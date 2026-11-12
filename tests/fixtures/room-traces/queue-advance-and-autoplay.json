@@ -25,6 +25,11 @@
           ],
           "epoch": "epoch#1",
           "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -95,6 +100,11 @@
           ],
           "epoch": "epoch#1",
           "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -136,6 +146,11 @@
             "title": "uburoom synchronization test",
             "version": "media#1"
           },
+          "stream": {
+            "format": "file",
+            "version": "stream#1",
+            "granted": true
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -164,6 +179,11 @@
             "id": "demo",
             "title": "uburoom synchronization test",
             "version": "media#1"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#2",
+            "granted": true
           },
           "timeline": {
             "paused": true,
@@ -272,6 +292,11 @@
       "views": {
         "alice": {
           "media": null,
+          "stream": {
+            "format": null,
+            "version": "stream#1",
+            "granted": false
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -300,6 +325,11 @@
         },
         "bob": {
           "media": null,
+          "stream": {
+            "format": null,
+            "version": "stream#2",
+            "granted": false
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -343,6 +373,11 @@
             "title": "uburoom synchronization test",
             "version": "media#2"
           },
+          "stream": {
+            "format": "file",
+            "version": "stream#3",
+            "granted": true
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -376,6 +411,11 @@
             "id": "demo",
             "title": "uburoom synchronization test",
             "version": "media#2"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#4",
+            "granted": true
           },
           "timeline": {
             "paused": true,
@@ -481,6 +521,11 @@
       "views": {
         "alice": {
           "media": null,
+          "stream": {
+            "format": null,
+            "version": "stream#3",
+            "granted": false
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -509,6 +554,11 @@
         },
         "bob": {
           "media": null,
+          "stream": {
+            "format": null,
+            "version": "stream#4",
+            "granted": false
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -598,6 +648,11 @@
             "title": "uburoom synchronization test",
             "version": "media#3"
           },
+          "stream": {
+            "format": "file",
+            "version": "stream#5",
+            "granted": true
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -627,6 +682,11 @@
             "id": "demo",
             "title": "uburoom synchronization test",
             "version": "media#3"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#6",
+            "granted": true
           },
           "timeline": {
             "paused": true,
@@ -740,6 +800,11 @@
       "views": {
         "alice": {
           "media": null,
+          "stream": {
+            "format": null,
+            "version": "stream#5",
+            "granted": false
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -761,6 +826,11 @@
         },
         "bob": {
           "media": null,
+          "stream": {
+            "format": null,
+            "version": "stream#6",
+            "granted": false
+          },
           "timeline": {
             "paused": true,
             "position": 0,

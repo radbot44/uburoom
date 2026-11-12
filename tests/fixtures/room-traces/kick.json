@@ -25,6 +25,11 @@
           ],
           "epoch": "epoch#1",
           "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -95,6 +100,11 @@
           ],
           "epoch": "epoch#1",
           "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -194,6 +204,11 @@
           ],
           "epoch": "epoch#1",
           "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -235,6 +250,11 @@
             "title": "uburoom synchronization test",
             "version": "media#1"
           },
+          "stream": {
+            "format": "file",
+            "version": "stream#1",
+            "granted": true
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -264,6 +284,11 @@
             "title": "uburoom synchronization test",
             "version": "media#1"
           },
+          "stream": {
+            "format": "file",
+            "version": "stream#2",
+            "granted": true
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -292,6 +317,11 @@
             "id": "demo",
             "title": "uburoom synchronization test",
             "version": "media#1"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#3",
+            "granted": true
           },
           "timeline": {
             "paused": true,
@@ -586,6 +616,11 @@
             "id": "demo",
             "title": "uburoom synchronization test",
             "version": "media#1"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#4",
+            "granted": true
           },
           "timeline": {
             "paused": false,

@@ -5765,6 +5765,9 @@ async function start() {
             connectionId: transport?.connectionId,
             visibility: document.visibilityState,
           });
+          // The room let this tab go (it went private, or the tab went silent). Leaving it
+          // selected would make choosing it again do nothing; the lobby offers it to rejoin.
+          if (message.value?.rejoin) selected = undefined;
           unavailable(message.value?.error || 'Room unavailable', 'room-poll');
         }
       } else if (message.type === 'unavailable') {

@@ -719,7 +719,7 @@ test(
     });
 
     const serverRoomB = app.watch.rooms.get(roomB);
-    const seqBBefore = serverRoomB.transportSequence;
+    const seqBBefore = app.watch.stateSequence(serverRoomB);
     const eventsBBefore = second.events.length;
     host.events.length = 0;
 
@@ -749,7 +749,7 @@ test(
     });
 
     assert.equal(
-      serverRoomB.transportSequence,
+      app.watch.stateSequence(serverRoomB),
       seqBBefore,
       'Room A local actions do not trigger snapshot publications in Room B',
     );

@@ -5,6 +5,7 @@ const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const https = require('node:https');
+const { inspect } = require('node:util');
 const { createApp } = require('../server/app');
 const { Hub } = require('../server/core');
 const { liveWatch } = require('./helpers/live-room');
@@ -61,8 +62,19 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
     await watch.reporting.observe(room, viewer, guestId, data, accepted);
     await watch.reporting.sessions.get(guestId)?.dispatched;
   };
-  watch.snapshot(room, host, hostId);
-  watch.snapshot(room, guest, guestId);
+  watch.join(room, host, hostId);
+  watch.join(room, guest, guestId);
+  {
+    // Looking never changes a live room, even one whose timeline is due to settle.
+    Object.assign(room, { position: 4, changedAt: Date.now() - 6000, startAt: Date.now() - 5000 });
+    room.pauseAt = Date.now() - 1000;
+    room.state.paused = false;
+    const before = inspect(room, { depth: Infinity, sorted: true });
+    for (let i = 0; i < 1000; i++)
+      assert.equal(watch.view(room, i % 2 ? guest : host, i % 2 ? guestId : hostId).state.paused, true);
+    assert.equal(inspect(room, { depth: Infinity, sorted: true }), before);
+    watch.refresh(room);
+  }
   const previous = room.viewers.get(guestId);
   previous.trackChoice = { audioId: '1042', subtitleId: 'off', audioIntent: { language: 'fr' } };
   previous.quality = '1080p';
@@ -76,11 +88,13 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
   const oldEpoch = previous.observationEpoch;
   watch.refresh(room);
   assert.equal(room.viewers.has(guestId), false);
-  assert.throws(() => watch.snapshot(room, actor('other'), guestId), /identity mismatch/);
+  assert.throws(() => watch.view(room, guest, guestId), /join again/);
+  assert.equal(room.viewers.has(guestId), false, 'a removed tab is not readmitted by looking');
+  assert.throws(() => watch.join(room, actor('other'), guestId), /identity mismatch/);
   const newTab = randomUUID();
-  watch.snapshot(room, guest, newTab);
+  watch.join(room, guest, newTab);
   assert.equal(room.viewers.get(newTab).trackChoice, undefined, 'a new tab does not inherit personal choices');
-  watch.snapshot(room, guest, guestId);
+  watch.join(room, guest, guestId);
   const restored = room.viewers.get(guestId);
   assert.deepEqual(restored.trackChoice, previous.trackChoice);
   assert.equal(restored.quality, '1080p');
@@ -94,13 +108,13 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
   watch.refresh(room);
   room.mediaVersion = randomUUID();
   watch.refresh(room);
-  watch.snapshot(room, guest, guestId);
+  watch.join(room, guest, guestId);
   assert.equal(room.viewers.get(guestId).trackChoice, undefined, 'a changed title cannot reuse numeric track IDs');
   room.viewers.get(guestId).trackChoice = { audioId: '1042' };
   room.viewers.get(guestId).at = Date.now() - 11000;
   watch.refresh(room);
   room.disconnectedViewers.get(guestId).expires = Date.now() - 1;
-  watch.snapshot(room, guest, guestId);
+  watch.join(room, guest, guestId);
   assert.equal(room.viewers.get(guestId).trackChoice, undefined, 'expired reconnect state is ignored');
   await report(room.viewers.get(guestId), 30);
   assert.notEqual(reports.at(-1).id, occurrence, 'a new media occurrence cannot reuse reporting');
@@ -109,7 +123,7 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
   watch.refresh(room);
   await watch.leave(room, guest, guestId);
   assert.equal(watch.reporting.sessions.has(guestId), false, 'explicit leave ends suspended reporting');
-  watch.snapshot(room, guest, guestId);
+  watch.join(room, guest, guestId);
   assert.equal(room.viewers.get(guestId).trackChoice, undefined, 'explicit leave does not restore personal choices');
   await watch.close();
 });
@@ -143,8 +157,8 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
     id = room.roomId,
     a = randomUUID(),
     b = randomUUID();
-  watch.snapshot(room, host, a);
-  watch.snapshot(room, guest, b);
+  watch.join(room, host, a);
+  watch.join(room, guest, b);
   room.media = { id: '12', kind: 'plex', title: 'Fixture', duration: 60, roomServerId: 'fixture' };
   await watch.prepareViewer(room, host, a);
   await watch.prepareViewer(room, guest, b);
@@ -158,9 +172,9 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
   assert.equal((await command(guest, b, 'media.pause')).status, 'forbidden');
   assert.equal((await command(guest, b, 'media.volume.set', { percent: 25 })).status, 'applied');
   await command(guest, b, 'media.mute');
-  assert.equal(watch.snapshot(room, guest, b).state.volume, 25);
-  assert.equal(watch.snapshot(room, guest, b).state.muted, true);
-  assert.equal(watch.snapshot(room, host, a).state.volume, 30);
+  assert.equal(watch.view(room, guest, b).state.volume, 25);
+  assert.equal(watch.view(room, guest, b).state.muted, true);
+  assert.equal(watch.view(room, host, a).state.volume, 30);
   assert.equal(room.state.muted, false);
   assert.equal(
     (await command(guest, b, 'media.quality.set', { quality: '1080p', compatible: true })).status,
@@ -243,8 +257,8 @@ test('HLS recovery replaces only the authorized viewer stream and preserves pers
     id = room.roomId,
     a = randomUUID(),
     b = randomUUID();
-  watch.snapshot(room, host, a);
-  watch.snapshot(room, guest, b);
+  watch.join(room, host, a);
+  watch.join(room, guest, b);
   room.media = { id: '104', kind: 'plex', title: 'Fixture', duration: 60, roomServerId: 'fixture' };
   room.position = 18;
   room.manualPaused = true;
@@ -909,9 +923,9 @@ test('viewer quality ceilings include fitting Original and survive lower outputs
       Media: [{ height, width: (height * 16) / 9, bitrate, Part: [{ key: '/library/parts/1/file.mp4' }] }],
     },
   });
-  watch.snapshot(room, actor, tab, undefined, '1080p8', { volume: 0, muted: true });
-  assert.equal(watch.snapshot(room, actor, tab).state.volume, 0);
-  assert.equal(watch.snapshot(room, actor, tab).state.muted, true);
+  watch.join(room, actor, tab, { quality: '1080p8', preferences: { volume: 0, muted: true } });
+  assert.equal(watch.view(room, actor, tab).state.volume, 0);
+  assert.equal(watch.view(room, actor, tab).state.muted, true);
   const viewer = room.viewers.get(tab);
   room.media = source(360, 1000);
   await watch.prepareViewer(room, actor, tab);
@@ -979,7 +993,7 @@ test('slow personal quality preparation has a bounded completion budget and reta
     const room = await fixture.open(host),
       id = room.roomId,
       viewerId = randomUUID();
-    watch.snapshot(room, host, viewerId, async () => live);
+    watch.join(room, host, viewerId, { alive: async () => live });
     room.media = { kind: 'plex', title: 'Fixture', id: '12', duration: 60, roomServerId: 'fixture' };
     const viewer = room.viewers.get(viewerId),
       old = { kind: 'plex', duration: 60 };
@@ -1000,7 +1014,7 @@ test('slow personal quality preparation has a bounded completion budget and reta
     await preparing;
     now += 4000;
     // Polling and room controls stay independent of private Plex preparation.
-    watch.snapshot(room, host, viewerId, async () => live);
+    watch.join(room, host, viewerId, { alive: async () => live });
     assert.equal((await command('media.pause')).status, 'applied');
     assert.equal(
       (await command('media.quality.set', { quality: '1080p' })).status,
@@ -1055,7 +1069,7 @@ test('superseded preparation retries for its waiting viewer instead of failing r
     host = actor('host');
   const room = await open(host),
     viewerId = randomUUID();
-  watch.snapshot(room, host, viewerId, async () => true);
+  watch.join(room, host, viewerId, { alive: async () => true });
   room.media = { kind: 'plex', title: 'Fixture', id: '12', duration: 60, roomServerId: 'fixture' };
   const viewer = room.viewers.get(viewerId),
     pending = watch.prepareViewer(room, host, viewerId);
@@ -1133,20 +1147,20 @@ test('shared seeks wait for fresh viewer buffers, reject superseded readiness, a
   const room = await open(host),
     first = randomUUID(),
     second = randomUUID();
-  watch.snapshot(room, host, first);
-  watch.snapshot(room, host, second);
+  watch.join(room, host, first);
+  watch.join(room, host, second);
   const dispatch = (action, args) => hub.dispatch(host, { roomId: room.roomId, action, args });
   const ready = viewer => watch.ready(room, host, viewer, room.mediaVersion, true, room.readinessVersion);
   await dispatch('media.load', { mediaId: 'demo', quality: 'direct' });
 
   // media.toggle during initial startup gate
-  assert.equal(watch.snapshot(room, host, first).state.waitingForReady, true);
+  assert.equal(watch.view(room, host, first).state.waitingForReady, true);
   await dispatch('media.toggle');
   assert.equal(room.manualPaused, true, 'toggle deliberately pauses pending startup');
   await ready(first);
   await ready(second);
   assert.equal(room.state.paused, true);
-  assert.equal(watch.snapshot(room, host, first).state.waitingForReady, false);
+  assert.equal(watch.view(room, host, first).state.waitingForReady, false);
   await dispatch('media.toggle');
   assert.equal(room.state.paused, false);
 
@@ -1160,7 +1174,7 @@ test('shared seeks wait for fresh viewer buffers, reject superseded readiness, a
   await assert.rejects(watch.ready(room, host, second, room.mediaVersion, true, old), /Invalid readiness/);
 
   // media.toggle during seek gate
-  assert.equal(watch.snapshot(room, host, first).state.waitingForReady, true);
+  assert.equal(watch.view(room, host, first).state.waitingForReady, true);
   await dispatch('media.toggle');
   assert.equal(room.manualPaused, true, 'toggle deliberately pauses pending seek');
 
@@ -1207,26 +1221,26 @@ test('a Plex outage keeps admitted viewers in the room, admits nobody new and ne
   const room = await open(a),
     viewerId = randomUUID();
   room.media = { id: '1', kind: 'plex', title: 'Movie', duration: 60, roomServerId: 'fixture' };
-  watch.snapshot(room, a, viewerId);
+  watch.join(room, a, viewerId);
   const viewer = room.viewers.get(viewerId);
   viewer.media = { id: '1', kind: 'plex' };
   assert.equal(await watch.canView(room, b), true);
-  assert.equal(watch.snapshot(room, a, viewerId).providerNotice, false);
+  assert.equal(watch.view(room, a, viewerId).providerNotice, false);
   failure = Object.assign(new Error('Unavailable'), { status: 503 });
   assert.equal(await watch.canView(room, a), true, 'an admitted viewer stays through an outage');
   assert.equal(await watch.canView(room, b), false, 'an outage admits nobody new');
-  assert.equal(watch.snapshot(room, a, viewerId).providerNotice, false, 'buffered viewers hear nothing');
+  assert.equal(watch.view(room, a, viewerId).providerNotice, false, 'buffered viewers hear nothing');
   viewer.syncQuality = { status: 'buffering' };
-  assert.equal(watch.snapshot(room, a, viewerId).providerNotice, true, 'one affected viewer warns the room');
+  assert.equal(watch.view(room, a, viewerId).providerNotice, true, 'one affected viewer warns the room');
   failure = Object.assign(new Error('Revoked'), { status: 403 });
   assert.equal(await watch.canView(room, a), false, 'a confirmed denial is never treated as an outage');
   failure = undefined;
   assert.equal(await watch.canView(room, a), true);
   assert.equal(
-    watch.snapshot(room, a, viewerId).providerNotice,
+    watch.view(room, a, viewerId).providerNotice,
     true,
     'a viewer still recovering after Plex returns keeps the notice',
   );
   viewer.syncQuality = { status: 'playing' };
-  assert.equal(watch.snapshot(room, a, viewerId).providerNotice, false);
+  assert.equal(watch.view(room, a, viewerId).providerNotice, false);
 });

@@ -25,8 +25,8 @@ async function fixture(t) {
   const room = await open(host),
     h = randomUUID(),
     g = randomUUID();
-  watch.snapshot(room, host, h);
-  watch.snapshot(room, guest, g);
+  watch.join(room, host, h);
+  watch.join(room, guest, g);
   const dispatch = (action, args, actor = host) => hub.dispatch(actor, { roomId: room.roomId, action, args });
   const ready = (viewer, value = true) =>
     watch.ready(room, viewer === h ? host : guest, viewer, room.mediaVersion, value, room.readinessVersion);
@@ -93,7 +93,7 @@ test('pause and resume share deadlines, project the pause target, and supersede 
     before = f.watch.position(f.room);
   assert.equal(at, f.now() + 400);
   assert.equal(f.room.state.paused, false);
-  const snapshot = f.watch.snapshot(f.room, f.host, f.h);
+  const snapshot = f.watch.view(f.room, f.host, f.h);
   assert.equal(target(snapshot, at + 1000), before + 0.4);
   f.advance(200);
   assert.equal(f.watch.position(f.room), before + 0.2);
@@ -168,9 +168,9 @@ test('a second tab of the same account restores group readiness and delivery lea
   await f.load();
   f.advance(200);
   const second = randomUUID();
-  f.watch.snapshot(f.room, f.host, second);
+  f.watch.join(f.room, f.host, second);
   assert.equal(f.room.viewers.size, 2);
-  assert.equal(f.watch.snapshot(f.room, f.host, f.h).viewers, 1, 'account presence is distinct from viewing tabs');
+  assert.equal(f.watch.view(f.room, f.host, f.h).viewers, 1, 'account presence is distinct from viewing tabs');
   assert.equal(f.room.readinessStartAt, f.now() + 1750);
   await f.ready(f.h);
   assert.equal(f.room.initialGate, true);
@@ -189,7 +189,7 @@ test('joining an already playing solo room does not stop its timeline and restor
   await f.ready(f.h);
   f.advance(1000);
   const position = f.watch.position(f.room);
-  f.watch.snapshot(f.room, f.guest, f.g);
+  f.watch.join(f.room, f.guest, f.g);
   assert.equal(f.room.initialGate, false);
   assert.equal(f.room.state.paused, false);
   assert.equal(f.watch.position(f.room), position);
@@ -211,21 +211,21 @@ test('departure and expired viewers release coordination delays without timeline
   assert.equal(f.watch.position(f.room), 0);
   f.advance(1000);
   assert.equal(f.watch.position(f.room), 1);
-  f.watch.snapshot(f.room, f.guest, f.g);
+  f.watch.join(f.room, f.guest, f.g);
   await f.dispatch('media.pause');
   f.advance(100);
   await f.watch.leave(f.room, f.guest, f.g);
   assert.equal(f.room.pauseAt, undefined);
   assert.equal(f.room.state.paused, true);
   assert.equal(f.watch.position(f.room), 1.1);
-  f.watch.snapshot(f.room, f.guest, f.g);
+  f.watch.join(f.room, f.guest, f.g);
   await f.dispatch('media.play');
   assert.equal(f.room.startAt, f.now() + 400);
   f.room.viewers.get(f.g).at = f.now() - 10001;
   f.watch.refresh(f.room);
   assert.equal(f.room.viewers.size, 1);
   assert.equal(f.room.startAt, f.now());
-  f.watch.snapshot(f.room, f.guest, f.g);
+  f.watch.join(f.room, f.guest, f.g);
   await f.dispatch('media.seek.absolute', { seconds: 30 });
   await f.ready(f.h);
   await f.watch.leave(f.room, f.guest, f.g);
@@ -239,7 +239,7 @@ test('timeout names blockers, latches despite late readiness, and only the host 
   await f.load();
   await f.ready(f.h);
   f.advance(3000);
-  assert.deepEqual(f.watch.snapshot(f.room, f.host, f.h).readiness.blockers, ['Guest']);
+  assert.deepEqual(f.watch.view(f.room, f.host, f.h).readiness.blockers, ['Guest']);
   f.advance(7000);
   const id = f.room.readinessId;
   assert.equal(f.room.readinessTimedOut, true);

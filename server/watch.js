@@ -39,6 +39,9 @@ const {
   applyTimelineCommand,
 } = require('../shared/sync');
 
+// A tab the room let go of (privacy, presence timeout) must join again; looking never readmits it.
+const REJOIN = 'You are no longer in this room; join again';
+
 function formatEntrySubtitle(entry) {
   if (!entry) return '';
   if (entry.subtitle) return entry.subtitle;
@@ -55,6 +58,8 @@ class Watch {
     this.plex = plex;
     this.demoMedia = demoMedia;
     this.rooms = new Map();
+    /** @type {WeakMap<Room, number>} */
+    this.stateSequences = new WeakMap();
     this.reporting = new PlexReporting({
       config: hub?.config,
       hub,
@@ -181,6 +186,18 @@ class Watch {
   }
   settle(room, now = Date.now()) {
     settleRoomTimeline(room, now);
+  }
+  // The timeline as refresh() would settle it at `now`, worked out on a copy so
+  // that looking at a room never moves it. Like refresh(), it leaves a room whose
+  // durable transition is still committing as it is.
+  projectTimeline(room, now = Date.now()) {
+    if (room.transitionCommit) return room;
+    const copy = { ...room, state: { ...room.state } };
+    this.settle(copy, now);
+    copy.state.waitingForReady = copy.initialGate && !copy.manualPaused && !copy.readinessTimedOut;
+    copy.state.position = this.position(copy, now);
+    copy.state.duration = copy.media?.duration || 0;
+    return copy;
   }
   invalidateControls(room) {
     this.cancelAutoplay(room);
@@ -963,9 +980,8 @@ class Watch {
   }
   async list(actor, activity = false) {
     const rooms = [];
+    // Listing rooms only reads them; the server's sweep keeps their lifecycle.
     for (const room of this.rooms.values()) {
-      this.refresh(room);
-      if (!this.rooms.has(room.roomId)) continue;
       const accessible = await this.canView(room, actor);
       if (!accessible && !(activity && room.visibility === 'private' && sameVoice(room, actor, this.hub.access)))
         continue;
@@ -1083,7 +1099,16 @@ class Watch {
       room.starting = false;
     }
   }
-  snapshot(room, actor, viewerId, alive, quality = '720p', preferences = {}) {
+  /**
+   * Admits one tab to the room, or renews the tab that is already in it. This is
+   * the only way into a room: reading a room never adds anyone to it.
+   * @param {any} room
+   * @param {Actor} actor
+   * @param {string} viewerId
+   * @param {{alive?: () => Promise<boolean>, quality?: string | null, preferences?: Object}} [options]
+   * @returns {any} The joined viewer.
+   */
+  join(room, actor, viewerId, { alive, quality = '720p', preferences = {} } = {}) {
     if (this.shuttingDown || room.removing) throw new Error('Room unavailable');
     if ((room.kickedViewers?.get(viewerId) || 0) > Date.now())
       throw Object.assign(new Error('You were removed from this room. You may rejoin.'), { status: 403 });
@@ -1165,19 +1190,81 @@ class Watch {
     }
     if (!oldViewer) promoteGroupReadinessLead(room, now);
     if (room.initialGate && !oldViewer) room.initialViewers.add(viewerId);
+    return viewer;
+  }
+  /**
+   * Keeps a tab that is still in the room present and its stored identity current.
+   * Returns undefined when the tab is no longer in the room; it must join again.
+   * @param {any} room
+   * @param {Actor} actor
+   * @param {string} viewerId
+   * @returns {any}
+   */
+  touch(room, actor, viewerId, now = Date.now()) {
+    if (this.shuttingDown || room.removing) throw new Error('Room unavailable');
+    const viewer = room.viewers.get(viewerId);
+    if (!viewer) return undefined;
+    if (viewer.userId !== actor.userId) throw new Error('Viewer identity mismatch');
+    Object.assign(viewer, { at: now, name: Engine.senderName(actor.name), actor: { ...actor } });
+    return viewer;
+  }
+  // Each state handed to a client carries the next number in its room's
+  // publication order, so the browser can drop an older state that arrives late.
+  // The count belongs to publication, not to the room.
+  nextStateSequence(room) {
+    const next = this.stateSequence(room) + 1;
+    this.stateSequences.set(room, next);
+    return next;
+  }
+  stateSequence(room) {
+    return this.stateSequences.get(room) || 0;
+  }
+  // Poll-driven: the ending card's details are fetched when someone looks at an
+  // empty room that needs them (A3.4 moves this to queue and media events).
+  requestEndingMeta(room) {
+    if (room.media || room.refreshingEndingMeta) return;
+    const queueSummary = this.roomState.queue.summary(room.roomId);
+    const completed = queueSummary?.lastHistory;
+    const next =
+      queueSummary?.next ||
+      (queueSummary?.autoQueue?.next
+        ? { ...queueSummary.autoQueue.next, id: 'auto:' + queueSummary.autoQueue.next.mediaId }
+        : null);
+    const endingOffer =
+      room.endingOffer?.key === completed?.id + ':' + queueSummary?.queueRevision ? room.endingOffer.offer : null;
+    if (!(completed || next || endingOffer)) return;
+    const needsOffer =
+      !next &&
+      completed?.type === 'episode' &&
+      queueSummary.autoQueue.mode === 'off' &&
+      room.endingOffer?.key !== completed?.id + ':' + queueSummary?.queueRevision;
+    const needsSummary = next && !room.endingMeta?.has(next.mediaId);
+    if (needsOffer || needsSummary) void this.refreshEndingMeta(room);
+  }
+  /**
+   * What one tab in the room sees. A pure projection: it never joins anyone,
+   * refreshes presence or otherwise changes the room.
+   * @param {any} room
+   * @param {Actor} actor
+   * @param {string} viewerId
+   */
+  view(room, actor, viewerId, now = Date.now()) {
+    if (this.shuttingDown || room.removing || this.rooms.get(room.roomId) !== room) throw new Error('Room unavailable');
+    const viewer = room.viewers.get(viewerId);
+    if (!viewer) throw Object.assign(new Error(REJOIN), { status: 409 });
+    if (viewer.userId !== actor.userId) throw new Error('Viewer identity mismatch');
     const owner = this.hub.authorize(actor, room, 'roomSettings').ok;
-    room.transportSequence = (room.transportSequence || 0) + 1;
+    const timeline = this.projectTimeline(room, now);
     const participants = syncQualityParticipants(room, this.roomState.participants(room.roomId), now);
     // Health details (buffer, stalls, device) are for the people who run the room.
     if (!owner)
       for (const person of participants)
         for (const session of person.syncQuality?.sessions || []) delete session.health;
-    const { waitingForReady, readiness } = snapshotReadiness(room);
+    const { waitingForReady, readiness } = snapshotReadiness(timeline);
     return {
       id: room.roomId,
-      transportSequence: room.transportSequence,
       epoch: room.epoch,
-      revision: room.revision,
+      revision: timeline.revision,
       mediaVersion: room.mediaVersion,
       serverNow: now,
       plexReporting: {
@@ -1190,8 +1277,8 @@ class Watch {
       invite: room.inviteCode
         ? { code: room.inviteCode, url: this.hub.config.publicUrl + '/join/' + room.inviteCode }
         : undefined,
-      startAt: room.startAt,
-      pauseAt: room.pauseAt,
+      startAt: timeline.startAt,
+      pauseAt: timeline.pauseAt,
       title: room.media?.title || 'Choose something to watch…',
       subtitle: room.media?.subtitle || '',
       mediaId: room.media?.id,
@@ -1318,18 +1405,8 @@ class Watch {
               error: room.autoplayError || room.autoQueueError || null,
             }
           : null;
-        if (!room.media && hasInterstitial && !room.refreshingEndingMeta) {
-          const offerKey = completed?.id + ':' + queueSummary?.queueRevision;
-          const needsOffer =
-            !next &&
-            completed?.type === 'episode' &&
-            queueSummary.autoQueue.mode === 'off' &&
-            room.endingOffer?.key !== offerKey;
-          const needsSummary = next && !room.endingMeta?.has(next.mediaId);
-          if (needsOffer || needsSummary) void this.refreshEndingMeta(room);
-        }
         return {
-          hasPrevious: this.position(room) >= 5 || (queueSummary?.historyCount || 0) > 0,
+          hasPrevious: this.position(timeline, now) >= 5 || (queueSummary?.historyCount || 0) > 0,
           hasNext: !!(queueSummary?.next || queueSummary?.autoQueue?.next),
           queueSummary,
           ending,
@@ -1371,7 +1448,7 @@ class Watch {
       canBrowse: true,
       isHost: isHost(room, actor),
       adminMode: this.hub.isAdmin(actor),
-      state: Engine.snapshot({ ...room.state, volume: viewer.volume, muted: viewer.muted }),
+      state: Engine.snapshot({ ...timeline.state, volume: viewer.volume, muted: viewer.muted }),
       canManage: owner,
       visibility: room.visibility,
       canPlayback: this.hub.authorize(actor, room, 'media.play').ok,
@@ -2905,4 +2982,4 @@ class Watch {
     return this.closing;
   }
 }
-module.exports = { Watch, syncQualityParticipants };
+module.exports = { Watch, syncQualityParticipants, REJOIN };

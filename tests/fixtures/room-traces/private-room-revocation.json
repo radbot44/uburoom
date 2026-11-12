@@ -25,6 +25,11 @@
           ],
           "epoch": "epoch#1",
           "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -95,6 +100,11 @@
           ],
           "epoch": "epoch#1",
           "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -194,6 +204,11 @@
           ],
           "epoch": "epoch#1",
           "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -306,6 +321,11 @@
             "title": "uburoom synchronization test",
             "version": "media#1"
           },
+          "stream": {
+            "format": "file",
+            "version": "stream#1",
+            "granted": true
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -335,6 +355,11 @@
             "title": "uburoom synchronization test",
             "version": "media#1"
           },
+          "stream": {
+            "format": "file",
+            "version": "stream#2",
+            "granted": true
+          },
           "timeline": {
             "paused": true,
             "position": 0,
@@ -363,6 +388,11 @@
             "id": "demo",
             "title": "uburoom synchronization test",
             "version": "media#1"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#3",
+            "granted": true
           },
           "timeline": {
             "paused": true,
@@ -566,6 +596,38 @@
       },
       "views": {
         "alice": {
+          "epoch": "epoch#4",
+          "timeline": {
+            "paused": false,
+            "position": 5.25,
+            "duration": 60,
+            "startAt": 5750,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "epoch": "epoch#4",
+          "timeline": {
+            "paused": false,
+            "position": 5.25,
+            "duration": 60,
+            "startAt": 5750,
+            "pauseAt": null
+          }
+        },
+        "carol": {
+          "refusal": "409 You are no longer in this room; join again"
+        }
+      }
+    },
+    {
+      "at": 12000,
+      "step": "carol rejoins",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
           "participants": [
             {
               "who": "alice",
@@ -583,10 +645,9 @@
               "present": true
             }
           ],
-          "epoch": "epoch#4",
           "timeline": {
             "paused": false,
-            "position": 5.25,
+            "position": 6.25,
             "duration": 60,
             "startAt": 5750,
             "pauseAt": null
@@ -610,10 +671,9 @@
               "present": true
             }
           ],
-          "epoch": "epoch#4",
           "timeline": {
             "paused": false,
-            "position": 5.25,
+            "position": 6.25,
             "duration": 60,
             "startAt": 5750,
             "pauseAt": null
@@ -650,9 +710,14 @@
             "title": "uburoom synchronization test",
             "version": "media#1"
           },
+          "stream": {
+            "format": "file",
+            "version": "stream#4",
+            "granted": true
+          },
           "timeline": {
             "paused": false,
-            "position": 5.25,
+            "position": 6.25,
             "duration": 60,
             "startAt": 5750,
             "pauseAt": null
@@ -674,42 +739,6 @@
           "ending": null,
           "recovery": null,
           "errors": []
-        }
-      }
-    },
-    {
-      "at": 12000,
-      "step": "carol rejoins",
-      "result": {
-        "ok": true
-      },
-      "views": {
-        "alice": {
-          "timeline": {
-            "paused": false,
-            "position": 6.25,
-            "duration": 60,
-            "startAt": 5750,
-            "pauseAt": null
-          }
-        },
-        "bob": {
-          "timeline": {
-            "paused": false,
-            "position": 6.25,
-            "duration": 60,
-            "startAt": 5750,
-            "pauseAt": null
-          }
-        },
-        "carol": {
-          "timeline": {
-            "paused": false,
-            "position": 6.25,
-            "duration": 60,
-            "startAt": 5750,
-            "pauseAt": null
-          }
         }
       }
     }

@@ -225,8 +225,8 @@ async function roomFixture() {
   const room = await open(host),
     h = randomUUID(),
     g = randomUUID();
-  watch.snapshot(room, host, h);
-  watch.snapshot(room, guest, g);
+  watch.join(room, host, h);
+  watch.join(room, guest, g);
   const dispatch = async (action, args) => {
     const result = await hub.dispatch(host, {
       roomId: room.roomId,
@@ -251,7 +251,7 @@ test('readiness schedules one initial start without advancing early; ordinary co
     assert.equal(f.watch.position(f.room, deadline - 500), 0);
     assert.equal(f.watch.position(f.room, deadline + 1000), 1);
     const late = randomUUID();
-    f.watch.snapshot(f.room, f.guest, late);
+    f.watch.join(f.room, f.guest, late);
     await f.watch.ready(f.room, f.guest, late, f.room.mediaVersion, false);
     assert.equal(f.room.startAt, deadline, 'a late unready viewer cannot delay the group');
     await f.dispatch('media.pause');

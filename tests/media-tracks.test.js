@@ -487,8 +487,8 @@ test('personal tracks preserve room state, isolate viewers, reject stale choices
     a = randomUUID(),
     b = randomUUID();
   try {
-    watch.snapshot(room, host, a);
-    watch.snapshot(room, guest, b);
+    watch.join(room, host, a);
+    watch.join(room, guest, b);
     room.media = await plex.prepare('1', 'direct', false, undefined, undefined, { sourceOnly: true });
     room.media.roomServerId = 'fixture';
     await watch.prepareViewer(room, host, a);
@@ -546,13 +546,13 @@ test('a failed automatic burn keeps its catalog available for an explicit Off re
   state.selected = '22';
   state.wrongBurn = true;
   try {
-    watch.snapshot(room, host, viewerId);
+    watch.join(room, host, viewerId);
     room.media = await plex.prepare('1', 'direct', false, undefined, undefined, { sourceOnly: true });
     room.media.roomServerId = 'fixture';
     await watch.prepareViewer(room, host, viewerId);
     const viewer = room.viewers.get(viewerId);
     assert.match(viewer.media.playbackError, /did not confirm burning/);
-    assert.ok(watch.snapshot(room, host, viewerId).tracks.subtitles.length);
+    assert.ok(watch.view(room, host, viewerId).tracks.subtitles.length);
     const result = await hub.dispatch(
       { ...host, watchViewerId: viewerId },
       {
