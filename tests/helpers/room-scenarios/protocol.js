@@ -255,6 +255,12 @@ class Viewer {
       participants: (s.participants || []).map(p => ({ who: account(p.id), role: p.role, present: !!p.present })),
       epoch: token('epoch', s.epoch),
       media: s.mediaId ? { id: s.mediaId, title: s.title, version: token('media', s.mediaVersion) } : null,
+      // This tab's own stream: what it was given to play and whether it may fetch it.
+      stream: {
+        format: s.format ?? null,
+        version: token('stream', s.streamVersion),
+        granted: !!s.mediaUrl,
+      },
       timeline: {
         paused: !!s.state?.paused,
         position: s.state?.position,
