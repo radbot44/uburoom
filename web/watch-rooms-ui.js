@@ -13,7 +13,7 @@
     deleteRoom: 'Permanently delete room',
     continueWithoutHost: 'Continue without hosts',
     addHosts: 'Add hosts',
-    kickParticipants: 'Kick participants',
+    kickParticipants: 'Kick viewers',
   };
   const descriptions = {
     playPause: 'Start or pause playback for the room.',
@@ -393,13 +393,13 @@
       rosterRoom;
     const expand = $('room-participants-expand'),
       rosterFrame = $('room-roster-frame');
-    controls.content(expand, { icon: 'chevron', label: 'Expand participants', iconOnly: true });
+    controls.content(expand, { icon: 'chevron', label: 'Expand viewers', iconOnly: true });
     const settingsRoster = $('room-current-people'),
       settingsFrame = document.createElement('div');
     settingsFrame.className = 'room-roster-frame';
     settingsRoster.before(settingsFrame);
     settingsFrame.append(settingsRoster);
-    const settingsExpand = controls.button(document, { icon: 'chevron', label: 'Expand participants', iconOnly: true });
+    const settingsExpand = controls.button(document, { icon: 'chevron', label: 'Expand viewers', iconOnly: true });
     settingsExpand.id = 'room-settings-participants-expand';
     settingsExpand.hidden = true;
     settingsFrame.append(settingsExpand);
@@ -424,7 +424,7 @@
         button.hidden = !overflow && !expanded;
         frame.classList.toggle('has-overflow', overflow || expanded);
         button.setAttribute('aria-expanded', String(expanded));
-        button.setAttribute('aria-label', expanded ? 'Show fewer participants' : 'Expand participants');
+        button.setAttribute('aria-label', expanded ? 'Show fewer viewers' : 'Expand viewers');
         button.title = button.getAttribute('aria-label');
       }
     }
@@ -481,7 +481,7 @@
       renderLivePeople();
       if (inSettings) {
         renderSettings();
-        setSettingsStatus('Removing participant…');
+        setSettingsStatus('Removing viewer…');
       }
       try {
         if (inSettings ? details?.id !== id : getState()?.id !== id) throw new Error('Room changed; try again');
@@ -503,11 +503,11 @@
         await changed();
         if (inSettings && dialog.open && details?.id === id) {
           await open(id, 'people');
-          setSettingsStatus('Participant removed', true);
+          setSettingsStatus('Viewer removed', true);
         }
         if (trigger && !inSettings)
           root.uburoomPopover?.show(trigger, {
-            text: kick ? 'Participant removed' : 'Host role saved',
+            text: kick ? 'Viewer removed' : 'Host role saved',
             state: 'success',
           });
       } catch (error) {
@@ -586,7 +586,7 @@
               ? 'Host'
               : person.guest
                 ? 'Guest'
-                : 'Participant';
+                : 'Viewer';
         const glyph =
           person.role === 'creator'
             ? 'creator'
@@ -1097,7 +1097,7 @@
       if (!value.capabilities.addHosts) clearSearch();
       $('room-host-inheritance').textContent = value.permissions.allHosts
         ? 'Everyone is host. Everyone uses the host permissions below.'
-        : 'Hosts also receive participant permissions.';
+        : 'Hosts also receive viewer permissions.';
       $('room-permission-custom').classList.toggle('all-hosts', !!value.permissions.allHosts);
       const roster = $('room-current-people');
       delete roster.dataset.signature;
@@ -1181,7 +1181,7 @@
       for (const [label, role] of [
         ['Permission', ''],
         ['Host', 'host'],
-        ['Participant', 'viewer'],
+        ['Viewer', 'viewer'],
       ]) {
         const cell = node('th', header, label);
         cell.scope = 'col';
@@ -1236,7 +1236,7 @@
               role === 'viewer' &&
               ['roomSettings', 'closeRoom', 'deleteRoom', 'addHosts', 'kickParticipants'].includes(key);
             const control = permissionButton(cell, {
-              label: (role === 'host' ? 'Host' : 'Participant') + ': ' + label,
+              label: (role === 'host' ? 'Host' : 'Viewer') + ': ' + label,
               checked: !!value.permissions[role][key],
               disabled: busy || !value.capabilities.managePermissions || restricted,
               reason: busy
@@ -1444,7 +1444,7 @@
     }
     for (const [key, label] of [
       ['general', 'General'],
-      ['people', 'People'],
+      ['people', 'Viewers'],
       ['permissions', 'Permissions'],
       ['playback', 'Playback & queue'],
       ['manage', 'Manage'],

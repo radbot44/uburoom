@@ -3529,7 +3529,7 @@ function renderVisibility() {
       label: state.viewers + ' / ' + (state.maxMembers || 20),
     });
     $('room-people-open').classList.remove('watch-control-responsive');
-    $('room-people-open').setAttribute('aria-label', 'People: ' + state.viewers + ' / ' + (state.maxMembers || 20));
+    $('room-people-open').setAttribute('aria-label', 'Viewers: ' + state.viewers + ' / ' + (state.maxMembers || 20));
   }
   roomUI.render();
   queueUI.render(state?.queueSummary);
@@ -5105,9 +5105,9 @@ for (const btn of $('room-settings-visibility-group')?.querySelectorAll('button'
 const roomOptionHints = {
   public: 'Eligible viewers can find and join this room.',
   private: 'Only the room leader and assigned hosts can join.',
-  'host-control': 'Hosts control playback and the queue. Participants have no controls.',
-  'play-pause': 'Participants can play and pause. Hosts control seeking, video choice and the queue.',
-  queue: 'Participants can use all playback and queue controls. Room management stays with hosts.',
+  'host-control': 'Hosts control playback and the queue. Viewers have no controls.',
+  'play-pause': 'Viewers can play and pause. Hosts control seeking, video choice and the queue.',
+  queue: 'Viewers can use all playback and queue controls. Room management stays with hosts.',
   custom: 'Custom permissions. Selecting this option does not change any permissions.',
 };
 for (const group of [

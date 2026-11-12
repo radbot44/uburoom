@@ -70,7 +70,7 @@ With both sign-in methods off, uburoom allows separate 24-hour anonymous browser
 
 Every room has an invite code, like `ubumfa-ogdave`. Anyone in the room can share it with the room's Share button (the device share sheet, the clipboard, or Discord's share link in an Activity), as a `/join/<code>` link or a code typed on the sign-in screen. People who can already enter the server use it to reach the room, including private rooms, which then remember them until a host revokes them. Hosts can make a new code at any time; that removes nobody.
 
-Guests let a room's invite admit people who couldn't otherwise get in. Turn the feature on with `guests.enabled: true`; each room then has an **Allow guests** switch in Room settings → People.
+Guests let a room's invite admit people who couldn't otherwise get in. Turn the feature on with `guests.enabled: true`; each room then has an **Allow guests** switch in Room settings → Viewers.
 
 | Setting | Behavior |
 | --- | --- |
@@ -148,7 +148,7 @@ Optional host-directory discovery can use Discord Server Members/Presence intent
 
 Set `discord.share_channel_id` to one quoted text-channel ID in `discord.guild_id`; blank disables new publishing. Give the bot **View Channel**, **Send Messages**, **Embed Links** and **Read Message History** in that channel, then restart uburoom. No additional privileged Gateway intent or bot commands are needed.
 
-In the Room section or Room settings → People, **Share** shows the full invite URL with Copy invite link and Share invite… for everyone. Room leaders, hosts (including All hosts, excluding room guests) and active admins can explicitly **Publish** a preview to the configured channel, view the post or remove it. Publishing is independent of the editable Room settings permission. It sends no participant names or automatic mentions. Publishing uses current room details and checks current host/access permissions; settings changes, playback changes and people joining do not require reopening Share. Removal checks current host authority and the room's current post independently of the preview.
+In the Room section or Room settings → Viewers, **Share** shows the full invite URL with Copy invite link and Share invite… for everyone. Room leaders, hosts (including All hosts, excluding room guests) and active admins can explicitly **Publish** a preview to the configured channel, view the post or remove it. Publishing is independent of the editable Room settings permission. It sends no participant names or automatic mentions. Publishing uses current room details and checks current host/access permissions; settings changes, playback changes and people joining do not require reopening Share. Removal checks current host authority and the room's current post independently of the preview.
 
 One post shows the room name, selected movie/episode and its poster when available, Playing/Paused/Waiting status, unique viewer count and Join room. The same post updates on meaningful changes, including invite rerolls, with changes grouped at five-second intervals. Public and private rooms can be published; existing entry, guest and Plex requirements still apply. Publishing never enables guests or grants media/host access. Poster URLs serve only a bounded cached image for the currently published room/media, with no anonymous provider lookup or Plex token exposure. They stop resolving after removal, closure or a media change; Discord may retain an already fetched image.
 
