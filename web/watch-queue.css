@@ -314,13 +314,6 @@ button.queue-title-link:hover {
   padding-top: var(--space-14);
   border-top: 0;
 }
-.queue-continuation {
-  display: flex;
-  align-items: center;
-  gap: var(--watch-control-gap);
-  flex-wrap: wrap;
-  flex: 1;
-}
 #queue-auto-open {
   color: var(--muted);
 }
@@ -329,31 +322,38 @@ button.queue-title-link:hover {
   margin-left: auto;
 }
 
-/* One timeline of vertically scrolling rows. */
+/* Header: title and Queue settings, then a row with the continuation switches and Center Now Playing.
+   The switches keep their labels and wrap to another line when the row is too narrow. */
 .queue-header {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 .queue-heading {
   grid-column: 1;
   grid-row: 1;
 }
-.queue-quick-controls {
+#queue-auto-open {
   grid-column: 2;
   grid-row: 1;
 }
 .queue-toolbar {
   grid-column: 1/-1;
   grid-row: 2;
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  min-height: 48px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--watch-control-gap);
   margin: 0;
 }
+.queue-quick-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--watch-control-gap);
+  min-width: 0;
+}
 #queue-center {
-  grid-column: 2;
-  grid-row: 1;
+  margin-inline-start: auto;
   max-width: 200px;
   font-size: var(--font-size-12);
 }
@@ -478,26 +478,6 @@ button.queue-title-link:hover {
   flex: none;
   font-size: var(--font-size-12);
 }
-@container queue (max-width:440px) {
-  .queue-quick-controls .watch-toggle-label {
-    display: none;
-  }
-  .queue-quick-controls .watch-toggle-pill {
-    padding: var(--space-4);
-    width: var(--watch-control-height);
-    justify-content: center;
-  }
-}
-@container queue (max-width:370px) {
-  .queue-quick-controls {
-    grid-row: 2;
-    grid-column: 1/-1;
-    justify-self: end;
-  }
-  .queue-toolbar {
-    grid-row: 3;
-  }
-}
 @media (pointer: coarse) {
   .queue-navigation button {
     min-height: 40px;
@@ -505,13 +485,6 @@ button.queue-title-link:hover {
   }
 }
 
-.queue-quick-controls {
-  display: flex;
-  align-items: center;
-  flex-wrap: nowrap;
-  gap: var(--watch-control-gap);
-  flex: none;
-}
 .queue-no-current .queue-now-playing {
   min-height: 150px !important;
   border: 0;
@@ -587,7 +560,8 @@ button.queue-title-link:hover {
 .queue-playback-state {
   margin-right: auto;
 }
-@container queue (max-width:370px) {
+/* Center Now Playing shares its row with the two switch pills; below this width it keeps only its icon. */
+@container queue (max-width:480px) {
   #queue-center {
     max-width: 40px;
     padding: 0;

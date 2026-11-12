@@ -25,6 +25,8 @@ Use established components, styles and interactions. Follow [AGENTS.md](../AGENT
 | Permission | Allowed/Denied thumbs |
 | Mute, Captions, Theater | Pressed icon button |
 
+A **switch pill** is the compact form of a switch for toolbars, where a full switch row does not fit: one shared helper and style for every use. State shows in the switch alone (accent fill when on, `var(--secondary)` for auto-queue); hover changes the surface to `var(--hover)`; disabled dims the whole pill to 40% with the reason as tooltip; read-only shows the switch at full strength without hover. Focus draws the standard ring around the whole pill.
+
 Keep action, selection, navigation and status distinct. Reuse established exceptions such as compact Admin/privacy controls rather than forcing every boolean into a switch.
 
 ### Sizing & token standards
@@ -42,6 +44,7 @@ Use existing theme tokens and shared control classes; do not recreate their sizi
 | Adjacent icon actions | 4px gap (`var(--watch-icon-gap)`) |
 | Focus | Visible 2px outline, 2px offset |
 | Switch | 36×22px component (`input.watch-switch`); 44px minimum row/target (`.watch-switch-label`) |
+| Switch pill | `uburoomControls.switchPill()`: 40px tall, 10px radius, `var(--elevated)` surface with no border or tint, 12px horizontal padding; 14px/500 label left, small 28×16px switch right (`.watch-switch-small`), 10px gap |
 | Segmented selector | 40px inner button height; 46px group height with 3px padding (`.watch-segmented`) |
 
 ### Scales and token families
@@ -120,7 +123,7 @@ A watch night is a room with a time on it: every event belongs to one saved room
 - **Section heading icon badges:** 40×40px solid orange (`var(--primary)`) square, 10px radius (`var(--watch-control-radius)`), with dark artwork (`var(--on-primary): #101217`, 24px icon) using `armchair-2` for Room, `player-track-next` for Queue, and `video` for Media.
 - **Section toggle layout:** The minimize chevron stays immediately adjacent to the heading title with an 8px gap (`var(--watch-control-gap)`). `#options-title` sizes to the room name; when the name and the header actions do not fit on one line, the actions wrap to a row below and the name keeps the full first line, truncating with ellipsis only beyond it.
 - **Room panel:** The panel shows the room header actions, the viewer list and the room buttons; it has no permission controls. Permissions are edited in Room settings → Permissions only. A header action the person cannot use is shown disabled with its reason as tooltip (for example Schedule: "Only hosts can schedule events") rather than hidden; actions the server does not offer at all (scheduling limited by the server, guests) stay hidden. Panel heading titles (`.watch-panel-title`) use a 2px vertical offset (`position: relative; top: 2px;`) to optically center uppercase glyphs with the 40×40px badge icon, while the minimize chevron remains vertically centered in the row.
-- **Continuation toggles:** Compact split-style toggle pills (40px tall, 10px radius, button grey `var(--elevated)` surface without borders or outlines) featuring an accented 32×32px left minibutton (8px radius) with 24×24px stroke icon (`fill: none`), and normal button font text label on the right (`Inter`, 14px, 500 weight). When ON, the minibutton is filled with the accent color (orange `var(--primary)` with Play icon for Auto-play; pink `var(--secondary)` with Sparkle icon for Auto-queue) with dark artwork (`var(--on-primary): #101217`). When OFF, the minibutton and label are neutral/muted. The pill retains its button grey background without tints. Responsive collapse to icon-only buttons occurs only when labels do not fit (`<= 440px` queue width). Queue settings gear button (`#queue-auto-open`) remains standalone beside Auto-queue.
+- **Queue header:** The first row holds the Queue title and the Queue settings gear (`#queue-auto-open`, shown only in a room). The second row holds the Auto-play and Auto-queue switch pills followed by Center Now Playing. Pill labels are never dropped: when the row is too narrow the pills wrap to another line, and Center Now Playing keeps only its icon below a 480px queue width.
 - **Room navigation & URLs:** Room URLs use clean path slugs (`/room/<slug>`) instead of query parameters (`/watch?room=<id>`). The default room name format "Room <UbumfaWord>" generates a single-word slug (`<ubumfa-word>`), while custom room names generate hyphenated alphanumeric slugs with numeric suffixes for collisions (`slug-2`). Single-room mode and the multi-room lobby live at root (`/`), and `/watch` redirects to root or the active room slug. When opening an authorized room link (`/room/<slug>`), the page renders directly in room context without flashing outside-room lobby controls or unjoined placeholder states; unauthenticated visits show the sign-in form with return destination preserved, and closed event rooms show waiting-for-host without flashing lobby controls.
 
 ## 5. States and Playback Interaction
@@ -190,7 +193,7 @@ A watch night is a room with a time on it: every event belongs to one saved room
 ### Feedback Selection Hierarchy
 
 Follow a clear hierarchy for user and system feedback:
-- **Anchored popovers (`.watch-popover`) — Default for direct interactions:** The primary, general-purpose method for feedback triggered by an explicit user action (button clicks, toggle pills, copy operations, queue additions, inline saves). Do not show toasts or append inline `<p class="hint">` status lines for direct control interactions; tether a precision pill popover directly to the triggering control.
+- **Anchored popovers (`.watch-popover`) — Default for direct interactions:** The primary, general-purpose method for feedback triggered by an explicit user action (button clicks, switch pills, copy operations, queue additions, inline saves). Do not show toasts or append inline `<p class="hint">` status lines for direct control interactions; tether a precision pill popover directly to the triggering control.
 - **Toasts (`.watch-toast`) — Reserved for global, async, or actionable room events:** Reserved strictly for asynchronous or room-wide events occurring independently of a focused button, including background room updates (participant joined/left, disconnected/reconnecting), system and playback alerts (Plex connection issues, stream fallback, subtitle errors), actionable two-line prompts with buttons (host video checks with "View", remote viewer buffering with "Pause to wait", choppy playback with "Lower quality"), and keyboard-triggered actions where no mouse focus or trigger anchor exists (e.g. PiP hotkey).
 - **Inline status hints — Reserved for dialogs and static forms:** Reserved only for static containers (such as modal `<dialog>` windows or onboarding/login cards) that have dedicated, non-shifting space for multi-line explanations or persistent validation messages. Never use inline status hints in dynamic content panels or toolbars where they displace neighboring controls.
 
@@ -203,7 +206,7 @@ Reuse the shared toast system (`.watch-toast`); preserve established placement, 
 
 ### Anchored popover system
 
-Use the shared anchored popover (`.watch-popover`) for immediate, localized feedback tethered directly to interactive triggers (e.g. Auto-queue and Auto-play pills, quick permissions, roster host/kick actions, copy buttons, and account name saving), replacing distant inline layout notices and localized toasts.
+Use the shared anchored popover (`.watch-popover`) for immediate, localized feedback tethered directly to interactive triggers (e.g. Auto-queue and Auto-play switch pills, roster host/kick actions, copy buttons, and account name saving), replacing distant inline layout notices and localized toasts.
 - **Silhouette & Geometry (Precision Pill):** Full capsule (`border-radius: 999px`, 32px height, `0 12px` padding), single-line 12px text (`font-weight: 600`), and a 14×14px status icon. Uses a centered 7×7px diamond caret pointing to the trigger, automatically positioning above or below the control with viewport edge clamping.
 - **Surface & Material:** Solid `var(--card)` background (no glassmorphism/backdrop blur) with a 1px solid border (`var(--border)`) and `0 6px 20px rgba(0, 0, 0, 0.45)` shadow.
 - **Semantic States:**

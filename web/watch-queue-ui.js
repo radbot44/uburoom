@@ -99,9 +99,23 @@
     symbol.append(root.uburoomIcons.icon(doc, 'player-track-next'));
     const queueTitle = node('span', heading, 'Queue', 'watch-panel-title');
     queueTitle.id = 'queue-title';
+    const autoOpen = button(header, 'Queue settings', 'settings', () => openSettings(), false, 'icon-button');
+    root.uburoomControls.content(autoOpen, { label: 'Queue settings', icon: 'settings', iconOnly: true });
+    autoOpen.id = 'queue-auto-open';
     const body = node('div', host);
     body.id = 'queue-body';
+    // Second header row: the continuation switches, then Center Now Playing.
     const toolbar = node('div', header, undefined, 'queue-toolbar watch-toolbar');
+    const continuation = node('div', toolbar, undefined, 'queue-continuation queue-quick-controls watch-control-group');
+    const autoplayPill = root.uburoomControls.switchPill(doc, { label: 'Auto-play' });
+    const autoplayLabel = autoplayPill.element,
+      autoplayToggle = autoplayPill.input;
+    autoplayToggle.id = 'queue-autoplay';
+    const autoPill = root.uburoomControls.switchPill(doc, { label: 'Auto-queue', accent: 'secondary' });
+    const autoLabel = autoPill.element,
+      autoToggle = autoPill.input;
+    autoToggle.id = 'queue-auto-toggle';
+    continuation.append(autoplayLabel, autoLabel);
     const centerButton = button(toolbar, 'Center Now Playing', 'center', () => centerCurrent(true));
     root.uburoomControls.content(centerButton, { label: 'Center Now Playing', icon: 'center' });
     centerButton.id = 'queue-center';
@@ -138,40 +152,13 @@
     node('span', emptyBrowse, 'Browse media');
     const footer = node('div', body, undefined, 'queue-footer');
 
-    const continuation = node('div', header, undefined, 'queue-continuation queue-quick-controls watch-control-group');
-    const autoplayLabel = node('label', continuation, undefined, 'watch-toggle-pill');
-    autoplayLabel.setAttribute('for', 'queue-autoplay');
-    const autoplayToggle = node('input', autoplayLabel);
-    autoplayToggle.type = 'checkbox';
-    autoplayToggle.id = 'queue-autoplay';
-    autoplayToggle.className = 'watch-toggle-input';
-    autoplayToggle.setAttribute('role', 'switch');
-    const autoplayBadge = node('span', autoplayLabel, undefined, 'watch-toggle-badge');
-    autoplayBadge.setAttribute('aria-hidden', 'true');
-    autoplayBadge.append(root.uburoomIcons.icon(doc, 'play'));
-    node('span', autoplayLabel, 'Auto-play', 'watch-toggle-label');
-    const autoOpen = button(continuation, 'Queue settings', 'settings', () => openSettings(), false, 'icon-button');
-    root.uburoomControls.content(autoOpen, { label: 'Queue settings', icon: 'settings', iconOnly: true });
-    autoOpen.id = 'queue-auto-open';
-    const autoLabel = node('label', continuation, undefined, 'watch-toggle-pill watch-toggle-secondary');
-    autoLabel.setAttribute('for', 'queue-auto-toggle');
-    const autoToggle = node('input', autoLabel);
-    autoToggle.type = 'checkbox';
-    autoToggle.id = 'queue-auto-toggle';
-    autoToggle.className = 'watch-toggle-input';
-    autoToggle.setAttribute('role', 'switch');
-    const autoBadge = node('span', autoLabel, undefined, 'watch-toggle-badge');
-    autoBadge.setAttribute('aria-hidden', 'true');
-    autoBadge.append(root.uburoomIcons.icon(doc, 'sparkle'));
-    node('span', autoLabel, 'Auto-queue', 'watch-toggle-label');
-    continuation.append(autoOpen);
     let rememberedAuto = null,
       rememberedRoom,
       lastAutoNextKey = '';
     autoToggle.addEventListener('change', async () => {
       if (autoPending) return;
       autoPending = true;
-      autoToggle.disabled = true;
+      renderContinuation();
       root.uburoomPopover?.show(autoLabel, { text: 'Saving…', state: 'loading' });
       const targetAuto = autoToggle.checked
         ? rememberedAuto || { mode: 'continue', scope: null, includeSpecials: false }
@@ -191,7 +178,7 @@
     autoplayToggle.addEventListener('change', async () => {
       if (autoplayPending) return;
       autoplayPending = true;
-      autoplayToggle.disabled = true;
+      renderContinuation();
       root.uburoomPopover?.show(autoplayLabel, { text: 'Saving…', state: 'loading' });
       try {
         await execute({ action: 'media.autoplay.set', args: { enabled: autoplayToggle.checked } });
@@ -206,17 +193,16 @@
 
     function renderContinuation() {
       const state = getState();
-      if (!autoplayPending) autoplayToggle.checked = state?.autoplay?.enabled !== false;
-      autoplayToggle.disabled = autoplayPending || !state?.capabilities?.autoplay;
-      autoplayLabel.classList.toggle('is-on', autoplayToggle.checked);
-      autoplayLabel.classList.toggle('is-disabled', autoplayToggle.disabled);
-      autoOpen.disabled = !state?.durable;
-      autoplayToggle.title = autoplayToggle.disabled
-        ? autoplayPending
+      autoplayPill.update({
+        checked: autoplayPending ? autoplayToggle.checked : state?.autoplay?.enabled !== false,
+        disabled: autoplayPending || !state?.capabilities?.autoplay,
+        reason: autoplayPending
           ? 'Saving Auto-play…'
-          : 'Auto-play is unavailable for your role.'
-        : 'Auto-play';
-      autoplayLabel.title = autoplayToggle.title;
+          : !state?.capabilities?.autoplay
+            ? 'Auto-play is unavailable for your role.'
+            : '',
+      });
+      autoOpen.disabled = !state?.durable;
       autoOpen.title = autoOpen.disabled ? 'Join a room to change queue settings.' : 'Queue settings';
       const auto = state?.queueSummary?.autoQueue;
       if (rememberedRoom !== state?.id) {
@@ -225,16 +211,15 @@
       }
       if (auto?.mode && auto.mode !== 'off')
         rememberedAuto = { mode: auto.mode, scope: auto.scope, includeSpecials: auto.includeSpecials };
-      if (!autoPending) autoToggle.checked = !!auto?.mode && auto.mode !== 'off';
-      autoToggle.disabled = autoPending || !state?.capabilities?.editQueue;
-      autoLabel.classList.toggle('is-on', autoToggle.checked);
-      autoLabel.classList.toggle('is-disabled', autoToggle.disabled);
-      autoToggle.title = autoToggle.disabled
-        ? autoPending
+      autoPill.update({
+        checked: autoPending ? autoToggle.checked : !!auto?.mode && auto.mode !== 'off',
+        disabled: autoPending || !state?.capabilities?.editQueue,
+        reason: autoPending
           ? 'Saving Auto-queue…'
-          : 'Queue editing is unavailable for your role.'
-        : 'Auto-queue';
-      autoLabel.title = autoToggle.title;
+          : !state?.capabilities?.editQueue
+            ? 'Queue editing is unavailable for your role.'
+            : '',
+      });
       if (state?.autoplay?.error && state.autoplay.error !== lastAutoplayError) {
         root.uburoomPopover?.show(autoplayLabel, { text: state.autoplay.error, state: 'error' });
       }
@@ -897,9 +882,9 @@
           state.queueSummary?.historyCount ||
           currentHistory.items.length
         );
-      toolbar.hidden = timeline.hidden = noEntries;
+      timeline.hidden = centerButton.hidden = noEntries;
+      toolbar.hidden = autoOpen.hidden = !state;
       emptyScreen.hidden = !noEntries;
-      continuation.hidden = !state;
       host.dataset.view = noEntries ? 'empty' : 'list';
       host.classList.toggle('queue-is-empty', noEntries);
       emptyTitle.textContent = state ? 'The queue is empty' : 'The queue lives in a room';

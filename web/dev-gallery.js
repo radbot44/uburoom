@@ -121,16 +121,25 @@
     cell(switches, label, element('label', { className: 'watch-switch-label' }, input, 'Keep room when empty'));
   }
   for (const [label, options] of [
-    ['Switch pill · off', { checked: false }],
-    ['Switch pill · on', { checked: true }],
-    ['Switch pill · read-only', { checked: true, editable: false }],
-    ['Switch pill · disabled', { checked: false, disabled: true }],
+    ['Switch pill · off', { label: 'Auto-play', checked: false }],
+    ['Switch pill · on', { label: 'Auto-play', checked: true }],
+    ['Switch pill · on (secondary)', { label: 'Auto-queue', checked: true, accent: 'secondary' }],
+    ['Switch pill · read-only', { label: 'Auto-play', checked: true, editable: false }],
+    [
+      'Switch pill · disabled',
+      { label: 'Auto-queue', checked: false, disabled: true, reason: 'Queue editing is unavailable for your role.' },
+    ],
     [
       'Switch pill · with action',
-      { checked: true, action: { label: 'Auto-queue settings', icon: 'settings', onClick: () => {} } },
+      {
+        label: 'Auto-queue',
+        checked: true,
+        accent: 'secondary',
+        action: { label: 'Auto-queue settings', icon: 'settings', onClick: () => {} },
+      },
     ],
   ])
-    cell(switches, label, controls.switchPill(document, { label: 'Auto-queue', ...options }).element);
+    cell(switches, label, controls.switchPill(document, options).element);
 
   // Segmented selectors.
   const segmented = section('Segmented selectors', '.watch-segmented groups wired by uburoomControls.segmented().', {

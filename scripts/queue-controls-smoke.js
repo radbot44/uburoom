@@ -122,7 +122,7 @@ async function main() {
       );
       assert.equal(
         await run(
-          '["queue-autoplay","queue-auto-toggle"].every(id=>$(id).getAttribute("role")==="switch" && Math.round($(id).closest("label").getBoundingClientRect().height)===40 && Math.round($(id).closest("label").querySelector(".watch-toggle-badge").getBoundingClientRect().width)===32 && Math.round($(id).closest("label").querySelector(".watch-toggle-badge svg").getBoundingClientRect().width)===24)',
+          '["queue-autoplay","queue-auto-toggle"].every(id=>{const pill=$(id).closest(".watch-switch-pill"),label=pill.querySelector(".watch-switch-pill-label");return $(id).getAttribute("role")==="switch" && Math.round(pill.getBoundingClientRect().height)===40 && label.getBoundingClientRect().width>0 && $(id).getBoundingClientRect().width===28})',
         ),
         true,
       );
@@ -132,7 +132,7 @@ async function main() {
         $("queue-autoplay").closest("label").click()`);
       assert.equal(
         await run(
-          '$("queue-autoplay").disabled && !$("queue-auto-open").disabled && document.querySelector(".queue-notice").textContent==="Saving Auto-play…"',
+          '$("queue-autoplay").disabled && !$("queue-auto-open").disabled && $("queue-autoplay").closest(".watch-switch-pill").title==="Saving Auto-play…"',
         ),
         true,
       );
