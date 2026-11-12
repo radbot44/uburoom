@@ -148,7 +148,8 @@ class WatchRooms {
   }
   async maybeRecover(room) {
     const recovery = room.recovery;
-    if (!recovery || room.recovering || recovery.until <= this.watch.clock.now() || !recovery.wasPlaying || !room.media) return;
+    if (!recovery || room.recovering || recovery.until <= this.watch.clock.now() || !recovery.wasPlaying || !room.media)
+      return;
     if (
       this.recoveryState(room).missing ||
       [...room.viewers.values()].some(v => !v.ready || v.version !== room.mediaVersion)
