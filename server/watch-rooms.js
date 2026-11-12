@@ -237,9 +237,6 @@ class WatchRooms {
     const hub = this.watch.hub;
     if (
       this.stopped ||
-      actor.surface !== 'web' ||
-      actor.guildId !== hub.config.guildId ||
-      (hub.config.channels?.length && !hub.config.channels.includes(actor.channelId)) ||
       !(await current()) ||
       (!canWatch(hub.access, actor.userId, actor) &&
         !(await (hub.access?.refreshWatch || hub.access?.refresh)?.(actor.userId, actor)))

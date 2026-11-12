@@ -104,7 +104,7 @@ class DiagnosticLog {
         at: localTime(at),
         source: 'viewer',
         room: room.s.roomId,
-        roomName: room.s.alias || undefined,
+        roomName: room.s.name || undefined,
         viewer: name,
         viewerId,
         title,

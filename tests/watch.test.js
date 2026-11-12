@@ -11,7 +11,7 @@ const { Watch } = require('../server/watch');
 const { Plex } = require('../server/plex');
 
 test('each server member owns their watch session; administrators cannot manage or discover another private room', async () => {
-  const hub = new Hub({ ownerId: 'admin', guildId: 'guild', channels: ['commands'] }, []);
+  const hub = new Hub({ ownerId: 'admin' }, []);
   const members = new Set(['admin', 'a', 'b']);
   hub.access = {
     refresh: async id => members.has(id),
@@ -19,7 +19,7 @@ test('each server member owns their watch session; administrators cannot manage 
     options: () => ({ available: true }),
   };
   const watch = new Watch(hub, { stop: async () => {} });
-  const actor = userId => ({ userId, name: userId, guildId: 'guild', channelId: 'commands', surface: 'web' });
+  const actor = userId => ({ userId, name: userId });
   const a = actor('a'),
     b = actor('b'),
     admin = actor('admin'),
@@ -33,24 +33,15 @@ test('each server member owns their watch session; administrators cannot manage 
   await dispatch(a, 'room.visibility', { visibility: 'private' });
   assert.equal(await watch.canView(room, admin), false);
   assert.equal(await watch.canView(room, b), false);
-  assert.equal(
-    (await hub.list(admin)).some(s => s.id === id),
-    false,
-  );
-  assert.equal(
-    (await hub.list(a)).some(s => s.id === id),
-    true,
-  );
   members.delete('a');
   assert.equal(await watch.canView(room, a), false);
   assert.equal((await dispatch(a, 'room.visibility', { visibility: 'public' })).status, 'forbidden');
   assert.throws(() => watch.create(a));
-  assert.throws(() => watch.create({ ...b, guildId: 'other' }));
   watch.close();
 });
 
 test('initial readiness honors deliberate pause; episode navigation and host succession preserve the room', async () => {
-  const config = { ownerId: 'host', guildId: 'guild', channels: ['commands'] },
+  const config = { ownerId: 'host' },
     hub = new Hub(config, []);
   hub.access = {
     refresh: async () => true,
@@ -73,7 +64,7 @@ test('initial readiness honors deliberate pause; episode navigation and host suc
     }),
   };
   const watch = new Watch(hub, plex);
-  const actor = id => ({ userId: id, guildId: 'guild', channelId: 'commands', surface: 'web', name: id });
+  const actor = id => ({ userId: id, name: id });
   const host = actor('host'),
     a = actor('a'),
     b = actor('b'),
@@ -168,7 +159,7 @@ test('initial readiness honors deliberate pause; episode navigation and host suc
 });
 
 test('host departure or heartbeat timeout rotates epoch, skips revoked viewers, and preserves private room security', async () => {
-  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  const hub = new Hub({ ownerId: 'host' }, []);
   hub.access = {
     refresh: async id => id !== 'revoked',
     isMember: () => true,
@@ -177,7 +168,7 @@ test('host departure or heartbeat timeout rotates epoch, skips revoked viewers, 
     options: () => ({ available: true }),
   };
   const watch = new Watch(hub, { stop: async () => {} });
-  const actor = userId => ({ userId, name: userId, guildId: 'guild', channelId: 'commands', surface: 'web' });
+  const actor = userId => ({ userId, name: userId });
   const host = actor('host'),
     guest = actor('guest'),
     id = watch.create(host),
@@ -233,7 +224,7 @@ test('host departure or heartbeat timeout rotates epoch, skips revoked viewers, 
 });
 
 test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the same reporting occurrence', async () => {
-  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  const hub = new Hub({ ownerId: 'host' }, []);
   hub.access = {
     refresh: async () => true,
     isMember: () => true,
@@ -242,7 +233,7 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
     options: () => ({ available: true }),
   };
   const watch = new Watch(hub, { stop: async () => {} });
-  const actor = userId => ({ userId, guildId: 'guild', channelId: 'commands', surface: 'web', name: userId });
+  const actor = userId => ({ userId, name: userId });
   const host = actor('host'),
     guest = actor('guest'),
     room = watch.rooms.get(watch.create(host)),
@@ -337,7 +328,7 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
 });
 
 test('an empty timed-out room admits only its eligible host tab and revokes old command and playback state', async () => {
-  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  const hub = new Hub({ ownerId: 'host' }, []);
   let member = true;
   hub.access = {
     refresh: async () => member,
@@ -352,7 +343,7 @@ test('an empty timed-out room admits only its eligible host tab and revokes old 
         if (media) stopped.push(media);
       },
     });
-  const host = { userId: 'host', name: 'Host', surface: 'web', guildId: 'guild', channelId: 'commands' },
+  const host = { userId: 'host', name: 'Host' },
     guest = { ...host, userId: 'guest' };
   const id = watch.create(host),
     room = watch.rooms.get(id),
@@ -394,7 +385,7 @@ test('an empty timed-out room admits only its eligible host tab and revokes old 
 });
 
 test('watch quality and audio belong to an authenticated viewer; shared playback still uses permissions', async () => {
-  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  const hub = new Hub({ ownerId: 'host' }, []);
   hub.access = {
     refresh: async () => true,
     isMember: () => true,
@@ -416,7 +407,7 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
       }),
     };
   const watch = new Watch(hub, plex),
-    host = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web' },
+    host = { userId: 'host' },
     guest = { ...host, userId: 'guest' };
   const id = watch.create(host),
     room = watch.rooms.get(id),
@@ -490,7 +481,7 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
 });
 
 test('HLS recovery replaces only the authorized viewer stream and preserves personal tracks and room intent', async () => {
-  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  const hub = new Hub({ ownerId: 'host' }, []);
   hub.access = {
     refresh: async () => true,
     isMember: () => true,
@@ -516,7 +507,7 @@ test('HLS recovery replaces only the authorized viewer stream and preserves pers
     stop: async media => stopped.push(media),
   };
   const watch = new Watch(hub, plex),
-    host = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web' },
+    host = { userId: 'host' },
     guest = { ...host, userId: 'guest' };
   const id = watch.create(host),
     room = watch.rooms.get(id),
@@ -1151,10 +1142,10 @@ test('Plex requests keep credentials server-side, restrict origins, prepare tran
 });
 
 test('retained host rooms count toward the limit and expire on grace, media change, leave or close', async () => {
-  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'], roomLimits: { maxOpen: 4 } }, []);
+  const hub = new Hub({ ownerId: 'host', roomLimits: { maxOpen: 4 } }, []);
   hub.access = { refresh: async () => true, isMember: () => true };
   const watch = new Watch(hub, { stop: async () => {} }),
-    host = { userId: 'host', name: 'Host', surface: 'web', guildId: 'guild', channelId: 'commands' };
+    host = { userId: 'host', name: 'Host' };
   const timedOut = () => {
     const room = watch.rooms.get(watch.create(host)),
       viewerId = randomUUID();
@@ -1187,7 +1178,7 @@ test('retained host rooms count toward the limit and expire on grace, media chan
 });
 
 test('viewer quality ceilings include fitting Original and survive lower outputs without raising or replacing the preference', async t => {
-  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  const hub = new Hub({ ownerId: 'host' }, []);
   hub.access = { isMember: () => true, refresh: async () => true };
   const catalog = new Plex({ plexUrl: 'http://fixture.invalid', plexToken: 'fixture' });
   const attempted = [];
@@ -1201,7 +1192,7 @@ test('viewer quality ceilings include fitting Original and survive lower outputs
   };
   const watch = new Watch(hub, plex);
   t.after(() => watch.rooms.clear());
-  const actor = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web' },
+  const actor = { userId: 'host' },
     id = watch.create(actor),
     room = watch.rooms.get(id),
     tab = randomUUID();
@@ -1251,7 +1242,7 @@ test('slow personal quality preparation has a bounded completion budget and reta
   let now = Date.now();
   t.mock.method(Date, 'now', () => now);
   for (const outcome of ['success', 'expired', 'stale-input', 'epoch', 'left', 'media', 'logout', 'access']) {
-    const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+    const hub = new Hub({ ownerId: 'host' }, []);
     hub.access = {
       refresh: async () => true,
       isMember: () => true,
@@ -1279,7 +1270,7 @@ test('slow personal quality preparation has a bounded completion budget and reta
       },
     };
     const watch = new Watch(hub, plex),
-      host = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web' };
+      host = { userId: 'host' };
     const id = watch.create(host),
       room = watch.rooms.get(id),
       viewerId = randomUUID();
@@ -1329,7 +1320,7 @@ test('slow personal quality preparation has a bounded completion budget and reta
 
 test('superseded preparation retries for its waiting viewer instead of failing room state', async () => {
   const { currentSignal } = require('../server/operation');
-  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  const hub = new Hub({ ownerId: 'host' }, []);
   hub.access = {
     refresh: async () => true,
     isMember: () => true,
@@ -1356,7 +1347,7 @@ test('superseded preparation retries for its waiting viewer instead of failing r
     },
   };
   const watch = new Watch(hub, plex),
-    host = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web' };
+    host = { userId: 'host' };
   const id = watch.create(host),
     room = watch.rooms.get(id),
     viewerId = randomUUID();
@@ -1427,14 +1418,14 @@ test('superseded preparation retries for its waiting viewer instead of failing r
 });
 
 test('shared seeks wait for fresh viewer buffers, reject superseded readiness, and handle play toggles during gates', async () => {
-  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  const hub = new Hub({ ownerId: 'host' }, []);
   hub.access = { isMember: () => true, refresh: async () => true };
   const watch = new Watch(
     hub,
     { stop: async () => {} },
     { title: 'fixture', duration: 120, format: 'file', kind: 'demo' },
   );
-  const host = { userId: 'host', name: 'Host', guildId: 'guild', channelId: 'commands', surface: 'web' };
+  const host = { userId: 'host', name: 'Host' };
   const room = watch.rooms.get(watch.create(host)),
     first = randomUUID(),
     second = randomUUID();
@@ -1495,7 +1486,7 @@ test('shared seeks wait for fresh viewer buffers, reject superseded readiness, a
 });
 
 test('a Plex outage keeps admitted viewers in the room, admits nobody new and never excuses a denial', async () => {
-  const hub = new Hub({ ownerId: 'a', guildId: 'guild', channels: ['commands'] }, []);
+  const hub = new Hub({ ownerId: 'a' }, []);
   hub.access = { refresh: async () => true, isMember: () => true, options: () => ({ available: true }) };
   let failure;
   const plex = {
@@ -1507,7 +1498,7 @@ test('a Plex outage keeps admitted viewers in the room, admits nobody new and ne
   };
   hub.plexFor = async () => plex;
   const watch = new Watch(hub, plex),
-    actor = userId => ({ userId, name: userId, guildId: 'guild', channelId: 'commands', surface: 'web' }),
+    actor = userId => ({ userId, name: userId }),
     a = actor('a'),
     b = actor('b');
   const room = watch.rooms.get(watch.create(a)),

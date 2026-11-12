@@ -20,12 +20,9 @@ async function roomFixture({ disk = false } = {}) {
   const actor = {
     userId: creator,
     name: 'Creator',
-    surface: 'web',
-    guildId: 'guild',
-    channelId: 'commands',
     watchViewerId: randomUUID(),
   };
-  const hub = new Hub({ ownerId: '111111111111111111', guildId: 'guild', channels: ['commands'] }, []);
+  const hub = new Hub({ ownerId: '111111111111111111' }, []);
   hub.access = { isMember: () => true, refresh: async () => true };
   const events = [],
     stopped = [];
@@ -364,7 +361,7 @@ test('a final checkpoint failure still closes provider/reporting and the applica
   });
   app.hub.access = { isMember: () => true, refresh: async () => true };
   const userId = app.registry.resolve('discord', '111111111111111111', 'Fixture').id;
-  const actor = { userId, name: 'Fixture', surface: 'web', guildId: 'guild', channelId: 'commands' };
+  const actor = { userId, name: 'Fixture' };
   const id = await app.watch.roomState.create(actor, { keepEmpty: true });
   app.watch.snapshot(app.watch.rooms.get(id), actor, randomUUID(), async () => true);
   await Promise.all([...app.watch.roomState.pending]);

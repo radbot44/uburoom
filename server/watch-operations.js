@@ -131,17 +131,6 @@ function watchOperations({
         const joined = await execute(context, subscription);
         return joined.status === 200 ? { status: 200, value: { id, state: joined.value }, subscription } : joined;
       };
-      if (url.pathname === '/api/rooms' && !write) return result(200, { rooms: await hub.list(auth.actor) });
-      if (url.pathname === '/api/command' && write) {
-        if (!throttle('command:' + auth.actor.userId, 120))
-          return result(429, { error: 'Too many commands; try again shortly' });
-        if (Object.hasOwn(data, 'sessionId') || !UUID.test(data.roomId || ''))
-          return result(400, { error: 'Select a room' });
-        return result(
-          200,
-          await hub.dispatch({ ...auth.actor, watchCurrent: current }, { ...data.command, roomId: data.roomId }),
-        );
-      }
       if (!write && url.pathname === '/api/watch/me') {
         return result(200, {
           name: auth.actor.name,

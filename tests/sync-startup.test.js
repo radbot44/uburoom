@@ -216,7 +216,7 @@ function roomFixture() {
   const hub = new Hub({ ownerId: 'host', guildId: 'fixture', channels: ['channel'] }, []);
   hub.access = { refresh: async () => true, isMember: () => true, options: () => ({ available: true }) };
   const watch = new Watch(hub, { stop: async () => {} }, { kind: 'demo', format: 'file', duration: 120 });
-  const actor = userId => ({ userId, name: userId, surface: 'web', guildId: 'fixture', channelId: 'channel' }),
+  const actor = userId => ({ userId, name: userId }),
     host = actor('host'),
     guest = actor('guest');
   const room = watch.rooms.get(watch.create(host)),

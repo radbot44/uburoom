@@ -123,12 +123,7 @@ class Watch {
   create(actor, visibility = 'public', saved) {
     if (this.shuttingDown) throw new Error('Server is closing');
     if (!['public', 'private'].includes(visibility)) throw new Error('Invalid room visibility');
-    if (
-      actor.surface !== 'web' ||
-      !canWatch(this.hub.access, actor.userId, actor) ||
-      actor.guildId !== this.hub.config.guildId ||
-      (this.hub.config.channels?.length && !this.hub.config.channels.includes(actor.channelId))
-    )
+    if (!canWatch(this.hub.access, actor.userId, actor))
       throw new Error('Only authenticated eligible users can create a viewing room');
     if (
       this.rooms.size >= require('./room-limits').limits(this.hub.config).maxOpen &&
@@ -145,7 +140,6 @@ class Watch {
     const s = {
       roomId: id,
       epoch: randomUUID(),
-      alias: this.rooms.size ? 'plex.' + id.slice(0, 8) : 'plex',
       kind: 'watch',
       ownerId: actor.userId,
       ownerName: actor.name,
@@ -185,7 +179,7 @@ class Watch {
     if (saved) this.roomState.apply(room, saved);
     this.rooms.set(id, room);
     this.hub.rooms.set(id, s);
-    this.hub?.config?.logger?.info('Room', `Room created "${s.alias || id}" (${id}) by ${actor.name || actor.userId}`);
+    this.hub?.config?.logger?.info('Room', `Room created (${id}) by ${actor.name || actor.userId}`);
     return id;
   }
   position(room, now = Date.now()) {
@@ -986,7 +980,7 @@ class Watch {
     return RoomPolicy.admitted(room.saved, userId) || !!this.hub.guestMembers?.(room.s.roomId).has(userId);
   }
   async canView(room, actor) {
-    if (!room?.saved && room?.reconnecting && (actor.surface !== 'web' || actor.userId !== room.s.hostId)) return false;
+    if (!room?.saved && room?.reconnecting && actor.userId !== room.s.hostId) return false;
     if (!room || this.rooms.get(room.s.roomId) !== room) return false;
     if (!canWatch(this.hub.access, actor.userId, actor)) {
       try {
@@ -1011,7 +1005,7 @@ class Watch {
     for (const room of this.rooms.values()) {
       this.refresh(room);
       if (!this.rooms.has(room.s.roomId)) continue;
-      if (!room.saved && room.reconnecting && (actor.surface !== 'web' || actor.userId !== room.s.hostId)) continue;
+      if (!room.saved && room.reconnecting && actor.userId !== room.s.hostId) continue;
       const accessible = await this.canView(room, actor);
       if (!accessible && !(activity && room.s.visibility === 'private' && sameVoice(room.s, actor, this.hub.access)))
         continue;
@@ -1130,7 +1124,7 @@ class Watch {
     room.revision++;
     this.hub?.config?.logger?.info(
       'Room',
-      `Viewer "${viewer?.name || viewerId}" left "${room.s.alias || room.s.roomId}" (remaining: ${room.viewers.size})`,
+      `Viewer "${viewer?.name || viewerId}" left "${room.s.name || room.s.roomId}" (remaining: ${room.viewers.size})`,
     );
     if (room.autoplayCountdown?.viewerId === viewerId || !room.viewers.size) this.cancelAutoplay(room);
     this.settle(room);
@@ -1195,7 +1189,6 @@ class Watch {
       room.reconnecting &&
       (!saved ||
         viewerId !== room.hostViewerId ||
-        actor.surface !== 'web' ||
         actor.userId !== room.s.hostId ||
         !viewEligible(room.s, actor, this.hub.config, now, this.hub.access))
     )
@@ -1260,7 +1253,7 @@ class Watch {
     if (!oldViewer)
       this.hub?.config?.logger?.info(
         'Room',
-        `Viewer "${viewer.name || actor.userId}" joined "${room.s.alias || room.s.roomId}" (viewers: ${room.viewers.size})`,
+        `Viewer "${viewer.name || actor.userId}" joined "${room.s.name || room.s.roomId}" (viewers: ${room.viewers.size})`,
       );
     if (room.saved && !oldViewer) {
       this.roomState.store.touch(room.s.roomId);
@@ -2680,7 +2673,7 @@ class Watch {
         'media.reporting.set',
       ].includes(action)
     ) {
-      const viewer = actor.surface === 'web' && room.viewers.get(actor.watchViewerId);
+      const viewer = room.viewers.get(actor.watchViewerId);
       if (!viewer || viewer.userId !== actor.userId)
         return { status: 'unsupported', message: 'Use your watch player for personal audio and quality.' };
       if (action === 'media.tracks.set') return this.changeTracks(room, viewer, args, actor, permitted);
@@ -2836,7 +2829,7 @@ class Watch {
     return {
       status: 'applied',
       message: 'Viewing room updated.',
-      ...(actor.surface === 'web' ? { state: Engine.snapshot(s.state) } : {}),
+      state: Engine.snapshot(s.state),
     };
   }
   async changeTracks(room, viewer, args, actor, permitted) {

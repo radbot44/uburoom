@@ -121,8 +121,6 @@ function createApp(
   config,
   { authorizeUrl = 'https://discord.com/oauth2/authorize', oauthFetch = fetch, plexFetch = fetch, plexDemo } = {},
 ) {
-  // Browser-only installations do not need a Discord text-channel whitelist.
-  if (config.accessPolicy && !config.channels.length) config.channels = ['__web__'];
   let registry;
   try {
     oauthFetch = resilientFetch(oauthFetch, { timeoutMs: 10000 });
@@ -362,7 +360,6 @@ function createApp(
         ? login
         : undefined;
     }
-    // Web requests are bound to the configured guild and its approved command context.
     // These actor fields come from the server/login, never from the caller's JSON.
     function webActor(login) {
       return {
@@ -371,9 +368,6 @@ function createApp(
           ? { discordId: registry.identities(login.userId).find(i => i.provider === 'discord' && i.verified)?.subject }
           : {}),
         name: registry?.canonical(login.userId)?.name || login.name,
-        guildId: config.guildId,
-        channelId: config.channels[0],
-        surface: 'web',
         activity: login.activity === true,
         ...(login.guestRoom ? { guestRoomId: login.guestRoom, device: login.device } : {}),
       };

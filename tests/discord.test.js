@@ -29,7 +29,7 @@ test('optional host-directory intents follow application flags without breaking 
     client.isReady = () => true;
     client.application = { commands: { set: async () => {} } };
     const hub = { dispatch: async () => ({ status: 'ok' }) };
-    await startBot({ botToken: 'fixture', ownerId: 'owner', guildId: 'guild', channels: ['commands'] }, hub, {
+    await startBot({ botToken: 'fixture', ownerId: 'owner', guildId: 'guild' }, hub, {
       createClient: () => client,
     });
     assert.equal(client.options.intents.has(GatewayIntentBits.GuildMembers), !!flags);
@@ -113,7 +113,7 @@ test('bot clears its guild command set on startup and registers no message or in
     },
   };
   const hub = {};
-  await startBot({ botToken: 'fixture', ownerId: 'owner', guildId: 'guild', channels: ['commands'] }, hub, {
+  await startBot({ botToken: 'fixture', ownerId: 'owner', guildId: 'guild' }, hub, {
     createClient: () => client,
   });
   assert.deepEqual(registrations, [[[], 'guild']]);

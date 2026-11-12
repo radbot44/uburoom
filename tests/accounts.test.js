@@ -1594,7 +1594,7 @@ test(
       scoped.prepare('999', 'direct', false, ownerSource),
       'owner metadata cannot bypass a restricted user context',
     );
-    const actor = { userId: b.id, name: 'Bob', surface: 'web', guildId: f.config.guildId, channelId: 'commands' };
+    const actor = { userId: b.id, name: 'Bob' };
     assert.equal(f.app.hub.access.isMember(b.id), false);
     assert.equal(
       await f.app.watch.canView(f.app.watch.rooms.get(roomId), actor),
@@ -1652,7 +1652,7 @@ test(
     assert.equal(
       (
         await f.app.hub.dispatch(
-          { userId: f.config.ownerId, name: 'Owner', surface: 'web', guildId: 'guild', channelId: 'commands' },
+          { userId: f.config.ownerId, name: 'Owner' },
           { roomId: aliceRoom, action: 'media.pause' },
         )
       ).status,

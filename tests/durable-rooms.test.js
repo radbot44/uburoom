@@ -396,12 +396,13 @@ test(
     };
     assert.equal(
       (
-        await creator.call('/api/command', {
-          roomId: id,
-          command: { action: 'room.publish', expiresAt: Date.now() - 1 },
+        await creator.call(root + '/command', {
+          command: { action: 'room.publish' },
+          epoch: (await creator.call(root + '/settings')).body.epoch,
+          expiresAt: Date.now() - 1,
         })
-      ).body.status,
-      'unavailable',
+      ).status,
+      409,
     );
     assert.equal(remote.messages.size, 0, 'expired publication cannot post');
     remote.channel.guildId = 'another-guild';
@@ -574,8 +575,12 @@ test(
       const current = await creator.call(root + '/settings');
       return creator.call(root + '/settings', { revision: current.body.revision, change });
     };
-    const kick = (client, userId) =>
-      client.call('/api/command', { roomId: id, command: { action: 'room.kick', args: { userId } } });
+    const kick = async (client, userId) =>
+      client.call(root + '/command', {
+        command: { action: 'room.kick', args: { userId } },
+        epoch: (await creator.call(root + '/settings')).body.epoch,
+        expiresAt: Date.now() + 2000,
+      });
     assert.equal((await kick(viewer, hostId)).body.status, 'forbidden');
     assert.equal((await edit({ action: 'host.add', userId: hostId })).status, 200);
     assert.equal((await kick(host, creatorId)).body.status, 'forbidden');
@@ -602,15 +607,7 @@ test(
     assert.equal((await kick(viewer, hostId)).body.status, 'applied', 'active admin may remove hosts');
     assert.equal((await kick(viewer, creatorId)).body.status, 'forbidden', 'even an admin cannot kick the leader');
     await viewer.call('/api/watch/admin-mode', { enabled: false });
-    assert.equal(
-      (
-        await creator.call('/api/command', {
-          roomId: id,
-          command: { action: 'room.kick', args: { userId: 'invalid' } },
-        })
-      ).body.status,
-      'unsupported',
-    );
+    assert.equal((await kick(creator, 'invalid')).body.status, 'unsupported');
   },
 );
 

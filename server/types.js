@@ -11,9 +11,6 @@
  * @typedef {Object} Actor
  * @property {string} userId - Stable internal account or visitor UUID.
  * @property {string} name - Sanitized display name.
- * @property {'web'|'discord'} surface - Surface origin.
- * @property {string} [guildId] - Discord guild snowflake if origin is linked to Discord.
- * @property {string} [channelId] - Discord command or text channel snowflake.
  * @property {string} [discordId] - Raw Discord user ID if available.
  * @property {boolean} [activity] - Set by the server after verified Activity sign-in.
  */
@@ -41,7 +38,6 @@
  * @typedef {Object} RoomDescriptor
  * @property {string} roomId - Unique room UUID.
  * @property {string} epoch - Epoch UUID rotated on consent revocation or host changes.
- * @property {string} alias - User-facing or generated room alias (e.g. 'plex', 'plex.ab12cd34').
  * @property {'watch'} kind - Room type for watch rooms.
  * @property {string} ownerId - Account UUID of the room creator.
  * @property {string} ownerName - Display name of the room creator.

@@ -34,8 +34,8 @@
 ## Room and playback invariants
 
 - Use **uburoom** and **room** throughout. Reserve “session” for technical connections/auth/media contexts; do not restore legacy room aliases.
-- Every control surface uses the shared validated command engine. Never bypass it with direct mutations or a parallel control path. Authorize actor, applicable guild/channel, room eligibility and current permissions on every operation.
-- Hide inaccessible rooms, reject ambiguous targets and expire pending commands; never replay stale commands or restore viewer consent from durable room state.
+- Every control surface uses the shared validated command engine. Never bypass it with direct mutations or a parallel control path. Authorize actor, room eligibility and current permissions on every operation.
+- Hide inaccessible rooms, address rooms by ID only and expire pending commands; never replay stale commands or restore viewer consent from durable room state.
 - The server owns the shared timeline; viewers own quality, audio, subtitles and volume. Keep ongoing buffering/recovery independent so a struggling viewer does not pause healthy viewers.
 - Preserve per-viewer authorization and track choices through preparation, shared conversion and recovery. Count Plex/local conversion jobs under the shared capacity policy; server-offered quality choices remain authoritative.
 - Use bounded recovery and truthful errors, never production mock/demo fallbacks. Command acknowledgements and codec hints do not prove decoded playback. Detailed delivery/sync behavior belongs in [playback reliability](docs/playback-reliability.md).

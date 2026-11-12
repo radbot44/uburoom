@@ -73,8 +73,8 @@ test('all-hosts changes controls without exposing private rooms or conferring sa
   assert.equal(Policy.allowed(room, viewer.id, 'roomSettings'), true);
   assert.equal(store.list(viewer.id).total, 0);
   assert.throws(() => store.restore(room.id, viewer.id), { status: 403 });
-  const actor = { userId: viewer.id, guildId: 'guild', channelId: 'channel' },
-    config = { guildId: 'guild', channels: ['channel'] };
+  const actor = { userId: viewer.id },
+    config = {};
   const live = { ...room, kind: 'watch', reachable: true, lastSeen: Date.now(), socket: { readyState: 1 } };
   assert.equal(viewEligible(live, actor, config, Date.now(), { isMember: () => true }), false);
   room = await store.edit(room.id, creator.id, room.revision, { action: 'host.add', userId: viewer.id });

@@ -38,14 +38,11 @@ async function fixture(t, { fallback = false } = {}) {
   const actor = userId => ({
     userId,
     name: userId === creatorId ? 'Creator' : 'Host',
-    surface: 'web',
-    guildId: 'guild',
-    channelId: 'commands',
     watchViewerId: randomUUID(),
   });
   const creator = actor(creatorId),
     guest = actor(guestId);
-  const hub = new Hub({ ownerId: '111111111111111111', guildId: 'guild', channels: ['commands'] }, []);
+  const hub = new Hub({ ownerId: '111111111111111111' }, []);
   hub.access = { isMember: () => true, refresh: async () => true };
   const stopped = [],
     prepared = [];
@@ -848,9 +845,6 @@ test('next-episode offer: ending episode with empty queue and autoQueue off offe
   const guestActor = {
     userId: guestId,
     name: 'RestrictedGuest',
-    surface: 'web',
-    guildId: 'guild',
-    channelId: 'commands',
     watchViewerId: randomUUID(),
   };
   const record = f.store.get(id);

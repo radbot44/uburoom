@@ -477,10 +477,10 @@ test('sidecar requests retain the viewer Plex scope, cap content, and do not fet
 });
 test('personal tracks preserve room state, isolate viewers, reject stale choices and roll back refused conversions', async () => {
   const { plex, state } = provider(),
-    hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+    hub = new Hub({ ownerId: 'host' }, []);
   hub.access = { isMember: () => true, refresh: async () => true, options: () => ({ available: true }) };
   const watch = new Watch(hub, plex),
-    actor = userId => ({ userId, guildId: 'guild', channelId: 'commands', surface: 'web' }),
+    actor = userId => ({ userId }),
     host = actor('host'),
     guest = actor('guest');
   const room = watch.rooms.get(watch.create(host)),
@@ -536,10 +536,10 @@ test('personal tracks preserve room state, isolate viewers, reject stale choices
 });
 test('a failed automatic burn keeps its catalog available for an explicit Off recovery', async () => {
   const { plex, state } = provider(),
-    hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+    hub = new Hub({ ownerId: 'host' }, []);
   hub.access = { isMember: () => true, refresh: async () => true, options: () => ({ available: true }) };
   const watch = new Watch(hub, plex),
-    host = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web' },
+    host = { userId: 'host' },
     viewerId = randomUUID();
   const room = watch.rooms.get(watch.create(host));
   state.selected = '22';

@@ -375,7 +375,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
             client.inflight.size >= 8 ||
             typeof message.path !== 'string' ||
             message.path.length > 1024 ||
-            !/^\/api\/(?:rooms|command|watch\/(?:me|profile|admin-mode|playback|events|rooms(?:\/saved|\/[a-f0-9-]{36}(?:\/(?:command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people|check|share|events))?)?|library(?:\/(?:item|filters|availability))?))(?:\?[^#]*)?$/.test(
+            !/^\/api\/(?:watch\/(?:me|profile|admin-mode|playback|events|rooms(?:\/saved|\/[a-f0-9-]{36}(?:\/(?:command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people|check|share|events))?)?|library(?:\/(?:item|filters|availability))?))(?:\?[^#]*)?$/.test(
               message.path,
             )
           )

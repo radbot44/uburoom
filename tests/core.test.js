@@ -4,8 +4,8 @@ const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const Engine = require('../shared/engine');
 const { Hub } = require('../server/core');
-const config = { ownerId: 'owner', guildId: 'guild', channels: ['commands'] };
-const actor = { userId: 'owner', guildId: 'guild', channelId: 'commands' };
+const config = { ownerId: 'owner' };
+const actor = { userId: 'owner' };
 
 test('command validation enforces explicit units, bounded finite values and no arbitrary actions', () => {
   assert.equal(Engine.validate({ action: 'media.volume.set', args: { percent: 50 } }).args.percent, 50);
@@ -79,14 +79,13 @@ test('live watch rooms use the shared engine and reject removed management actio
 
   const hub = new Hub(config);
   hub.access = { refresh: async () => true, isMember: () => true };
-  const host = { ...actor, surface: 'web' };
-  const guest = { ...actor, userId: 'friend', surface: 'web' };
+  const host = { ...actor };
+  const guest = { ...actor, userId: 'friend' };
   const roomId = randomUUID(),
     room = {
       kind: 'watch',
       roomId,
       epoch: randomUUID(),
-      alias: 'livingroom',
       ownerId: 'owner',
       hostId: 'owner',
       hostName: 'owner',
@@ -101,13 +100,8 @@ test('live watch rooms use the shared engine and reject removed management actio
       execute: async command => ({ status: 'applied', message: command.action }),
     };
   hub.rooms.set(roomId, room);
-  assert.equal((await hub.list(guest))[0].id, roomId);
   assert.equal((await hub.dispatch(host, { roomId, action: 'media.pause' })).status, 'applied');
   assert.equal((await hub.dispatch(guest, { roomId, action: 'media.pause' })).status, 'applied');
-  assert.equal(
-    (await hub.dispatch({ ...guest, surface: 'discord' }, { roomId, action: 'media.pause' })).status,
-    'forbidden',
-  );
   room.controls.playback = false;
   assert.equal((await hub.dispatch(guest, { roomId, action: 'media.pause' })).status, 'forbidden');
   hub.close();
@@ -116,14 +110,13 @@ test('live watch rooms use the shared engine and reject removed management actio
 test('dispatch grants 30s deadline to personal track/stream refreshes and queue operations', async () => {
   const hub = new Hub(config);
   hub.access = { refresh: async () => true, isMember: () => true };
-  const host = { ...actor, surface: 'web' };
+  const host = { ...actor };
   const roomId = randomUUID();
   let capturedPermitted;
   const room = {
     kind: 'watch',
     roomId,
     epoch: randomUUID(),
-    alias: 'livingroom',
     ownerId: 'owner',
     hostId: 'owner',
     hostName: 'owner',

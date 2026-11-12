@@ -12,11 +12,11 @@ function fixture(t) {
     mono = 1000;
   t.mock.method(Date, 'now', () => now);
   t.mock.method(performance, 'now', () => mono);
-  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['channel'] }, []);
+  const hub = new Hub({ ownerId: 'host' }, []);
   hub.access = { isMember: () => true, refresh: async () => true, options: () => ({ available: true }) };
   const watch = new Watch(hub, { stop: async () => {} }, { kind: 'demo', format: 'file', duration: 120 });
   t.after(() => watch.close());
-  const host = { userId: 'host', name: 'Host', surface: 'web', guildId: 'guild', channelId: 'channel' },
+  const host = { userId: 'host', name: 'Host' },
     guest = { ...host, userId: 'guest', name: 'Guest' };
   const room = watch.rooms.get(watch.create(host)),
     h = randomUUID(),
