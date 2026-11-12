@@ -102,11 +102,6 @@ class Hub {
         : NO_ROOM;
     if (action === 'room.host') return !actor.guestRoomId && (isHost(room, actor) || admin) ? ALLOW : NO_PERMISSION;
     const command = Engine.command(action);
-    if (!command && action !== 'room.view')
-      return admin ||
-        RoomPolicy.allowed(actor.guestRoomId ? { ...room, guests: [actor.userId] } : room, actor.userId, action)
-        ? ALLOW
-        : NO_PERMISSION;
     // A guest session opens one room only.
     const view =
       (!actor.guestRoomId || roomId === actor.guestRoomId) &&
@@ -115,6 +110,15 @@ class Hub {
         room.visibility === 'public' ||
         RoomPolicy.admitted(room, actor.userId) ||
         actor.guestRoomId === roomId);
+    // A capability is only ever held inside a room the actor may open.
+    if (!command && action !== 'room.view')
+      return admin ||
+        (view &&
+          RoomPolicy.allowed(actor.guestRoomId ? { ...room, guests: [actor.userId] } : room, actor.userId, action))
+        ? ALLOW
+        : view
+          ? NO_PERMISSION
+          : NO_ROOM;
     if (!view) return NO_ROOM;
     // Only the authenticated watch endpoint attaches a viewer identity; personal
     // commands change only that viewer's player.

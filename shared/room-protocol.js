@@ -215,6 +215,7 @@
       scope: 'room',
       capability: 'chooseMedia',
       idle: 'playPause',
+      hostless: true,
       prepares: true,
       persists: true,
       args: none,
@@ -385,6 +386,7 @@
       scope: 'room',
       capability: 'chooseMedia',
       idle: 'playPause',
+      hostless: true,
       prepares: true,
       args(a) {
         const args = {};
@@ -402,6 +404,7 @@
       scope: 'room',
       capability: 'chooseMedia',
       idle: 'playPause',
+      hostless: true,
       prepares: true,
       args: entry,
     },

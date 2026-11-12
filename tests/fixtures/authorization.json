@@ -35,13 +35,13 @@
   "playPause": {
     "creator": "11111111",
     "host": "11111111",
-    "viewer": "11111111",
+    "viewer": "11110000",
     "invitee": "11111111",
-    "absent": "11111111",
+    "absent": "11110000",
     "guest": "11111111",
-    "otherGuest": "11111111",
+    "otherGuest": "00000000",
     "admin": "11111111",
-    "adminOff": "11111111"
+    "adminOff": "11110000"
   },
   "seek": {
     "creator": "11111111",
@@ -453,10 +453,10 @@
   "media.next": {
     "creator": "11111111",
     "host": "11111111",
-    "viewer": "10100000",
-    "invitee": "10101010",
+    "viewer": "10000000",
+    "invitee": "10001000",
     "absent": "00000000",
-    "guest": "10101010",
+    "guest": "10001000",
     "otherGuest": "00000000",
     "admin": "11111111",
     "adminOff": "00000000"
@@ -596,10 +596,10 @@
   "queue.auto.playNow": {
     "creator": "11111111",
     "host": "11111111",
-    "viewer": "10100000",
-    "invitee": "10101010",
+    "viewer": "10000000",
+    "invitee": "10001000",
     "absent": "00000000",
-    "guest": "10101010",
+    "guest": "10001000",
     "otherGuest": "00000000",
     "admin": "11111111",
     "adminOff": "00000000"
@@ -629,10 +629,10 @@
   "queue.history.replay": {
     "creator": "11111111",
     "host": "11111111",
-    "viewer": "10100000",
-    "invitee": "10101010",
+    "viewer": "10000000",
+    "invitee": "10001000",
     "absent": "00000000",
-    "guest": "10101010",
+    "guest": "10001000",
     "otherGuest": "00000000",
     "admin": "11111111",
     "adminOff": "00000000"

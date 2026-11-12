@@ -2,7 +2,9 @@
 // Every authorization decision for an open room, against every kind of actor.
 // tests/fixtures/authorization.json was recorded from the separate helpers that
 // authorize() replaced (eligible, viewEligible, canRoom, roomCommandAllowed,
-// privateMember and the publication host check) at e2627bb. Each decision is a
+// privateMember and the publication host check) at e2627bb, then deliberately
+// changed on 2026-11-12: next-video commands need a host present (or
+// continueWithoutHost), and capabilities require room access. Each decision is a
 // string of eight results, one per context in CONTEXTS order.
 const test = require('node:test');
 const assert = require('node:assert/strict');
