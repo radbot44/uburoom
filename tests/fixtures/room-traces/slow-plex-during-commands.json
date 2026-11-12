@@ -1,0 +1,822 @@
+{
+  "scenario": "slow-plex-during-commands",
+  "steps": [
+    {
+      "at": 1000,
+      "step": "alice creates a public room and joins it",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "connection": "open",
+          "room": "joined",
+          "role": "creator",
+          "host": "alice",
+          "isHost": true,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#1",
+          "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 2000,
+      "step": "bob joins the room",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            }
+          ]
+        },
+        "bob": {
+          "connection": "open",
+          "room": "joined",
+          "role": "viewer",
+          "host": "alice",
+          "isHost": false,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#1",
+          "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 3000,
+      "step": "alice loads the demo video",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#1"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#1",
+            "granted": true
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          }
+        },
+        "bob": {
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#1"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#2",
+            "granted": true
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          }
+        },
+        "carol": {
+          "connection": "closed"
+        }
+      }
+    },
+    {
+      "at": 4000,
+      "step": "everyone reports ready",
+      "result": {
+        "alice": {
+          "ok": true
+        },
+        "bob": {
+          "ok": true
+        }
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        }
+      }
+    },
+    {
+      "at": 5000,
+      "step": "Plex becomes slow",
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 1.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 1.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 6000,
+      "step": "alice loads a Plex item; Plex does not answer",
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 2.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 2.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 7000,
+      "step": "bob pauses",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": true,
+            "position": 2.65,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": true,
+            "position": 2.65,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 8000,
+      "step": "alice queues a video while the load waits",
+      "result": {
+        "ok": false,
+        "status": 409,
+        "error": "Wait for the current queue operation"
+      },
+      "views": {}
+    },
+    {
+      "at": 9000,
+      "step": "bob plays",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 3.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 3.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 10000,
+      "step": "carol joins",
+      "views": {
+        "alice": {
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            },
+            {
+              "who": "carol",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "timeline": {
+            "paused": false,
+            "position": 4.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            },
+            {
+              "who": "carol",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "timeline": {
+            "paused": false,
+            "position": 4.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          }
+        },
+        "carol": {
+          "connection": "open",
+          "room": "joined",
+          "role": "viewer",
+          "host": "alice",
+          "isHost": false,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            },
+            {
+              "who": "carol",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#1",
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#1"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#3",
+            "granted": true
+          },
+          "timeline": {
+            "paused": false,
+            "position": 4.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 12000,
+      "step": "two seconds pass",
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 6.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 6.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          }
+        },
+        "carol": {
+          "timeline": {
+            "paused": false,
+            "position": 6.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 13000,
+      "step": "Plex answers; alice and carol hear back",
+      "result": {
+        "load": {
+          "ok": false,
+          "outcome": "unavailable",
+          "message": "Room changed or command expired."
+        },
+        "carolJoin": {
+          "ok": true
+        }
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 7.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 7.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          }
+        },
+        "carol": {
+          "timeline": {
+            "paused": false,
+            "position": 7.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 15000,
+      "step": "two seconds pass",
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 9.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 9.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          }
+        },
+        "carol": {
+          "timeline": {
+            "paused": false,
+            "position": 9.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 16000,
+      "step": "alice queues the video",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 10.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": "Fixture movie",
+            "pending": 1,
+            "history": 0
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 10.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": "Fixture movie",
+            "pending": 1,
+            "history": 0
+          }
+        },
+        "carol": {
+          "timeline": {
+            "paused": false,
+            "position": 10.25,
+            "duration": 60,
+            "startAt": 8400,
+            "pauseAt": null
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": "Fixture movie",
+            "pending": 1,
+            "history": 0
+          }
+        }
+      }
+    },
+    {
+      "at": 17000,
+      "step": "alice loads the Plex item again",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "media": {
+            "id": "1",
+            "title": "Fixture movie",
+            "version": "media#2"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#4",
+            "granted": true
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#2",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "Fixture movie",
+            "next": "Fixture movie",
+            "pending": 1,
+            "history": 1
+          }
+        },
+        "bob": {
+          "media": {
+            "id": "1",
+            "title": "Fixture movie",
+            "version": "media#2"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#5",
+            "granted": true
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#2",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "Fixture movie",
+            "next": "Fixture movie",
+            "pending": 1,
+            "history": 1
+          }
+        },
+        "carol": {
+          "media": {
+            "id": "1",
+            "title": "Fixture movie",
+            "version": "media#2"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#6",
+            "granted": true
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#2",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "Fixture movie",
+            "next": "Fixture movie",
+            "pending": 1,
+            "history": 1
+          }
+        }
+      }
+    },
+    {
+      "at": 18000,
+      "step": "everyone reports ready",
+      "result": {
+        "alice": {
+          "ok": true
+        },
+        "bob": {
+          "ok": true
+        },
+        "carol": {
+          "ok": true
+        }
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 17750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 17750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        },
+        "carol": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 17750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        }
+      }
+    }
+  ]
+}

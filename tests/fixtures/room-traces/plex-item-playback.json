@@ -1,0 +1,652 @@
+{
+  "scenario": "plex-item-playback",
+  "steps": [
+    {
+      "at": 1000,
+      "step": "alice creates a public room and joins it",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "connection": "open",
+          "room": "joined",
+          "role": "creator",
+          "host": "alice",
+          "isHost": true,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#1",
+          "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 2000,
+      "step": "bob joins the room",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            }
+          ]
+        },
+        "bob": {
+          "connection": "open",
+          "room": "joined",
+          "role": "viewer",
+          "host": "alice",
+          "isHost": false,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#1",
+          "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 3000,
+      "step": "alice loads a Plex item",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "media": {
+            "id": "1",
+            "title": "Fixture movie",
+            "version": "media#1"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#1",
+            "granted": true
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "Fixture movie",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          }
+        },
+        "bob": {
+          "media": {
+            "id": "1",
+            "title": "Fixture movie",
+            "version": "media#1"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#2",
+            "granted": true
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "Fixture movie",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          }
+        }
+      }
+    },
+    {
+      "at": 4000,
+      "step": "everyone reports ready",
+      "result": {
+        "alice": {
+          "ok": true
+        },
+        "bob": {
+          "ok": true
+        }
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        }
+      }
+    },
+    {
+      "at": 7000,
+      "step": "three seconds of playback",
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 3.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 3.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 8000,
+      "step": "bob picks a different quality",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 4.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "stream": {
+            "format": "file",
+            "version": "stream#3",
+            "granted": true
+          },
+          "timeline": {
+            "paused": false,
+            "position": 4.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 9000,
+      "step": "bob reports ready on his new stream",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 5.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 5.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 10000,
+      "step": "alice queues a second Plex item",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 6.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          },
+          "queue": {
+            "current": "Fixture movie",
+            "next": "Fixture movie",
+            "pending": 1,
+            "history": 0
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 6.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          },
+          "queue": {
+            "current": "Fixture movie",
+            "next": "Fixture movie",
+            "pending": 1,
+            "history": 0
+          }
+        }
+      }
+    },
+    {
+      "at": 12000,
+      "step": "two seconds of playback",
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 8.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 8.25,
+            "duration": 60,
+            "startAt": 3750,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 13000,
+      "step": "alice moves to the next item",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "media": {
+            "id": "2",
+            "title": "Fixture movie",
+            "version": "media#2"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#4",
+            "granted": true
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#2",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "Fixture movie",
+            "next": null,
+            "pending": 0,
+            "history": 1
+          }
+        },
+        "bob": {
+          "media": {
+            "id": "2",
+            "title": "Fixture movie",
+            "version": "media#2"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#5",
+            "granted": true
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#2",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "Fixture movie",
+            "next": null,
+            "pending": 0,
+            "history": 1
+          }
+        }
+      }
+    },
+    {
+      "at": 14000,
+      "step": "everyone reports ready",
+      "result": {
+        "alice": {
+          "ok": true
+        },
+        "bob": {
+          "ok": true
+        }
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 13750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 13750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        }
+      }
+    },
+    {
+      "at": 15000,
+      "step": "alice turns autoplay off",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 1.25,
+            "duration": 60,
+            "startAt": 13750,
+            "pauseAt": null
+          },
+          "autoplay": {
+            "enabled": false,
+            "countdown": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 1.25,
+            "duration": 60,
+            "startAt": 13750,
+            "pauseAt": null
+          },
+          "autoplay": {
+            "enabled": false,
+            "countdown": null
+          }
+        }
+      }
+    },
+    {
+      "at": 16000,
+      "step": "bob picks a quality the source cannot serve",
+      "result": {
+        "ok": false,
+        "outcome": "failed",
+        "message": "No available quality is at or below your preferred setting. Your preference has been kept."
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 2.25,
+            "duration": 60,
+            "startAt": 13750,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 2.25,
+            "duration": 60,
+            "startAt": 13750,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 17000,
+      "step": "alice seeks to the end of the last item",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "media": null,
+          "stream": {
+            "format": null,
+            "version": "stream#4",
+            "granted": false
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 2
+          },
+          "ending": {
+            "state": "finished",
+            "completed": "Fixture movie",
+            "next": null
+          }
+        },
+        "bob": {
+          "media": null,
+          "stream": {
+            "format": null,
+            "version": "stream#5",
+            "granted": false
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 2
+          },
+          "ending": {
+            "state": "finished",
+            "completed": "Fixture movie",
+            "next": null
+          }
+        }
+      }
+    },
+    {
+      "at": 27000,
+      "step": "ten seconds pass",
+      "views": {}
+    }
+  ]
+}

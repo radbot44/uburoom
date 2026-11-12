@@ -1,0 +1,500 @@
+{
+  "scenario": "empty-room-lifecycle",
+  "steps": [
+    {
+      "at": 1000,
+      "step": "alice and bob open the site",
+      "views": {
+        "alice": {
+          "connection": "open",
+          "room": "none"
+        },
+        "bob": {
+          "connection": "open",
+          "room": "none"
+        }
+      }
+    },
+    {
+      "at": 2000,
+      "step": "alice creates a room and never joins it",
+      "result": {
+        "ok": true
+      },
+      "views": {}
+    },
+    {
+      "at": 37000,
+      "step": "thirty-five seconds pass",
+      "views": {}
+    },
+    {
+      "at": 38000,
+      "step": "bob tries to join the unused room",
+      "result": {
+        "ok": false,
+        "status": 403,
+        "error": "Room unavailable or private"
+      },
+      "views": {}
+    },
+    {
+      "at": 39000,
+      "step": "alice creates another room and joins it",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "connection": "open",
+          "room": "joined",
+          "role": "creator",
+          "host": "alice",
+          "isHost": true,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#1",
+          "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 40000,
+      "step": "alice loads the demo video",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#1"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#1",
+            "granted": true
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          }
+        }
+      }
+    },
+    {
+      "at": 41000,
+      "step": "alice reports ready",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 1,
+            "duration": 60,
+            "startAt": 40000,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        }
+      }
+    },
+    {
+      "at": 42000,
+      "step": "alice loses her connection; nobody is left",
+      "views": {
+        "alice": {
+          "connection": "closed"
+        }
+      }
+    },
+    {
+      "at": 57000,
+      "step": "fifteen seconds pass; the room freezes",
+      "views": {}
+    },
+    {
+      "at": 58000,
+      "step": "alice returns within the grace period",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "connection": "open",
+          "room": "joined",
+          "role": "creator",
+          "host": "alice",
+          "isHost": true,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#2",
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#1"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#2",
+            "granted": true
+          },
+          "timeline": {
+            "paused": true,
+            "position": 1,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 59000,
+      "step": "alice reports ready",
+      "result": {
+        "ok": true
+      },
+      "views": {}
+    },
+    {
+      "at": 61000,
+      "step": "two seconds of playback",
+      "views": {}
+    },
+    {
+      "at": 62000,
+      "step": "alice leaves; the room is empty",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "connection": "open",
+          "room": "none"
+        }
+      }
+    },
+    {
+      "at": 65000,
+      "step": "three seconds pass",
+      "views": {}
+    },
+    {
+      "at": 66000,
+      "step": "alice tries to join the room again",
+      "result": {
+        "ok": false,
+        "status": 403,
+        "error": "Room unavailable or private"
+      },
+      "views": {}
+    },
+    {
+      "at": 67000,
+      "step": "alice creates a third room and joins it",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "connection": "open",
+          "room": "joined",
+          "role": "creator",
+          "host": "alice",
+          "isHost": true,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#3",
+          "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 68000,
+      "step": "alice loses her connection",
+      "views": {
+        "alice": {
+          "connection": "closed"
+        }
+      }
+    },
+    {
+      "at": 148000,
+      "step": "eighty seconds pass; the grace period ends",
+      "views": {}
+    },
+    {
+      "at": 149000,
+      "step": "alice returns after the grace period",
+      "result": {
+        "ok": false,
+        "status": 403,
+        "error": "Room unavailable or private"
+      },
+      "views": {
+        "alice": {
+          "connection": "open",
+          "room": "none"
+        }
+      }
+    },
+    {
+      "at": 150000,
+      "step": "alice creates a fourth room and joins it",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "connection": "open",
+          "room": "joined",
+          "role": "creator",
+          "host": "alice",
+          "isHost": true,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#4",
+          "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 151000,
+      "step": "alice loses her connection again",
+      "views": {
+        "alice": {
+          "connection": "closed"
+        }
+      }
+    },
+    {
+      "at": 166000,
+      "step": "fifteen seconds pass; the room freezes",
+      "views": {}
+    },
+    {
+      "at": 167000,
+      "step": "bob joins the frozen room",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "bob": {
+          "connection": "open",
+          "room": "joined",
+          "role": "viewer",
+          "host": "alice",
+          "isHost": false,
+          "waitingForHost": true,
+          "canPlayback": false,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": false
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#5",
+          "media": null,
+          "stream": {
+            "format": null,
+            "version": null,
+            "granted": false
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 177000,
+      "step": "ten seconds pass",
+      "views": {}
+    }
+  ]
+}

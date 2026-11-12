@@ -230,5 +230,133 @@ const scenarios = [
       await s.step('two seconds of playback', undefined, { wait: 2000 });
     },
   },
+  {
+    // Fixture Plex items play as a direct file, so no transcode session starts.
+    name: 'plex-item-playback',
+    async run(s) {
+      const { alice, bob } = await together(s);
+      await s.step('alice loads a Plex item', () => alice.command('media.load', { mediaId: '1', quality: 'direct' }));
+      await s.step('everyone reports ready', () => allReady([alice, bob]));
+      await s.step('three seconds of playback', undefined, { wait: 3000 });
+      await s.step('bob picks a different quality', () => bob.command('media.quality.set', { quality: '720p4' }));
+      await s.step('bob reports ready on his new stream', () => bob.ready());
+      await s.step('alice queues a second Plex item', () =>
+        alice.queueAdd({ mediaId: '2', title: 'Second item', duration: 60 }),
+      );
+      await s.step('two seconds of playback', undefined, { wait: 2000 });
+      await s.step('alice moves to the next item', () => alice.command('media.next'));
+      await s.step('everyone reports ready', () => allReady([alice, bob]));
+      await s.step('alice turns autoplay off', () => alice.command('media.autoplay.set', { enabled: false }));
+      await s.step('bob picks a quality the source cannot serve', () =>
+        bob.command('media.quality.set', { quality: '360p1' }),
+      );
+      await s.step('alice seeks to the end of the last item', () =>
+        alice.command('media.seek.absolute', { seconds: 60 }),
+      );
+      await s.step('ten seconds pass', undefined, { wait: 10000 });
+    },
+  },
+  {
+    // Plex answers nothing while held. The demo video keeps playing for everyone
+    // meanwhile; a Plex item's own stream would stall the once-a-second republish.
+    name: 'slow-plex-during-commands',
+    async run(s) {
+      const { alice, bob } = await together(s);
+      const carol = await s.tab('carol'),
+        plex = s.server.plex;
+      await startPlayback(s, alice, [alice, bob]);
+      await s.step('Plex becomes slow', () => plex.hold());
+      let loading, joining;
+      await s.step('alice loads a Plex item; Plex does not answer', () => {
+        loading = alice.background(() => alice.command('media.load', { mediaId: '1', quality: 'direct' }));
+      });
+      await s.step('bob pauses', () => bob.command('media.pause'));
+      await s.step('alice queues a video while the load waits', () =>
+        alice.queueAdd({ mediaId: '3', title: 'Extra video', duration: 60 }),
+      );
+      await s.step('bob plays', () => bob.command('media.play'));
+      await s.step('carol joins', async () => {
+        await carol.connect();
+        joining = carol.background(() => carol.join(alice.roomId));
+      });
+      await s.step('two seconds pass', undefined, { wait: 2000 });
+      await s.step('Plex answers; alice and carol hear back', async () => {
+        plex.release();
+        return { load: await loading, carolJoin: await joining };
+      });
+      await s.step('two seconds pass', undefined, { wait: 2000 });
+      await s.step('alice queues the video', () =>
+        alice.queueAdd({ mediaId: '3', title: 'Extra video', duration: 60 }),
+      );
+      await s.step('alice loads the Plex item again', () =>
+        alice.command('media.load', { mediaId: '1', quality: 'direct' }),
+      );
+      await s.step('everyone reports ready', () => allReady([alice, bob, carol]));
+    },
+  },
+  {
+    name: 'empty-room-lifecycle',
+    async run(s) {
+      const alice = await s.tab('alice'),
+        bob = await s.tab('bob');
+      await s.step('alice and bob open the site', async () => {
+        await alice.connect();
+        await bob.connect();
+      });
+      await s.step('alice creates a room and never joins it', () => alice.createRoom({ name: 'Unused room' }));
+      const unused = alice.roomId;
+      await s.step('thirty-five seconds pass', undefined, { wait: 35000 });
+      await s.step('bob tries to join the unused room', () => bob.join(unused));
+      await s.step('alice creates another room and joins it', async () => {
+        await alice.createRoom({ name: 'Scenario room' });
+        return alice.join();
+      });
+      await s.step('alice loads the demo video', () => load(alice));
+      await s.step('alice reports ready', () => alice.ready());
+      await s.step('alice loses her connection; nobody is left', () => alice.disconnect());
+      await s.step('fifteen seconds pass; the room freezes', undefined, { wait: 15000 });
+      await s.step('alice returns within the grace period', async () => {
+        await alice.connect();
+        return alice.join();
+      });
+      await s.step('alice reports ready', () => alice.ready());
+      await s.step('two seconds of playback', undefined, { wait: 2000 });
+      await s.step('alice leaves; the room is empty', () => alice.leave());
+      await s.step('three seconds pass', undefined, { wait: 3000 });
+      await s.step('alice tries to join the room again', () => alice.join());
+      await s.step('alice creates a third room and joins it', async () => {
+        await alice.createRoom({ name: 'Second scenario room' });
+        return alice.join();
+      });
+      await s.step('alice loses her connection', () => alice.disconnect());
+      await s.step('eighty seconds pass; the grace period ends', undefined, { wait: 80000 });
+      await s.step('alice returns after the grace period', async () => {
+        await alice.connect();
+        return alice.join();
+      });
+      await s.step('alice creates a fourth room and joins it', () =>
+        alice.createRoom({ name: 'Third scenario room' }).then(created => (created.ok ? alice.join() : created)),
+      );
+      await s.step('alice loses her connection again', () => alice.disconnect());
+      await s.step('fifteen seconds pass; the room freezes', undefined, { wait: 15000 });
+      await s.step('bob joins the frozen room', () => bob.join(alice.roomId));
+      await s.step('ten seconds pass', undefined, { wait: 10000 });
+    },
+  },
+  {
+    // Viewing grants last 15 s unless the server renews them, so a lapse shows up as a 403.
+    name: 'long-playback-grants',
+    async run(s) {
+      const { alice, bob } = await together(s);
+      await s.step('alice loads a Plex item', () => alice.command('media.load', { mediaId: '1', quality: 'direct' }));
+      await s.step('everyone reports ready', () => allReady([alice, bob]));
+      const access = async () => ({ mediaStatus: [await alice.mediaStatus(), await bob.mediaStatus()] });
+      for (let seconds = 0; seconds < 40; seconds += 10)
+        await s.step(`streams checked after ${seconds} seconds; ten seconds pass with no commands`, access, {
+          wait: 10000,
+        });
+      await s.step('streams checked after 40 seconds', access);
+    },
+  },
 ];
 module.exports = { scenarios };
