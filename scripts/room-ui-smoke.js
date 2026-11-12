@@ -492,8 +492,8 @@ async function main() {
           '.open=true;' +
           press('#room-permissions button[data-role=viewer][data-permission=seek]'),
       );
-      await browser.until(guest, '!' + byId('timeline') + '.disabled', 'Viewer seek grant');
       await until(text('#room-settings-status') + '==="Saved"', 'Settings save completes');
+      await browser.until(guest, '!' + byId('timeline') + '.disabled', 'Viewer seek grant');
       await run(settingsSection('people') + ';' + press('#room-current-people button'));
       await browser.until(
         guest,
