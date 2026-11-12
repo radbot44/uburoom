@@ -106,6 +106,8 @@ test('live watch rooms use the shared engine and reject removed management actio
 
 test('dispatch grants 30s deadline to personal track/stream refreshes and queue operations', async () => {
   const hub = new Hub(config);
+  // This test moves time by replacing Date.now, so the room clock follows it.
+  hub.clock = { now: () => Date.now() };
   hub.access = { refresh: async () => true, isMember: () => true };
   const host = { ...actor };
   const roomId = randomUUID();

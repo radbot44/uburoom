@@ -117,7 +117,7 @@ async function fixture(t, { autoLoad = false } = {}) {
     };
   }
   room.position = 80;
-  room.changedAt = Date.now();
+  room.changedAt = watch.clock.now();
   room.initialGate = false;
   room.manualPaused = true;
   room.state.paused = true;
@@ -211,7 +211,7 @@ test('orderly shutdown captures final progress and restart intent before detachi
   const f = await roomFixture({ disk: true });
   t.after(() => f.cleanup());
   f.room.position = 25;
-  f.room.changedAt = Date.now();
+  f.room.changedAt = f.watch.clock.now();
   f.room.initialGate = false;
   f.room.state.paused = true;
   await f.watch.roomState.save(f.room);
@@ -231,7 +231,7 @@ test('orderly shutdown captures final progress and restart intent before detachi
   const previous = f.watch.roomState.save(f.room);
   await started;
   f.room.position = 80;
-  f.room.changedAt = Date.now();
+  f.room.changedAt = f.watch.clock.now();
   f.room.startAt = undefined;
   f.room.state.paused = false;
   f.room.manualPaused = false;

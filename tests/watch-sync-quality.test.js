@@ -246,7 +246,7 @@ test('Room participants include disconnected sessions during reconnect grace but
     };
   const fake = {
     store: { get: () => ({ creatorId: 'owner', hosts: [], permissions: {} }) },
-    watch: { rooms: new Map([['room', room]]) },
+    watch: { clock: { now: () => Date.now() }, rooms: new Map([['room', room]]) },
     registry: { canonical: id => ({ name: id }) },
   };
   const people = WatchRooms.prototype.participants.call(fake, 'room');

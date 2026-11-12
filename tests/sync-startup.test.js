@@ -214,6 +214,7 @@ test('sync owner resets replacement state and closes its timer and scheduled ala
 });
 async function roomFixture() {
   const hub = new Hub({ ownerId: 'host', guildId: 'fixture', channels: ['channel'] }, []);
+  hub.clock = { now: () => Date.now() }; // some tests move time by mocking Date.now
   hub.access = { refresh: async () => true, isMember: () => true, options: () => ({ available: true }) };
   const { watch, actor, open } = liveWatch(
     hub,

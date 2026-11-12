@@ -314,6 +314,7 @@ test('every room-scoped library route rejects inaccessible viewers and rechecks 
     config: { publicUrl: 'https://localhost' },
     hub,
     watch: {
+      clock: { now: () => Date.now() },
       rooms,
       roomState: roomStateStub,
       canView: async (room, actor) => manage && actor.userId === 'host',
@@ -389,7 +390,7 @@ test('lobby catalog, details, filters and artwork recheck identity and Plex scop
   const routes = watchHttp({
     config: { publicUrl: 'https://localhost' },
     hub,
-    watch: { rooms: new Map(), roomState: roomStateStub },
+    watch: { clock: { now: () => Date.now() }, rooms: new Map(), roomState: roomStateStub },
     user: async () => (signedIn ? { userId: 'viewer' } : undefined),
     webActor: identity => identity,
     throttle: () => true,
@@ -465,6 +466,7 @@ test('room watch party history takes priority over personal Plex progress in lib
     visible: async () => true,
   };
   const watch = {
+    clock: { now: () => Date.now() },
     rooms,
     roomState: roomStateStub,
     position: () => 1500,

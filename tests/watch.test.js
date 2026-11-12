@@ -67,7 +67,7 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
   {
     // Looking never changes a live room, even one whose timeline is due to settle.
     Object.assign(room, { position: 4, changedAt: Date.now() - 6000, startAt: Date.now() - 5000 });
-    room.pauseAt = Date.now() - 1000;
+    room.pauseAt = watch.clock.now() - 1000;
     room.state.paused = false;
     const before = inspect(room, { depth: Infinity, sorted: true });
     for (let i = 0; i < 1000; i++)
@@ -84,7 +84,7 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
   previous.reportingAuthorized = async () => true;
   await report(previous, 10);
   const occurrence = reports[0].id;
-  previous.at = Date.now() - 11000;
+  previous.at = watch.clock.now() - 11000;
   const oldEpoch = previous.observationEpoch;
   watch.refresh(room);
   assert.equal(room.viewers.has(guestId), false);
@@ -104,22 +104,22 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
   await report(restored, 20);
   assert.equal(reports.at(-1).id, occurrence, 'fresh decoded observations resume the same reporting identity');
   assert.ok(reports.every(report => report.state !== 'stopped'));
-  restored.at = Date.now() - 11000;
+  restored.at = watch.clock.now() - 11000;
   watch.refresh(room);
   room.mediaVersion = randomUUID();
   watch.refresh(room);
   watch.join(room, guest, guestId);
   assert.equal(room.viewers.get(guestId).trackChoice, undefined, 'a changed title cannot reuse numeric track IDs');
   room.viewers.get(guestId).trackChoice = { audioId: '1042' };
-  room.viewers.get(guestId).at = Date.now() - 11000;
+  room.viewers.get(guestId).at = watch.clock.now() - 11000;
   watch.refresh(room);
-  room.disconnectedViewers.get(guestId).expires = Date.now() - 1;
+  room.disconnectedViewers.get(guestId).expires = watch.clock.now() - 1;
   watch.join(room, guest, guestId);
   assert.equal(room.viewers.get(guestId).trackChoice, undefined, 'expired reconnect state is ignored');
   await report(room.viewers.get(guestId), 30);
   assert.notEqual(reports.at(-1).id, occurrence, 'a new media occurrence cannot reuse reporting');
   room.viewers.get(guestId).trackChoice = { audioId: '1042' };
-  room.viewers.get(guestId).at = Date.now() - 11000;
+  room.viewers.get(guestId).at = watch.clock.now() - 11000;
   watch.refresh(room);
   await watch.leave(room, guest, guestId);
   assert.equal(watch.reporting.sessions.has(guestId), false, 'explicit leave ends suspended reporting');
@@ -961,6 +961,7 @@ test('slow personal quality preparation has a bounded completion budget and reta
   t.mock.method(Date, 'now', () => now);
   for (const outcome of ['success', 'expired', 'stale-input', 'epoch', 'left', 'media', 'logout', 'access']) {
     const hub = new Hub({ ownerId: 'host' }, []);
+    hub.clock = { now: () => Date.now() }; // this test moves time by mocking Date.now
     hub.access = {
       refresh: async () => true,
       isMember: () => true,
