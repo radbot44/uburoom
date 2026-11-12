@@ -43,6 +43,22 @@ Use existing theme tokens and shared control classes; do not recreate their sizi
 | Switch | 36×22px component (`input.watch-switch`); 44px minimum row/target (`.watch-switch-label`) |
 | Segmented selector | 40px inner button height; 46px group height with 3px padding (`.watch-segmented`) |
 
+### Scales and token families
+
+Tokens are declared once, in the `:root` block at the top of `web/watch.css`. Outside that block, stylesheets use tokens rather than literal font sizes, radii, `z-index` values, colours, or pixel gaps, padding and margins.
+
+| Family | Tokens |
+| --- | --- |
+| Type scale | 12 / 14 / 16 / 20 / 24 px: `--font-size-12` … `--font-size-24`. No other sizes; a size between two steps takes the larger. |
+| Spacing | `--space-<px>` for gap, padding and margin |
+| Radius | `--radius-<px>`, `--radius-pill` (capsule), `--radius-round` (circle) |
+| Layers | `--z-local-<n>` and `--z-behind*` inside a component; named page layers from `--z-ending` up to `--z-popover` |
+| Fixed colours | `--chrome-*` (dark palette for video chrome in both themes), `--black` / `--white` and their `-a<percent>` alpha steps, `--discord` |
+
+Spacing, radius and alpha tokens are named by value and currently mirror every value in use; consolidating near-duplicates is a separate owner decision. Breakpoints cannot be custom properties; the widths in use are listed in the comment above the token block.
+
+Type scale exceptions: subtitle text (viewer-chosen size), the player quality badge (8px) and the handoff code (32px). Sizes outside the scale were folded to the nearest step on adoption (10, 11 → 12; 13 → 14; 15, 17 → 16; 18, 19, 22 → 20).
+
 ### Shared semantic classes
 
 - **Actions:** `.primary` for primary actions, `.quiet` for secondary, `.icon-button` for icon actions, `.danger-button` for destructive actions, and `.solid-button` for player title-bar controls only.

@@ -37,7 +37,7 @@
   gap: var(--watch-group-gap);
 }
 .queue-header {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-16);
   flex-wrap: wrap;
 }
 .queue-heading {
@@ -53,18 +53,18 @@
   display: flex;
   align-items: center;
   white-space: nowrap;
-  padding-inline: 8px;
+  padding-inline: var(--space-8);
   flex: 1 0 auto;
 }
 .queue-view-button span {
   white-space: nowrap;
 }
 .queue-toolbar {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-16);
   flex-wrap: wrap;
 }
 .queue-navigation {
-  gap: 5px;
+  gap: var(--space-5);
   margin-left: auto;
 }
 .queue-navigation button {
@@ -72,10 +72,10 @@
   place-items: center;
   min-width: 40px;
   min-height: 40px;
-  padding: 7px;
+  padding: var(--space-7);
   background: none;
   border: 1px solid var(--border);
-  border-radius: 11px;
+  border-radius: var(--radius-11);
   color: var(--muted);
 }
 .queue-navigation button:hover {
@@ -89,7 +89,7 @@
 .queue-layout:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
-  border-radius: 12px;
+  border-radius: var(--radius-12);
 }
 .queue-entry,
 .queue-history-entry,
@@ -97,8 +97,8 @@
   min-width: 0;
   background: var(--elevated);
   border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 12px;
+  border-radius: var(--radius-16);
+  padding: var(--space-12);
 }
 .queue-now-playing {
   border-color: color-mix(in srgb, var(--primary) 60%, var(--border));
@@ -108,10 +108,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-8);
 }
 .queue-section-label {
-  font-size: 11px;
+  font-size: var(--font-size-12);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.6px;
@@ -123,14 +123,14 @@
   width: 7px;
   height: 7px;
   background: var(--primary);
-  border-radius: 50%;
-  margin-right: 6px;
+  border-radius: var(--radius-round);
+  margin-right: var(--space-6);
 }
 .queue-badge,
 .queue-rank,
 .queue-meta,
 .queue-now-playing-meta {
-  font-size: 12px;
+  font-size: var(--font-size-12);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -139,7 +139,7 @@
   display: grid;
   place-items: center;
   background: var(--card);
-  border-radius: 10px;
+  border-radius: var(--radius-10);
   overflow: hidden;
   aspect-ratio: 16/9;
   color: var(--muted);
@@ -181,21 +181,21 @@ button.queue-title-link:hover {
 }
 .queue-entry-title,
 .queue-now-playing-title {
-  font-size: 14px;
+  font-size: var(--font-size-14);
   line-height: 1.4;
 }
 .queue-entry-subtitle {
-  font-size: 12px;
-  margin: 4px 0;
+  font-size: var(--font-size-12);
+  margin: var(--space-4) 0;
   overflow-wrap: anywhere;
 }
 .queue-progress {
   display: block;
   width: 100%;
   height: 5px;
-  margin-top: 12px;
+  margin-top: var(--space-12);
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
   appearance: none;
   background: var(--border);
@@ -207,14 +207,14 @@ button.queue-title-link:hover {
 }
 .queue-progress::-webkit-progress-value {
   background: var(--primary);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 .queue-progress::-moz-progress-bar {
   background: var(--primary);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 .queue-now-playing-meta {
-  margin-top: 5px;
+  margin-top: var(--space-5);
 }
 .queue-entry-actions {
   display: flex;
@@ -229,9 +229,9 @@ button.queue-title-link:hover {
   min-height: 32px;
   width: 32px;
   height: 32px;
-  padding: 4px;
+  padding: var(--space-4);
   background: none;
-  border-radius: 8px;
+  border-radius: var(--radius-8);
   color: var(--muted);
 }
 .queue-entry-actions button:hover {
@@ -240,14 +240,14 @@ button.queue-title-link:hover {
 }
 .queue-card-caption {
   margin-right: auto;
-  font-size: 12px;
+  font-size: var(--font-size-12);
   color: var(--muted);
 }
 .queue-entry-top {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 6px;
+  gap: var(--space-6);
   min-width: 0;
 }
 .queue-entry-top > .queue-rank {
@@ -256,7 +256,7 @@ button.queue-title-link:hover {
 }
 .queue-rank,
 .queue-history-status {
-  font-size: 11px;
+  font-size: var(--font-size-12);
   font-weight: 700;
   letter-spacing: 0.5px;
   line-height: 1.5;
@@ -267,10 +267,10 @@ button.queue-title-link:hover {
   display: flex;
   align-items: flex-start;
   min-height: 34px;
-  padding-top: 8px;
+  padding-top: var(--space-8);
 }
 .queue-entry-top > .queue-rank {
-  padding-top: 8px;
+  padding-top: var(--space-8);
 }
 .queue-move-actions {
   display: flex;
@@ -284,9 +284,9 @@ button.queue-title-link:hover {
   min-height: 32px;
   width: 32px;
   height: 32px;
-  padding: 4px;
+  padding: var(--space-4);
   background: none;
-  border-radius: 8px;
+  border-radius: var(--radius-8);
   color: var(--muted);
 }
 .queue-move-actions button:hover {
@@ -302,20 +302,20 @@ button.queue-title-link:hover {
 }
 .queue-column-heading {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-size-14);
 }
 .queue-history-heading {
   min-height: 28px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: var(--space-10);
+  margin-bottom: var(--space-10);
 }
 .queue-empty {
-  font-size: 12px;
+  font-size: var(--font-size-12);
   line-height: 1.6;
-  padding: 18px 12px;
+  padding: var(--space-18) var(--space-12);
   margin: 0;
   color: var(--muted);
 }
@@ -323,10 +323,10 @@ button.queue-title-link:hover {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-10);
   flex-wrap: wrap;
-  margin-top: 16px;
-  padding-top: 14px;
+  margin-top: var(--space-16);
+  padding-top: var(--space-14);
   border-top: 0;
 }
 .queue-continuation {
@@ -378,7 +378,7 @@ button.queue-title-link:hover {
   grid-column: 2;
   grid-row: 1;
   max-width: 200px;
-  font-size: 11px;
+  font-size: var(--font-size-12);
 }
 #queue-center .watch-control-label {
   white-space: nowrap;
@@ -391,7 +391,7 @@ button.queue-title-link:hover {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--z-local-5);
   justify-content: space-between;
   margin: 0;
 }
@@ -402,12 +402,12 @@ button.queue-title-link:hover {
   pointer-events: auto;
   background: color-mix(in srgb, var(--card) 92%, transparent);
   border: 0;
-  box-shadow: 0 2px 8px #0005;
+  box-shadow: 0 2px 8px var(--black-a33);
   align-self: center;
   width: 32px;
   min-width: 32px;
   min-height: 44px;
-  padding: 4px;
+  padding: var(--space-4);
 }
 .queue-layout {
   overflow-anchor: none;
@@ -415,12 +415,12 @@ button.queue-title-link:hover {
 [data-view='cards'] .queue-layout {
   display: flex;
   align-items: stretch;
-  gap: 14px;
+  gap: var(--space-14);
   overflow-x: auto;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
   scrollbar-color: var(--border) transparent;
-  padding-bottom: 12px;
+  padding-bottom: var(--space-12);
 }
 [data-view='cards'] .queue-view,
 [data-view='cards'] .queue-list {
@@ -438,11 +438,11 @@ button.queue-title-link:hover {
   padding: 0;
   overflow: hidden;
   border: 0;
-  border-radius: 12px;
-  --text: #f8f7f4;
-  --muted: #aab0bc;
+  border-radius: var(--radius-12);
+  --text: var(--chrome-text);
+  --muted: var(--chrome-muted);
   color: var(--text);
-  background: #101217;
+  background: var(--chrome-background);
 }
 [data-view='cards'] .queue-now-playing {
   outline: 2px solid var(--primary);
@@ -455,15 +455,20 @@ button.queue-title-link:hover {
   height: 100%;
   border-radius: inherit;
   aspect-ratio: auto;
-  background: #101217;
-  z-index: -2;
+  background: var(--chrome-background);
+  z-index: var(--z-behind-2);
 }
 [data-view='cards'] :is(.queue-entry, .queue-history-entry, .queue-now-playing)::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(#101217cc, transparent 28%, transparent 35%, #101217ed 78%);
-  z-index: -1;
+  background: linear-gradient(
+    var(--chrome-background-a80),
+    transparent 28%,
+    transparent 35%,
+    var(--chrome-background-a93) 78%
+  );
+  z-index: var(--z-behind);
   pointer-events: none;
 }
 [data-view='cards'] :is(.queue-entry-top, .queue-now-playing-header) {
@@ -474,7 +479,7 @@ button.queue-title-link:hover {
 }
 [data-view='cards'] .queue-history-status {
   min-height: 34px;
-  padding-top: 8px;
+  padding-top: var(--space-8);
 }
 [data-view='cards'] :is(.queue-entry-info, .queue-now-playing-body) {
   position: absolute;
@@ -510,12 +515,12 @@ button.queue-title-link:hover {
   flex: 0 0 110px;
   align-self: center;
   min-height: 44px;
-  font-size: 12px;
+  font-size: var(--font-size-12);
 }
 [data-view='list'] .queue-layout {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-8);
   height: 592px;
   overflow-y: auto;
   overscroll-behavior-y: contain;
@@ -534,12 +539,12 @@ button.queue-title-link:hover {
   flex: 0 0 120px;
   min-height: 120px;
   height: 120px;
-  padding: 8px 10px 8px 72px;
+  padding: var(--space-8) var(--space-10) var(--space-8) var(--space-72);
   border: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  border-radius: 10px;
+  gap: var(--space-2);
+  border-radius: var(--radius-10);
 }
 [data-view='list'] .queue-now-playing {
   box-shadow: inset 0 0 0 2px var(--primary);
@@ -556,20 +561,20 @@ button.queue-title-link:hover {
   width: 48px;
   height: 72px;
   aspect-ratio: 2/3;
-  border-radius: 5px;
+  border-radius: var(--radius-5);
 }
 [data-view='list'] .queue-title-link {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 12px;
+  font-size: var(--font-size-12);
 }
 [data-view='list'] .queue-entry-subtitle {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   margin: 0;
-  font-size: 10px;
+  font-size: var(--font-size-12);
 }
 [data-view='list'] .queue-entry-actions {
   position: absolute;
@@ -580,7 +585,7 @@ button.queue-title-link:hover {
 }
 [data-view='list'] .queue-now-playing-meta,
 [data-view='list'] .queue-meta {
-  font-size: 10px;
+  font-size: var(--font-size-12);
 }
 [data-view='list'] .queue-progress {
   position: absolute;
@@ -599,17 +604,17 @@ button.queue-title-link:hover {
 }
 [data-view='list'] .queue-history-older {
   flex: none;
-  font-size: 12px;
+  font-size: var(--font-size-12);
 }
 @container queue (max-width:560px) {
   .queue-view-button span {
     display: none;
   }
   .queue-badge {
-    font-size: 10px;
+    font-size: var(--font-size-12);
   }
   .queue-card-caption {
-    font-size: 10px;
+    font-size: var(--font-size-12);
   }
   .queue-header .queue-view-switch {
     flex-basis: auto;
@@ -620,7 +625,7 @@ button.queue-title-link:hover {
     display: none;
   }
   .queue-quick-controls .watch-toggle-pill {
-    padding: 4px;
+    padding: var(--space-4);
     width: var(--watch-control-height);
     justify-content: center;
   }
@@ -657,7 +662,7 @@ button.queue-title-link:hover {
   min-height: 150px !important;
   border: 0;
   background: transparent;
-  padding: 16px;
+  padding: var(--space-16);
   text-align: center;
   display: flex !important;
   flex-direction: column;
@@ -667,7 +672,7 @@ button.queue-title-link:hover {
 .queue-no-current .queue-now-playing button {
   min-height: 44px;
   display: flex;
-  gap: 8px;
+  gap: var(--space-8);
   align-items: center;
   width: auto;
 }
@@ -685,9 +690,9 @@ button.queue-title-link:hover {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: var(--space-14);
   text-align: center;
-  padding: 24px 12px;
+  padding: var(--space-24) var(--space-12);
 }
 #queue-content .queue-empty-screen > svg {
   width: 36px;
@@ -697,12 +702,12 @@ button.queue-title-link:hover {
 .queue-empty-title {
   margin: 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--font-size-14);
 }
 .queue-empty-screen button {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
   min-height: 44px;
 }
 .queue-is-empty .queue-footer-actions {
@@ -737,11 +742,11 @@ button.queue-title-link:hover {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 9px 6px;
+  gap: var(--space-4);
+  padding: var(--space-9) var(--space-6);
 }
 .queue-navigation-count {
-  font-size: 10px;
+  font-size: var(--font-size-12);
   white-space: nowrap;
   line-height: 1.3;
 }
@@ -752,7 +757,7 @@ button.queue-title-link:hover {
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 0;
+  padding: var(--space-4) 0;
 }
 [data-view='list'] .queue-navigation button {
   align-self: center;
@@ -779,9 +784,9 @@ button.queue-title-link:hover {
 [data-view='list'] :is(.queue-entry, .queue-history-entry, .queue-now-playing) {
   isolation: isolate;
   overflow: hidden;
-  background: #101217;
-  --text: #f8f7f4;
-  --muted: #aab0bc;
+  background: var(--chrome-background);
+  --text: var(--chrome-text);
+  --muted: var(--chrome-muted);
   color: var(--text);
 }
 [data-view='list'] .queue-row-backdrop {
@@ -792,7 +797,7 @@ button.queue-title-link:hover {
   background-size: cover;
   filter: blur(22px) brightness(0.24);
   opacity: 0.85;
-  z-index: -1;
+  z-index: var(--z-behind);
 }
 .queue-entry-auto {
   border-color: color-mix(in srgb, var(--secondary) 55%, var(--border)) !important;

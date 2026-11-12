@@ -4,8 +4,8 @@
   --os-size: 10px;
   --os-padding-perpendicular: 2px;
   --os-padding-axis: 2px;
-  --os-track-border-radius: 999px;
-  --os-handle-border-radius: 999px;
+  --os-track-border-radius: var(--radius-pill);
+  --os-handle-border-radius: var(--radius-pill);
   --os-handle-min-size: 32px;
   --os-handle-interactive-area-offset: 4px;
   --os-handle-bg: color-mix(in srgb, var(--muted) 70%, transparent);
