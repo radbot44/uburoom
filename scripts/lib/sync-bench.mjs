@@ -578,7 +578,7 @@ export function formatBaseline(rows) {
     .map(row => `  '${row.key}': { met: ${meetsTarget(row)}, today: ${num(row.value)} },`)
     .join('\n');
   return [
-    `// Recorded sync-bench values for shared/sync/timing.mjs as of the S0 bench (seed ${DEFAULT_SEED}).`,
+    `// Recorded sync-bench values for shared/sync/timing.mjs (seed ${DEFAULT_SEED}).`,
     '// tests/sync-bench.test.js fails when a metric is worse than its value here by more than ratchetLimit() allows,',
     '// when a target marked met stops being met, and when a target marked unmet starts being met (flip it to true).',
     '// Regenerate with `npm run sync:bench -- --emit-baseline` only after an intentional behaviour change.',
