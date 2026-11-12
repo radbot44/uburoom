@@ -62,6 +62,8 @@ const DEV_GALLERY_ASSETS = {
 };
 const STATIC_ASSETS = {
   '/assets/fonts/UburoomSans-Regular.woff2': ['assets/fonts/UburoomSans-Regular.woff2', 'font/woff2'],
+  '/assets/fonts/InterVariable.woff2': ['assets/fonts/InterVariable.woff2', 'font/woff2'],
+  '/assets/fonts/InterVariable-Italic.woff2': ['assets/fonts/InterVariable-Italic.woff2', 'font/woff2'],
   '/icons.js': ['icons.js', 'text/javascript'],
   '/assets/discord-symbol-white.svg': ['assets/discord-symbol-white.svg', 'image/svg+xml'],
   '/assets/plex-icon.png': ['assets/plex-icon.png', 'image/png'],

@@ -1,4 +1,18 @@
 @font-face {
+  font-family: Inter;
+  src: url('/assets/fonts/InterVariable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: Inter;
+  src: url('/assets/fonts/InterVariable-Italic.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
   font-family: 'Uburoom Sans';
   src: url('/assets/fonts/UburoomSans-Regular.woff2') format('woff2');
   font-weight: 400;
@@ -31,7 +45,8 @@
   --hover: color-mix(in srgb, var(--elevated), var(--text) 8%);
   --primary-hover: color-mix(in srgb, var(--primary), var(--text) 10%);
   --orange-hover: var(--primary-hover);
-  --font-heading: 'Uburoom Sans', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-body: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-heading: 'Uburoom Sans', var(--font-body);
 
   /* Fixed colours: the same in both themes. --chrome-* is the dark palette that video chrome keeps
      on a light page. Alpha steps are named by opacity percentage. */
@@ -160,11 +175,7 @@
 
   color-scheme: dark;
   font:
-    14px/1.4 Inter,
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    sans-serif;
+    14px/1.4 var(--font-body);
   color: var(--text);
   background: var(--background);
 }
@@ -1080,11 +1091,7 @@ video {
   bottom: var(--subtitle-lift, 24px);
   text-align: center;
   font:
-    600 var(--subtitle-size, var(--font-size-24))/1.25 Inter,
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    sans-serif;
+    600 var(--subtitle-size, var(--font-size-24))/1.25 var(--font-body);
   color: var(--subtitle-color, var(--white));
 }
 .subtitle-text-lines.top {

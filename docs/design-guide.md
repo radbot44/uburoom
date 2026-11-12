@@ -71,7 +71,7 @@ Type scale exceptions: subtitle text (viewer-chosen size), the player quality ba
 
 ### Typography
 
-- Body and controls: `Inter, system-ui, -apple-system, "Segoe UI", sans-serif`.
+- Body and controls: `--font-body`, which is `Inter, system-ui, -apple-system, "Segoe UI", sans-serif`. Inter 4.1 (variable WOFF2, roman and italic, `font-display: swap`) is shipped in `web/assets/fonts/` so text wraps the same on every machine; provenance is in `docs/third-party.md`.
 - Headings: `Uburoom Sans` (`UburoomSans-Regular.woff2`, 400 weight).
   - Scope: Major headings (`h1`, `h2`), dialog headers (`dialog h2`, `.watch-dialog h2`), and sidebar panel headers (`.watch-panel-heading`).
   - Section panel headings (`.watch-panel-heading`): 24px size, 400 weight.
