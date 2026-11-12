@@ -162,6 +162,20 @@ async function captureBrowser(name, out, only) {
       'Lobby',
     );
     await capture(host, 'lobby', {});
+    // Phone lobby: the Player settings gear opens a dialog holding only Notifications.
+    await capture(host, 'lobby-player-settings', {
+      widths: WIDTHS.filter(([label]) => label === 'phone'),
+      open: async () => {
+        await browser.viewport(host, 390, 844);
+        await until(host, shown('#tracks-open'), 'Lobby Player settings gear');
+        await run(host, pressId('tracks-open'));
+        await until(host, isOpen('#tracks-dialog'), 'Lobby Player settings');
+      },
+      close: async () => {
+        await run(host, pressId('tracks-close'));
+        await until(host, '!' + isOpen('#tracks-dialog'), 'Lobby Player settings closed');
+      },
+    });
     await capture(host, 'new-room-dialog', {
       open: async () => {
         await run(host, pressId('create'));
