@@ -31,7 +31,8 @@
     },
   ) {
     const doc = host.ownerDocument;
-    let centerPending = true;
+    let centerPending = true,
+      hadHistory = false;
     let centerAfterFetch = true;
     let currentKey = '';
     let currentId;
@@ -644,7 +645,12 @@
 
     function centerCurrent(smooth = false) {
       if (!layout.clientWidth) return;
-      layout.style.paddingBlock = Math.max(0, (layout.clientHeight - nowPlayingBox.offsetHeight) / 2) + 'px';
+      // Without history there is nothing to scroll back to: the "No playback history yet" line, Now Playing
+      // and the upcoming rows start at the top with no centering space.
+      hadHistory = Boolean(layout.querySelector('.queue-history-entry'));
+      layout.style.paddingBlock = hadHistory
+        ? Math.max(0, (layout.clientHeight - nowPlayingBox.offsetHeight) / 2) + 'px'
+        : '';
       const r = nowPlayingBox.getBoundingClientRect(),
         bounds = layout.getBoundingClientRect();
       layout.scrollTo({
@@ -842,6 +848,8 @@
       const qLen = summary?.pendingCount ?? currentQueue.total ?? 0;
       const hLen = summary?.historyCount ?? currentHistory.total ?? 0;
       previousCount.textContent = hLen ? hLen + ' past' : '';
+      // Without history the button has nothing to scroll to and would cover the "No playback history yet" line.
+      previousButton.classList.toggle('queue-navigation-idle', !hLen);
       nextCount.textContent = qLen ? qLen + ' queued' : '';
       const badge = doc.getElementById('queue-count-badge');
       if (badge) {
@@ -1368,6 +1376,7 @@
           observedImages.delete(img);
         }
       layout.scrollTop = scrollTop;
+      if (Boolean(layout.querySelector('.queue-history-entry')) !== hadHistory) centerPending = true;
       if (centerPending) requestAnimationFrame(() => centerCurrent());
       else updateNavigation();
       scheduleNavigation();
