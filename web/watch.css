@@ -174,8 +174,7 @@
   --watch-switch-small-knob: 12px;
 
   color-scheme: dark;
-  font:
-    14px/1.4 var(--font-body);
+  font: 14px/1.4 var(--font-body);
   color: var(--text);
   background: var(--background);
 }
@@ -1090,8 +1089,7 @@ video {
   right: 4%;
   bottom: var(--subtitle-lift, 24px);
   text-align: center;
-  font:
-    600 var(--subtitle-size, var(--font-size-24))/1.25 var(--font-body);
+  font: 600 var(--subtitle-size, var(--font-size-24))/1.25 var(--font-body);
   color: var(--subtitle-color, var(--white));
 }
 .subtitle-text-lines.top {
