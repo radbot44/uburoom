@@ -243,9 +243,9 @@ async function main() {
       await until(hasText('#queue-history-view', 'No playback history yet'), 'History cleared');
       await run(pressId('queue-scroll-next'));
       await until(byId('queue-autoplay') + '.checked', 'Autoplay default on');
-      // Switching the queue tab smooth-scrolls #queue-layout; Firefox ends it with sub-pixel steps for
+      // Scrolling toward upcoming smooth-scrolls the queue list; Firefox ends it with sub-pixel steps for
       // ~60 ms. Popovers close on any scroll, so a press inside that tail loses its confirmation.
-      await settledScroll(browser, host, 'queue-layout');
+      await settledScroll(browser, host, '.queue-layout');
       const autoplay = () => app.watch.roomState.store.get(app.watch.rooms.get(id).roomId).autoplay;
       await until(enabled('#queue-autoplay'), 'Autoplay toggle ready');
       await run(pressId('queue-autoplay'));
@@ -455,6 +455,16 @@ async function main() {
       assert.equal(
         await browser.evaluate(
           guest,
+          '(e=>e.hidden || (e.getAttribute("aria-disabled")==="true" && e.title==="Only hosts can schedule events"))(' +
+            byId('room-schedule') +
+            ')',
+        ),
+        true,
+        'a viewer sees Schedule disabled with its reason, or not at all where the server limits scheduling',
+      );
+      assert.equal(
+        await browser.evaluate(
+          guest,
           byId('queue-autoplay') + '.disabled && !' + byId('queue-auto-open') + '.disabled',
         ),
         true,
@@ -493,10 +503,10 @@ async function main() {
       assert.equal(
         await browser.evaluate(
           guest,
-          '[...document.querySelectorAll("[data-quick-permission]")].every(input=>input.disabled)',
+          '!document.querySelector("#options-panel .watch-permission-button") && state.capabilities.managePermissions===false',
         ),
         true,
-        'a host cannot edit management permissions',
+        'the Room panel has no permission controls and a host cannot edit management permissions',
       );
       await until(hasText('#room-current-people', 'Demo guest') + ' && ' + enabled('#room-transfer'), 'Host controls');
       await run(settingsSection('general') + ';' + choose('room-settings-visibility', 'private'));
@@ -673,23 +683,23 @@ async function main() {
     }
   }
 }
-// Wait until an element's horizontal scroll position reads the same three times, 100 ms apart. Sampled from
+// Wait until an element's vertical scroll position reads the same three times, 100 ms apart. Sampled from
 // the runner: Firefox throttles animation frames in this background tab, so a frame count never completes.
-async function settledScroll(browser, page, id, timeout = 10000) {
+async function settledScroll(browser, page, selector, timeout = 10000) {
   const deadline = Date.now() + timeout;
   let last,
     same = 0;
   while (Date.now() < deadline) {
-    const left = await browser.evaluate(
+    const top = await browser.evaluate(
       page,
-      'document.getElementById(' + JSON.stringify(id) + ')?.scrollLeft ?? null',
+      'document.querySelector(' + JSON.stringify(selector) + ')?.scrollTop ?? null',
     );
-    same = left === last ? same + 1 : 0;
+    same = top === last ? same + 1 : 0;
     if (same >= 2) return;
-    last = left;
+    last = top;
     await pause(100);
   }
-  throw new Error(id + ' scroll did not settle');
+  throw new Error(selector + ' scroll did not settle');
 }
 async function waitFor(check, label, timeout = 20000) {
   const deadline = Date.now() + timeout;
