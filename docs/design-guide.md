@@ -146,6 +146,8 @@ A watch night is a room with a time on it: every event belongs to one saved room
 - **Center player overlay:** Circular center player overlay toggles play/pause on hover for viewers authorized to manage playback, but remains hidden whenever disabled (for unauthorized viewers, spectators, or while commands are pending) so no faint or ineffectual overlay obscures video playback.
 - **Personal playback toggles:** Mute, Captions, Picture-in-Picture, and Theater use `aria-pressed` reflecting authoritative local state (`aria-pressed="true"` when active/muted) while retaining action labels, title cues, and volume state presentation.
 - **Desktop fullscreen idle:** In desktop fullscreen, a mouse at rest for 2.5 seconds hides the controls and pointer during playback. Controls stay visible while paused, hovered over player chrome, or with a menu or drawer open.
+- **Phone transport (600px wide and below):** The bar keeps Play, Previous, Next, Subtitles, Volume, Player settings and Fullscreen. Notifications and Picture-in-Picture move into Player settings, in a **Player** group shown only at this width: Notifications as a switch and Picture-in-Picture as a button, each mirroring the bar control's state and availability. Theater mode is not offered in the phone layout (it is already hidden there), so it has no entry.
+- **Phone volume:** Volume is the speaker button alone, its icon showing the level or muted. Tapping it opens a vertical slider above it with a mute button at the bottom; the panel closes after 3 seconds without interaction, when tapping elsewhere, and on Escape. Browsers that ignore page-set volume (iOS Safari) are detected at runtime: they never show a volume slider, at any width, and the speaker button mutes and unmutes directly.
 - **Mobile & iPhone fullscreen:** On iPhone, the Fullscreen button activates native video fullscreen using Apple's system controls; text subtitles use native captions there, and other subtitle formats require Burn-in.
 
 ### Quality & Stream Delivery
@@ -163,7 +165,7 @@ A watch night is a room with a time on it: every event belongs to one saved room
 
 ### Picture-in-Picture (PiP)
 
-- Button (`#pip`) sits in `.player-tools` adjacent to Theater and Fullscreen, operable via click or the `P` key (`KeyP`).
+- Button (`#pip`) sits in `.player-tools` adjacent to Theater and Fullscreen (in Player settings at 600px and below), operable via click or the `P` key (`KeyP`).
 - **Document PiP:** In browsers supporting the Document Picture-in-Picture API, PiP reparents `#stage` into the always-on-top window with the full hover-revealed transport bar, skip marker overlays, and client subtitle canvas layers intact, while displaying a centered `#pip-placeholder` with a Return video button on the main stage; closing the floating window or clicking return restores `#stage` cleanly to the page.
 - **Native video PiP fallback:** In browsers lacking Document PiP support, `#pip` falls back to native `<video>.requestPictureInPicture()`; when client-rendered subtitles (ASS, PGS, VobSub) are active, an informative action toast directs viewers to choose Burn-in in Subtitle settings to retain subtitles in PiP.
 

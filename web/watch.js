@@ -3714,9 +3714,9 @@ function renderTransport() {
   $('player-play').title = paused ? 'Play' : 'Pause';
   const isMuted = !!state?.state?.muted;
   renderVolumeIcon();
-  $('player-mute').setAttribute('aria-label', isMuted ? 'Unmute' : 'Mute');
-  $('player-mute').title = isMuted ? 'Unmute' : 'Mute';
-  $('player-mute').setAttribute('aria-pressed', isMuted ? 'true' : 'false');
+  // Player UI derives the speaker's name from this: Mute/Unmute, or Volume where it opens the phone panel.
+  if ($('player-mute').getAttribute('aria-pressed') !== String(isMuted))
+    $('player-mute').setAttribute('aria-pressed', String(isMuted));
   const joinBlocked =
     !autoplayBlocked &&
     (!playback || pending || !!state?.waitingForReady || !!state?.waitingForHost || !!state?.recovery);
