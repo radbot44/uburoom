@@ -79,7 +79,7 @@ test('watchPage renders authenticated and unauthenticated bootstrap data safely 
       'id="reopen" class="quiet watch-control watch-control-responsive" aria-label="Reopen room" title="Reopen room" hidden',
     ),
   );
-  assert.ok(directRoomHtml.includes('<p class="queue-empty-title">Join a room to use the queue</p>'));
+  assert.ok(directRoomHtml.includes('<h3 class="queue-empty-title">The queue lives in a room</h3>'));
   assert.ok(
     directRoomHtml.includes(
       'id="queue-empty-browse" type="button" class="quiet" aria-label="Browse media" title="Browse media">',

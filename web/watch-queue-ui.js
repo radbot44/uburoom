@@ -160,7 +160,13 @@
     const emptyScreen = node('section', body, undefined, 'queue-empty-screen');
     emptyScreen.id = 'queue-empty-screen';
     emptyScreen.append(root.uburoomIcons.icon(doc, 'queue'));
-    const emptyTitle = node('p', emptyScreen, '', 'queue-empty-title');
+    const emptyTitle = node('h3', emptyScreen, '', 'queue-empty-title');
+    const emptyText = node(
+      'p',
+      emptyScreen,
+      'Join or create a room, then add movies and episodes here. They play in order for everyone.',
+      'queue-empty-text',
+    );
     const emptyBrowse = button(emptyScreen, 'Browse media', 'media', () => browseMedia());
     node('span', emptyBrowse, 'Browse media');
     const footer = node('div', body, undefined, 'queue-footer');
@@ -962,7 +968,8 @@
       continuation.hidden = !state;
       host.dataset.view = noEntries ? 'empty' : view;
       host.classList.toggle('queue-is-empty', noEntries);
-      emptyTitle.textContent = state ? 'The queue is empty' : 'Join a room to use the queue';
+      emptyTitle.textContent = state ? 'The queue is empty' : 'The queue lives in a room';
+      emptyText.hidden = !!state;
       emptyBrowse.disabled = !getMe?.() || (!!state && !state.canBrowse);
     }
 

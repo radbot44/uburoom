@@ -703,6 +703,21 @@ button.queue-title-link:hover {
   margin: 0;
   color: var(--muted);
   font-size: var(--font-size-14);
+  font-weight: 500;
+}
+.queue-empty-screen:has(.queue-empty-text:not([hidden])) .queue-empty-title {
+  color: var(--text);
+  font-size: var(--font-size-16);
+  font-weight: 600;
+}
+.queue-empty-text {
+  max-width: 32ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-14);
+}
+.queue-empty-text[hidden] {
+  display: none;
 }
 .queue-empty-screen button {
   display: flex;

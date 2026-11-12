@@ -202,8 +202,8 @@ function watchPage(template, initial, scrollbarStyleNonce) {
         );
         html = replaceTemplate(
           html,
-          '<p class="queue-empty-title">Join a room to use the queue</p>',
-          '<p class="queue-empty-title" hidden>Join a room to use the queue</p>',
+          '<h3 class="queue-empty-title">The queue lives in a room</h3><p class="queue-empty-text">',
+          '<h3 class="queue-empty-title" hidden>The queue lives in a room</h3><p class="queue-empty-text" hidden>',
         );
       } else {
         html = replaceTemplate(html, 'class="auth-pending outside-room idle-player"', 'class="idle-player"');

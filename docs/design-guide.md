@@ -166,6 +166,8 @@ A watch night is a room with a time on it: every event belongs to one saved room
 
 ### Queue & Auto-Queue
 
+- **Queue outside a room:** The Queue panel stays in the lobby. Its empty screen reads "The queue lives in a room" with the line "Join or create a room, then add movies and episodes here. They play in order for everyone." and one button, Browse media. It carries no room buttons; room actions live on the stage and in the Room panel. Inside a room an empty queue reads "The queue is empty" with Browse media.
+
 - **Now Playing outline:** Now Playing retains the primary accent outline (`outline: 2px solid var(--primary)` in cards view; inset box-shadow in list view) instead of a transient selected-item state.
 - **Auto-queue preview card:** Auto-queue maintains at most one preview card (`autoQueue.next`) at the tail of Upcoming, styled with `var(--secondary)` border and inset accent (including an explicit 2px `var(--secondary)` outline in cards view), an `AUTO` rank badge (`Auto-queue` / `Auto · Up in …` caption), and dedicated actions (Add to queue, Skip suggestion, Play now, Skip to) with no reorder arrows.
 - **Auto-queue options:** Queue settings offer four auto-queue modes (`Off`, `Continue`, `In order`, `Shuffle`) highlighting active selections with `var(--secondary)`. Auto-queue switches (`#queue-auto-toggle` and `#queue-auto-specials`) use `var(--secondary)` when active. In Media and library views, auto-queue source actions use `.library-auto-queue` and `.library-auto-queue-label` with the designated `sparkle` icon, `var(--secondary)` accent, 40px minimum height, 12px radius, 14px label, and label text "Set as auto-queue".
