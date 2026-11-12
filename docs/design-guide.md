@@ -57,7 +57,7 @@ Tokens are declared once, in the `:root` block at the top of `web/watch.css`. Ou
 
 Spacing, radius and alpha tokens are named by value and currently mirror every value in use; consolidating near-duplicates is a separate owner decision. Breakpoints cannot be custom properties; the widths in use are listed in the comment above the token block.
 
-Type scale exceptions: subtitle text (viewer-chosen size) and the player quality badge (8px).
+Type scale exceptions: subtitle text (viewer-chosen size), the player quality badge (8px) and the handoff code (32px). Sizes outside the scale were folded to the nearest step on adoption (10, 11 → 12; 13 → 14; 15, 17 → 16; 18, 19, 22 → 20).
 
 ### Shared semantic classes
 

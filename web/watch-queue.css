@@ -111,7 +111,7 @@
   gap: var(--space-8);
 }
 .queue-section-label {
-  font-size: 11px;
+  font-size: var(--font-size-12);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.6px;
@@ -256,7 +256,7 @@ button.queue-title-link:hover {
 }
 .queue-rank,
 .queue-history-status {
-  font-size: 11px;
+  font-size: var(--font-size-12);
   font-weight: 700;
   letter-spacing: 0.5px;
   line-height: 1.5;
@@ -302,7 +302,7 @@ button.queue-title-link:hover {
 }
 .queue-column-heading {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-size-14);
 }
 .queue-history-heading {
   min-height: 28px;
@@ -378,7 +378,7 @@ button.queue-title-link:hover {
   grid-column: 2;
   grid-row: 1;
   max-width: 200px;
-  font-size: 11px;
+  font-size: var(--font-size-12);
 }
 #queue-center .watch-control-label {
   white-space: nowrap;
@@ -574,7 +574,7 @@ button.queue-title-link:hover {
   white-space: nowrap;
   text-overflow: ellipsis;
   margin: 0;
-  font-size: 10px;
+  font-size: var(--font-size-12);
 }
 [data-view='list'] .queue-entry-actions {
   position: absolute;
@@ -585,7 +585,7 @@ button.queue-title-link:hover {
 }
 [data-view='list'] .queue-now-playing-meta,
 [data-view='list'] .queue-meta {
-  font-size: 10px;
+  font-size: var(--font-size-12);
 }
 [data-view='list'] .queue-progress {
   position: absolute;
@@ -611,10 +611,10 @@ button.queue-title-link:hover {
     display: none;
   }
   .queue-badge {
-    font-size: 10px;
+    font-size: var(--font-size-12);
   }
   .queue-card-caption {
-    font-size: 10px;
+    font-size: var(--font-size-12);
   }
   .queue-header .queue-view-switch {
     flex-basis: auto;
@@ -746,7 +746,7 @@ button.queue-title-link:hover {
   padding: var(--space-9) var(--space-6);
 }
 .queue-navigation-count {
-  font-size: 10px;
+  font-size: var(--font-size-12);
   white-space: nowrap;
   line-height: 1.3;
 }

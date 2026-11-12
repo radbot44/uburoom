@@ -54,7 +54,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-6);
-  font-size: 13px;
+  font-size: var(--font-size-14);
   margin: 0 0 0 var(--space-6);
   min-width: 0;
   height: 36px;
@@ -84,7 +84,7 @@
   color: var(--muted);
   text-align: left;
   overflow-wrap: anywhere;
-  font-size: 13px;
+  font-size: var(--font-size-14);
   cursor: pointer;
 }
 .library-crumb:hover {
@@ -169,7 +169,7 @@
   background: var(--elevated);
   color: var(--text);
   padding: 0 var(--space-12) 0 var(--space-34);
-  font-size: 13px;
+  font-size: var(--font-size-14);
   box-sizing: border-box;
 }
 .search-field input[type='search']:focus {
@@ -200,7 +200,7 @@
   min-height: var(--watch-control-height);
   width: 160px;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--font-size-14);
   appearance: none;
   -webkit-appearance: none;
   cursor: pointer;
@@ -466,7 +466,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-4);
   padding: 0 var(--space-5);
-  font-size: 11px;
+  font-size: var(--font-size-12);
   line-height: 20px;
 }
 .library-play,
@@ -674,7 +674,7 @@
   max-width: 76ch;
 }
 .library-detail-copy h3 {
-  font-size: 22px;
+  font-size: var(--font-size-20);
   font-weight: 600;
   line-height: 1.3;
   margin: 0 0 var(--space-8);
@@ -835,7 +835,7 @@
 .library-empty {
   grid-column: 1/-1;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--font-size-14);
   margin: var(--space-16) 0;
 }
 .library-skeleton {
@@ -879,7 +879,7 @@
 }
 .library-home-title,
 .library-other h3 {
-  font-size: 17px;
+  font-size: var(--font-size-16);
   font-weight: 600;
   margin: 0;
   overflow-wrap: anywhere;
@@ -1081,7 +1081,7 @@
     width: var(--library-poster-width, 160px);
   }
   .library-detail-copy h3 {
-    font-size: 19px;
+    font-size: var(--font-size-20);
   }
   [data-view='list'] .library-tile,
   .library-tile.episode {

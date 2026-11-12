@@ -36,7 +36,7 @@
   background: var(--chrome-background-a95);
   border: 1px solid var(--border);
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--font-size-12);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   pointer-events: none;
@@ -56,7 +56,7 @@
   background: color-mix(in srgb, var(--card) 92%, transparent);
   border: 1px solid var(--border);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-size-14);
   font-weight: 600;
   cursor: pointer;
   z-index: var(--z-skip-marker);
@@ -241,14 +241,14 @@
   margin-top: var(--space-8);
 }
 #tracks-dialog h3 {
-  font-size: 13px;
+  font-size: var(--font-size-14);
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin: 0 0 var(--space-12);
 }
 #tracks-dialog h4 {
-  font-size: 13px;
+  font-size: var(--font-size-14);
   font-weight: 600;
   margin: 0;
 }
@@ -344,7 +344,7 @@
   stroke-linejoin: round;
 }
 #tracks-dialog .player-media-columns summary {
-  font-size: 13px;
+  font-size: var(--font-size-14);
   font-weight: 600;
   cursor: pointer;
 }
@@ -352,7 +352,7 @@
   display: none;
 }
 #tracks-dialog label {
-  font-size: 13px;
+  font-size: var(--font-size-14);
   font-weight: 600;
   margin-top: var(--space-12);
 }
@@ -399,7 +399,7 @@
   min-width: 0;
   padding: var(--space-9) var(--space-8);
   font-family: monospace;
-  font-size: 13px;
+  font-size: var(--font-size-14);
   text-transform: uppercase;
 }
 #subtitle-color-picker {
@@ -445,7 +445,7 @@
   min-width: 0;
 }
 #subtitle-brightness-value {
-  font-size: 13px;
+  font-size: var(--font-size-14);
   font-variant-numeric: tabular-nums;
   min-width: 42px;
   text-align: right;
@@ -476,7 +476,7 @@
   background: var(--card);
   color: var(--text);
   box-shadow: 0 8px 30px var(--black-a53);
-  font-size: 13px;
+  font-size: var(--font-size-14);
   z-index: var(--z-player-menu);
   overflow: hidden;
 }
@@ -566,7 +566,7 @@
   min-width: 0;
   white-space: normal;
   overflow-wrap: anywhere;
-  font-size: 11px;
+  font-size: var(--font-size-12);
   color: var(--muted);
   margin-left: auto;
   text-align: right;
@@ -576,7 +576,7 @@
 }
 .settings-caption {
   display: block;
-  font-size: 11px;
+  font-size: var(--font-size-12);
   color: var(--muted);
   font-weight: 400;
   margin-top: var(--space-3);
@@ -586,7 +586,7 @@
 .settings-auto {
   display: block;
   color: var(--accent-text);
-  font-size: 11px;
+  font-size: var(--font-size-12);
   margin-top: var(--space-4);
 }
 .settings-submenu button[aria-checked='true'] {
@@ -606,7 +606,7 @@
   margin: 0;
   background: var(--chrome-background-a85);
   border-radius: var(--radius-20);
-  font-size: 15px;
+  font-size: var(--font-size-16);
   color: var(--text);
   pointer-events: none;
 }
@@ -680,7 +680,7 @@ body.mobile-player .center-play svg {
 }
 body.mobile-player #ready-status {
   top: calc(45% + 24px);
-  font-size: 10px;
+  font-size: var(--font-size-12);
 }
 body.mobile-player .title-bar {
   padding: var(--space-8) var(--space-10) var(--space-20);
@@ -712,7 +712,7 @@ body.mobile-player #empty-stage {
 }
 .pip-placeholder-content p {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--font-size-16);
   font-weight: 500;
   color: var(--muted);
 }
