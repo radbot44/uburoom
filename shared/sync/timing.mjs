@@ -760,6 +760,43 @@ export function createTimingApi() {
     return bufferedAhead(buffered, start) >= Math.min(2, Math.max(0, duration - start));
   }
 
+  // Start delay: how long a player takes from play() to its first advancing frame, per stream kind. A scheduled
+  // start seeks that far ahead while paused so the first moving frame lands on the room position. The estimate is the
+  // median of the last few samples, so a single slow start (cold cache, busy tab) does not move it. Kept in memory
+  // only; with fewer than minSamples for a kind there is no estimate and the drift controller's settling handles it.
+  const START_DELAY = Object.freeze({ maxSampleMs: 1500, window: 9, minSamples: 2, maxCompensationMs: 250 });
+
+  function startDelay() {
+    const samples = new Map();
+    return {
+      /** @param {string} kind @param {number} ms play() to first advancing frame */
+      record(kind, ms) {
+        if (!Number.isFinite(ms) || ms < 0 || ms > START_DELAY.maxSampleMs) return false;
+        const list = samples.get(kind) || [];
+        list.push(ms);
+        if (list.length > START_DELAY.window) list.shift();
+        samples.set(kind, list);
+        return true;
+      },
+      /** Median delay in ms for the kind, or undefined while there are too few samples. */
+      estimate(kind) {
+        const list = samples.get(kind);
+        if (!list || list.length < START_DELAY.minSamples) return undefined;
+        const sorted = [...list].sort((a, b) => a - b),
+          mid = sorted.length >> 1;
+        return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+      },
+      /** Milliseconds to seek ahead before a scheduled start; 0 with no estimate. Bounded. */
+      compensationMs(kind) {
+        const value = this.estimate(kind);
+        return value === undefined ? 0 : Math.min(START_DELAY.maxCompensationMs, value);
+      },
+      reset() {
+        samples.clear();
+      },
+    };
+  }
+
   // Observation duration follows the monotonic clock, not Date.now() or a
   // freshly jittering poll offset. A server clock step starts a new boundary.
   // Slow polls cannot establish/rebase this clock or extend its freshness.
@@ -805,6 +842,8 @@ export function createTimingApi() {
     bufferedAhead,
     readinessBuffered,
     observationClock,
+    startDelay,
+    START_DELAY,
   };
 }
 
@@ -821,4 +860,6 @@ export const {
   bufferedAhead,
   readinessBuffered,
   observationClock,
+  startDelay,
+  START_DELAY,
 } = createTimingApi();

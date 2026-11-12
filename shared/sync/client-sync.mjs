@@ -69,6 +69,8 @@ import { normalizePlayerAdapter } from './player-adapter.mjs';
  *   now?:()=>number,
  *   driftCorrection?:ReturnType<typeof import('./timing.mjs').correction>,
  *   jumpDriftCorrection?:ReturnType<typeof import('./timing.mjs').jumpCorrection>,
+ *   startDelay?:ReturnType<typeof import('./timing.mjs').startDelay>,
+ *   streamKind?:(snapshot:SyncSnapshot)=>string,
  *   startAlarm?:ReturnType<typeof import('./timing.mjs').alarm>,
  *   pauseAlarm?:ReturnType<typeof import('./timing.mjs').alarm>
  * }} host
@@ -95,6 +97,10 @@ export function createSync(host) {
   const jumpDriftCorrection = host.jumpDriftCorrection || makeJumpCorrection();
   const startAlarm = host.startAlarm || makeAlarm({ now: () => playbackClock.read().serverTime });
   const pauseAlarm = host.pauseAlarm || makeAlarm({ now: () => playbackClock.read().serverTime });
+  // Per-page start-delay estimates by stream kind (see timing.mjs startDelay); never persisted.
+  const startDelay = host.startDelay || (timingApi.startDelay || defaultTiming.startDelay)();
+  const streamKind = snapshot => String(host.streamKind?.(snapshot) ?? 'default');
+  let scheduledStartKey;
   let preparedStartKey,
     syncSeekPending = false,
     sharedSeekPending = false,
@@ -142,6 +148,9 @@ export function createSync(host) {
     const { state } = host.read();
     if (state.state.paused) return false;
     if (timing.valid && timing.serverTime >= state.startAt) {
+      // Measure this start only if it was prepared and the alarm was on time; late or unprepared starts say nothing
+      // about the player's own delay.
+      if (preparedStartKey === startKey() && timing.serverTime - state.startAt <= 150) scheduledStartKey = startKey();
       startAlarm.cancel();
       return false;
     }
@@ -153,9 +162,11 @@ export function createSync(host) {
       // Readiness briefly decoded a local probe. Rewind/align once while paused,
       // before the shared deadline, rather than correcting its residue in motion.
       try {
-        if (Math.abs(player.currentTime() - target) > 0.01) {
-          diagnosticSample('start-prepare');
-          player.seek(target);
+        // Seek ahead by the player's measured start delay so the first moving frame lands on the room position.
+        const ahead = startDelay.compensationMs(streamKind(host.read())) / 1000;
+        if (Math.abs(player.currentTime() - (target + ahead)) > 0.01) {
+          diagnosticSample('start-prepare', { aheadMs: ahead * 1000 });
+          player.seek(target + ahead);
         }
         preparedStartKey = key;
       } catch {}
@@ -390,6 +401,14 @@ export function createSync(host) {
           sourceMatches
         );
       };
+      const measured = scheduledStartKey !== undefined && scheduledStartKey === startKey() && player.measureStart;
+      scheduledStartKey = undefined;
+      const kind = streamKind(snapshot);
+      const measurement = measured ? player.measureStart() : undefined;
+      void measurement?.then(ms => {
+        if (ms !== undefined && current() && startDelay.record(kind, ms))
+          diagnosticSample('start-delay', { delayMs: ms });
+      });
       try {
         await player.play();
         if (current()) host.playing(version, false);
@@ -405,7 +424,7 @@ export function createSync(host) {
     resetDriftCorrection(true);
     startAlarm.cancel();
     pauseAlarm.cancel();
-    preparedStartKey = undefined;
+    preparedStartKey = scheduledStartKey = undefined;
     syncSeekPending = false;
     sharedSeekPending = false;
     hlsPreparationUntil = 0;
