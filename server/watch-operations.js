@@ -11,6 +11,7 @@ const { PlaybackError } = require('./av1');
 const { localFormat } = require('../web/playback-policy');
 const { ObservationError } = require('./playback-tracking');
 const { clientAddress } = require('./plex-delivery');
+const { REJOIN } = require('./watch');
 
 function applyRoomProgress(watch, roomId, items = []) {
   if (!roomId || !items.length) return;
@@ -86,7 +87,91 @@ function watchOperations({
 }) {
   const result = (status, value) => ({ status, value });
   /**
-   * @param {{headers: Object, signal?: AbortSignal, controlSocket?: {readyState: number, watchHeaders?: Object}}} context Auth credentials and optional live connection.
+   * A client's own room request: joins (or renews) the tab with its preferences
+   * and connection details. Returns the joined viewer.
+   */
+  function join(room, auth, context, url, viewerId, alive, authenticated) {
+    const preferences = {};
+    if (url.searchParams.has('volume'))
+      preferences.volume = require('../shared/engine').validate({
+        action: 'media.volume.set',
+        args: { percent: Number(url.searchParams.get('volume')) },
+      }).args.percent;
+    if (url.searchParams.has('muted')) {
+      if (!['true', 'false'].includes(url.searchParams.get('muted'))) throw new Error('Invalid mute preference');
+      preferences.muted = url.searchParams.get('muted') === 'true';
+    }
+    if (url.searchParams.has('plexReporting')) {
+      if (!['true', 'false'].includes(url.searchParams.get('plexReporting')))
+        throw new Error('Invalid reporting preference');
+      preferences.plexReporting = url.searchParams.get('plexReporting') === 'true';
+    }
+    if (url.searchParams.has('plexWatchState')) {
+      if (!['true', 'false'].includes(url.searchParams.get('plexWatchState')))
+        throw new Error('Invalid watch-state preference');
+      preferences.plexWatchState = url.searchParams.get('plexWatchState') === 'true';
+    }
+    // A new viewer's saved subtitle choice shapes their first stream; their own later
+    // choices in the room always win.
+    if (
+      url.searchParams.has('subtitlePreference') ||
+      url.searchParams.has('subtitleMode') ||
+      url.searchParams.has('audioPreference')
+    ) {
+      const value = url.searchParams.get('subtitlePreference') || 'auto',
+        mode = url.searchParams.get('subtitleMode') || 'auto';
+      const language = /^language:([a-z]{2,3}(?:-[a-z0-9]+)*)$/i.exec(value)?.[1];
+      const audio = url.searchParams.has('audioPreference')
+        ? /^language:([a-z]{2,3}(?:-[a-z0-9]+)*)$/i.exec(url.searchParams.get('audioPreference'))?.[1]
+        : undefined;
+      if (
+        (!language && !['auto', 'off'].includes(value)) ||
+        !['auto', 'burn'].includes(mode) ||
+        (url.searchParams.has('audioPreference') && !audio)
+      )
+        throw new Error('Invalid track preference');
+      preferences.trackChoice = {
+        audioId: 'auto',
+        subtitleId: value === 'off' ? 'off' : 'auto',
+        subtitleMode: mode,
+        ...(language ? { subtitleIntent: { language } } : {}),
+        ...(audio ? { audioIntent: { language: audio } } : {}),
+      };
+    }
+    const viewer = watch.join(room, auth.actor, viewerId, {
+      alive,
+      quality: url.searchParams.get('quality'),
+      preferences,
+    });
+    // Capability is set before the first source preparation and never grants access.
+    viewer.reportingAuthorized = authenticated;
+    const remoteAddress = clientAddress(context);
+    if (remoteAddress) viewer.remoteAddress = remoteAddress;
+    viewer.activity = !!auth.identity.activity;
+    if (viewer.activity && viewer.media?.directHls) {
+      watch.tracking.end(viewer, 'delivery-changed');
+      void watch.reporting?.end(viewer, 'delivery-changed');
+      const previous = viewer.media;
+      viewer.media = undefined;
+      viewer.mediaVersion = undefined;
+      viewer.directDelivery = undefined;
+      viewer.directProxyVersion = room.mediaVersion;
+      viewer.streamVersion = randomUUID();
+      viewer.ready = false;
+      void watch.plex.stop(previous);
+    }
+    if (context.controlSocket) viewer.watchSocket = context.controlSocket;
+    if (viewer.browserSubtitles === undefined)
+      viewer.browserSubtitles = url.searchParams.get('subtitles') === 'browser';
+    viewer.localCodecs = (url.searchParams.get('codecs') || '').split(',').filter(localFormat);
+    viewer.localDelivery = url.searchParams.get('delivery') === 'local';
+    viewer.browserLoginHash = context.headers.authorization
+      ? undefined
+      : cookies(context).uburoom && hash(cookies(context).uburoom);
+    return viewer;
+  }
+  /**
+   * @param {{headers: Object, signal?: AbortSignal, controlSocket?: {readyState: number, watchHeaders?: Object}, republish?: boolean}} context Auth credentials and optional live connection. `republish` marks the server's own periodic state publication, which reads a room without joining it.
    * @param {string} path Allowlisted operation path and query.
    * @param {Object} [data] Validated mutation input; absence selects a read.
    */
@@ -427,7 +512,8 @@ function watchOperations({
           }),
         );
       }
-      if (!watch.rooms.has(match[1]) && !write && !match[2])
+      // Only a client's own request reopens a room from the database; republishing never does.
+      if (!watch.rooms.has(match[1]) && !write && !match[2] && !context.republish)
         await watch.roomState.recover(match[1], auth.actor, current);
       const room = watch.rooms.get(match[1]);
       if (room && write && match[2] === 'close')
@@ -547,86 +633,21 @@ function watchOperations({
         (await login({ headers: context.controlSocket?.watchHeaders || headers }))?.userId === auth.actor.userId;
       const alive = async () =>
         (!context.controlSocket || context.controlSocket.readyState === 1) && (await authenticated());
-      const preferences = {};
-      if (url.searchParams.has('volume'))
-        preferences.volume = require('../shared/engine').validate({
-          action: 'media.volume.set',
-          args: { percent: Number(url.searchParams.get('volume')) },
-        }).args.percent;
-      if (url.searchParams.has('muted')) {
-        if (!['true', 'false'].includes(url.searchParams.get('muted'))) throw new Error('Invalid mute preference');
-        preferences.muted = url.searchParams.get('muted') === 'true';
-      }
-      if (url.searchParams.has('plexReporting')) {
-        if (!['true', 'false'].includes(url.searchParams.get('plexReporting')))
-          throw new Error('Invalid reporting preference');
-        preferences.plexReporting = url.searchParams.get('plexReporting') === 'true';
-      }
-      if (url.searchParams.has('plexWatchState')) {
-        if (!['true', 'false'].includes(url.searchParams.get('plexWatchState')))
-          throw new Error('Invalid watch-state preference');
-        preferences.plexWatchState = url.searchParams.get('plexWatchState') === 'true';
-      }
-      // A new viewer's saved subtitle choice shapes their first stream; their own later
-      // choices in the room always win.
-      if (
-        url.searchParams.has('subtitlePreference') ||
-        url.searchParams.has('subtitleMode') ||
-        url.searchParams.has('audioPreference')
-      ) {
-        const value = url.searchParams.get('subtitlePreference') || 'auto',
-          mode = url.searchParams.get('subtitleMode') || 'auto';
-        const language = /^language:([a-z]{2,3}(?:-[a-z0-9]+)*)$/i.exec(value)?.[1];
-        const audio = url.searchParams.has('audioPreference')
-          ? /^language:([a-z]{2,3}(?:-[a-z0-9]+)*)$/i.exec(url.searchParams.get('audioPreference'))?.[1]
-          : undefined;
-        if (
-          (!language && !['auto', 'off'].includes(value)) ||
-          !['auto', 'burn'].includes(mode) ||
-          (url.searchParams.has('audioPreference') && !audio)
-        )
-          throw new Error('Invalid track preference');
-        preferences.trackChoice = {
-          audioId: 'auto',
-          subtitleId: value === 'off' ? 'off' : 'auto',
-          subtitleMode: mode,
-          ...(language ? { subtitleIntent: { language } } : {}),
-          ...(audio ? { audioIntent: { language: audio } } : {}),
-        };
-      }
-      watch.snapshot(room, auth.actor, viewerId, alive, url.searchParams.get('quality'), preferences);
-      // Capability is set before the first source preparation and never grants access.
-      const viewer = room.viewers.get(viewerId);
-      viewer.reportingAuthorized = authenticated;
-      const remoteAddress = clientAddress(context);
-      if (remoteAddress) viewer.remoteAddress = remoteAddress;
-      viewer.activity = !!auth.identity.activity;
-      if (viewer.activity && viewer.media?.directHls) {
-        watch.tracking.end(viewer, 'delivery-changed');
-        void watch.reporting?.end(viewer, 'delivery-changed');
-        const previous = viewer.media;
-        viewer.media = undefined;
-        viewer.mediaVersion = undefined;
-        viewer.directDelivery = undefined;
-        viewer.directProxyVersion = room.mediaVersion;
-        viewer.streamVersion = randomUUID();
-        viewer.ready = false;
-        void watch.plex.stop(previous);
-      }
-      if (context.controlSocket) viewer.watchSocket = context.controlSocket;
-      if (viewer.browserSubtitles === undefined)
-        viewer.browserSubtitles = url.searchParams.get('subtitles') === 'browser';
-      viewer.localCodecs = (url.searchParams.get('codecs') || '').split(',').filter(localFormat);
-      viewer.localDelivery = url.searchParams.get('delivery') === 'local';
-      room.viewers.get(viewerId).browserLoginHash = context.headers.authorization
-        ? undefined
-        : cookies(context).uburoom && hash(cookies(context).uburoom);
+      const viewer = context.republish
+        ? watch.touch(room, auth.actor, viewerId)
+        : join(room, auth, context, url, viewerId, alive, authenticated);
+      // A tab the room let go of (privacy, presence timeout) is not let back in by looking.
+      if (!viewer) return result(409, { error: REJOIN, rejoin: true });
+      // Poll-driven until A3.4: every republish prepares this tab's stream and
+      // renews its media grant, which expires after 15 seconds.
       watch.reconcileFallback(room);
       await watch.prepareViewer(room, auth.actor, viewerId);
       if (!(await watch.canView(room, auth.actor)) || !(await alive()) || room.viewers.get(viewerId) !== viewer) {
         return result(403, { error: 'Viewing access was revoked' });
       }
-      const state = watch.snapshot(room, auth.actor, viewerId, alive);
+      const state = watch.view(room, auth.actor, viewerId);
+      state.transportSequence = watch.nextStateSequence(room);
+      watch.requestEndingMeta(room);
       const fallbackMedia = watch.fallbackFor(room, viewer),
         fallbackGrant = fallbackMedia && mediaGrant(room, auth, context, viewerId, true);
       if (fallbackGrant)

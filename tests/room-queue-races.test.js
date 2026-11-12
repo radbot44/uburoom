@@ -50,7 +50,7 @@ async function roomFixture({ disk = false } = {}) {
   clearInterval(watch.roomState.timer);
   const id = await watch.roomState.create(actor, { name: 'Writer race' }),
     room = watch.rooms.get(id);
-  watch.snapshot(room, actor, actor.watchViewerId, async () => true, 'direct');
+  watch.join(room, actor, actor.watchViewerId, { alive: async () => true, quality: 'direct' });
   assert.equal(
     (await hub.dispatch(actor, { roomId: id, action: 'media.load', args: { mediaId: '100', quality: 'direct' } }))
       .status,
@@ -193,7 +193,7 @@ test('stale autoplay retains preload ownership until cancellation cleans up ever
   await turn();
   const outputs = await Promise.all(preload.viewers.values());
   assert.equal(outputs.length, 1);
-  f.watch.snapshot(f.room, f.actor, randomUUID(), async () => true, 'direct');
+  f.watch.join(f.room, f.actor, randomUUID(), { alive: async () => true, quality: 'direct' });
   const result = await f.hub.dispatch(
     { ...f.actor, watchQueueAdvance: countdown },
     { roomId: f.id, action: 'media.next' },
@@ -363,7 +363,7 @@ test('a final checkpoint failure still closes provider/reporting and the applica
   const userId = app.registry.resolve('discord', '111111111111111111', 'Fixture').id;
   const actor = { userId, name: 'Fixture' };
   const id = await app.watch.roomState.create(actor, { keepEmpty: true });
-  app.watch.snapshot(app.watch.rooms.get(id), actor, randomUUID(), async () => true);
+  app.watch.join(app.watch.rooms.get(id), actor, randomUUID(), { alive: async () => true });
   await Promise.all([...app.watch.roomState.pending]);
   await app.registry.flush();
   const flush = app.registry.flush.bind(app.registry);

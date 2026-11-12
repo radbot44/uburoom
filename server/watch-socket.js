@@ -54,7 +54,9 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
     }
     client.ws.send(raw);
   }
-  const request = (client, path, data, signal = client.lifetime.signal) =>
+  // `republish` marks the server's own state publication: it reads the room
+  // without joining, so a tab the room let go of has to join again.
+  const request = (client, path, data, signal = client.lifetime.signal, { republish = false } = {}) =>
     runOperation(signal, async () => {
       const result = await routes.execute(
         {
@@ -64,6 +66,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
           },
           controlSocket: client.ws,
           remoteAddress: client.remoteAddress || client.socket?.remoteAddress,
+          republish,
         },
         path,
         data,
@@ -188,7 +191,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
           send(client, { type: 'identity', value: me.value });
         }
         if (path && client.subscription === path) {
-          const result = await waitFor(request(client, path, undefined, signal), signal);
+          const result = await waitFor(request(client, path, undefined, signal, { republish: true }), signal);
           if (client.subscription === path) send(client, { type: 'state', path, ...result });
         }
       }
