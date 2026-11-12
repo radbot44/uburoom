@@ -36,9 +36,26 @@ async function startServer({ disk = false } = {}) {
         }
       : {}),
   };
+  // Fake Plex with a slow switch. While held, every request to the media server
+  // waits until release(); account-service requests are not held. Release only
+  // at a step boundary, and within the server's 12 s fetch timeout (scenario time).
+  let gate;
+  const plex = {
+    hold() {
+      gate ??= Promise.withResolvers();
+    },
+    release() {
+      gate?.resolve();
+      gate = undefined;
+    },
+  };
+  async function plexFetch(input, options) {
+    if (gate && new URL(input).hostname === new URL(config.plexUrl).hostname) await gate.promise;
+    return provider.fetch(input, options);
+  }
   let app, port;
   async function listen() {
-    app = createApp(config, { plexFetch: provider.fetch, oauthFetch: provider.discordFetch, plexDemo: provider });
+    app = createApp(config, { plexFetch, oauthFetch: provider.discordFetch, plexDemo: provider });
     app.hub.access = {
       refresh: async () => true,
       isMember: () => true,
@@ -79,6 +96,7 @@ async function startServer({ disk = false } = {}) {
     config,
     cert,
     login,
+    plex,
     get app() {
       return app;
     },
@@ -87,6 +105,7 @@ async function startServer({ disk = false } = {}) {
       await listen();
     },
     async close() {
+      plex.release();
       await app.close();
       if (directory) {
         if (path.dirname(directory) !== path.resolve(os.tmpdir())) throw new Error('Unexpected scenario directory');

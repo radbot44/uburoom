@@ -12,6 +12,7 @@
 // identity matters but whose value does not, time() for scenario-clock instants,
 // account() and person() for people. Everything else is recorded as given.
 const { randomUUID } = require('node:crypto');
+const https = require('node:https');
 const { WebSocket } = require('ws');
 const WatchTransport = require('../../../web/watch-transport');
 const { realTimer } = require('./clock');
@@ -85,7 +86,9 @@ class Viewer {
   }
   /** Sends one request; scenario time is frozen meanwhile, so it must finish on real I/O alone. */
   async request(path, data, timeoutMs) {
-    this.env.pending++;
+    const detached = this.detaching;
+    this.detaching = false;
+    if (!detached) this.env.pending++;
     let cancel = () => {};
     try {
       const value = await Promise.race([
@@ -102,8 +105,21 @@ class Viewer {
       return { ok: false, status: error.status, error: error.message };
     } finally {
       cancel();
-      this.env.pending--;
+      if (!detached) this.env.pending--;
       this.env.activity();
+    }
+  }
+  /**
+   * Starts one operation (join, command, ...) without making the harness wait
+   * for its answer, for a request the fake Plex is holding. Returns the
+   * operation's promise; await it after the gate is released.
+   */
+  background(operation) {
+    this.detaching = true;
+    try {
+      return operation();
+    } finally {
+      this.detaching = false;
     }
   }
   /**
@@ -210,6 +226,37 @@ class Viewer {
         result.value.state,
       );
     return ack(result);
+  }
+
+  /**
+   * HTTP status the server gives this tab's current media URL right now: 200
+   * while its viewing grant is valid, 403 once it has lapsed; null with no URL.
+   */
+  async mediaStatus() {
+    const { cert, config } = this.env.server,
+      url = this.latest?.value?.mediaUrl;
+    if (!url) return null;
+    this.env.pending++;
+    let cancel = () => {};
+    try {
+      return await Promise.race([
+        new Promise((resolve, reject) => {
+          const request = https.request(config.publicUrl + url, { method: 'HEAD', ca: cert }, response => {
+            response.resume();
+            resolve(response.statusCode);
+          });
+          request.on('error', reject);
+          request.end();
+        }),
+        new Promise((_resolve, reject) => {
+          cancel = realTimer(REQUEST_REAL_TIMEOUT_MS, () => reject(new Error('Media request waited on scenario time')));
+        }),
+      ]);
+    } finally {
+      cancel();
+      this.env.pending--;
+      this.env.activity();
+    }
   }
 
   /** Marks the start of a tick, for fresh(). */
