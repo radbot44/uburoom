@@ -1189,7 +1189,6 @@ function glyph(id, symbol) {
 for (const pair of [
   ['refresh', 'refresh'],
   ['room-symbol', 'armchair-2'],
-  ['roomies-symbol', 'oomark'],
   ['fullscreen', 'fullscreen'],
   ['join-playback', 'play'],
   ['player-play', 'play'],

@@ -3719,29 +3719,6 @@ body:not(.mobile-player)
   #room-settings-navigation {
     flex: none;
   }
-  #room-settings-navigation::before,
-  #room-settings-navigation::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    bottom: 12px;
-    width: 20px;
-    pointer-events: none;
-    z-index: var(--z-local-1);
-    opacity: 0;
-  }
-  #room-settings-navigation::before {
-    left: 0;
-    background: linear-gradient(to right, var(--card), transparent);
-  }
-  #room-settings-navigation::after {
-    right: 0;
-    background: linear-gradient(to left, var(--card), transparent);
-  }
-  #room-settings-navigation.hidden-before::before,
-  #room-settings-navigation.hidden-after::after {
-    opacity: 1;
-  }
   #room-settings-panels {
     flex: 1;
     min-height: 0;
@@ -3751,11 +3728,13 @@ body:not(.mobile-player)
   #room-settings-panels > section > h3 {
     display: none;
   }
+  /* All section tabs stay visible: they wrap to a second row instead of scrolling out of view. */
   #room-settings-nav {
     position: relative;
     display: flex;
     flex-direction: row;
-    overflow-x: auto;
+    flex-wrap: wrap;
+    overflow-x: visible;
     gap: var(--space-6);
     margin-bottom: var(--space-12);
     padding-bottom: var(--space-4);
@@ -4852,15 +4831,6 @@ input.watch-switch.watch-switch-small:checked::after {
   border: 0;
   font-size: var(--font-size-12);
   font-weight: 600;
-}
-.room-roster-heading svg {
-  width: 20px;
-  height: 20px;
-  flex: none;
-}
-#roomies-symbol {
-  display: inline-flex;
-  flex: none;
 }
 :is(
   .watch-permission-button,

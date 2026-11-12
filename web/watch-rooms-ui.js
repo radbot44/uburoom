@@ -1430,17 +1430,6 @@
       for (const control of $('room-settings-nav').children)
         control.setAttribute('aria-current', String(control.dataset.section === value));
       $('room-settings-panels').scrollTop = 0;
-      requestAnimationFrame(() => {
-        const nav = $('room-settings-nav'),
-          selected = nav.querySelector('[aria-current=true]');
-        if (selected && matchMedia('(max-width:620px)').matches) {
-          nav.scrollTo({
-            left: selected.offsetLeft - nav.offsetLeft - (nav.clientWidth - selected.offsetWidth) / 2,
-            behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
-          });
-        }
-        updateNavigationEdges();
-      });
     }
     for (const [key, label] of [
       ['general', 'General'],
@@ -1452,14 +1441,6 @@
       const control = button($('room-settings-nav'), label, () => selectSection(key));
       control.dataset.section = key;
     }
-    function updateNavigationEdges() {
-      const nav = $('room-settings-nav'),
-        wrap = $('room-settings-navigation');
-      wrap.classList.toggle('hidden-before', nav.scrollLeft > 1);
-      wrap.classList.toggle('hidden-after', nav.scrollLeft + nav.clientWidth < nav.scrollWidth - 1);
-    }
-    $('room-settings-nav').addEventListener('scroll', updateNavigationEdges, { passive: true });
-    new ResizeObserver(updateNavigationEdges).observe($('room-settings-nav'));
     $('room-settings-nav').addEventListener('keydown', event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
