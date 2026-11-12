@@ -178,9 +178,9 @@
     }
     clock() {
       if (!this.ready || this.socket?.readyState !== 1 || this.pending.size >= 8) return;
-      // One outstanding sample is enough. Clock exchange expiry is bounded to
-      // the timing sample validity window so dropped exchanges can recover
-      // promptly without waiting for the connection heartbeat deadline.
+      // One outstanding sample is enough. Clock exchange expiry is bounded so
+      // dropped exchanges can recover promptly without waiting for the
+      // connection heartbeat deadline.
       if ([...this.pending.values()].some(entry => entry.clock)) return;
       const id = ++this.sequence,
         exchange = this.beginClock();

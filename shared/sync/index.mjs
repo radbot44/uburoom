@@ -15,8 +15,9 @@ export * as RoomAuthority from './room-authority.mjs';
 export * as Subscriptions from './subscriptions.mjs';
 
 export {
-  MAX_CLOCK_SAMPLE_AGE_MS,
+  CLOCK_DISCONTINUITY_MS,
   CLOCK_WINDOW_MS,
+  CLOCK_MAX_UNCERTAINTY_MS,
   clock,
   target,
   presentation,

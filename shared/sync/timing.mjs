@@ -4,8 +4,21 @@
  */
 
 export function createTimingApi() {
-  const MAX_AGE = 5000;
+  // A gap this long between clock reads (frozen tab, sleep) resets the clock; it proves nothing about the offset.
+  const DISCONTINUITY = 5000;
+  // Samples older than this leave the min-RTT filter and the uncertainty bound.
   const WINDOW = 30000;
+  // Validity is "estimated uncertainty below a bound", not "a sample was accepted recently". Every exchange bounds
+  // the true offset to its offset +- (RTT/2 + SAMPLE_SLACK) at the time it arrived; that interval widens afterwards by
+  // the assumed client/server clock rate difference. The clock is usable while the tightest bound on the current
+  // mapping stays under MAX_UNCERTAINTY: wide enough for any accepted RTT (1500 ms), so a stable high-latency path is
+  // usable with a wide drift band rather than unusable.
+  const DRIFT_RATE = 0.0001; // 100 ppm
+  const SAMPLE_SLACK = 2; // ms: server timestamp rounding
+  const MAX_UNCERTAINTY = 1000;
+  // While acquiring (fewer accepted samples than this since the mapping was set), the mapping is still coarse and is
+  // usually not yet driving playback, so it steps into each better sample's range instead of slewing there.
+  const ACQUIRE_SAMPLES = 8;
 
   function clock({ monotonic = () => performance.now(), wall = Date.now } = {}) {
     let samples = [],
@@ -16,6 +29,7 @@ export function createTimingApi() {
       revision = 0,
       rejected = 0,
       accepted = 0,
+      acquired = 0,
       reason = 'startup';
 
     function reset(why = 'disconnect') {
@@ -33,7 +47,7 @@ export function createTimingApi() {
         date = wall();
       if (
         lastTick !== undefined &&
-        (now < lastTick || now - lastTick > MAX_AGE || Math.abs(date - lastWall - (now - lastTick)) > 250)
+        (now < lastTick || now - lastTick > DISCONTINUITY || Math.abs(date - lastWall - (now - lastTick)) > 250)
       ) {
         reset('discontinuity');
       }
@@ -84,10 +98,19 @@ export function createTimingApi() {
         lastSent = request.sent;
       }
       epoch = clockEpoch;
-      delays.push({ at: received, rtt });
-      delays = delays.filter(s => received - s.at <= WINDOW).slice(-32);
-      if (rtt > 1500) return reject('delay');
       const offset = (t2 + t3 - request.sent - received) / 2;
+      // Every exchange, accepted or not, is evidence for the uncertainty bound in read().
+      const evidence = { at: received, rtt, offset, suspect: false };
+      delays.push(evidence);
+      delays = delays.filter(s => received - s.at <= WINDOW).slice(-32);
+      // A slow exchange whose possible range still contains the current mapping confirms it.
+      const confirm = () => {
+        if (mapping !== undefined && Math.abs(offset - mapping) <= rtt / 2 + SAMPLE_SLACK) lastGood = received;
+      };
+      if (rtt > 1500) {
+        confirm();
+        return reject('delay');
+      }
       samples = samples.filter(s => received - s.at <= WINDOW);
       // A low-delay sample gives the narrowest possible offset interval. Do
       // not assume path symmetry: uncertainty retains half the network RTT.
@@ -101,15 +124,20 @@ export function createTimingApi() {
           delayed.length < 3 ||
           !delayed.every(s => Math.abs(s.rtt - rtt) <= Math.max(20, rtt * 0.2) && Math.abs(s.offset - offset) <= 20)
         ) {
+          confirm();
           return reject('jitter');
         }
         samples = [];
+        // Be conservative after a route change: the old route's exchanges no longer bound the offset.
+        for (const s of delays) s.suspect = s !== evidence;
       }
       delayed = [];
       if (mapping !== undefined && Math.abs(offset - mapping) > Math.max(250, rtt / 2 + (best?.rtt || 0) / 2 + 10)) {
         uncertain = true;
         // A server wall-clock step changes the authoritative timeline. Require
         // three agreeing exchanges before rebasing; one outlier cannot jump it.
+        // Outliers are left to this rule and do not widen the uncertainty bound.
+        evidence.suspect = true;
         samples.push({ at: received, rtt, offset, suspect: true });
         samples = samples.slice(-32);
         const recent = samples.slice(-3);
@@ -118,12 +146,23 @@ export function createTimingApi() {
         samples = [];
         mapping = undefined;
         revision++;
+        // Evidence from before the step describes the old timeline.
+        for (const s of delays) s.suspect = s !== evidence;
       }
       samples.push({ at: received, rtt, offset });
       samples = samples.slice(-32);
       const reliable = samples.filter(s => !s.suspect).sort((a, b) => a.rtt - b.rtt || b.at - a.at);
       desired = reliable[0].offset;
-      if (mapping === undefined) mapping = desired;
+      if (mapping === undefined) {
+        mapping = desired;
+        acquired = 0;
+      } else if (acquired < ACQUIRE_SAMPLES) {
+        // The first samples often have a long, asymmetric delay. A mapping outside the best sample's possible range
+        // is provably wrong; step it to the edge of that range. Later refinements only slew.
+        const range = reliable[0].rtt / 2 + SAMPLE_SLACK;
+        mapping = Math.max(desired - range, Math.min(desired + range, mapping));
+      }
+      acquired++;
       adjustedAt = received;
       lastGood = received;
       uncertain = false;
@@ -146,6 +185,18 @@ export function createTimingApi() {
         lastRtt,
         minRtt = Infinity,
         maxRtt = -Infinity;
+      // Uncertainty: the tightest bound any recent exchange puts on |true offset - mapping| (upper), unless some
+      // exchange's range excludes the mapping by more (lower), which means the drift assumption or the server clock
+      // is off and the bound must widen. With consistent evidence lower <= upper.
+      let upper = Infinity,
+        lower = 0;
+      const bound = s => {
+        const width = s.rtt / 2 + SAMPLE_SLACK + (now - s.at) * DRIFT_RATE,
+          distance = Math.abs(s.offset - mapping);
+        if (distance + width < upper) upper = distance + width;
+        if (distance - width > lower) lower = distance - width;
+      };
+      if (best && mapping !== undefined) bound(best);
       for (let i = 0; i < delays.length; i++) {
         const s = delays[i];
         if (now - s.at <= WINDOW) {
@@ -153,9 +204,11 @@ export function createTimingApi() {
           lastRtt = s.rtt;
           if (s.rtt < minRtt) minRtt = s.rtt;
           if (s.rtt > maxRtt) maxRtt = s.rtt;
+          if (mapping !== undefined && !s.suspect) bound(s);
         }
       }
-      const valid = mapping !== undefined && best !== undefined && now - lastGood <= MAX_AGE && !uncertain;
+      const uncertainty = Math.max(upper, lower);
+      const valid = mapping !== undefined && best !== undefined && !uncertain && uncertainty <= MAX_UNCERTAINTY;
       const jitter = rttCount ? maxRtt - minRtt : undefined;
       const excessRtt = valid && rttCount ? Math.max(0, lastRtt - best.rtt) : 0;
       return {
@@ -167,11 +220,16 @@ export function createTimingApi() {
         clockReason: reason,
         clockOffsetMs: valid ? now + mapping - wall() : undefined,
         clockAgeMs: lastGood === undefined ? undefined : now - lastGood,
-        clockUncertaintyMs: valid
-          ? best.rtt / 2 + 2 + Math.abs(desired - mapping) + (now - best.at) * 0.0001
-          : undefined,
+        clockUncertaintyMs: valid ? uncertainty : undefined,
+        // Uncertainty with the half-RTT floor capped and the latest excess delay added: how much the estimate could
+        // move, rather than how far it could be off. The drift controllers reject an unstable clock outright.
         clockStabilityMs: valid
-          ? Math.min(25, best.rtt / 2) + 2 + excessRtt / 2 + Math.abs(desired - mapping) + (now - best.at) * 0.0001
+          ? Math.min(25, best.rtt / 2) +
+            SAMPLE_SLACK +
+            excessRtt / 2 +
+            Math.abs(desired - mapping) +
+            (now - best.at) * DRIFT_RATE +
+            Math.max(0, lower - upper)
           : undefined,
         networkRttMs: lastRtt,
         networkMinRttMs: best?.rtt,
@@ -830,8 +888,9 @@ export function createTimingApi() {
   }
 
   return {
-    MAX_CLOCK_SAMPLE_AGE_MS: MAX_AGE,
+    CLOCK_DISCONTINUITY_MS: DISCONTINUITY,
     CLOCK_WINDOW_MS: WINDOW,
+    CLOCK_MAX_UNCERTAINTY_MS: MAX_UNCERTAINTY,
     clock,
     target,
     presentation,
@@ -848,8 +907,9 @@ export function createTimingApi() {
 }
 
 export const {
-  MAX_CLOCK_SAMPLE_AGE_MS,
+  CLOCK_DISCONTINUITY_MS,
   CLOCK_WINDOW_MS,
+  CLOCK_MAX_UNCERTAINTY_MS,
   clock,
   target,
   presentation,

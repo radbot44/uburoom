@@ -51,6 +51,11 @@ test('clock rejects jitter/malformed/reordered exchanges; refinements slew witho
   const f = fixture();
   f.sample();
   const first = f.c.read();
+  // Finish acquisition first; until then a mapping outside a better sample's range steps into it.
+  for (let i = 0; i < 7; i++) {
+    f.tick(1000);
+    f.sample();
+  }
   f.tick(1000);
   assert.equal(f.sample(10, 700), false);
   assert.equal(f.c.read().clockOffsetMs, 500);
