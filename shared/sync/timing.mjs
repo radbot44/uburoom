@@ -461,19 +461,75 @@ export function createTimingApi() {
     return { error: positionError, source: 'position', divergenceMs, reason: 'divergent' };
   }
 
-  // Local drift correction only. Frame intervals widen tolerance; they never
+  // Local drift correction only: converge, then rest. Frame intervals widen tolerance; they never
   // authorize a shared action or imply that physical display cadence is known.
+  //
+  // The controller keeps its own estimate of the error. Between observations it predicts the estimate from
+  // the rate it commanded, then moves it part of the way to the new observation. The input may be a single
+  // noisy or frame-quantised sample, or a smoothed value that lags; the estimate is what entry, exit and the
+  // progress check read, so one stale sample can neither start a correction nor carry it past zero.
+  const DRIFT = Object.freeze({
+    // Rest until the estimate leaves this band. The band is the largest of entrySeconds, half a frame plus
+    // frameGuardSeconds (so a position known only to the nearest frame cannot restart a finished correction)
+    // and uncertaintyFactor x clock uncertainty. The estimate must stay outside it for persistMs.
+    entrySeconds: 0.03,
+    uncertaintyFactor: 0.75,
+    frameFactor: 0.5,
+    maxFrameMarginSeconds: 0.025,
+    frameGuardSeconds: 0.01,
+    persistMs: 1000,
+    // Settling: after a reset (start, seek, stream change, stall, tab return) the first correction uses a
+    // tighter band and a shorter wait. Settling ends when that correction stops or after settleMs.
+    settleEntrySeconds: 0.02,
+    settleUncertaintyFactor: 0.5,
+    settlePersistMs: 500,
+    settleMs: 8000,
+    // Stop when the estimate is this close to zero, or has changed sign.
+    exitSeconds: 0.008,
+    // Speed offset = estimate / timeConstantSeconds, in steps of stepQuantum between minStep and maxStep.
+    timeConstantSeconds: 6,
+    minStep: 0.01,
+    maxStep: 0.04,
+    stepQuantum: 0.005,
+    // Estimate smoothing time constant; an observation this far from the prediction restarts the estimate.
+    smoothingMs: 1500,
+    restartSeconds: 0.12,
+    // Back off when the estimate shrank by less than progressSeconds over progressWindowMs. The rest doubles
+    // after each consecutive failure, from backoffMs up to maxBackoffMs.
+    progressWindowMs: 5000,
+    progressSeconds: 0.01,
+    backoffMs: 5000,
+    maxBackoffMs: 60000,
+    // Larger errors are left to a seek (client-sync.mjs).
+    seekSeconds: 0.65,
+  });
+
   function correction() {
     let since,
       direction = 0,
-      activeUntil = 0,
       quietUntil = 0,
+      failures = 0,
       last,
-      key;
+      key,
+      estimate,
+      rate = 1,
+      settleUntil,
+      checkpoint;
+    const rest = () => {
+      since = checkpoint = undefined;
+      direction = 0;
+      rate = 1;
+    };
     function reset() {
-      since = last = key = undefined;
-      direction = activeUntil = quietUntil = 0;
+      rest();
+      last = key = estimate = settleUntil = undefined;
+      quietUntil = failures = 0;
     }
+    /**
+     * @param {{now:number, error:number, eligible:boolean, context?:string, uncertaintyMs?:number,
+     *   stabilityMs?:number, frameSeconds?:number}} input `error` is target minus position, in seconds.
+     * @returns {number} playback rate to apply, 1 when resting
+     */
     function update({
       now,
       error,
@@ -488,14 +544,13 @@ export function createTimingApi() {
         reset();
         return 1;
       }
-      if (last !== undefined && (now < last || now - last > 1500)) {
-        since = undefined;
-        direction = activeUntil = 0;
+      const gap = last === undefined ? 0 : now - last;
+      if (gap < 0 || gap > 1500) {
+        rest();
+        estimate = undefined;
       }
       key = context;
       last = now;
-      const magnitude = Math.abs(error),
-        sign = Math.sign(error);
       if (
         !eligible ||
         !Number.isFinite(error) ||
@@ -505,47 +560,70 @@ export function createTimingApi() {
         !Number.isFinite(stabilityMs) ||
         stabilityMs < 0 ||
         stabilityMs > 100 ||
-        magnitude > 0.65 ||
-        sign === 0
+        Math.abs(error) > DRIFT.seekSeconds ||
+        error === 0
       ) {
-        since = undefined;
-        direction = activeUntil = 0;
+        rest();
+        estimate = undefined;
         return 1;
       }
-      const frameMargin = Math.min(0.05, Math.max(0, Number.isFinite(frameSeconds) ? frameSeconds : 0));
-      const tolerance = Math.max(0.045 + frameMargin, (uncertaintyMs / 1000) * 1.25);
-      const exitTol = Math.max(0.02, uncertaintyMs / 1000, tolerance * 0.45);
-      const gainFor = mag => {
-        const span = Math.max(0.001, 0.5 - exitTol);
-        const ratio = Math.min(1, Math.max(0, (mag - exitTol) / span));
-        const step = Math.round((0.005 + ratio * 0.035) / 0.005) * 0.005;
-        return Number((1 + direction * step).toFixed(3));
-      };
-      const stop = timedOut => {
-        direction = activeUntil = 0;
-        since = undefined;
-        if (timedOut) quietUntil = now + 5000;
+      if (estimate === undefined) estimate = error;
+      else {
+        // A positive error means behind; playing faster shrinks it at (rate - 1) seconds per second.
+        const predicted = estimate - (rate - 1) * (gap / 1000);
+        estimate =
+          Math.abs(error - predicted) > DRIFT.restartSeconds
+            ? error
+            : predicted + (1 - Math.exp(-gap / DRIFT.smoothingMs)) * (error - predicted);
+      }
+      settleUntil ??= now + DRIFT.settleMs;
+      const settling = now < settleUntil;
+      const magnitude = Math.abs(estimate),
+        sign = Math.sign(estimate);
+      const command = () => {
+        const steps = Math.round(magnitude / DRIFT.timeConstantSeconds / DRIFT.stepQuantum) * DRIFT.stepQuantum;
+        rate = Number((1 + direction * Math.min(DRIFT.maxStep, Math.max(DRIFT.minStep, steps))).toFixed(3));
+        return rate;
       };
       if (direction !== 0) {
-        if (sign !== direction || magnitude <= exitTol || now >= activeUntil) {
-          stop(now >= activeUntil && magnitude > exitTol && sign === direction);
+        if (sign !== direction || magnitude <= DRIFT.exitSeconds) {
+          rest();
+          failures = 0;
+          settleUntil = now;
           return 1;
         }
-        return gainFor(magnitude);
+        if (now - checkpoint.at >= DRIFT.progressWindowMs) {
+          if (checkpoint.magnitude - magnitude < DRIFT.progressSeconds) {
+            rest();
+            quietUntil = now + Math.min(DRIFT.maxBackoffMs, DRIFT.backoffMs * 2 ** failures++);
+            settleUntil = now;
+            return 1;
+          }
+          checkpoint = { at: now, magnitude };
+        }
+        return command();
       }
+      const frameMargin = Math.min(
+        DRIFT.maxFrameMarginSeconds,
+        Math.max(0, Number.isFinite(frameSeconds) ? frameSeconds : 0) * DRIFT.frameFactor,
+      );
+      const tolerance = settling
+        ? Math.max(DRIFT.settleEntrySeconds, (uncertaintyMs / 1000) * DRIFT.settleUncertaintyFactor)
+        : Math.max(
+            DRIFT.entrySeconds,
+            frameMargin + DRIFT.frameGuardSeconds,
+            (uncertaintyMs / 1000) * DRIFT.uncertaintyFactor,
+          );
       if (magnitude <= tolerance || now < quietUntil) {
         since = undefined;
         return 1;
       }
-      if (since === undefined || since.sign !== sign) {
-        since = { at: now, sign };
-        return 1;
-      }
-      if (now - since.at < 1000) return 1;
+      if (since === undefined || since.sign !== sign) since = { at: now, sign };
+      if (now - since.at < (settling ? DRIFT.settlePersistMs : DRIFT.persistMs)) return 1;
       direction = sign;
-      activeUntil = now + 10000;
       since = undefined;
-      return gainFor(magnitude);
+      checkpoint = { at: now, magnitude };
+      return command();
     }
     return { update, reset };
   }

@@ -18,29 +18,32 @@ test('small drift stays at native speed at representative cadences and within cl
   for (const fps of [24, 60]) {
     const f = fixture();
     for (let i = 0; i < 100; i++)
-      assert.equal(f.step(500, { error: 0.04, frameSeconds: 1 / fps, uncertaintyMs: 10 }), 1);
+      assert.equal(f.step(500, { error: 0.015, frameSeconds: 1 / fps, uncertaintyMs: 10 }), 1);
+    // Once settling has passed, the resting band is wider than the settling band.
+    for (let i = 0; i < 100; i++)
+      assert.equal(f.step(500, { error: 0.028, frameSeconds: 1 / fps, uncertaintyMs: 10 }), 1);
   }
   const f = fixture();
-  for (let i = 0; i < 20; i++) assert.equal(f.step(500, { error: 0.29, uncertaintyMs: 250 }), 1);
+  for (let i = 0; i < 20; i++) assert.equal(f.step(500, { error: 0.1, uncertaintyMs: 250 }), 1);
   const highRtt = fixture();
   for (let i = 0; i < 10; i++)
     assert.equal(
-      highRtt.step(500, { error: 0.1, uncertaintyMs: 110, stabilityMs: 25 }),
+      highRtt.step(500, { error: 0.05, uncertaintyMs: 110, stabilityMs: 25 }),
       1,
       'ignores drift inside asymmetry bound',
     );
   assert.equal(highRtt.step(500, { error: 0.35, uncertaintyMs: 110, stabilityMs: 25 }), 1);
-  assert.equal(highRtt.step(500, { error: 0.35, uncertaintyMs: 110, stabilityMs: 25 }), 1);
   assert.equal(
     highRtt.step(500, { error: 0.35, uncertaintyMs: 110, stabilityMs: 25 }),
-    1.025,
+    1.04,
     'corrects resolvable drift on stable high-RTT clock',
   );
   assert.equal(
     highRtt.step(500, { error: 0.1, uncertaintyMs: 110, stabilityMs: 25 }),
-    1,
-    'exits speed correction once error drops inside clock uncertainty',
+    1.015,
+    'keeps converging inside the clock uncertainty',
   );
+  assert.equal(highRtt.step(500, { error: -0.1, uncertaintyMs: 110, stabilityMs: 25 }), 1, 'exits on a sign change');
   for (let i = 0; i < 3; i++) highRtt.step(500, { error: 0.35, uncertaintyMs: 110, stabilityMs: 25 });
   assert.equal(
     highRtt.step(500, { error: 0.35, uncertaintyMs: 110, stabilityMs: 105 }),
@@ -49,19 +52,29 @@ test('small drift stays at native speed at representative cadences and within cl
   );
 });
 
-test('persistent drift uses bounded subtle bursts with a quiet interval and hysteresis', () => {
+test('persistent drift converges with a tapering rate and rests; stalled progress backs off', () => {
   const f = fixture();
-  for (let i = 0; i < 2; i++) assert.equal(f.step(), 1);
-  assert.equal(f.step(), 1.025);
-  for (let i = 0; i < 19; i++) assert.equal(f.step(), 1.025);
-  assert.equal(f.step(), 1, 'ten second limit');
+  assert.equal(f.step(), 1);
+  assert.equal(f.step(), 1.04, 'settling after a reset needs half a second of evidence');
+  for (let i = 0; i < 19; i++) assert.equal(f.step(), 1.04);
+  assert.equal(f.step(), 1, 'backs off when the error has stopped shrinking');
   for (let i = 0; i < 9; i++) assert.equal(f.step(), 1, 'quiet interval');
   assert.equal(f.step(), 1, 'fresh persistence required');
   assert.equal(f.step(), 1);
-  assert.equal(f.step(), 1.025);
-  assert.equal(f.step(500, { error: 0.12 }), 1.01, 'proportional taper as error shrinks');
-  assert.equal(f.step(500, { error: 0.05 }), 1.005, 'hysteresis avoids threshold chatter');
-  assert.equal(f.step(500, { error: 0.02 }), 1, 'clean exit inside deadband');
+  assert.equal(f.step(), 1.04);
+  // A player that obeys: the error shrinks at the commanded rate.
+  let error = 0.3,
+    rate = 1.04,
+    previous = rate;
+  for (let i = 0; i < 60 && rate !== 1; i++) {
+    error -= (rate - 1) * 0.5;
+    rate = f.step(500, { error });
+    assert.ok(rate <= previous && (rate === 1 || rate >= 1.01), 'the rate only tapers, down to one percent');
+    previous = rate;
+  }
+  assert.equal(rate, 1, 'stops');
+  assert.ok(error > 0 && error <= 0.015, `stops near zero without overshoot (${error})`);
+  for (let i = 0; i < 40; i++) assert.equal(f.step(500, { error }), 1, 'rests');
 });
 
 test('transient/sign-changing drift never accumulates evidence; interrupted playback cancels a burst', () => {
@@ -85,8 +98,8 @@ test('transient/sign-changing drift never accumulates evidence; interrupted play
   assert.equal(g.step(), 1);
   const ahead = fixture();
   for (let i = 0; i < 2; i++) ahead.step(500, { error: -0.3 });
-  assert.equal(ahead.step(500, { error: -0.3 }), 0.975);
-  assert.equal(ahead.step(500, { error: -0.05 }), 0.995);
+  assert.equal(ahead.step(500, { error: -0.3 }), 0.96);
+  assert.equal(ahead.step(500, { error: -0.05 }), 0.99);
 });
 
 test('cadence estimate needs contiguous frames and resets across source/seek boundaries', () => {
@@ -155,14 +168,14 @@ test('default uses proportional drift correction with persistence and recovery g
   assert.equal(ctx.video.playbackRate, 1, 'waits for sustained drift before adjusting speed');
   now = 500;
   await ctx.synchronize();
-  assert.equal(ctx.video.playbackRate, 1);
+  assert.equal(ctx.video.playbackRate, 1.04, 'applies proportional speed adjustment');
   now = 1000;
   await ctx.synchronize();
-  assert.equal(ctx.video.playbackRate, 1.025, 'applies proportional speed adjustment');
+  assert.equal(ctx.video.playbackRate, 1.04);
   ctx.video.currentTime = 10.25;
   now = 1500;
   await ctx.synchronize();
-  assert.equal(ctx.video.playbackRate, 1.005, 'tapers rate smoothly as viewer catches up');
+  assert.equal(ctx.video.playbackRate, 1.01, 'tapers rate smoothly as viewer catches up');
   ctx.playerWaiting = true;
   now = 2000;
   await ctx.synchronize();
@@ -414,14 +427,14 @@ test('default uses proportional drift correction with persistence and recovery g
   );
   await ctx.synchronize();
   assert.equal(ctx.sync.control.source, 'presentation', 'selects presentation control signal');
-  assert.equal(ctx.video.playbackRate, 1.01, 'steers playbackRate to speed up from behind presentation error');
+  assert.equal(ctx.video.playbackRate, 1.02, 'steers playbackRate to speed up from behind presentation error');
 
   // Stale sample fallback: after > 1000 ms without frame updates, falls back to position difference
   ctx.video.currentTime = 10.0;
   now = 32500;
   await ctx.synchronize();
   assert.equal(ctx.sync.control.source, 'position', 'falls back to position when presentation sample is stale');
-  assert.equal(ctx.video.playbackRate, 1.025, 'falls back to currentTime difference when presentation sample is stale');
+  assert.equal(ctx.video.playbackRate, 1.04, 'falls back to currentTime difference when presentation sample is stale');
 
   // Ahead frame: mediaTime 10.42 vs target 10.30 => presentationErrorMs = +120 ms => presentationControlError = -0.12 s (slows down)
   ctx.video.currentTime = 10.45;
@@ -454,7 +467,7 @@ test('default uses proportional drift correction with persistence and recovery g
   );
   await ctx.synchronize(); // 1000ms sustained negative drift
   assert.equal(ctx.sync.control.source, 'presentation');
-  assert.equal(ctx.video.playbackRate, 0.99, 'steers playbackRate to slow down from ahead presentation error');
+  assert.equal(ctx.video.playbackRate, 0.98, 'steers playbackRate to slow down from ahead presentation error');
 
   // Presentation error cannot independently trigger hard seeks or jumps
   // Small position difference (0.05s) with large presentation error (-800ms)
@@ -503,7 +516,7 @@ test('default uses proportional drift correction with persistence and recovery g
   await ctx.synchronize();
   now = 75000;
   await ctx.synchronize();
-  assert.equal(ctx.video.playbackRate, 1.025, 'suspended jump mode falls back to speed correction');
+  assert.equal(ctx.video.playbackRate, 1.04, 'suspended jump mode falls back to speed correction');
 
   assert.equal(typeof ctx.sync.driftCorrection?.update, 'function');
   const custom = {
