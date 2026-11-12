@@ -757,6 +757,10 @@ body.pip-window :is(#theater, #drawer-open) {
   #player-extras {
     display: none;
   }
+  /* The group after the hidden Player group keeps the first-group spacing. */
+  #tracks-dialog .player-settings-column > #player-extras:first-child + .settings-group {
+    margin-top: var(--space-8);
+  }
 }
 @media (max-width: 600px) {
   .player-tools > :is(#notifications-toggle, #pip, #theater) {
