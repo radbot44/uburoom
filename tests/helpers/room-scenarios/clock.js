@@ -1,7 +1,10 @@
 'use strict';
 // Scenario time. The server reads time only through Date, setTimeout,
 // setInterval and performance.now; all four follow this clock while it is
-// installed. setImmediate, sockets and the storage worker stay real so I/O
+// installed. Monotonic time (performance.now and the timers) only moves with
+// tick(). Wall time (Date) follows it too, but stepWall() can move it alone,
+// like an NTP correction. Clients in a scenario keep server time, so they use
+// scenarioNow(), which a wall step does not touch. setImmediate, sockets and the storage worker stay real so I/O
 // still completes between ticks.
 const { mock } = require('node:test');
 const realSetTimeout = globalThis.setTimeout,
@@ -18,22 +21,35 @@ function realTimer(ms, action) {
   return () => realClearTimeout(timer);
 }
 
+let mockNow = () => Date.now();
+/** Scenario server time: advances with tick() only, never with stepWall(). */
+const scenarioNow = () => mockNow();
+
 function installClock() {
   mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: START });
   const performance = globalThis.performance;
-  // Monotonic time is a fixed offset from scenario wall time.
-  performance.now = () => Date.now() - START + 1000;
+  const mocked = Date.now;
+  let wallOffset = 0;
+  mockNow = () => mocked();
+  Date.now = () => mocked() + wallOffset;
+  // Monotonic time is a fixed offset from scenario time.
+  performance.now = () => mocked() - START + 1000;
   return {
     /** Milliseconds since the scenario started. */
-    elapsed: () => Date.now() - START,
+    elapsed: () => mocked() - START,
+    /** Steps the wall clock alone by `ms` (negative for backwards); timers and monotonic time are unaffected. */
+    stepWall(ms) {
+      wallOffset += ms;
+    },
     /** Advances in small increments so each timer runs close to its own due time. */
     tick(ms) {
       for (let left = ms; left > 0; left -= STEP_MS) mock.timers.tick(Math.min(STEP_MS, left));
     },
     uninstall() {
       delete performance.now;
+      mockNow = () => Date.now();
       mock.timers.reset();
     },
   };
 }
-module.exports = { installClock, realDelay, realNow, realTimer, START };
+module.exports = { installClock, scenarioNow, realDelay, realNow, realTimer, START };

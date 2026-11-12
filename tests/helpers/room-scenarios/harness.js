@@ -3,7 +3,7 @@
 // and returns its semantic trace: after each step, the room facts each tab sees
 // that changed since the previous step, with random ids, people and instants
 // normalised. Wire details stay in ./protocol.
-const { installClock, realDelay, realNow, START } = require('./clock');
+const { installClock, scenarioNow, realDelay, realNow, START } = require('./clock');
 const { startServer } = require('./server');
 const { Viewer } = require('./protocol');
 
@@ -91,7 +91,7 @@ class Scenario {
   }
   /** Waits until every tab has seen the server at the current instant and I/O is quiet. */
   async settle() {
-    const now = Date.now(),
+    const now = scenarioNow(),
       started = realNow();
     for (;;) {
       // Poll on event-loop turns (timers are coarse on Windows); back off once a wait is clearly long.

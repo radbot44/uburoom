@@ -358,5 +358,21 @@ const scenarios = [
       await s.step('streams checked after 40 seconds', access);
     },
   },
+  {
+    name: 'server-wall-clock-step',
+    async run(s) {
+      const { alice, bob } = await together(s);
+      await startPlayback(s, alice, [alice, bob]);
+      await s.step('three seconds of playback', undefined, { wait: 3000 });
+      await s.step('the server wall clock steps back 5 seconds', () => s.clock.stepWall(-5000), { wait: 3000 });
+      await s.step('bob pauses', () => bob.command('media.pause'));
+      await s.step('alice plays', () => alice.command('media.play'));
+      await s.step('three seconds of playback', undefined, { wait: 3000 });
+      await s.step('the server wall clock steps forward 10 seconds', () => s.clock.stepWall(10000), { wait: 3000 });
+      await s.step('alice seeks to 30s', () => alice.command('media.seek.absolute', { seconds: 30 }));
+      await s.step('both report ready at 30s', () => allReady([alice, bob]));
+      await s.step('three seconds of playback', undefined, { wait: 3000 });
+    },
+  },
 ];
 module.exports = { scenarios };

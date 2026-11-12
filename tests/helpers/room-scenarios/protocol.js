@@ -15,7 +15,7 @@ const { randomUUID } = require('node:crypto');
 const https = require('node:https');
 const { WebSocket } = require('ws');
 const WatchTransport = require('../../../web/watch-transport');
-const { realTimer } = require('./clock');
+const { realTimer, scenarioNow } = require('./clock');
 
 const ROOM = id => '/api/watch/rooms/' + id;
 const COMMAND_TTL_MS = 2500;
@@ -176,7 +176,7 @@ class Viewer {
       {
         viewerId: this.viewerId,
         epoch: stale ? randomUUID() : this.latest?.value?.epoch,
-        expiresAt: Date.now() + COMMAND_TTL_MS,
+        expiresAt: scenarioNow() + COMMAND_TTL_MS,
         command: { action, ...(args ? { args } : {}) },
       },
       35000,
