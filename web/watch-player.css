@@ -803,6 +803,16 @@ body.pip-window :is(#theater, #drawer-open) {
     color: var(--chrome-text);
     background: var(--chrome-elevated);
   }
+  /* In the lobby the gear stays and Player settings holds only the Player group (Notifications). */
+  body.outside-room #tracks-open {
+    display: inline-grid !important;
+  }
+  body.outside-room #tracks-dialog .player-settings-column + .player-settings-column,
+  body.outside-room #tracks-dialog .player-settings-column > :not(#player-extras),
+  body.outside-room #tracks-dialog .player-media-information,
+  body.outside-room #player-extras-pip {
+    display: none;
+  }
 }
 .player-extras > button {
   display: inline-flex;

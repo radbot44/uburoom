@@ -168,7 +168,8 @@
       global.uburoomDialogs.open(dialog, cog);
       stage.classList.add('settings-open');
       cog.setAttribute('aria-expanded', 'true');
-      $('quality').focus();
+      // Outside a room only the Notifications switch is shown.
+      (document.body.classList.contains('outside-room') ? $('player-extras-notifications') : $('quality')).focus();
       showChrome();
     }
     function openSettings() {
