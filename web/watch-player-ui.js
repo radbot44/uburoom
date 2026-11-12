@@ -87,7 +87,8 @@
       press,
       taps,
       lastSubtitle,
-      touching = false;
+      touching = false,
+      volumeOpen = false;
     function layoutCaptions() {
       const transport = stage.querySelector('.transport');
       captions.layout(getComputedStyle(transport).pointerEvents !== 'none' ? transport.offsetHeight : 0);
@@ -456,7 +457,8 @@
       stage.classList.add('controls-visible');
       layoutCaptions();
       chromeTimer = setTimeout(() => {
-        if (touching || opened || dialog.open || stage.classList.contains('drawer-open')) return showChrome();
+        if (touching || opened || volumeOpen || dialog.open || stage.classList.contains('drawer-open'))
+          return showChrome();
         stage.classList.remove('controls-visible');
         layoutCaptions();
       }, 2500);
@@ -538,11 +540,169 @@
         }, 900);
       }
     });
+    // Phone transport (600px wide and below): Notifications and Picture-in-Picture move into Player settings,
+    // and the speaker button opens a vertical volume panel. The bar buttons stay the single source of truth;
+    // the settings entries mirror them and act through them.
+    const phone = matchMedia('(max-width: 600px)');
+    const extras = document.createElement('section');
+    extras.id = 'player-extras';
+    extras.className = 'settings-group player-extras';
+    const extrasTitle = document.createElement('h3');
+    extrasTitle.textContent = 'Player';
+    const notifyLabel = document.createElement('label');
+    notifyLabel.className = 'watch-switch-label';
+    const notify = document.createElement('input');
+    notify.type = 'checkbox';
+    notify.id = 'player-extras-notifications';
+    notify.className = 'watch-switch';
+    notify.setAttribute('role', 'switch');
+    notifyLabel.append(notify, document.createTextNode('Notifications'));
+    const pipEntry = document.createElement('button');
+    pipEntry.type = 'button';
+    pipEntry.id = 'player-extras-pip';
+    pipEntry.className = 'quiet';
+    extras.append(extrasTitle, notifyLabel, pipEntry);
+    dialog.querySelector('.player-settings-column')?.prepend(extras);
+    function mirrorExtras() {
+      const bell = $('notifications-toggle'),
+        pip = $('pip');
+      notify.checked = bell.getAttribute('aria-pressed') === 'true';
+      notifyLabel.hidden = bell.hidden;
+      const label = pip.getAttribute('aria-label') || 'Picture-in-Picture';
+      if (pipEntry.dataset.label !== label) {
+        pipEntry.replaceChildren(uburoomIcons.icon(document, 'picture-in-picture'), document.createTextNode(label));
+        pipEntry.dataset.label = label;
+      }
+      pipEntry.disabled = pip.disabled;
+      pipEntry.hidden = pip.hidden || document.body.classList.contains('no-pip');
+      extras.hidden = notifyLabel.hidden && pipEntry.hidden;
+    }
+    notify.addEventListener('change', () => {
+      $('notifications-toggle').click();
+      mirrorExtras();
+    });
+    pipEntry.addEventListener('click', () => {
+      if (pipEntry.disabled) return;
+      global.uburoomDialogs.close(dialog);
+      $('pip').click();
+    });
+    new MutationObserver(mirrorExtras).observe($('notifications-toggle'), { attributes: true });
+    new MutationObserver(mirrorExtras).observe($('pip'), { attributes: true });
+    mirrorExtras();
+
+    const speaker = $('player-mute'),
+      slider = $('player-volume'),
+      volumeControl = speaker.closest('.volume-control');
+    const volumePanel = document.createElement('div');
+    volumePanel.id = 'volume-panel';
+    volumePanel.className = 'volume-panel';
+    const panelMute = document.createElement('button');
+    panelMute.type = 'button';
+    panelMute.id = 'volume-panel-mute';
+    panelMute.className = 'player-button volume-panel-mute';
+    slider.before(volumePanel);
+    volumePanel.append(slider, panelMute);
+    // iOS Safari ignores a page-set video volume; probe a detached element so playback is untouched.
+    const volumeSettable = (() => {
+      try {
+        const probe = document.createElement('video');
+        probe.volume = 0.5;
+        return Math.abs(probe.volume - 0.5) < 0.01;
+      } catch {
+        return false;
+      }
+    })();
+    volumeControl.classList.toggle('volume-mute-only', !volumeSettable);
+    let volumeTimer,
+      speakerMuting = false;
+    const panelMode = () => volumeSettable && phone.matches;
+    function idleVolume() {
+      clearTimeout(volumeTimer);
+      volumeTimer = setTimeout(() => closeVolume(), 3000);
+    }
+    function openVolume() {
+      volumeOpen = true;
+      volumeControl.classList.add('volume-open');
+      speaker.setAttribute('aria-expanded', 'true');
+      showChrome();
+      idleVolume();
+    }
+    function closeVolume(focus = false) {
+      clearTimeout(volumeTimer);
+      if (!volumeOpen) return;
+      volumeOpen = false;
+      volumeControl.classList.remove('volume-open');
+      speaker.setAttribute('aria-expanded', 'false');
+      if (focus) speaker.focus();
+    }
+    // Only changed attributes are written, so the observer below settles after one pass.
+    function setAttribute(element, name, value) {
+      if (value === undefined) element.removeAttribute(name);
+      else if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+    }
+    function mirrorSpeaker() {
+      const panel = panelMode(),
+        muted = speaker.getAttribute('aria-pressed') === 'true',
+        muteLabel = muted ? 'Unmute' : 'Mute';
+      if (!panel) closeVolume();
+      setAttribute(speaker, 'aria-controls', panel ? volumePanel.id : undefined);
+      setAttribute(speaker, 'aria-expanded', panel ? String(volumeOpen) : undefined);
+      // In panel mode the speaker opens the volume panel; otherwise it mutes.
+      setAttribute(speaker, 'aria-label', panel ? 'Volume' : muteLabel);
+      setAttribute(speaker, 'title', panel ? 'Volume' : muteLabel);
+      const svg = speaker.querySelector('svg');
+      if (svg) panelMute.replaceChildren(svg.cloneNode(true));
+      setAttribute(panelMute, 'aria-label', muteLabel);
+      setAttribute(panelMute, 'title', muteLabel);
+      setAttribute(panelMute, 'aria-pressed', String(muted));
+      panelMute.disabled = speaker.disabled;
+    }
+    // In panel mode the speaker opens the panel; its own mute action runs only from the panel's mute button.
+    volumeControl.addEventListener(
+      'click',
+      event => {
+        if (event.target.closest('#player-mute') !== speaker || speakerMuting || !panelMode()) return;
+        event.stopImmediatePropagation();
+        event.preventDefault();
+        if (volumeOpen) closeVolume();
+        else openVolume();
+      },
+      true,
+    );
+    panelMute.addEventListener('click', () => {
+      speakerMuting = true;
+      try {
+        speaker.click();
+      } finally {
+        speakerMuting = false;
+      }
+      idleVolume();
+    });
+    for (const type of ['pointerdown', 'pointermove', 'input', 'keydown', 'focusin'])
+      volumePanel.addEventListener(type, () => volumeOpen && idleVolume());
+    document.addEventListener('pointerdown', event => {
+      if (volumeOpen && !volumeControl.contains(event.target)) closeVolume();
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && volumeOpen) {
+        event.preventDefault();
+        closeVolume(true);
+      }
+    });
+    new MutationObserver(mirrorSpeaker).observe(speaker, {
+      attributes: true,
+      attributeFilter: ['aria-label', 'title', 'aria-pressed', 'disabled'],
+      childList: true,
+    });
+    phone.addEventListener('change', mirrorSpeaker);
+    mirrorSpeaker();
+
     const reset = () => {
       clearTimeout(tapTimer);
       taps = press = undefined;
       touching = false;
       closeSettings();
+      closeVolume();
       if (dialog.open) dialog.close();
     };
     window.addEventListener('resize', () => {

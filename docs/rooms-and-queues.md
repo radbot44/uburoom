@@ -31,7 +31,7 @@ Creator > host > viewer, using canonical UUIDs. Hosts inherit viewer grants; def
 - **Without a creator/host**, playback pauses unless Continue without host permits it. This permission grants no management authority.
 - **Visibility and role changes** revoke ineligible subscriptions and pending work. Private rooms require explicit assignments even with All hosts enabled.
 
-### Participant removal
+### Removing viewers
 
 `room.kick` requires `kickParticipants` (default on for hosts, off and ineligible for viewers). Leader and self are protected; authorized hosts can remove viewers, while the room leader and active administrators can also remove hosts.
 

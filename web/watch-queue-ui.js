@@ -31,10 +31,6 @@
     },
   ) {
     const doc = host.ownerDocument;
-    let view = 'cards';
-    try {
-      if (localStorage.getItem('uburoom-queue-view') === 'list') view = 'list';
-    } catch {}
     let centerPending = true;
     let centerAfterFetch = true;
     let currentKey = '';
@@ -66,7 +62,6 @@
     let lastAutoplayError = '';
     let lastFetchedRevision = -1;
     let lastFetchedRoomId = null;
-    let moveFollow = null;
 
     function node(tag, parent, text, className) {
       const el = doc.createElement(tag);
@@ -95,7 +90,7 @@
     const confirm = message => popups.confirm(message, { destructive: true });
 
     host.replaceChildren();
-    host.dataset.view = view;
+    host.dataset.view = 'list';
     const header = node('header', host, undefined, 'queue-header watch-panel-header');
     const heading = node('h2', header, undefined, 'queue-heading watch-panel-heading');
     const symbol = node('span', heading, undefined, 'watch-panel-symbol');
@@ -104,48 +99,34 @@
     symbol.append(root.uburoomIcons.icon(doc, 'player-track-next'));
     const queueTitle = node('span', heading, 'Queue', 'watch-panel-title');
     queueTitle.id = 'queue-title';
-    const views = node('div', header, undefined, 'queue-view-switch watch-segmented watch-segmented-view');
-    views.setAttribute('role', 'group');
-    views.setAttribute('aria-label', 'Queue layout');
-    const viewButtons = ['cards', 'list'].map(value => {
-      const b = button(
-        views,
-        value === 'cards' ? 'Cards' : 'List',
-        value === 'cards' ? 'libraryCards' : 'libraryList',
-        () => {
-          view = value;
-          host.dataset.view = view;
-          try {
-            localStorage.setItem('uburoom-queue-view', view);
-          } catch {}
-          centerPending = true;
-          renderNowPlaying();
-          renderTab();
-          updateView();
-        },
-        false,
-        'queue-view-button group-button',
-      );
-      node('span', b, value === 'cards' ? 'Cards' : 'List');
-      b.id = 'queue-view-' + value;
-      return b;
-    });
-    root.uburoomControls.segmented(views);
+    const autoOpen = button(header, 'Queue settings', 'settings', () => openSettings(), false, 'icon-button');
+    root.uburoomControls.content(autoOpen, { label: 'Queue settings', icon: 'settings', iconOnly: true });
+    autoOpen.id = 'queue-auto-open';
     const body = node('div', host);
     body.id = 'queue-body';
+    // Second header row: the continuation switches, then Center Now Playing.
     const toolbar = node('div', header, undefined, 'queue-toolbar watch-toolbar');
-    toolbar.append(views);
+    const continuation = node('div', toolbar, undefined, 'queue-continuation queue-quick-controls watch-control-group');
+    const autoplayPill = root.uburoomControls.switchPill(doc, { label: 'Auto-play' });
+    const autoplayLabel = autoplayPill.element,
+      autoplayToggle = autoplayPill.input;
+    autoplayToggle.id = 'queue-autoplay';
+    const autoPill = root.uburoomControls.switchPill(doc, { label: 'Auto-queue', accent: 'secondary' });
+    const autoLabel = autoPill.element,
+      autoToggle = autoPill.input;
+    autoToggle.id = 'queue-auto-toggle';
+    continuation.append(autoplayLabel, autoLabel);
     const centerButton = button(toolbar, 'Center Now Playing', 'center', () => centerCurrent(true));
     root.uburoomControls.content(centerButton, { label: 'Center Now Playing', icon: 'center' });
     centerButton.id = 'queue-center';
     const timeline = node('div', body, undefined, 'queue-timeline');
     const navigation = node('div', timeline, undefined, 'queue-navigation');
-    const previousCard = button(navigation, 'Scroll toward history', 'left', () => scrollCards(-1));
-    previousCard.id = 'queue-scroll-previous';
-    const previousCount = node('span', previousCard, '', 'queue-navigation-count');
-    const nextCard = button(navigation, 'Scroll toward upcoming videos', 'right', () => scrollCards(1));
-    const nextCount = node('span', nextCard, '', 'queue-navigation-count');
-    nextCard.id = 'queue-scroll-next';
+    const previousButton = button(navigation, 'Scroll toward history', 'up', () => scrollEntries(-1));
+    previousButton.id = 'queue-scroll-previous';
+    const previousCount = node('span', previousButton, '', 'queue-navigation-count');
+    const nextButton = button(navigation, 'Scroll toward upcoming videos', 'down', () => scrollEntries(1));
+    const nextCount = node('span', nextButton, '', 'queue-navigation-count');
+    nextButton.id = 'queue-scroll-next';
     const layout = node('div', timeline, undefined, 'queue-layout');
     layout.tabIndex = 0;
     layout.setAttribute('role', 'region');
@@ -160,45 +141,24 @@
     const emptyScreen = node('section', body, undefined, 'queue-empty-screen');
     emptyScreen.id = 'queue-empty-screen';
     emptyScreen.append(root.uburoomIcons.icon(doc, 'queue'));
-    const emptyTitle = node('p', emptyScreen, '', 'queue-empty-title');
+    const emptyTitle = node('h3', emptyScreen, '', 'queue-empty-title');
+    const emptyText = node(
+      'p',
+      emptyScreen,
+      'Join or create a room, then add movies and episodes here. They play in order for everyone.',
+      'queue-empty-text',
+    );
     const emptyBrowse = button(emptyScreen, 'Browse media', 'media', () => browseMedia());
     node('span', emptyBrowse, 'Browse media');
     const footer = node('div', body, undefined, 'queue-footer');
 
-    const continuation = node('div', header, undefined, 'queue-continuation queue-quick-controls watch-control-group');
-    const autoplayLabel = node('label', continuation, undefined, 'watch-toggle-pill');
-    autoplayLabel.setAttribute('for', 'queue-autoplay');
-    const autoplayToggle = node('input', autoplayLabel);
-    autoplayToggle.type = 'checkbox';
-    autoplayToggle.id = 'queue-autoplay';
-    autoplayToggle.className = 'watch-toggle-input';
-    autoplayToggle.setAttribute('role', 'switch');
-    const autoplayBadge = node('span', autoplayLabel, undefined, 'watch-toggle-badge');
-    autoplayBadge.setAttribute('aria-hidden', 'true');
-    autoplayBadge.append(root.uburoomIcons.icon(doc, 'play'));
-    node('span', autoplayLabel, 'Auto-play', 'watch-toggle-label');
-    const autoOpen = button(continuation, 'Queue settings', 'settings', () => openSettings(), false, 'icon-button');
-    root.uburoomControls.content(autoOpen, { label: 'Queue settings', icon: 'settings', iconOnly: true });
-    autoOpen.id = 'queue-auto-open';
-    const autoLabel = node('label', continuation, undefined, 'watch-toggle-pill watch-toggle-secondary');
-    autoLabel.setAttribute('for', 'queue-auto-toggle');
-    const autoToggle = node('input', autoLabel);
-    autoToggle.type = 'checkbox';
-    autoToggle.id = 'queue-auto-toggle';
-    autoToggle.className = 'watch-toggle-input';
-    autoToggle.setAttribute('role', 'switch');
-    const autoBadge = node('span', autoLabel, undefined, 'watch-toggle-badge');
-    autoBadge.setAttribute('aria-hidden', 'true');
-    autoBadge.append(root.uburoomIcons.icon(doc, 'sparkle'));
-    node('span', autoLabel, 'Auto-queue', 'watch-toggle-label');
-    continuation.append(autoOpen);
     let rememberedAuto = null,
       rememberedRoom,
       lastAutoNextKey = '';
     autoToggle.addEventListener('change', async () => {
       if (autoPending) return;
       autoPending = true;
-      autoToggle.disabled = true;
+      renderContinuation();
       root.uburoomPopover?.show(autoLabel, { text: 'Saving…', state: 'loading' });
       const targetAuto = autoToggle.checked
         ? rememberedAuto || { mode: 'continue', scope: null, includeSpecials: false }
@@ -218,7 +178,7 @@
     autoplayToggle.addEventListener('change', async () => {
       if (autoplayPending) return;
       autoplayPending = true;
-      autoplayToggle.disabled = true;
+      renderContinuation();
       root.uburoomPopover?.show(autoplayLabel, { text: 'Saving…', state: 'loading' });
       try {
         await execute({ action: 'media.autoplay.set', args: { enabled: autoplayToggle.checked } });
@@ -233,17 +193,16 @@
 
     function renderContinuation() {
       const state = getState();
-      if (!autoplayPending) autoplayToggle.checked = state?.autoplay?.enabled !== false;
-      autoplayToggle.disabled = autoplayPending || !state?.capabilities?.autoplay;
-      autoplayLabel.classList.toggle('is-on', autoplayToggle.checked);
-      autoplayLabel.classList.toggle('is-disabled', autoplayToggle.disabled);
-      autoOpen.disabled = !state?.durable;
-      autoplayToggle.title = autoplayToggle.disabled
-        ? autoplayPending
+      autoplayPill.update({
+        checked: autoplayPending ? autoplayToggle.checked : state?.autoplay?.enabled !== false,
+        disabled: autoplayPending || !state?.capabilities?.autoplay,
+        reason: autoplayPending
           ? 'Saving Auto-play…'
-          : 'Auto-play is unavailable for your role.'
-        : 'Auto-play';
-      autoplayLabel.title = autoplayToggle.title;
+          : !state?.capabilities?.autoplay
+            ? 'Auto-play is unavailable for your role.'
+            : '',
+      });
+      autoOpen.disabled = !state?.durable;
       autoOpen.title = autoOpen.disabled ? 'Join a room to change queue settings.' : 'Queue settings';
       const auto = state?.queueSummary?.autoQueue;
       if (rememberedRoom !== state?.id) {
@@ -252,16 +211,15 @@
       }
       if (auto?.mode && auto.mode !== 'off')
         rememberedAuto = { mode: auto.mode, scope: auto.scope, includeSpecials: auto.includeSpecials };
-      if (!autoPending) autoToggle.checked = !!auto?.mode && auto.mode !== 'off';
-      autoToggle.disabled = autoPending || !state?.capabilities?.editQueue;
-      autoLabel.classList.toggle('is-on', autoToggle.checked);
-      autoLabel.classList.toggle('is-disabled', autoToggle.disabled);
-      autoToggle.title = autoToggle.disabled
-        ? autoPending
+      autoPill.update({
+        checked: autoPending ? autoToggle.checked : !!auto?.mode && auto.mode !== 'off',
+        disabled: autoPending || !state?.capabilities?.editQueue,
+        reason: autoPending
           ? 'Saving Auto-queue…'
-          : 'Queue editing is unavailable for your role.'
-        : 'Auto-queue';
-      autoLabel.title = autoToggle.title;
+          : !state?.capabilities?.editQueue
+            ? 'Queue editing is unavailable for your role.'
+            : '',
+      });
       if (state?.autoplay?.error && state.autoplay.error !== lastAutoplayError) {
         root.uburoomPopover?.show(autoplayLabel, { text: state.autoplay.error, state: 'error' });
       }
@@ -686,25 +644,11 @@
 
     function centerCurrent(smooth = false) {
       if (!layout.clientWidth) return;
-      if (view === 'list') {
-        layout.style.paddingBlock = Math.max(0, (layout.clientHeight - nowPlayingBox.offsetHeight) / 2) + 'px';
-        const r = nowPlayingBox.getBoundingClientRect(),
-          bounds = layout.getBoundingClientRect();
-        layout.scrollTo({
-          top: layout.scrollTop + r.top - bounds.top - (layout.clientHeight - r.height) / 2,
-          behavior: smooth ? motion() : 'instant',
-        });
-        centerPending = false;
-        return;
-      }
-      layout.style.paddingBlock = '';
-      layout.style.paddingInline = '0px';
-      const inset = Math.max(0, (layout.clientWidth - nowPlayingBox.offsetWidth) / 2);
-      layout.style.paddingInline = inset + 'px';
+      layout.style.paddingBlock = Math.max(0, (layout.clientHeight - nowPlayingBox.offsetHeight) / 2) + 'px';
       const r = nowPlayingBox.getBoundingClientRect(),
         bounds = layout.getBoundingClientRect();
       layout.scrollTo({
-        left: layout.scrollLeft + r.left - bounds.left - inset,
+        top: layout.scrollTop + r.top - bounds.top - (layout.clientHeight - r.height) / 2,
         behavior: smooth ? motion() : 'instant',
       });
       centerPending = false;
@@ -717,14 +661,13 @@
       );
     }
     function nearestEntry() {
-      const bounds = layout.getBoundingClientRect(),
-        horizontal = view === 'cards';
-      const center = horizontal ? bounds.left + layout.clientWidth / 2 : bounds.top + layout.clientHeight / 2;
+      const bounds = layout.getBoundingClientRect();
+      const center = bounds.top + layout.clientHeight / 2;
       let closest,
         distance = Infinity;
       for (const row of entries()) {
         const rect = row.getBoundingClientRect();
-        const delta = Math.abs((horizontal ? rect.left + rect.width / 2 : rect.top + rect.height / 2) - center);
+        const delta = Math.abs(rect.top + rect.height / 2 - center);
         if (delta < distance) {
           closest = row;
           distance = delta;
@@ -736,17 +679,10 @@
       if (!target || timeline.hidden) return;
       const rect = target.getBoundingClientRect(),
         bounds = layout.getBoundingClientRect();
-      layout.scrollTo(
-        view === 'cards'
-          ? {
-              left: layout.scrollLeft + rect.left - bounds.left - (layout.clientWidth - rect.width) / 2,
-              behavior: smooth ? motion() : 'instant',
-            }
-          : {
-              top: layout.scrollTop + rect.top - bounds.top - (layout.clientHeight - rect.height) / 2,
-              behavior: smooth ? motion() : 'instant',
-            },
-      );
+      layout.scrollTo({
+        top: layout.scrollTop + rect.top - bounds.top - (layout.clientHeight - rect.height) / 2,
+        behavior: smooth ? motion() : 'instant',
+      });
       updateNavigation();
     }
     function directionTarget(direction) {
@@ -756,13 +692,13 @@
       if (index === -1) return undefined;
       return rows[index + direction];
     }
-    function scrollCards(direction) {
+    function scrollEntries(direction) {
       centerEntry(directionTarget(direction));
     }
     function updateNavigation() {
       if (!layout.clientWidth) return;
-      previousCard.disabled = !directionTarget(-1);
-      nextCard.disabled = !directionTarget(1);
+      previousButton.disabled = !directionTarget(-1);
+      nextButton.disabled = !directionTarget(1);
     }
     let navFrame;
     function scheduleNavigation() {
@@ -773,25 +709,13 @@
       });
     }
 
-    function updateView() {
-      renderHeaderBadge(getState()?.queueSummary);
-      viewButtons.forEach((b, i) => b.setAttribute('aria-pressed', String(view === (i ? 'list' : 'cards'))));
-      navigation.hidden = false;
-      previousCard.querySelector('svg')?.replaceWith(root.uburoomIcons.icon(doc, view === 'cards' ? 'left' : 'up'));
-      nextCard.querySelector('svg')?.replaceWith(root.uburoomIcons.icon(doc, view === 'cards' ? 'right' : 'down'));
-      layout.tabIndex = 0;
-      layout.style.paddingBlock = '';
-      if (view === 'list') layout.style.paddingInline = '';
-      requestAnimationFrame(() => centerCurrent());
-    }
-
     layout.addEventListener('scroll', scheduleNavigation, { passive: true });
     layout.addEventListener('keydown', event => {
       if (event.target !== layout) return;
-      if ((view === 'cards' ? ['ArrowLeft', 'ArrowRight'] : ['ArrowUp', 'ArrowDown']).includes(event.key)) {
+      if (['ArrowUp', 'ArrowDown'].includes(event.key)) {
         event.preventDefault();
         event.stopPropagation();
-        scrollCards(['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1);
+        scrollEntries(event.key === 'ArrowUp' ? -1 : 1);
       } else if (event.key === 'Home') {
         event.preventDefault();
         event.stopPropagation();
@@ -805,7 +729,8 @@
       measuredWidth = layout.clientWidth;
       if (resized || centerPending) centerCurrent();
     }).observe(layout);
-    updateView();
+    renderHeaderBadge(getState()?.queueSummary);
+    requestAnimationFrame(() => centerCurrent());
 
     const images = new Map();
     const imageRequests = new Map();
@@ -957,12 +882,13 @@
           state.queueSummary?.historyCount ||
           currentHistory.items.length
         );
-      views.hidden = toolbar.hidden = timeline.hidden = noEntries;
+      timeline.hidden = centerButton.hidden = noEntries;
+      toolbar.hidden = autoOpen.hidden = !state;
       emptyScreen.hidden = !noEntries;
-      continuation.hidden = !state;
-      host.dataset.view = noEntries ? 'empty' : view;
+      host.dataset.view = noEntries ? 'empty' : 'list';
       host.classList.toggle('queue-is-empty', noEntries);
-      emptyTitle.textContent = state ? 'The queue is empty' : 'Join a room to use the queue';
+      emptyTitle.textContent = state ? 'The queue is empty' : 'The queue lives in a room';
+      emptyText.hidden = !!state;
       emptyBrowse.disabled = !getMe?.() || (!!state && !state.canBrowse);
     }
 
@@ -1010,7 +936,6 @@
         state?.capabilities?.playPause,
         state?.capabilities?.editQueue,
         state?.capabilities?.chooseMedia,
-        view,
       ]);
       if (currentKey !== key) {
         const changedItem = currentId !== current?.id;
@@ -1037,7 +962,7 @@
         const progress = node('progress', body, undefined, 'queue-progress');
         progress.setAttribute('aria-label', 'Current video progress');
         const actions = node('div', nowPlayingBox, undefined, 'queue-entry-actions');
-        node('span', actions, '', 'queue-card-caption queue-playback-state');
+        node('span', actions, '', 'queue-entry-caption queue-playback-state');
         const playBtn = button(
           actions,
           'Play',
@@ -1108,7 +1033,7 @@
       const duration = state?.queueSummary?.current?.duration || state?.state?.duration || 0;
       let remaining = Math.max(0, duration - (state?.state?.position || 0));
       const ranks = upcomingView.querySelectorAll('.queue-rank');
-      const captions = upcomingView.querySelectorAll('.queue-card-caption');
+      const captions = upcomingView.querySelectorAll('.queue-entry-caption');
       const items = currentQueue.items || [];
       items.forEach((item, i) => {
         if (ranks[i]) {
@@ -1120,9 +1045,8 @@
       });
       const autoRow = upcomingView.querySelector('.queue-entry-auto');
       if (autoRow) {
-        const autoCaption = autoRow.querySelector('.queue-card-caption');
-        if (autoCaption)
-          autoCaption.textContent = view === 'list' ? 'Auto · Up in ' + formatTime(remaining) : 'Auto-queue';
+        const autoCaption = autoRow.querySelector('.queue-entry-caption');
+        if (autoCaption) autoCaption.textContent = 'Auto · Up in ' + formatTime(remaining);
       }
     }
 
@@ -1152,7 +1076,7 @@
         action(
           moves,
           'Move earlier',
-          view === 'cards' ? 'left' : 'up',
+          'up',
           () => moveItem(item.id, item.rank - 1),
           !canEdit || i === 0,
           'queue-action-up',
@@ -1160,7 +1084,7 @@
         action(
           moves,
           'Move later',
-          view === 'cards' ? 'right' : 'down',
+          'down',
           () => moveItem(item.id, item.rank + 1),
           !canEdit || item.rank === currentQueue.total - 1,
           'queue-action-down',
@@ -1171,7 +1095,7 @@
         title(info, item, 'queue-entry-title');
         node('span', info, formatTime(item.duration), 'queue-meta');
         const actions = node('div', row, undefined, 'queue-entry-actions');
-        node('span', actions, 'Queue', 'queue-card-caption');
+        node('span', actions, 'Queue', 'queue-entry-caption');
         action(actions, 'Play now', 'play', () => playEntry(item.id, false), !canChoose, 'queue-action-play');
         const skipLabel = i === 0 ? 'Skip to' : 'Skip ' + i + (i === 1 ? ' item to' : ' items to');
         action(
@@ -1218,7 +1142,7 @@
         title(info, autoNext, 'queue-entry-title');
         node('span', info, formatTime(autoNext.duration), 'queue-meta');
         const actions = node('div', row, undefined, 'queue-entry-actions');
-        node('span', actions, 'Auto-queue', 'queue-card-caption');
+        node('span', actions, 'Auto-queue', 'queue-entry-caption');
         action(
           actions,
           'Play now',
@@ -1412,7 +1336,7 @@
           'queue-meta',
         );
         const actions = node('div', row, undefined, 'queue-entry-actions');
-        node('span', actions, 'History', 'queue-card-caption');
+        node('span', actions, 'History', 'queue-entry-caption');
         action(
           actions,
           'Restart from here',
@@ -1433,8 +1357,7 @@
     }
 
     function renderTab() {
-      const scroll = layout.scrollLeft,
-        scrollTop = layout.scrollTop;
+      const scrollTop = layout.scrollTop;
       footer.querySelector('.queue-footer-actions')?.remove();
       renderUpcoming();
       renderHistory();
@@ -1444,27 +1367,9 @@
           imageObserver.unobserve(img);
           observedImages.delete(img);
         }
-      layout.scrollLeft = scroll;
       layout.scrollTop = scrollTop;
-      if (moveFollow && view === 'cards') {
-        const follow = moveFollow;
-        requestAnimationFrame(() => {
-          const row = [...upcomingView.querySelectorAll('.queue-entry')].find(
-            item => item.dataset.entryId === follow.entryId,
-          );
-          if (!row || moveFollow !== follow) return;
-          const delta = row.getBoundingClientRect().left - layout.getBoundingClientRect().left - follow.offset;
-          layout.scrollTo({ left: layout.scrollLeft + delta, behavior: motion() });
-          if (follow.focus)
-            row
-              .querySelector(follow.direction < 0 ? '.queue-action-up' : '.queue-action-down')
-              ?.focus({ preventScroll: true });
-        });
-      } else if (centerPending) requestAnimationFrame(() => centerCurrent());
-      else {
-        layout.scrollLeft = scroll;
-        updateNavigation();
-      }
+      if (centerPending) requestAnimationFrame(() => centerCurrent());
+      else updateNavigation();
       scheduleNavigation();
     }
 
@@ -1567,32 +1472,14 @@
     async function moveItem(entryId, targetRank) {
       const state = getState();
       if (!state?.id) return;
-      const item = currentQueue.items.find(item => item.id === entryId);
-      const row = [...upcomingView.querySelectorAll('.queue-entry')].find(row => row.dataset.entryId === entryId);
-      const follow =
-        view === 'cards' && row
-          ? {
-              entryId,
-              direction: targetRank - item.rank,
-              offset: row.getBoundingClientRect().left - layout.getBoundingClientRect().left,
-              focus: row.contains(doc.activeElement),
-            }
-          : null;
-      moveFollow = follow;
-      try {
-        await request('/api/watch/rooms/' + state.id + '/queue', {
-          action: 'move',
-          entryId,
-          targetRank,
-          expectedRevision: queueRevision(state),
-        });
-        await changed();
-        await fetchData(true);
-        // renderTab schedules the follow after the new order has been laid out.
-        await new Promise(resolve => requestAnimationFrame(resolve));
-      } finally {
-        if (moveFollow === follow) moveFollow = null;
-      }
+      await request('/api/watch/rooms/' + state.id + '/queue', {
+        action: 'move',
+        entryId,
+        targetRank,
+        expectedRevision: queueRevision(state),
+      });
+      await changed();
+      await fetchData(true);
     }
 
     async function removeItem(entryId) {
@@ -1729,15 +1616,14 @@
     let rememberedPosition;
     return {
       rememberPosition() {
-        if (layout.clientWidth)
-          rememberedPosition = { room: getState()?.id, view, left: layout.scrollLeft, top: layout.scrollTop };
+        if (layout.clientWidth) rememberedPosition = { room: getState()?.id, top: layout.scrollTop };
       },
       restorePosition() {
         const saved = rememberedPosition;
-        if (layout.clientWidth && saved?.room === getState()?.id && saved.view === view)
+        if (layout.clientWidth && saved?.room === getState()?.id)
           requestAnimationFrame(() => {
             if (!layout.clientWidth) return;
-            layout.scrollTo({ left: saved.left, top: saved.top, behavior: 'instant' });
+            layout.scrollTo({ top: saved.top, behavior: 'instant' });
             updateNavigation();
           });
       },

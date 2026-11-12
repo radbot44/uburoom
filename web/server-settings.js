@@ -103,9 +103,9 @@
           checked: !!(own || inherited),
           disabled: busy || !draft || item.blocked || inherited,
           reason: inherited
-            ? 'Inherited from participants'
+            ? 'Inherited from viewers'
             : item.blocked
-              ? 'Room management is unavailable to participants'
+              ? 'Room management is unavailable to viewers'
               : '',
         });
       }
@@ -203,18 +203,18 @@
     for (const [name, label] of [
       ['max_saved', 'Saved rooms limit'],
       ['max_open', 'Open rooms limit'],
-      ['max_members', 'People per room'],
+      ['max_members', 'Viewers per room'],
       ['max_people', 'People on the server'],
       ['recovery_seconds', 'Reconnect window (seconds)'],
       ['max_queue', 'Upcoming videos per room'],
     ])
       field(capacity, 'rooms.' + name, label, 'number');
     node('h3', panels.rooms, 'Default room permissions');
-    node('p', panels.rooms, 'Defaults for new rooms. Hosts also receive participant permissions.', 'hint');
+    node('p', panels.rooms, 'Defaults for new rooms. Hosts also receive viewer permissions.', 'hint');
     const table = node('table', panels.rooms, null, 'room-permission-table');
     table.setAttribute('aria-label', 'Default room permissions');
     const head = node('tr', node('thead', table));
-    for (const text of ['Permission', 'Host', 'Participant']) {
+    for (const text of ['Permission', 'Host', 'Viewer']) {
       const cell = node('th', head, text);
       cell.scope = 'col';
       if (text !== 'Permission') cell.dataset.permissionRole = text === 'Host' ? 'host' : 'viewer';
@@ -233,16 +233,16 @@
       deleteRoom: 'Delete room',
       continueWithoutHost: 'Continue without hosts',
       addHosts: 'Add hosts',
-      kickParticipants: 'Kick participants',
+      kickParticipants: 'Kick viewers',
     })) {
       const row = node('tr', body),
         heading = node('th', row, label);
       heading.scope = 'row';
       for (const role of ['host', 'viewer']) {
         const key = 'rooms.' + (role === 'host' ? 'host' : 'viewer') + '_permissions';
-        labels[key] = (role === 'host' ? 'Host' : 'Participant') + ' permissions';
+        labels[key] = (role === 'host' ? 'Host' : 'Viewer') + ' permissions';
         const control = controls.permissionButton(document, {
-          label: (role === 'host' ? 'Host' : 'Participant') + ': ' + label,
+          label: (role === 'host' ? 'Host' : 'Viewer') + ': ' + label,
           action: () => {
             const value = draft[key];
             set(key, value.includes(cap) ? value.filter(name => name !== cap) : [...value, cap]);
@@ -392,7 +392,7 @@
                           closeRoom: 'Close room',
                           deleteRoom: 'Delete room',
                           addHosts: 'Add hosts',
-                          kickParticipants: 'Kick participants',
+                          kickParticipants: 'Kick viewers',
                           autoplay: 'Manage auto-play',
                           seek: 'Seek',
                         })[name] || name.toUpperCase(),

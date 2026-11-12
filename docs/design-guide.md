@@ -5,6 +5,7 @@ Use established components, styles and interactions. Follow [AGENTS.md](../AGENT
 ## 1. Principles & General Rules
 
 - **Safe DOM creation:** Construct SVG icons and DOM structures safely using `createElementNS` with static attribute dictionaries and safe DOM methods (`createElement`, `textContent`). Never use `innerHTML`, `outerHTML` or `insertAdjacentHTML`, preserving the public icon API, local asset set and accessible attributes.
+- **People vocabulary:** People in a room are **Viewers** (the roster heading, the Room settings Viewers section, counts and removal messages); **Hosts** is the role. The non-host role is labelled Viewer in permission tables. Do not use "Participants", "Roomies" or "People" as headings or labels for people in a room.
 - **Terse copy & form design:** Omit explanatory access-policy, server-audience and room-lifecycle prose from forms. Prefer short action labels and truthful status or error text. Avoid implementation explanations in end-user flows unless they help someone take a concrete action.
 - **Motion & interaction:** Respect `prefers-reduced-motion`; hover and press changes color or surface, not scale or position. Focus uses a visible 2px outline with a 2px offset (`var(--primary)`). Text labels may wrap to two lines; compact labels stay single-line.
 - **Theming & external extensions:** Support dark and light themes (`[data-theme=light]`) with high-contrast semantics. The watch page declares `<meta name="darkreader-lock">` so third-party dark mode extensions cannot recolor subtitle outlines, player controls or palette tokens.
@@ -24,6 +25,8 @@ Use established components, styles and interactions. Follow [AGENTS.md](../AGENT
 | Permission | Allowed/Denied thumbs |
 | Mute, Captions, Theater | Pressed icon button |
 
+A **switch pill** is the compact form of a switch for toolbars, where a full switch row does not fit: one shared helper and style for every use. State shows in the switch alone (accent fill when on, `var(--secondary)` for auto-queue); hover changes the surface to `var(--hover)`; disabled dims the whole pill to 40% with the reason as tooltip; read-only shows the switch at full strength without hover. Focus draws the standard ring around the whole pill.
+
 Keep action, selection, navigation and status distinct. Reuse established exceptions such as compact Admin/privacy controls rather than forcing every boolean into a switch.
 
 ### Sizing & token standards
@@ -41,6 +44,7 @@ Use existing theme tokens and shared control classes; do not recreate their sizi
 | Adjacent icon actions | 4px gap (`var(--watch-icon-gap)`) |
 | Focus | Visible 2px outline, 2px offset |
 | Switch | 36×22px component (`input.watch-switch`); 44px minimum row/target (`.watch-switch-label`) |
+| Switch pill | `uburoomControls.switchPill()`: 40px tall, 10px radius, `var(--elevated)` surface with no border or tint, 12px horizontal padding; 14px/500 label left, small 28×16px switch right (`.watch-switch-small`), 10px gap |
 | Segmented selector | 40px inner button height; 46px group height with 3px padding (`.watch-segmented`) |
 
 ### Scales and token families
@@ -92,7 +96,7 @@ Shared modal dialogs use `.watch-dialog` with a semantic `<header>` containing a
   - **Player settings (`#tracks-dialog`):** Groups related controls in two columns on wide screens, stacking in reading order on narrow screens.
   - **Account dialog (`#account-dialog`):** Houses Log out in `.dialog-footer.with-divider` separated from the scrollable account body.
   - **Rooms dialog (`#room-dialog`):** Places list tabs in `#room-chooser-nav`, uses the standard header Close button, and displays `.dialog-footer` (`[Cancel (.quiet)]` left, `[Create room (.primary)]` and `[Settings (.icon-button)]` right) only while in New room mode.
-  - **Room settings dialog (`#room-settings-dialog`):** Full settings workspace with navigation tabs, section panels, and header Close button.
+  - **Room settings dialog (`#room-settings-dialog`):** Full settings workspace with navigation tabs, section panels, and header Close button. At phone width the section tabs wrap onto a second row so every tab stays fully visible.
   - **Codec tester (`#codec-test-dialog`):** Semantic `<header>` with title and top-right Close button.
 
 ### Share Dialog (`#room-share-dialog`)
@@ -117,8 +121,9 @@ A watch night is a room with a time on it: every event belongs to one saved room
 ## 4. Panel Headings & Navigation
 
 - **Section heading icon badges:** 40×40px solid orange (`var(--primary)`) square, 10px radius (`var(--watch-control-radius)`), with dark artwork (`var(--on-primary): #101217`, 24px icon) using `armchair-2` for Room, `player-track-next` for Queue, and `video` for Media.
-- **Section toggle layout:** The minimize chevron stays immediately adjacent to the heading title with an 8px gap (`var(--watch-control-gap)`). `#options-title` sizes to content and truncates with ellipsis for long room names rather than expanding to fill the header. Panel heading titles (`.watch-panel-title`) use a 2px vertical offset (`position: relative; top: 2px;`) to optically center uppercase glyphs with the 40×40px badge icon, while the minimize chevron remains vertically centered in the row.
-- **Continuation toggles:** Compact split-style toggle pills (40px tall, 10px radius, button grey `var(--elevated)` surface without borders or outlines) featuring an accented 32×32px left minibutton (8px radius) with 24×24px stroke icon (`fill: none`), and normal button font text label on the right (`Inter`, 14px, 500 weight). When ON, the minibutton is filled with the accent color (orange `var(--primary)` with Play icon for Auto-play; pink `var(--secondary)` with Sparkle icon for Auto-queue) with dark artwork (`var(--on-primary): #101217`). When OFF, the minibutton and label are neutral/muted. The pill retains its button grey background without tints. Responsive collapse to icon-only buttons occurs only when labels do not fit (`<= 440px` queue width). Queue settings gear button (`#queue-auto-open`) remains standalone beside Auto-queue.
+- **Section toggle layout:** The minimize chevron stays immediately adjacent to the heading title with an 8px gap (`var(--watch-control-gap)`). `#options-title` sizes to the room name; when the name and the header actions do not fit on one line, the actions wrap to a row below and the name keeps the full first line, truncating with ellipsis only beyond it.
+- **Room panel:** The panel shows the room header actions, the viewer list and the room buttons; it has no permission controls. Permissions are edited in Room settings → Permissions only. A header action the person cannot use is shown disabled with its reason as tooltip (for example Schedule: "Only hosts can schedule events") rather than hidden; actions the server does not offer at all (scheduling limited by the server, guests) stay hidden. Panel heading titles (`.watch-panel-title`) use a 2px vertical offset (`position: relative; top: 2px;`) to optically center uppercase glyphs with the 40×40px badge icon, while the minimize chevron remains vertically centered in the row.
+- **Queue header:** The first row holds the Queue title and the Queue settings gear (`#queue-auto-open`, shown only in a room). The second row holds the Auto-play and Auto-queue switch pills followed by Center Now Playing. Pill labels are never dropped: when the row is too narrow the pills wrap to another line, and Center Now Playing keeps only its icon below a 480px queue width.
 - **Room navigation & URLs:** Room URLs use clean path slugs (`/room/<slug>`) instead of query parameters (`/watch?room=<id>`). The default room name format "Room <UbumfaWord>" generates a single-word slug (`<ubumfa-word>`), while custom room names generate hyphenated alphanumeric slugs with numeric suffixes for collisions (`slug-2`). Single-room mode and the multi-room lobby live at root (`/`), and `/watch` redirects to root or the active room slug. When opening an authorized room link (`/room/<slug>`), the page renders directly in room context without flashing outside-room lobby controls or unjoined placeholder states; unauthenticated visits show the sign-in form with return destination preserved, and closed event rooms show waiting-for-host without flashing lobby controls.
 
 ## 5. States and Playback Interaction
@@ -141,6 +146,8 @@ A watch night is a room with a time on it: every event belongs to one saved room
 - **Center player overlay:** Circular center player overlay toggles play/pause on hover for viewers authorized to manage playback, but remains hidden whenever disabled (for unauthorized viewers, spectators, or while commands are pending) so no faint or ineffectual overlay obscures video playback.
 - **Personal playback toggles:** Mute, Captions, Picture-in-Picture, and Theater use `aria-pressed` reflecting authoritative local state (`aria-pressed="true"` when active/muted) while retaining action labels, title cues, and volume state presentation.
 - **Desktop fullscreen idle:** In desktop fullscreen, a mouse at rest for 2.5 seconds hides the controls and pointer during playback. Controls stay visible while paused, hovered over player chrome, or with a menu or drawer open.
+- **Phone transport (600px wide and below):** The bar keeps Play, Previous, Next, Subtitles, Volume, Player settings and Fullscreen. Notifications and Picture-in-Picture move into Player settings, in a **Player** group shown only at this width: Notifications as a switch and Picture-in-Picture as a button, each mirroring the bar control's state and availability. Theater mode is not offered in the phone layout (it is already hidden there), so it has no entry.
+- **Phone volume:** Volume is the speaker button alone, its icon showing the level or muted. Tapping it opens a vertical slider above it with a mute button at the bottom; the panel closes after 3 seconds without interaction, when tapping elsewhere, and on Escape. Browsers that ignore page-set volume (iOS Safari) are detected at runtime: they never show a volume slider, at any width, and the speaker button mutes and unmutes directly.
 - **Mobile & iPhone fullscreen:** On iPhone, the Fullscreen button activates native video fullscreen using Apple's system controls; text subtitles use native captions there, and other subtitle formats require Burn-in.
 
 ### Quality & Stream Delivery
@@ -158,19 +165,22 @@ A watch night is a room with a time on it: every event belongs to one saved room
 
 ### Picture-in-Picture (PiP)
 
-- Button (`#pip`) sits in `.player-tools` adjacent to Theater and Fullscreen, operable via click or the `P` key (`KeyP`).
+- Button (`#pip`) sits in `.player-tools` adjacent to Theater and Fullscreen (in Player settings at 600px and below), operable via click or the `P` key (`KeyP`).
 - **Document PiP:** In browsers supporting the Document Picture-in-Picture API, PiP reparents `#stage` into the always-on-top window with the full hover-revealed transport bar, skip marker overlays, and client subtitle canvas layers intact, while displaying a centered `#pip-placeholder` with a Return video button on the main stage; closing the floating window or clicking return restores `#stage` cleanly to the page.
 - **Native video PiP fallback:** In browsers lacking Document PiP support, `#pip` falls back to native `<video>.requestPictureInPicture()`; when client-rendered subtitles (ASS, PGS, VobSub) are active, an informative action toast directs viewers to choose Burn-in in Subtitle settings to retain subtitles in PiP.
 
 ### Queue & Auto-Queue
 
-- **Now Playing outline:** Now Playing retains the primary accent outline (`outline: 2px solid var(--primary)` in cards view; inset box-shadow in list view) instead of a transient selected-item state.
-- **Auto-queue preview card:** Auto-queue maintains at most one preview card (`autoQueue.next`) at the tail of Upcoming, styled with `var(--secondary)` border and inset accent (including an explicit 2px `var(--secondary)` outline in cards view), an `AUTO` rank badge (`Auto-queue` / `Auto · Up in …` caption), and dedicated actions (Add to queue, Skip suggestion, Play now, Skip to) with no reorder arrows.
+- **Queue outside a room:** The Queue panel stays in the lobby. Its empty screen reads "The queue lives in a room" with the line "Join or create a room, then add movies and episodes here. They play in order for everyone." and one button, Browse media. It carries no room buttons; room actions live on the stage and in the Room panel. Inside a room an empty queue reads "The queue is empty" with Browse media.
+
+- **One layout:** The queue is a single vertically scrolling list (history, Now Playing, Upcoming). There is no card view and no layout selector.
+- **Now Playing outline:** Now Playing retains the primary accent outline (a 2px inset `var(--primary)` box-shadow) instead of a transient selected-item state.
+- **Auto-queue preview row:** Auto-queue maintains at most one preview row (`autoQueue.next`) at the tail of Upcoming, styled with a `var(--secondary)` inset accent, an `AUTO` rank badge (`Auto · Up in …` caption), and dedicated actions (Add to queue, Skip suggestion, Play now, Skip to) with no reorder arrows.
 - **Auto-queue options:** Queue settings offer four auto-queue modes (`Off`, `Continue`, `In order`, `Shuffle`) highlighting active selections with `var(--secondary)`. Auto-queue switches (`#queue-auto-toggle` and `#queue-auto-specials`) use `var(--secondary)` when active. In Media and library views, auto-queue source actions use `.library-auto-queue` and `.library-auto-queue-label` with the designated `sparkle` icon, `var(--secondary)` accent, 40px minimum height, 12px radius, 14px label, and label text "Set as auto-queue".
 
-### Room Participants & Telemetry
+### Room Viewers & Telemetry
 
-- **Viewer telemetry cards:** In the room participants roster, sync quality badges operate as interactive 24×24px buttons with transparent backgrounds (including on hover) opening an anchored floating viewer telemetry card (`.viewer-telemetry-card`). The card is interactive in fullscreen and its close button leaves the drawer open. Displays username, role badge, live playback status pill (Playing, Buffering, Paused, Seeking, Starting, Disconnected), sync score percentage, level badge, confidence, plain-language diagnostic explanation, measurement freshness, and multi-session device breakdown. Dismisses on Escape, outside click, or close button.
+- **Viewer telemetry cards:** In the room's Viewers roster, sync quality badges operate as interactive 24×24px buttons with transparent backgrounds (including on hover) opening an anchored floating viewer telemetry card (`.viewer-telemetry-card`). The card is interactive in fullscreen and its close button leaves the drawer open. Displays username, role badge, live playback status pill (Playing, Buffering, Paused, Seeking, Starting, Disconnected), sync score percentage, level badge, confidence, plain-language diagnostic explanation, measurement freshness, and multi-session device breakdown. Dismisses on Escape, outside click, or close button.
 - **Viewer health alerts:** In the roster, a guest's sync icon becomes `alert-triangle` while they experience an issue (warning color; danger for player error), held 15 seconds after it clears. Their telemetry card adds an issue line and host-only details list: quality and format, buffered seconds, stalls in the last minute, dropped frames, sync offset, reconnects, and device. Issues and limits are defined once in sync core: error; 2 stalls or 3 seconds stuck per minute; under 2 seconds buffered while playing; 10% dropped frames; Poor sync.
 - **Roles & guest presentation:** Host role badge and icon use theme-aware text (`var(--text)`), maintaining high contrast against both dark and light surfaces while room leader retains accent coloring (`var(--accent-text)`). Active library filter labels use `var(--accent-text)`. In the roster, guests whose name is not verified show their name in italics with the `user-question` icon, with accessible label and tooltip reading "Guest (name not verified)". People in a room as guests are never offered Make host, and the Account dialog offers guests no Connect buttons.
 - **Account provider rows:** Present actionable connect and reconnect controls based on identity state: Connect <Provider> when unlinked; Sign in to <Provider> when awaiting credentials; Reconnect when connected. Unlink remains separate and disabled whenever removing the identity would leave no enabled, usable sign-in method.
@@ -185,7 +195,7 @@ A watch night is a room with a time on it: every event belongs to one saved room
 ### Feedback Selection Hierarchy
 
 Follow a clear hierarchy for user and system feedback:
-- **Anchored popovers (`.watch-popover`) — Default for direct interactions:** The primary, general-purpose method for feedback triggered by an explicit user action (button clicks, toggle pills, copy operations, queue additions, inline saves). Do not show toasts or append inline `<p class="hint">` status lines for direct control interactions; tether a precision pill popover directly to the triggering control.
+- **Anchored popovers (`.watch-popover`) — Default for direct interactions:** The primary, general-purpose method for feedback triggered by an explicit user action (button clicks, switch pills, copy operations, queue additions, inline saves). Do not show toasts or append inline `<p class="hint">` status lines for direct control interactions; tether a precision pill popover directly to the triggering control.
 - **Toasts (`.watch-toast`) — Reserved for global, async, or actionable room events:** Reserved strictly for asynchronous or room-wide events occurring independently of a focused button, including background room updates (participant joined/left, disconnected/reconnecting), system and playback alerts (Plex connection issues, stream fallback, subtitle errors), actionable two-line prompts with buttons (host video checks with "View", remote viewer buffering with "Pause to wait", choppy playback with "Lower quality"), and keyboard-triggered actions where no mouse focus or trigger anchor exists (e.g. PiP hotkey).
 - **Inline status hints — Reserved for dialogs and static forms:** Reserved only for static containers (such as modal `<dialog>` windows or onboarding/login cards) that have dedicated, non-shifting space for multi-line explanations or persistent validation messages. Never use inline status hints in dynamic content panels or toolbars where they displace neighboring controls.
 
@@ -198,7 +208,7 @@ Reuse the shared toast system (`.watch-toast`); preserve established placement, 
 
 ### Anchored popover system
 
-Use the shared anchored popover (`.watch-popover`) for immediate, localized feedback tethered directly to interactive triggers (e.g. Auto-queue and Auto-play pills, quick permissions, roster host/kick actions, copy buttons, and account name saving), replacing distant inline layout notices and localized toasts.
+Use the shared anchored popover (`.watch-popover`) for immediate, localized feedback tethered directly to interactive triggers (e.g. Auto-queue and Auto-play switch pills, roster host/kick actions, copy buttons, and account name saving), replacing distant inline layout notices and localized toasts.
 - **Silhouette & Geometry (Precision Pill):** Full capsule (`border-radius: 999px`, 32px height, `0 12px` padding), single-line 12px text (`font-weight: 600`), and a 14×14px status icon. Uses a centered 7×7px diamond caret pointing to the trigger, automatically positioning above or below the control with viewport edge clamping.
 - **Surface & Material:** Solid `var(--card)` background (no glassmorphism/backdrop blur) with a 1px solid border (`var(--border)`) and `0 6px 20px rgba(0, 0, 0, 0.45)` shadow.
 - **Semantic States:**

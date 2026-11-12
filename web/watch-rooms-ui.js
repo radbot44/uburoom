@@ -13,7 +13,7 @@
     deleteRoom: 'Permanently delete room',
     continueWithoutHost: 'Continue without hosts',
     addHosts: 'Add hosts',
-    kickParticipants: 'Kick participants',
+    kickParticipants: 'Kick viewers',
   };
   const descriptions = {
     playPause: 'Start or pause playback for the room.',
@@ -393,13 +393,13 @@
       rosterRoom;
     const expand = $('room-participants-expand'),
       rosterFrame = $('room-roster-frame');
-    controls.content(expand, { icon: 'chevron', label: 'Expand participants', iconOnly: true });
+    controls.content(expand, { icon: 'chevron', label: 'Expand viewers', iconOnly: true });
     const settingsRoster = $('room-current-people'),
       settingsFrame = document.createElement('div');
     settingsFrame.className = 'room-roster-frame';
     settingsRoster.before(settingsFrame);
     settingsFrame.append(settingsRoster);
-    const settingsExpand = controls.button(document, { icon: 'chevron', label: 'Expand participants', iconOnly: true });
+    const settingsExpand = controls.button(document, { icon: 'chevron', label: 'Expand viewers', iconOnly: true });
     settingsExpand.id = 'room-settings-participants-expand';
     settingsExpand.hidden = true;
     settingsFrame.append(settingsExpand);
@@ -424,7 +424,7 @@
         button.hidden = !overflow && !expanded;
         frame.classList.toggle('has-overflow', overflow || expanded);
         button.setAttribute('aria-expanded', String(expanded));
-        button.setAttribute('aria-label', expanded ? 'Show fewer participants' : 'Expand participants');
+        button.setAttribute('aria-label', expanded ? 'Show fewer viewers' : 'Expand viewers');
         button.title = button.getAttribute('aria-label');
       }
     }
@@ -481,7 +481,7 @@
       renderLivePeople();
       if (inSettings) {
         renderSettings();
-        setSettingsStatus('Removing participant…');
+        setSettingsStatus('Removing viewer…');
       }
       try {
         if (inSettings ? details?.id !== id : getState()?.id !== id) throw new Error('Room changed; try again');
@@ -503,11 +503,11 @@
         await changed();
         if (inSettings && dialog.open && details?.id === id) {
           await open(id, 'people');
-          setSettingsStatus('Participant removed', true);
+          setSettingsStatus('Viewer removed', true);
         }
         if (trigger && !inSettings)
           root.uburoomPopover?.show(trigger, {
-            text: kick ? 'Participant removed' : 'Host role saved',
+            text: kick ? 'Viewer removed' : 'Host role saved',
             state: 'success',
           });
       } catch (error) {
@@ -586,7 +586,7 @@
               ? 'Host'
               : person.guest
                 ? 'Guest'
-                : 'Participant';
+                : 'Viewer';
         const glyph =
           person.role === 'creator'
             ? 'creator'
@@ -1097,7 +1097,7 @@
       if (!value.capabilities.addHosts) clearSearch();
       $('room-host-inheritance').textContent = value.permissions.allHosts
         ? 'Everyone is host. Everyone uses the host permissions below.'
-        : 'Hosts also receive participant permissions.';
+        : 'Hosts also receive viewer permissions.';
       $('room-permission-custom').classList.toggle('all-hosts', !!value.permissions.allHosts);
       const roster = $('room-current-people');
       delete roster.dataset.signature;
@@ -1181,7 +1181,7 @@
       for (const [label, role] of [
         ['Permission', ''],
         ['Host', 'host'],
-        ['Participant', 'viewer'],
+        ['Viewer', 'viewer'],
       ]) {
         const cell = node('th', header, label);
         cell.scope = 'col';
@@ -1236,7 +1236,7 @@
               role === 'viewer' &&
               ['roomSettings', 'closeRoom', 'deleteRoom', 'addHosts', 'kickParticipants'].includes(key);
             const control = permissionButton(cell, {
-              label: (role === 'host' ? 'Host' : 'Participant') + ': ' + label,
+              label: (role === 'host' ? 'Host' : 'Viewer') + ': ' + label,
               checked: !!value.permissions[role][key],
               disabled: busy || !value.capabilities.managePermissions || restricted,
               reason: busy
@@ -1430,21 +1430,10 @@
       for (const control of $('room-settings-nav').children)
         control.setAttribute('aria-current', String(control.dataset.section === value));
       $('room-settings-panels').scrollTop = 0;
-      requestAnimationFrame(() => {
-        const nav = $('room-settings-nav'),
-          selected = nav.querySelector('[aria-current=true]');
-        if (selected && matchMedia('(max-width:620px)').matches) {
-          nav.scrollTo({
-            left: selected.offsetLeft - nav.offsetLeft - (nav.clientWidth - selected.offsetWidth) / 2,
-            behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
-          });
-        }
-        updateNavigationEdges();
-      });
     }
     for (const [key, label] of [
       ['general', 'General'],
-      ['people', 'People'],
+      ['people', 'Viewers'],
       ['permissions', 'Permissions'],
       ['playback', 'Playback & queue'],
       ['manage', 'Manage'],
@@ -1452,14 +1441,6 @@
       const control = button($('room-settings-nav'), label, () => selectSection(key));
       control.dataset.section = key;
     }
-    function updateNavigationEdges() {
-      const nav = $('room-settings-nav'),
-        wrap = $('room-settings-navigation');
-      wrap.classList.toggle('hidden-before', nav.scrollLeft > 1);
-      wrap.classList.toggle('hidden-after', nav.scrollLeft + nav.clientWidth < nav.scrollWidth - 1);
-    }
-    $('room-settings-nav').addEventListener('scroll', updateNavigationEdges, { passive: true });
-    new ResizeObserver(updateNavigationEdges).observe($('room-settings-nav'));
     $('room-settings-nav').addEventListener('keydown', event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
@@ -1510,82 +1491,6 @@
     ])
       if (!$(id).querySelector('svg')) $(id).prepend(root.uburoomIcons.icon(document, icon));
     controls.content($('reopen'), { label: 'Reopen room', icon: 'reopen' });
-    let quickBusy = false,
-      quickRoom;
-    const quickControls = [];
-    for (const [role, title, icon] of [
-      ['viewer', 'Participants', 'users'],
-      ['host', 'Hosts', 'host'],
-    ]) {
-      const heading = node('h4', $('room-quick-switches'), undefined, 'room-control-row room-control-heading');
-      heading.append(root.uburoomIcons.icon(document, icon));
-      node('span', heading, title);
-      for (const [key, label] of [
-        ['playPause', 'Play/pause'],
-        ['seek', 'Seek'],
-        ['addQueue', 'Add to queue'],
-      ]) {
-        const row = node('div', $('room-quick-switches'), undefined, 'room-control-row');
-        node('span', row, label, 'room-control-name');
-        const control = controls.permissionButton(document, { label: title + ': ' + label });
-        const input = control.element;
-        input.dataset.quickPermission = key;
-        input.dataset.quickRole = role;
-        row.append(input);
-        quickControls.push(control);
-        input.addEventListener('click', async () => {
-          const state = getState(),
-            enabled = input.getAttribute('aria-pressed') !== 'true';
-          if (quickBusy || !state?.capabilities?.managePermissions) {
-            renderQuick();
-            return;
-          }
-          const id = state.id,
-            focused = document.activeElement === input;
-          quickBusy = true;
-          renderQuick();
-          root.uburoomPopover?.show(input, { text: 'Saving…', state: 'loading' });
-          try {
-            const current = await request('/api/watch/rooms/' + id + '/settings');
-            if (getState()?.id !== id) return;
-            if (!!current.allHosts !== !!state.allHosts) throw new Error('Room mode changed; check the controls again');
-            await request('/api/watch/rooms/' + id + '/settings', {
-              revision: current.revision,
-              change: { action: 'permissions', role, permissions: { [key]: enabled } },
-            });
-            await changed();
-            if (getState()?.id === id) root.uburoomPopover?.show(input, { text: 'Saved', state: 'success' });
-          } catch (error) {
-            if (getState()?.id === id) root.uburoomPopover?.show(input, { text: error.message, state: 'error' });
-          } finally {
-            quickBusy = false;
-            renderQuick();
-            if (focused && getState()?.id === id && document.activeElement === document.body) input.focus();
-          }
-        });
-      }
-    }
-    function renderQuick() {
-      const state = getState();
-      if (quickRoom !== state?.id) quickRoom = state?.id;
-      $('room-quick-permissions').hidden = !state?.durable;
-      const canEdit = !!state?.capabilities?.managePermissions;
-      $('room-quick-switches').hidden = false;
-      $('room-quick-switches').setAttribute('aria-busy', String(quickBusy));
-      for (const control of quickControls) {
-        const input = control.element;
-        const grants = input.dataset.quickRole === 'host' ? state?.hostPermissions : state?.participantPermissions;
-        control.update({
-          checked: !!grants?.[input.dataset.quickPermission],
-          disabled: quickBusy || !canEdit,
-          reason: quickBusy
-            ? 'Saving permissions…'
-            : !canEdit
-              ? 'Only the room leader or an active administrator can edit permissions'
-              : '',
-        });
-      }
-    }
     for (const [id, icon, label] of [
       ['room-settings-open', 'settings', 'Room settings'],
       ['room-settings-refresh', 'refresh', 'Refresh settings'],
@@ -1727,7 +1632,6 @@
       render() {
         $('reopen').hidden = !!getState() || !getMe()?.durableRooms || !!getMe()?.guestRoomId;
         $('lobby-reopen').hidden = !getMe()?.durableRooms || !!getMe()?.guestRoomId;
-        renderQuick();
         renderLivePeople();
         $('room-create-details').hidden =
           $('room-create-policy').hidden =

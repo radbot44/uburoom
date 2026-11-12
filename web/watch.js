@@ -1191,7 +1191,6 @@ function glyph(id, symbol) {
 for (const pair of [
   ['refresh', 'refresh'],
   ['room-symbol', 'armchair-2'],
-  ['roomies-symbol', 'oomark'],
   ['fullscreen', 'fullscreen'],
   ['join-playback', 'play'],
   ['player-play', 'play'],
@@ -1252,7 +1251,13 @@ const lobbyEvents = uburoomLobbyEvents.mount({
 });
 // The room header calendar button needs both hosting and the server's scheduling tier.
 function renderScheduleButton() {
-  $('room-schedule').hidden = !state?.durable || !state.canManage || !lobbyEvents.canSchedule();
+  // Shown to everyone the server lets schedule; disabled with its reason for people who are not hosts here.
+  const button = $('room-schedule'),
+    usable = !!state?.canManage;
+  button.hidden = !state?.durable || !lobbyEvents.canSchedule();
+  // aria-disabled keeps it focusable so the reason is reachable by keyboard and tooltip.
+  button.setAttribute('aria-disabled', String(!usable));
+  button.title = usable ? 'Schedule event' : 'Only hosts can schedule events';
 }
 const roomShare = uburoomShare.mount({
   request: api,
@@ -3525,7 +3530,7 @@ function renderVisibility() {
       label: state.viewers + ' / ' + (state.maxMembers || 20),
     });
     $('room-people-open').classList.remove('watch-control-responsive');
-    $('room-people-open').setAttribute('aria-label', 'People: ' + state.viewers + ' / ' + (state.maxMembers || 20));
+    $('room-people-open').setAttribute('aria-label', 'Viewers: ' + state.viewers + ' / ' + (state.maxMembers || 20));
   }
   roomUI.render();
   queueUI.render(state?.queueSummary);
@@ -3673,16 +3678,15 @@ async function shareInvite(invite = state?.invite, roomName = state?.roomName ||
   }
 }
 $('room-share').addEventListener('click', () => void roomShare.open(selected));
-$('room-schedule').addEventListener(
-  'click',
-  () =>
-    void roomEvents.open({
-      roomId: selected,
-      roomName: state?.roomName,
-      duration: () => state?.state?.duration,
-      onChange: () => lobbyEvents.refresh(),
-    }),
-);
+$('room-schedule').addEventListener('click', () => {
+  if ($('room-schedule').getAttribute('aria-disabled') === 'true') return;
+  void roomEvents.open({
+    roomId: selected,
+    roomName: state?.roomName,
+    duration: () => state?.state?.duration,
+    onChange: () => lobbyEvents.refresh(),
+  });
+});
 function renderTransport() {
   const available = !reconnecting && !!state?.mediaUrl,
     playback = available && state.canPlayback;
@@ -3711,9 +3715,9 @@ function renderTransport() {
   $('player-play').title = paused ? 'Play' : 'Pause';
   const isMuted = !!state?.state?.muted;
   renderVolumeIcon();
-  $('player-mute').setAttribute('aria-label', isMuted ? 'Unmute' : 'Mute');
-  $('player-mute').title = isMuted ? 'Unmute' : 'Mute';
-  $('player-mute').setAttribute('aria-pressed', isMuted ? 'true' : 'false');
+  // Player UI derives the speaker's name from this: Mute/Unmute, or Volume where it opens the phone panel.
+  if ($('player-mute').getAttribute('aria-pressed') !== String(isMuted))
+    $('player-mute').setAttribute('aria-pressed', String(isMuted));
   const joinBlocked =
     !autoplayBlocked &&
     (!playback || pending || !!state?.waitingForReady || !!state?.waitingForHost || !!state?.recovery);
@@ -5102,9 +5106,9 @@ for (const btn of $('room-settings-visibility-group')?.querySelectorAll('button'
 const roomOptionHints = {
   public: 'Eligible viewers can find and join this room.',
   private: 'Only the room leader and assigned hosts can join.',
-  'host-control': 'Hosts control playback and the queue. Participants have no controls.',
-  'play-pause': 'Participants can play and pause. Hosts control seeking, video choice and the queue.',
-  queue: 'Participants can use all playback and queue controls. Room management stays with hosts.',
+  'host-control': 'Hosts control playback and the queue. Viewers have no controls.',
+  'play-pause': 'Viewers can play and pause. Hosts control seeking, video choice and the queue.',
+  queue: 'Viewers can use all playback and queue controls. Room management stays with hosts.',
   custom: 'Custom permissions. Selecting this option does not change any permissions.',
 };
 for (const group of [

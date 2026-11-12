@@ -743,3 +743,100 @@ body.pip-window :is(#theater, #drawer-open) {
     transition: none;
   }
 }
+
+/* Volume: an inline slider on wider screens; at 600px and below the speaker opens a vertical slider
+   panel above it with a mute button at the bottom. Browsers that ignore page-set volume get mute only. */
+.volume-panel {
+  display: contents;
+}
+.volume-panel-mute,
+.volume-mute-only #player-volume {
+  display: none;
+}
+@media (min-width: 601px) {
+  #player-extras {
+    display: none;
+  }
+  /* The group after the hidden Player group keeps the first-group spacing. */
+  #tracks-dialog .player-settings-column > #player-extras:first-child + .settings-group {
+    margin-top: var(--space-8);
+  }
+}
+@media (max-width: 600px) {
+  .player-tools > :is(#notifications-toggle, #pip, #theater) {
+    display: none !important;
+  }
+  .volume-control {
+    position: relative;
+  }
+  .volume-panel {
+    position: absolute;
+    bottom: calc(100% + var(--space-6));
+    left: 50%;
+    translate: -50% 0;
+    z-index: var(--z-player-menu);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-8);
+    padding: var(--space-12) var(--space-4) var(--space-4);
+    border: 1px solid var(--chrome-border);
+    border-radius: var(--radius-12);
+    background: var(--chrome-background-a95);
+    box-shadow: 0 4px 12px var(--black-a53);
+  }
+  .volume-control.volume-open .volume-panel {
+    display: flex;
+  }
+  #stage .volume-control .volume-panel #player-volume {
+    writing-mode: vertical-lr;
+    direction: rtl;
+    width: 24px;
+    height: 96px;
+    margin: 0;
+  }
+  .volume-panel .volume-panel-mute {
+    display: inline-grid;
+    place-items: center;
+  }
+  .volume-control.volume-open #player-mute {
+    color: var(--chrome-text);
+    background: var(--chrome-elevated);
+  }
+}
+.player-extras > button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  justify-self: start;
+}
+.player-extras > button svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.player-extras[hidden],
+.player-extras [hidden] {
+  display: none !important;
+}
+/* Switch rows in Player settings keep the shared switch look over the dialog's text-input styling. */
+#tracks-dialog label.watch-switch-label {
+  display: flex;
+  align-items: center;
+  gap: var(--watch-control-gap);
+  min-height: 44px;
+  margin: var(--space-8) 0 0;
+}
+#tracks-dialog input.watch-switch {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+}
+#tracks-dialog input.watch-switch:checked {
+  background: var(--primary);
+}

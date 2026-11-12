@@ -26,9 +26,21 @@
     if (action) control.addEventListener('click', action);
     return control;
   }
+  // A label with a small switch (or an Allowed/Denied thumb) on a button-grey surface. `accent: 'secondary'`
+  // colours the switch with the auto-queue accent; `reason` replaces the tooltip while disabled.
   function switchPill(
     doc,
-    { label, checked = false, editable = true, disabled = false, onChange, action, variant = 'switch' },
+    {
+      label,
+      checked = false,
+      editable = true,
+      disabled = false,
+      reason = '',
+      onChange,
+      action,
+      variant = 'switch',
+      accent = 'primary',
+    },
   ) {
     const element = doc.createElement('div');
     element.className = 'watch-switch-pill';
@@ -47,7 +59,9 @@
     state.className = 'watch-switch-pill-state';
     const input = doc.createElement('input');
     input.type = 'checkbox';
-    input.className = permission ? 'watch-permission-input' : 'watch-switch';
+    input.className = permission
+      ? 'watch-permission-input'
+      : 'watch-switch watch-switch-small' + (accent === 'secondary' ? ' watch-switch-secondary' : '');
     if (!permission) input.setAttribute('role', 'switch');
     const indicator = permission ? doc.createElement('span') : undefined;
     if (indicator) {
@@ -59,16 +73,26 @@
       ? button(doc, { label: action.label, icon: action.icon || 'settings', iconOnly: true, action: action.onClick })
       : undefined;
     actionButton?.classList.add('watch-switch-pill-action');
-    function update({ checked = input.checked, editable = currentEditable, disabled = input.disabled } = {}) {
+    let currentReason = reason,
+      currentDisabled = disabled;
+    function update({
+      checked = input.checked,
+      editable = currentEditable,
+      disabled = currentDisabled,
+      reason = currentReason,
+    } = {}) {
       currentEditable = editable;
+      currentReason = reason;
+      currentDisabled = disabled;
       input.checked = checked;
-      input.disabled = disabled;
+      // Read-only switches still show their state: a switch that cannot be changed, at full strength.
+      input.disabled = disabled || !editable;
       element.classList.toggle('is-on', checked);
       element.classList.toggle('is-readonly', !editable);
       element.classList.toggle('is-disabled', disabled);
       element.classList.toggle('watch-switch-pill-split', !!actionButton && editable);
       const stateText = permission ? (checked ? ': Allowed' : ': Denied') : checked ? ': On' : ': Off';
-      element.title = label + stateText;
+      element.title = disabled && reason ? reason : label + stateText;
       if (indicator) {
         const slug = checked ? 'thumb-up' : 'thumb-down';
         indicator.replaceChildren(root.uburoomIcons.icon(doc, slug));
@@ -76,7 +100,7 @@
       const body = editable ? controlLabel : badge;
       if (element.firstChild !== body) {
         if (editable) controlLabel.replaceChildren(text, input);
-        else badge.replaceChildren(text, state);
+        else badge.replaceChildren(text, permission ? state : input);
         if (indicator) body.append(indicator);
         element.replaceChildren(body);
         if (editable && actionButton) element.append(actionButton);
@@ -84,9 +108,9 @@
       state.textContent = stateText;
       if (actionButton) actionButton.disabled = disabled;
     }
-    update({ checked, editable, disabled });
+    update({ checked, editable, disabled, reason });
     input.addEventListener('change', event => {
-      update({ checked: input.checked, editable: currentEditable, disabled: input.disabled });
+      update({ checked: input.checked });
       onChange?.(event);
     });
     return { element, input, update };

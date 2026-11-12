@@ -140,7 +140,7 @@ Every room has exactly one active invite code: two six-letter ubumfa words separ
 - **Explicit revocations and blocks:**
   - Kicking a guest terminates their guest session immediately (`endGuestSessions`) and blocks both their account and browser marker (`uburoom_device`) from the invite via `watch_room_invite_blocks`.
   - Kicking an invited member of a private room revokes their invite (`DELETE FROM watch_room_invites`) and blocks their account in `watch_room_invite_blocks`.
-  - Revoking via Room settings → People applies the same revocation and block for an offline user.
+  - Revoking via Room settings → Viewers applies the same revocation and block for an offline user.
   - Remove all guests terminates every guest session in the room and rerolls the invite code.
   - Blocks in `watch_room_invite_blocks` expire when the room invite code is rerolled. All removals emit the kick notice, terminate the session, and close the socket.
 - **Guest session boundaries:** Guest sessions see only their assigned room, cannot create rooms or enter Admin mode, cannot modify the invite, and are treated as viewers for every capability. Room records list current guests in `guests`, which the shared role check treats as viewers even under All hosts; host assignment rejects them. Private rooms admit leaders, hosts, invited members, and current guests (`RoomPolicy.admitted`). Reopening a closed room remains restricted to leaders, assigned hosts, and administrators; a guest whose room is closed is notified that it is unavailable.

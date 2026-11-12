@@ -76,13 +76,8 @@ async function main() {
       assert.equal(await run('getComputedStyle(document.querySelector(".queue-heading")).gap'), '8px');
       assert.equal(await run('getComputedStyle(document.querySelector(".queue-quick-controls")).gap'), '8px');
       assert.equal(await run('getComputedStyle(document.querySelector(".queue-header")).rowGap'), '16px');
-      assert.equal(await run('getComputedStyle(document.querySelector(".queue-view-switch")).borderRadius'), '12px');
-      assert.equal(await run('document.querySelector(".queue-view-button>svg").getBoundingClientRect().width'), 24);
-      assert.equal(
-        await run('$("queue-view-cards").getBoundingClientRect().width >= 40'),
-        true,
-        'Selected Queue view has at least 40px width',
-      );
+      assert.equal(await run('!document.querySelector(".queue-view-switch")'), true, 'Queue has one layout');
+      assert.equal(await run('$("queue-content").dataset.view'), 'list');
       const footerGeometry = await run(
         `(()=>{const room=getComputedStyle($("switch-room"));return ["queue-clear-history","queue-shuffle","queue-clear-queue"].map(id=>{const e=$(id),r=e.getBoundingClientRect(),s=getComputedStyle(e);return [id,e.className,r.height,s.borderRadius,s.backgroundColor,s.borderTopWidth,room.borderRadius,room.backgroundColor]})})()`,
       );
@@ -127,35 +122,7 @@ async function main() {
       );
       assert.equal(
         await run(
-          '$("queue-view-cards").getBoundingClientRect().height < 40 && document.querySelector(".queue-view-switch").getBoundingClientRect().height===40',
-        ),
-        true,
-      );
-      assert.equal(
-        await run(
-          'getComputedStyle($("queue-view-cards")).backgroundColor===getComputedStyle(document.documentElement).getPropertyValue("--primary").trim()',
-        ),
-        true,
-      );
-      assert.equal(await run('$("queue-view-cards").getAttribute("aria-pressed")'), 'true');
-      assert.equal(await run('$("queue-view-list").tabIndex'), -1);
-      await run('$("queue-view-cards").focus()');
-      await browser.key(page, 'ArrowRight');
-      assert.equal(await run('document.activeElement.id'), 'queue-view-list');
-      assert.equal(await run('$("queue-view-cards").getAttribute("aria-pressed")'), 'true', 'Arrows move focus only');
-      await browser.key(page, 'Enter');
-      assert.equal(await run('$("queue-view-list").getAttribute("aria-pressed")'), 'true');
-      assert.equal(await run('$("queue-content").dataset.view'), 'list');
-      assert.equal(await run('getComputedStyle($("queue-view-list")).outlineWidth'), '2px');
-      assert.equal(
-        await run(
-          'getComputedStyle($("queue-view-list")).outlineColor===getComputedStyle(document.documentElement).getPropertyValue("--primary").trim()',
-        ),
-        true,
-      );
-      assert.equal(
-        await run(
-          '["queue-autoplay","queue-auto-toggle"].every(id=>$(id).getAttribute("role")==="switch" && Math.round($(id).closest("label").getBoundingClientRect().height)===40 && Math.round($(id).closest("label").querySelector(".watch-toggle-badge").getBoundingClientRect().width)===32 && Math.round($(id).closest("label").querySelector(".watch-toggle-badge svg").getBoundingClientRect().width)===24)',
+          '["queue-autoplay","queue-auto-toggle"].every(id=>{const pill=$(id).closest(".watch-switch-pill"),label=pill.querySelector(".watch-switch-pill-label");return $(id).getAttribute("role")==="switch" && Math.round(pill.getBoundingClientRect().height)===40 && label.getBoundingClientRect().width>0 && $(id).getBoundingClientRect().width===28})',
         ),
         true,
       );
@@ -165,7 +132,7 @@ async function main() {
         $("queue-autoplay").closest("label").click()`);
       assert.equal(
         await run(
-          '$("queue-autoplay").disabled && !$("queue-auto-open").disabled && document.querySelector(".queue-notice").textContent==="Saving Auto-play…"',
+          '$("queue-autoplay").disabled && !$("queue-auto-open").disabled && $("queue-autoplay").closest(".watch-switch-pill").title==="Saving Auto-play…"',
         ),
         true,
       );
@@ -200,7 +167,7 @@ async function main() {
       assert.equal(await run('$("room-autoplay").closest("label").getBoundingClientRect().height'), 44);
       await shot('desktop-settings');
       await run('$("room-settings-dialog").close()');
-      await run('$("queue-view-cards").click();$("queue-panel").scrollIntoView({block:"start"})');
+      await run('$("queue-panel").scrollIntoView({block:"start"})');
       await pause(1500);
       assert.equal(
         await run(
@@ -220,26 +187,8 @@ async function main() {
       await browser.move(page, 0, 0);
       await browser.viewport(page, 390, 844);
       await run('$("section-tab-queue").click()');
-      await run('$("queue-view-cards").click()');
       await pause(1500);
       assert.equal(await run('getComputedStyle(document.querySelector(".queue-heading")).fontSize'), '24px');
-      assert.equal(
-        await run('$("queue-view-list").querySelector("span").getBoundingClientRect().width'),
-        0,
-        'Narrow view label hidden',
-      );
-      assert.equal(
-        await run('!!$("queue-view-list").getAttribute("aria-label") && !!$("queue-view-list").title'),
-        true,
-      );
-      const viewInsets = await run(
-        '(()=>{const b=$("queue-view-cards").getBoundingClientRect(),i=$("queue-view-cards").querySelector("svg").getBoundingClientRect();return [b.width,i.width,i.left-b.left,b.right-i.right]})()',
-      );
-      assert.equal(
-        viewInsets[0] >= 40 && viewInsets[2] >= 8 && viewInsets[3] >= 8,
-        true,
-        'Selected narrow view gives its icon at least 8px on either side: ' + JSON.stringify(viewInsets),
-      );
       assert.equal(await run('document.documentElement.scrollWidth <= innerWidth + 1'), true, 'No phone overflow');
       await shot('narrow');
       await run('document.querySelector(".queue-footer").scrollIntoView({block:"end"})');
