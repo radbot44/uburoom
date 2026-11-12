@@ -144,7 +144,6 @@ class Watch {
       visibility,
       slug,
       ubumfaWord: saved.ubumfaWord || slug,
-      controls: { ...Engine.CONTROLS },
       state: {
         paused: true,
         muted: false,
@@ -1384,7 +1383,6 @@ class Watch {
       adminMode: this.hub.isAdmin(actor),
       state: Engine.snapshot({ ...room.state, volume: viewer.volume, muted: viewer.muted }),
       canManage: owner,
-      controls: { ...room.controls },
       visibility: room.visibility,
       canPlayback: this.hub.roomCommandAllowed(room, actor, { action: 'media.play' }),
       viewers: new Set([...room.viewers.values()].map(x => x.userId)).size,

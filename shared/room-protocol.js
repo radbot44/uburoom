@@ -10,7 +10,7 @@
   'use strict';
   const syncProtocol =
     typeof module !== 'undefined' && module.exports ? require('./sync/protocol.mjs') : root.uburoomSyncProtocol;
-  const { CONTROLS, controls, controlFor, controlAllowed, numeric, validateSyncCommand } = syncProtocol;
+  const { numeric, validateSyncCommand } = syncProtocol;
   const QUALITIES = Object.freeze([
     { id: 'direct', label: 'Original' },
     { id: '1080p20', label: '1080p · 20 Mbps', width: 1920, height: 1080, bitrate: 20000 },
@@ -291,16 +291,12 @@
     return { action, args };
   }
   const api = {
-    CONTROLS,
     QUALITIES,
     qualityId,
     mediaIdentity,
     qualityDefinition,
     validQuality,
     MANAGEMENT,
-    controls,
-    controlFor,
-    controlAllowed,
     senderName,
     validate,
   };

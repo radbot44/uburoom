@@ -15,9 +15,7 @@ const PRESENCE_MS = PRESENCE_TIMEOUT_MS;
 const COMMAND_MS = COMMAND_TTL_MS;
 const isOwner = (actor, config) => (actor?.discordId || actor?.userId) === config.ownerId;
 // A guest session is never a host, whatever the room's roles say.
-const isHost = (room, actor) =>
-  !actor.guestRoomId &&
-  (room.creatorId ? RoomPolicy.role(room, actor.userId) !== 'viewer' : actor.userId === room.hostId);
+const isHost = (room, actor) => !actor.guestRoomId && RoomPolicy.role(room, actor.userId) !== 'viewer';
 const privileged = (room, actor, config, admin = false) => isHost(room, actor) || admin;
 const canWatch = (access, id, actor) => (access?.canWatch ? access.canWatch(id, actor) : !!access?.isMember(id));
 function sameVoice(room, actor, access) {
@@ -35,7 +33,7 @@ function viewEligible(room, actor, config, now = Date.now(), access, admin = fal
     canWatch(access, actor.userId, actor) &&
     (admin ||
       room.visibility === 'public' ||
-      (room.creatorId ? RoomPolicy.admitted(room, actor.userId) : isHost(room, actor)) ||
+      RoomPolicy.admitted(room, actor.userId) ||
       actor.guestRoomId === (room.roomId ?? room.id))
   );
 }
@@ -87,16 +85,13 @@ class Hub {
     return this.isOwner(actor) ? this.adminMode : this.adminUsers.has(actor.userId);
   }
   canRoom(room, actor, capability) {
-    if (!room.permissions) return this.canManage(room, actor);
     return (
       this.isAdmin(actor) ||
       RoomPolicy.allowed(actor.guestRoomId ? { ...room, guests: [actor.userId] } : room, actor.userId, capability)
     );
   }
   canManage(room, actor) {
-    return room.permissions
-      ? this.canRoom(room, actor, 'roomSettings')
-      : privileged(room, actor, this.config, this.isAdmin(actor));
+    return this.canRoom(room, actor, 'roomSettings');
   }
   roomCommandAllowed(room, actor, command, personal = false) {
     if (personal) return true;
@@ -250,15 +245,8 @@ class Hub {
       return { status: 'forbidden', message: 'No controllable room.' };
     if (this.watchCanView && !(await this.watchCanView(s, actor)))
       return { status: 'forbidden', message: 'No controllable room.' };
-    if (s.permissions) {
-      if (!this.roomCommandAllowed(s, actor, command, personal))
-        return { status: 'forbidden', message: 'Your room permissions do not allow this action.' };
-    } else {
-      if (!this.canManage(s, actor) && manage)
-        return { status: 'forbidden', message: 'This action requires the host.' };
-      if (!personal && !this.canManage(s, actor) && !Engine.controlAllowed(s.controls, command))
-        return { status: 'forbidden', message: 'This control is not shared.' };
-    }
+    if (!this.roomCommandAllowed(s, actor, command, personal))
+      return { status: 'forbidden', message: 'Your room permissions do not allow this action.' };
     if (s.execute) {
       const acceptedAt = Date.now();
       // A fresh personal quality request starts immediately, but Plex room
@@ -267,23 +255,22 @@ class Hub {
       const preparing =
         (personal && ['media.quality.set', 'media.tracks.set', 'media.stream.refresh'].includes(command.action)) ||
         ['media.load', 'room.publish'].includes(command.action) ||
-        (s.permissions &&
-          ([
-            'queue.bulk',
-            'queue.auto',
-            'queue.auto.skip',
-            'queue.auto.pin',
-            'queue.auto.playNow',
-            'queue.offer.start',
-            'queue.history.replay',
-            'queue.history.goBack',
-            'queue.playNow',
-            'queue.playEntry',
-            'queue.skipTo',
-            'media.next',
-            'media.previous',
-          ].includes(command.action) ||
-            (['media.play', 'media.toggle'].includes(command.action) && this.watchIdle?.(s.roomId))));
+        [
+          'queue.bulk',
+          'queue.auto',
+          'queue.auto.skip',
+          'queue.auto.pin',
+          'queue.auto.playNow',
+          'queue.offer.start',
+          'queue.history.replay',
+          'queue.history.goBack',
+          'queue.playNow',
+          'queue.playEntry',
+          'queue.skipTo',
+          'media.next',
+          'media.previous',
+        ].includes(command.action) ||
+        (['media.play', 'media.toggle'].includes(command.action) && this.watchIdle?.(s.roomId));
       const deadlines = resolveCommandDeadlines({
         acceptedAt,
         expiresAt: input.expiresAt,
@@ -298,13 +285,11 @@ class Hub {
         this.rooms.get(s.roomId) === s &&
         s.epoch === epoch &&
         Date.now() < deadline &&
-        (s.permissions || this.isOwner(actor) ? this.adminEpoch === adminEpoch : true) &&
+        this.adminEpoch === adminEpoch &&
         (personal
           ? viewEligible(s, actor, this.config, Date.now(), this.access, this.isAdmin(actor))
           : eligible(s, actor, this.config, Date.now(), this.access, manage, this.isAdmin(actor))) &&
-        (s.permissions
-          ? this.roomCommandAllowed(s, actor, command, personal)
-          : personal || this.canManage(s, actor) || (!manage && Engine.controlAllowed(s.controls, command)));
+        this.roomCommandAllowed(s, actor, command, personal);
       try {
         return await s.execute(command, actor, permitted);
       } catch (error) {

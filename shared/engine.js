@@ -2,8 +2,7 @@
 (function (root) {
   'use strict';
   const Room = typeof module !== 'undefined' && module.exports ? require('./room-protocol') : root.uburoomRoomProtocol;
-  const { CONTROLS, QUALITIES, qualityId, validQuality, MANAGEMENT, controls, controlFor, controlAllowed, senderName } =
-    Room;
+  const { QUALITIES, qualityId, validQuality, MANAGEMENT, senderName } = Room;
   const validate = Room.validate;
   const numeric = (n, min, max) => {
     if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max)
@@ -57,14 +56,10 @@
       : Math.max(...valid.map(([start, end]) => Math.max(start, end - 0.01)));
   }
   const api = {
-    CONTROLS,
     QUALITIES,
     qualityId,
     validQuality,
     MANAGEMENT,
-    controls,
-    controlFor,
-    controlAllowed,
     validate,
     snapshot,
     seekTarget,

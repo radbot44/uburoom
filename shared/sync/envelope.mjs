@@ -39,7 +39,6 @@ const COORDINATION_KEYS = Object.freeze([
   'canPlayback',
   'isHost',
   'adminMode',
-  'controls',
   'timing',
 ]);
 

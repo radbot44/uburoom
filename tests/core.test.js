@@ -90,15 +90,16 @@ test('live watch rooms use the shared engine and reject removed management actio
       hostName: 'owner',
       ownerName: 'owner',
       visibility: 'public',
+      creatorId: 'owner',
+      permissions: { host: {}, viewer: { playPause: true } },
       viewers: new Map([['guest-viewer', { userId: 'friend', at: Date.now(), actor: guest }]]),
-      controls: { ...Engine.CONTROLS },
       state: { paused: true, muted: false, volume: 50, seekable: false },
       execute: async command => ({ status: 'applied', message: command.action }),
     };
   hub.rooms.set(roomId, room);
   assert.equal((await hub.dispatch(host, { roomId, action: 'media.pause' })).status, 'applied');
   assert.equal((await hub.dispatch(guest, { roomId, action: 'media.pause' })).status, 'applied');
-  room.controls.playback = false;
+  room.permissions.viewer.playPause = false;
   assert.equal((await hub.dispatch(guest, { roomId, action: 'media.pause' })).status, 'forbidden');
   hub.close();
 });
@@ -117,9 +118,9 @@ test('dispatch grants 30s deadline to personal track/stream refreshes and queue 
     hostName: 'owner',
     ownerName: 'owner',
     visibility: 'public',
+    creatorId: 'owner',
     permissions: { host: { playPause: true }, viewer: {} },
     viewers: new Map([['viewer-1', { userId: 'owner', at: Date.now(), actor: host }]]),
-    controls: { ...Engine.CONTROLS },
     state: { paused: true, muted: false, volume: 50, seekable: false },
     execute: async (command, actor, permitted) => {
       capturedPermitted = permitted;

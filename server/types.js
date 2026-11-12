@@ -16,12 +16,6 @@
  */
 
 /**
- * Control permission flags for a watch room.
- * @typedef {Object} Controls
- * @property {boolean} playback - Whether media transport controls (play, pause, seek) are enabled.
- */
-
-/**
  * Media playback state in a room.
  * @typedef {Object} RoomPlaybackState
  * @property {boolean} paused - Whether playback is currently paused.
@@ -43,7 +37,6 @@
  * @property {string} hostId - Account UUID of the current room host.
  * @property {string} hostName - Display name of the current room host.
  * @property {'public'|'private'} visibility - Room visibility gate.
- * @property {Controls} controls - Current allowed control categories.
  * @property {RoomPlaybackState} state - Live playback and picture state.
  * @property {Map<string, Viewer>} [viewers] - Active viewers in the room.
  * @property {Function} [execute] - Command execution delegate.
