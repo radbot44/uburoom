@@ -359,6 +359,21 @@ const scenarios = [
     },
   },
   {
+    // The host's seek leaves the room waiting for everyone; then the host closes
+    // their tab. The room was set to play, so the others' readiness should start it.
+    name: 'auto-start-without-host',
+    async run(s) {
+      const { alice, bob, carol } = await together(s, ['bob', 'carol']);
+      await s.step('alice loads a Plex item', () => alice.command('media.load', { mediaId: '1', quality: 'direct' }));
+      await s.step('everyone reports ready', () => allReady([alice, bob, carol]));
+      await s.step('two seconds of playback', undefined, { wait: 2000 });
+      await s.step('alice seeks to 20s', () => alice.command('media.seek.absolute', { seconds: 20 }));
+      await s.step('alice closes her tab', () => alice.disconnect({ abrupt: false }));
+      await s.step('bob and carol report ready', () => allReady([bob, carol]));
+      await s.step('three seconds pass', undefined, { wait: 3000 });
+    },
+  },
+  {
     name: 'server-wall-clock-step',
     async run(s) {
       const { alice, bob } = await together(s);
