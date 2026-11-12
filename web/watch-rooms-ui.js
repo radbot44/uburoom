@@ -1510,82 +1510,6 @@
     ])
       if (!$(id).querySelector('svg')) $(id).prepend(root.uburoomIcons.icon(document, icon));
     controls.content($('reopen'), { label: 'Reopen room', icon: 'reopen' });
-    let quickBusy = false,
-      quickRoom;
-    const quickControls = [];
-    for (const [role, title, icon] of [
-      ['viewer', 'Participants', 'users'],
-      ['host', 'Hosts', 'host'],
-    ]) {
-      const heading = node('h4', $('room-quick-switches'), undefined, 'room-control-row room-control-heading');
-      heading.append(root.uburoomIcons.icon(document, icon));
-      node('span', heading, title);
-      for (const [key, label] of [
-        ['playPause', 'Play/pause'],
-        ['seek', 'Seek'],
-        ['addQueue', 'Add to queue'],
-      ]) {
-        const row = node('div', $('room-quick-switches'), undefined, 'room-control-row');
-        node('span', row, label, 'room-control-name');
-        const control = controls.permissionButton(document, { label: title + ': ' + label });
-        const input = control.element;
-        input.dataset.quickPermission = key;
-        input.dataset.quickRole = role;
-        row.append(input);
-        quickControls.push(control);
-        input.addEventListener('click', async () => {
-          const state = getState(),
-            enabled = input.getAttribute('aria-pressed') !== 'true';
-          if (quickBusy || !state?.capabilities?.managePermissions) {
-            renderQuick();
-            return;
-          }
-          const id = state.id,
-            focused = document.activeElement === input;
-          quickBusy = true;
-          renderQuick();
-          root.uburoomPopover?.show(input, { text: 'Saving…', state: 'loading' });
-          try {
-            const current = await request('/api/watch/rooms/' + id + '/settings');
-            if (getState()?.id !== id) return;
-            if (!!current.allHosts !== !!state.allHosts) throw new Error('Room mode changed; check the controls again');
-            await request('/api/watch/rooms/' + id + '/settings', {
-              revision: current.revision,
-              change: { action: 'permissions', role, permissions: { [key]: enabled } },
-            });
-            await changed();
-            if (getState()?.id === id) root.uburoomPopover?.show(input, { text: 'Saved', state: 'success' });
-          } catch (error) {
-            if (getState()?.id === id) root.uburoomPopover?.show(input, { text: error.message, state: 'error' });
-          } finally {
-            quickBusy = false;
-            renderQuick();
-            if (focused && getState()?.id === id && document.activeElement === document.body) input.focus();
-          }
-        });
-      }
-    }
-    function renderQuick() {
-      const state = getState();
-      if (quickRoom !== state?.id) quickRoom = state?.id;
-      $('room-quick-permissions').hidden = !state?.durable;
-      const canEdit = !!state?.capabilities?.managePermissions;
-      $('room-quick-switches').hidden = false;
-      $('room-quick-switches').setAttribute('aria-busy', String(quickBusy));
-      for (const control of quickControls) {
-        const input = control.element;
-        const grants = input.dataset.quickRole === 'host' ? state?.hostPermissions : state?.participantPermissions;
-        control.update({
-          checked: !!grants?.[input.dataset.quickPermission],
-          disabled: quickBusy || !canEdit,
-          reason: quickBusy
-            ? 'Saving permissions…'
-            : !canEdit
-              ? 'Only the room leader or an active administrator can edit permissions'
-              : '',
-        });
-      }
-    }
     for (const [id, icon, label] of [
       ['room-settings-open', 'settings', 'Room settings'],
       ['room-settings-refresh', 'refresh', 'Refresh settings'],
@@ -1727,7 +1651,6 @@
       render() {
         $('reopen').hidden = !!getState() || !getMe()?.durableRooms || !!getMe()?.guestRoomId;
         $('lobby-reopen').hidden = !getMe()?.durableRooms || !!getMe()?.guestRoomId;
-        renderQuick();
         renderLivePeople();
         $('room-create-details').hidden =
           $('room-create-policy').hidden =

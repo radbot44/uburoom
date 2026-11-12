@@ -1250,7 +1250,13 @@ const lobbyEvents = uburoomLobbyEvents.mount({
 });
 // The room header calendar button needs both hosting and the server's scheduling tier.
 function renderScheduleButton() {
-  $('room-schedule').hidden = !state?.durable || !state.canManage || !lobbyEvents.canSchedule();
+  // Shown to everyone the server lets schedule; disabled with its reason for people who are not hosts here.
+  const button = $('room-schedule'),
+    usable = !!state?.canManage;
+  button.hidden = !state?.durable || !lobbyEvents.canSchedule();
+  // aria-disabled keeps it focusable so the reason is reachable by keyboard and tooltip.
+  button.setAttribute('aria-disabled', String(!usable));
+  button.title = usable ? 'Schedule event' : 'Only hosts can schedule events';
 }
 const roomShare = uburoomShare.mount({
   request: api,
@@ -3671,16 +3677,15 @@ async function shareInvite(invite = state?.invite, roomName = state?.roomName ||
   }
 }
 $('room-share').addEventListener('click', () => void roomShare.open(selected));
-$('room-schedule').addEventListener(
-  'click',
-  () =>
-    void roomEvents.open({
-      roomId: selected,
-      roomName: state?.roomName,
-      duration: () => state?.state?.duration,
-      onChange: () => lobbyEvents.refresh(),
-    }),
-);
+$('room-schedule').addEventListener('click', () => {
+  if ($('room-schedule').getAttribute('aria-disabled') === 'true') return;
+  void roomEvents.open({
+    roomId: selected,
+    roomName: state?.roomName,
+    duration: () => state?.state?.duration,
+    onChange: () => lobbyEvents.refresh(),
+  });
+});
 function renderTransport() {
   const available = !reconnecting && !!state?.mediaUrl,
     playback = available && state.canPlayback;

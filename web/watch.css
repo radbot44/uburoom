@@ -3298,12 +3298,6 @@ body:not(.mobile-player)
   display: none;
 }
 
-#room-quick-switches {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
 #room-role:empty {
   display: none;
 }
@@ -4106,9 +4100,18 @@ body.idle-player #video {
   position: relative;
   top: 2px;
 }
+/* The room name keeps the first line; the header actions wrap below it when both do not fit. */
+#options-panel > .watch-panel-header {
+  flex-wrap: wrap;
+  row-gap: var(--space-8);
+}
 #options-panel .watch-panel-heading {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
+}
+#options-panel .room-header-actions {
+  margin-inline-start: auto;
 }
 #options-panel .watch-panel-heading .section-toggle {
   width: auto;
@@ -4117,7 +4120,6 @@ body.idle-player #video {
 #options-title {
   display: inline-block;
   min-width: 0;
-  max-width: min(240px, 38vw);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4150,13 +4152,9 @@ body.idle-player #video {
 .room-content-columns {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--watch-group-gap);
+  grid-template-columns: minmax(0, 1fr);
   width: 100%;
-  max-width: 500px;
-  margin-inline: auto;
 }
-.room-controls-column,
 .room-participant-column {
   min-width: 0;
 }
@@ -4905,7 +4903,6 @@ input.watch-switch:disabled {
 .room-content-columns {
   --room-row-height: var(--watch-row-height);
 }
-#room-quick-permissions .room-control-row,
 .room-roster-heading {
   box-sizing: border-box;
   height: var(--room-row-height);
@@ -4913,20 +4910,13 @@ input.watch-switch:disabled {
   margin: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--watch-icon-gap);
-  padding: var(--space-2);
+  justify-content: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-10) var(--space-2) var(--space-2);
   border: 0;
   font-size: var(--font-size-12);
-}
-#room-quick-permissions .room-control-heading,
-.room-roster-heading {
-  justify-content: center;
-  gap: var(--space-4);
   font-weight: 600;
-  padding-block: var(--space-10) var(--space-2);
 }
-.room-control-heading svg,
 .room-roster-heading svg {
   width: 20px;
   height: 20px;
@@ -4935,11 +4925,6 @@ input.watch-switch:disabled {
 #roomies-symbol {
   display: inline-flex;
   flex: none;
-}
-.room-control-name {
-  min-width: 0;
-  line-height: 1.15;
-  overflow-wrap: anywhere;
 }
 :is(
   .watch-permission-button,
