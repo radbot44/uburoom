@@ -702,6 +702,8 @@ const syncReady = import('./watch-sync.mjs').then(({ createSync }) => {
     }),
     expected,
     decodedFrames,
+    // Start-delay estimates are kept per stream kind: players start differently on direct files, HLS and local formats.
+    streamKind: ({ state: current }) => (current?.directHls ? 'direct-hls' : current?.format || 'default'),
     unlockLocal,
     reportReadiness,
     render: renderTransport,

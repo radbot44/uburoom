@@ -91,6 +91,22 @@ export const BASELINE = Object.freeze({
   'two-viewer-spread-900s/mobile+bad/spreadP50Ms': 27,
   'two-viewer-spread-900s/mobile+bad/spreadP95Ms': 64.4,
   'two-viewer-spread-900s/mobile+bad/seeks': 0,
+  'start-uncompensated/wired+wired/startErrorP95Ms': 200.2,
+  'start-uncompensated/wired+wired/startSpreadP95Ms': 157.2,
+  'start-uncompensated/wired+wifi/startErrorP95Ms': 153.8,
+  'start-uncompensated/wired+wifi/startSpreadP95Ms': 57.8,
+  'start-uncompensated/wifi+mobile/startErrorP95Ms': 180.4,
+  'start-uncompensated/wifi+mobile/startSpreadP95Ms': 146.8,
+  'start-uncompensated/mobile+bad/startErrorP95Ms': 226,
+  'start-uncompensated/mobile+bad/startSpreadP95Ms': 175,
+  'start-compensated/wired+wired/startErrorP95Ms': 12,
+  'start-compensated/wired+wired/startSpreadP95Ms': 15.1,
+  'start-compensated/wired+wifi/startErrorP95Ms': 13.7,
+  'start-compensated/wired+wifi/startSpreadP95Ms': 19.3,
+  'start-compensated/wifi+mobile/startErrorP95Ms': 40.8,
+  'start-compensated/wifi+mobile/startSpreadP95Ms': 87.2,
+  'start-compensated/mobile+bad/startErrorP95Ms': 103.5,
+  'start-compensated/mobile+bad/startSpreadP95Ms': 117.5,
 });
 
 // Each owner-agreed target per row: met today or not, with today's measured value. Unmet targets are data, not skips.
@@ -106,4 +122,8 @@ export const TARGET_STATUS = Object.freeze({
   'two-viewer-spread-900s/wired+wifi/spreadP95Ms': { met: true, today: 37.2 },
   'two-viewer-spread-900s/wifi+mobile/spreadP95Ms': { met: true, today: 39.8 },
   'two-viewer-spread-900s/mobile+bad/spreadP95Ms': { met: false, today: 64.4 },
+  'start-compensated/wired+wired/startSpreadP95Ms': { met: true, today: 15.1 },
+  'start-compensated/wired+wifi/startSpreadP95Ms': { met: true, today: 19.3 },
+  'start-compensated/wifi+mobile/startSpreadP95Ms': { met: false, today: 87.2 },
+  'start-compensated/mobile+bad/startSpreadP95Ms': { met: false, today: 117.5 },
 });

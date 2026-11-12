@@ -27,6 +27,8 @@ export {
   bufferedAhead,
   readinessBuffered,
   observationClock,
+  startDelay,
+  START_DELAY,
 } from './timing.mjs';
 
 export { createVideoElementAdapter, normalizePlayerAdapter } from './player-adapter.mjs';

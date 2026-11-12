@@ -15,6 +15,9 @@ export const TARGET_SPREAD_P95_MS = 50;
 export const TARGET_CLOCK_USABLE_PERCENT = 99;
 export const TARGET_NON_NORMAL_RATE_PERCENT = 2;
 
+export const TARGET_START_SPREAD_P95_MS = 30;
+const START_JITTER_MS = 5;
+
 export const DEFAULT_SEED = 20261110;
 
 // ---- Seeded pseudo-random numbers (mulberry32). Sub-streams come from hashing labels into the seed.
@@ -70,7 +73,7 @@ const BASE_POSITION_S = 600;
  * Time is in simulated client-stopwatch milliseconds; the run starts playing at `warmupS`.
  * @param {{profile:keyof typeof PROFILES, seed:number, seconds:number, warmupS?:number, player?:boolean,
  *   fps?:number, initialOffsetMs?:number, startDelayMs?:number, driftPpm?:number, noiseMs?:number,
- *   seekCostMs?:number, rateLagMs?:number}} options
+ *   seekCostMs?:number, rateLagMs?:number, startAheadMs?:number}} options
  */
 export function simulateViewer(options) {
   const {
@@ -86,6 +89,7 @@ export function simulateViewer(options) {
     noiseMs = 3,
     seekCostMs = 250,
     rateLagMs = 100,
+    startAheadMs = 0, // start-delay compensation: the paused player was seeked this far ahead before the alarm
   } = options;
   const profile = PROFILES[profileId];
   const rng = createRng(deriveSeed(seed, 'viewer', profileId));
@@ -135,6 +139,7 @@ export function simulateViewer(options) {
   let commanded = 1;
   let seeks = 0;
   let started = !withPlayer;
+  let startErrorMs = NaN; // true error when the first frame moves, for a scheduled start with a valid clock
   const errorsMs = []; // true error on the common sampling grid: target - position (positive = behind)
   const rates = [];
   const drift = 1 + driftPpm * 1e-6;
@@ -238,8 +243,9 @@ export function simulateViewer(options) {
       // The alarm fires when the clock estimate reaches the start; clock error shifts the instant.
       const clockError = reading.serverTime - (MONO_BASE_MS + startMs + SERVER_OFFSET_MS);
       started = true;
-      position.p = BASE_POSITION_S;
+      position.p = BASE_POSITION_S + startAheadMs / 1000;
       position.stallUntil = startMs - clockError + startDelayMs;
+      startErrorMs = position.stallUntil - startMs - startAheadMs;
       holdUntil = position.stallUntil + 1000;
     });
     for (let t = startMs; t <= totalMs; t += TICK_MS) {
@@ -263,6 +269,7 @@ export function simulateViewer(options) {
     errorsMs,
     rates,
     seeks,
+    startErrorMs,
     clock: {
       exchanges: stats.exchanges,
       accepted: stats.accepted,
@@ -303,6 +310,10 @@ export const TARGETS = Object.freeze({
   },
   spread: { id: 'T2', text: `two-viewer spread p95 under ${TARGET_SPREAD_P95_MS} ms` },
   usable: { id: 'T3', text: `clock usable at least ${TARGET_CLOCK_USABLE_PERCENT}% (Wi-Fi, mobile)` },
+  startSpread: {
+    id: 'T5',
+    text: `two-viewer start spread p95 under ${TARGET_START_SPREAD_P95_MS} ms once the start delay is estimated`,
+  },
   nonNormal: { id: 'T4', text: `under ${TARGET_NON_NORMAL_RATE_PERCENT}% of steady-state time at a non-normal speed` },
 });
 
@@ -531,6 +542,63 @@ function spreadRows(seed, trials) {
 }
 
 /**
+ * Scheduled starts: each viewer's player has its own start delay (40 ms + exponential, capped at 400 ms, as in the
+ * spread scenario) that varies a little from start to start (normal, sd START_JITTER_MS). The compensated runs seek
+ * ahead by the running median that timing.mjs startDelay() holds, as the client does, once two starts have been
+ * measured; the uncompensated runs are today's behaviour. Error is true target minus position when the first frame
+ * moves, before any drift correction. Starts whose clock was invalid at the alarm are not observed. The estimator is
+ * fed the exact delay; real rVFC timing adds frame quantization.
+ */
+function startRows(seed, trials) {
+  const rows = [];
+  const starts = 8;
+  for (const compensated of [false, true]) {
+    for (const pair of PAIRS) {
+      const errors = [];
+      const spreads = [];
+      for (let i = 0; i < trials; i++) {
+        const rng = createRng(deriveSeed(seed, 'start', pair.join('+'), String(i)));
+        const base = pair.map(() => Math.min(400, 40 + rng.exponential(60)));
+        const estimators = pair.map(() => createTimingApi().startDelay());
+        for (let k = 0; k < starts; k++) {
+          const result = pair.map((profile, index) => {
+            const delay = Math.min(400, Math.max(0, base[index] + rng.normal() * START_JITTER_MS));
+            const run = simulateViewer({
+              profile: /** @type {any} */ (profile),
+              seed: deriveSeed(seed, 'start-net', pair.join('+'), String(i), String(index), String(k)),
+              seconds: 1,
+              warmupS: 15,
+              startDelayMs: delay,
+              startAheadMs: compensated ? estimators[index].compensationMs('bench') : 0,
+            });
+            estimators[index].record('bench', delay);
+            return run.startErrorMs;
+          });
+          if (compensated && k < 2) continue;
+          for (const error of result) if (Number.isFinite(error)) errors.push(Math.abs(error));
+          if (result.every(Number.isFinite)) spreads.push(Math.abs(result[0] - result[1]));
+        }
+      }
+      const scenario = compensated ? 'start-compensated' : 'start-uncompensated';
+      const profile = pair.join('+');
+      rows.push(
+        makeRow(scenario, profile, 'startErrorP95Ms', 'ms', 'lower', quantile(errors, 0.95)),
+        makeRow(
+          scenario,
+          profile,
+          'startSpreadP95Ms',
+          'ms',
+          'lower',
+          quantile(spreads, 0.95),
+          compensated ? { ...TARGETS.startSpread, op: '<', limit: TARGET_START_SPREAD_P95_MS } : undefined,
+        ),
+      );
+    }
+  }
+  return rows;
+}
+
+/**
  * Run every scenario. Deterministic for a given seed.
  * @param {{seed?:number}} [options]
  * @returns {{seed:number, rows:BenchRow[]}}
@@ -558,7 +626,7 @@ export function runBench({ seed = DEFAULT_SEED } = {}) {
   rows.push(
     ...convergenceRow(seed, 6, { profile: 'wired', offsetMs: 95, fps: 24, noiseMs: 25, label: '95ms-24fps-noise25ms' }),
   );
-  rows.push(...steadyRows(seed, 2), ...spreadRows(seed, 10));
+  rows.push(...steadyRows(seed, 2), ...spreadRows(seed, 10), ...startRows(seed, 10));
   return { seed, rows };
 }
 

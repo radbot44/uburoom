@@ -17,6 +17,7 @@ import { bufferedAhead as computeBufferedAhead } from './timing.mjs';
  * @property {()=>Promise<unknown>} play Start or resume local playback.
  * @property {()=>void} pause Pause local playback.
  * @property {(position:number)=>number} bufferedAhead Contiguous buffered seconds ahead of position.
+ * @property {()=>Promise<number|undefined>} [measureStart] Call just before play(). Resolves with milliseconds from the call to the first presented frame that advanced past the position at the call, or undefined when unsupported, interrupted (pause, seek) or not seen within 2 s.
  * @property {(position:number, toleranceSeconds?:number)=>boolean} isBufferedAt Whether position lies inside any buffered range.
  */
 
@@ -27,7 +28,11 @@ import { bufferedAhead as computeBufferedAhead } from './timing.mjs';
  *   readyState:number, currentTime:number, duration:number, paused:boolean, ended:boolean,
  *   seeking:boolean, playbackRate:number, volume:number, muted:boolean,
  *   buffered:{length:number, start:(index:number)=>number, end:(index:number)=>number},
- *   play:()=>Promise<unknown>, pause:()=>void
+ *   play:()=>Promise<unknown>, pause:()=>void,
+ *   requestVideoFrameCallback?:(callback:(now:number, metadata:any)=>void)=>number,
+ *   cancelVideoFrameCallback?:(id:number)=>void,
+ *   addEventListener?:(type:string, listener:()=>void)=>void,
+ *   removeEventListener?:(type:string, listener:()=>void)=>void
  * }} video
  * @param {{bufferedAhead?:(buffered:any, position:number)=>number}} [helpers]
  * @returns {PlayerAdapter}
@@ -56,6 +61,34 @@ export function createVideoElementAdapter(video, helpers = {}) {
     play: () => (video ? video.play() : Promise.resolve()),
     pause() {
       if (video) video.pause();
+    },
+    measureStart() {
+      if (!video || typeof video.requestVideoFrameCallback !== 'function') return Promise.resolve(undefined);
+      const began = globalThis.performance.now(),
+        from = video.currentTime;
+      return new Promise(resolve => {
+        let id, timer;
+        const finish = value => {
+          clearTimeout(timer);
+          video.removeEventListener?.('pause', interrupt);
+          video.removeEventListener?.('seeking', interrupt);
+          try {
+            video.cancelVideoFrameCallback?.(id);
+          } catch {}
+          resolve(value);
+        };
+        const interrupt = () => finish(undefined);
+        const frame = (at, metadata) => {
+          if (metadata?.mediaTime > from + 0.001) {
+            const shown = Number.isFinite(metadata.presentationTime) ? metadata.presentationTime : at;
+            finish(Math.max(0, shown - began));
+          } else id = video.requestVideoFrameCallback(frame);
+        };
+        video.addEventListener?.('pause', interrupt);
+        video.addEventListener?.('seeking', interrupt);
+        timer = setTimeout(interrupt, 2000);
+        id = video.requestVideoFrameCallback(frame);
+      });
     },
     bufferedAhead: position => (video ? aheadFn(video.buffered, position) : 0),
     isBufferedAt(position, toleranceSeconds = 0.05) {
