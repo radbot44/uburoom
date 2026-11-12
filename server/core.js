@@ -9,6 +9,7 @@ const { createHash } = require('node:crypto');
 const Engine = require('../shared/engine');
 const RoomPolicy = require('./room-policy');
 const { COMMAND_TTL_MS, PRESENCE_TIMEOUT_MS, resolveCommandDeadlines } = require('../shared/sync/envelope.mjs');
+const { createServerClock } = require('../shared/sync/server-clock.mjs');
 const hash = text => createHash('sha256').update(text).digest('hex');
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const PRESENCE_MS = PRESENCE_TIMEOUT_MS;
@@ -24,13 +25,15 @@ function sameVoice(room, actor, access) {
   const channel = access?.voiceChannel?.(room.hostId || room.ownerId);
   return !!channel && !!access?.validVoiceChannel?.(channel) && access.voiceChannel(actor.userId) === channel;
 }
-function watching(room, actor, now = Date.now()) {
+function watching(room, actor, now) {
   return [...(room.viewers?.values() || [])].some(v => v.userId === actor.userId && now - v.at < PRESENCE_MS);
 }
 
 class Hub {
   constructor(config) {
     this.config = config;
+    // The one time base for room timelines and command deadlines (see shared/sync/server-clock.mjs).
+    this.clock = createServerClock();
     this.rooms = new Map();
     this.adminMode = false;
     this.adminEpoch = 0;
@@ -123,7 +126,7 @@ class Hub {
     // Only the authenticated watch endpoint attaches a viewer identity; personal
     // commands change only that viewer's player.
     if (!command || (command.scope === 'personal' && actor.watchViewerId)) return ALLOW;
-    if (!isHost(room, actor) && !admin && !watching(room, actor)) return NO_ROOM;
+    if (!isHost(room, actor) && !admin && !watching(room, actor, this.clock.now())) return NO_ROOM;
     if (command.host) return this.authorize(actor, room, 'room.host').ok ? ALLOW : NO_PERMISSION;
     const can = capability => this.authorize(actor, room, capability).ok;
     if (
@@ -191,7 +194,7 @@ class Hub {
       }[declared.service];
     if (service) {
       const deadlines = resolveCommandDeadlines({
-        acceptedAt: Date.now(),
+        acceptedAt: this.clock.now(),
         expiresAt: input.expiresAt,
         commandTtlMs: COMMAND_MS,
         extendedTtlMs: 12000,
@@ -199,7 +202,7 @@ class Hub {
       if (!deadlines.admitted) return { status: 'unavailable', message: 'Select a room and try again.' };
       const adminEpoch = this.adminEpoch;
       const permitted = () =>
-        Date.now() < deadlines.executionDeadline &&
+        this.clock.now() < deadlines.executionDeadline &&
         this.adminEpoch === adminEpoch &&
         canWatch(this.access, actor.userId, actor);
       try {
@@ -215,7 +218,7 @@ class Hub {
       }
     }
     if (command.action.startsWith('queue.') && !this.rooms.has(input.roomId) && this.savedQueueExecute) {
-      const acceptedAt = Date.now();
+      const acceptedAt = this.clock.now();
       const deadlines = resolveCommandDeadlines({
         acceptedAt,
         expiresAt: input.expiresAt,
@@ -226,7 +229,7 @@ class Hub {
       const deadline = deadlines.executionDeadline,
         adminEpoch = this.adminEpoch;
       const permitted = () =>
-        Date.now() < deadline &&
+        this.clock.now() < deadline &&
         this.adminEpoch === adminEpoch &&
         !this.rooms.has(input.roomId) &&
         canWatch(this.access, actor.userId, actor);
@@ -248,7 +251,7 @@ class Hub {
     if (!this.authorize(actor, s, command.action).ok)
       return { status: 'forbidden', message: 'Your room permissions do not allow this action.' };
     if (s.execute) {
-      const acceptedAt = Date.now();
+      const acceptedAt = this.clock.now();
       // A fresh personal quality request starts immediately, but Plex room
       // preparation can take longer than the default command deadline.
       // Keep completion bounded and recheck the same live authorization below.
@@ -269,7 +272,7 @@ class Hub {
       const permitted = () =>
         this.rooms.get(s.roomId) === s &&
         s.epoch === epoch &&
-        Date.now() < deadline &&
+        this.clock.now() < deadline &&
         this.adminEpoch === adminEpoch &&
         this.authorize(actor, s, command.action).ok;
       try {

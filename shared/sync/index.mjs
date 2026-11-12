@@ -12,6 +12,7 @@ export * as Protocol from './protocol.mjs';
 export * as Policy from './policy.mjs';
 export * as Envelope from './envelope.mjs';
 export * as RoomAuthority from './room-authority.mjs';
+export { createServerClock } from './server-clock.mjs';
 export * as Subscriptions from './subscriptions.mjs';
 
 export {

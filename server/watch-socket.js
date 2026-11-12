@@ -108,7 +108,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
       viewer.streamVersion !== message.streamVersion
     )
       return;
-    const now = Date.now();
+    const now = watch.clock.now();
     const statusChanged = client.lastSyncQualityStatus !== message.status;
     const confidenceChanged = client.lastSyncQualityConfidence !== message.confidence;
     const minimumInterval = statusChanged || confidenceChanged ? 500 : 4000;
@@ -242,12 +242,12 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
           origin: req.headers.origin,
           'content-type': 'application/json',
         }),
-        lastSeen: Date.now(),
+        lastSeen: watch.clock.now(),
         inflight: new Map(),
         running: new Set(),
         lifetime: new AbortController(),
         connectionId: ++nextConnectionId,
-        openedAt: Date.now(),
+        openedAt: watch.clock.now(),
       };
       Object.defineProperty(ws, 'watchHeaders', {
         get() {
@@ -268,7 +268,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
       ws.on('pong', () => {
         // Native pongs keep presence alive even when the browser throttles its
         // JavaScript timers. Authorization is still checked by publish/requests.
-        client.lastSeen = Date.now();
+        client.lastSeen = watch.clock.now();
         if (client.authenticated) watch.roomState.people.reserve(client.userId, client.lastSeen + 60000);
         if (client.authenticated)
           for (const room of watch.rooms.values())
@@ -281,13 +281,13 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
           ws.watchRtts = [...ws.watchRtts, { at: now, ms }].filter(sample => now - sample.at <= 30000).slice(-16);
       });
       const timer = setTimeout(() => ws.close(4003, 'Authentication required'), 5000);
-      let windowAt = Date.now(),
+      let windowAt = watch.clock.now(),
         count = 0;
       ws.on('error', () => {});
       ws.on('message', raw => {
         void (async () => {
-          if (Date.now() - windowAt > 1000) {
-            windowAt = Date.now();
+          if (watch.clock.now() - windowAt > 1000) {
+            windowAt = watch.clock.now();
             count = 0;
           }
           if (++count > 40) return ws.close(4008, 'Rate limit');
@@ -328,7 +328,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
             );
             return;
           }
-          client.lastSeen = Date.now();
+          client.lastSeen = watch.clock.now();
           hub.directory?.connected(ws, client.userId);
           if (message.type === 'cancel') {
             if (!Number.isSafeInteger(message.id) || message.id < 0) return ws.close(4002, 'Invalid cancellation');
@@ -340,18 +340,19 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
             client.clocking = true;
             try {
               if (!Number.isSafeInteger(message.id) || message.id < 0) return ws.close(4002, 'Invalid clock message');
-              const serverReceivedAt = Date.now(),
+              const serverReceivedAt = watch.clock.now(),
                 received = performance.now();
               if (!(await routes.authorized({ headers: client.headers }, true))) return ws.close(4003, 'Sign in again');
               for (const room of watch.rooms.values())
-                for (const viewer of room.viewers.values()) if (viewer.watchSocket === ws) viewer.at = Date.now();
+                for (const viewer of room.viewers.values())
+                  if (viewer.watchSocket === ws) viewer.at = watch.clock.now();
               send(client, {
                 type: 'clock',
                 id: message.id,
-                serverNow: Date.now(),
+                serverNow: watch.clock.now(),
                 timing: {
                   serverReceivedAt,
-                  serverSentAt: Date.now(),
+                  serverSentAt: watch.clock.now(),
                   serverProcessingMs: performance.now() - received,
                   clockEpoch,
                 },
@@ -450,11 +451,11 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
         );
         config.logger?.debug(
           'Socket',
-          `conn=${client.connectionId} closed code=${code} reason=${JSON.stringify(reason)} source=${client.terminationCause || 'peer-or-network'} account=${JSON.stringify(client.userName || client.userId || 'unauthenticated')} ageMs=${Date.now() - client.openedAt} attachedViewers=${attached} (remaining: ${clients.size - 1})`,
+          `conn=${client.connectionId} closed code=${code} reason=${JSON.stringify(reason)} source=${client.terminationCause || 'peer-or-network'} account=${JSON.stringify(client.userName || client.userId || 'unauthenticated')} ageMs=${watch.clock.now() - client.openedAt} attachedViewers=${attached} (remaining: ${clients.size - 1})`,
         );
         if (attached) {
           const planned = code === 1000 || code === 1001 || client.terminationCause === 'server-shutdown',
-            now = Date.now();
+            now = watch.clock.now();
           const count = planned ? 0 : noteDisconnect(client.userId, now),
             quoted = reason ? ` ("${reason}")` : '';
           config.logger?.[planned ? 'info' : 'warn'](
@@ -475,7 +476,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
           (code === 1005 || code === 1006) &&
           client.terminationCause !== 'server-shutdown' &&
           client.terminationCause !== 'backpressure';
-        const disconnectedAt = Date.now();
+        const disconnectedAt = watch.clock.now();
         for (const room of watch.rooms.values()) {
           for (const viewer of room.viewers.values())
             if (viewer.watchSocket === ws) {
@@ -489,7 +490,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
   });
   const timer = setInterval(() => {
     for (const client of clients) {
-      if (Date.now() - client.lastSeen >= 10000) {
+      if (watch.clock.now() - client.lastSeen >= 10000) {
         client.terminationCause = 'server-idle-timeout';
         client.ws.terminate();
       } else {

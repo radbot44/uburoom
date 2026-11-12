@@ -178,7 +178,7 @@ function watchOperations({
   async function execute(context, path, data) {
     const url = new URL(path, config.publicUrl),
       write = data !== undefined;
-    const serverReceivedAt = Date.now(),
+    const serverReceivedAt = watch.clock.now(),
       receivedMono = performance.now();
     try {
       context.signal?.throwIfAborted();
@@ -541,7 +541,7 @@ function watchOperations({
         if (!throttle('watch-command:' + auth.actor.userId, 120)) {
           return result(429, { error: 'Too many commands' });
         }
-        const envelope = validateCommandEnvelope(data, { expectedEpoch: room.epoch, now: Date.now() });
+        const envelope = validateCommandEnvelope(data, { expectedEpoch: room.epoch, now: watch.clock.now() });
         if (!envelope.ok) {
           return result(409, { error: 'Room changed or command expired; retry manually' });
         }
@@ -696,7 +696,7 @@ function watchOperations({
       }
       state.timing = {
         serverReceivedAt,
-        serverSentAt: Date.now(),
+        serverSentAt: watch.clock.now(),
         serverProcessingMs: performance.now() - receivedMono,
         clockEpoch,
       };

@@ -16,7 +16,7 @@ class WatchRooms {
     this.closing = new Map();
     this.creating = 0;
     this.limits = require('./room-limits').limits(watch.hub.config);
-    this.people = new (require('./room-presence').RoomPresence)(this.limits.maxPeople);
+    this.people = new (require('./room-presence').RoomPresence)(this.limits.maxPeople, () => watch.clock.now());
     this.recoveries = new Map();
     this.store = new RoomStore(registry, {
       limits: this.limits,
@@ -58,7 +58,7 @@ class WatchRooms {
     );
     return promise;
   }
-  startRecovery(now = Date.now()) {
+  startRecovery(now = this.watch.clock.now()) {
     this.readyAt = now;
     for (const recovery of this.recoveries.values()) {
       recovery.until = now + this.limits.recoverySeconds * 1000;
@@ -75,7 +75,7 @@ class WatchRooms {
     return null;
   }
   checkCapacity(room, userId) {
-    const now = Date.now(),
+    const now = this.watch.clock.now(),
       members = new Set([...room.viewers.values()].map(v => this.store.account(v.userId)));
     for (const saved of room.disconnectedViewers.values())
       if (saved.expires > now) members.add(this.store.account(saved.userId));
@@ -86,7 +86,7 @@ class WatchRooms {
   }
   async recover(id, actor, current) {
     const recovery = this.recoveries.get(id);
-    if (!recovery || recovery.until <= Date.now()) return;
+    if (!recovery || recovery.until <= this.watch.clock.now()) return;
     if (actor.guestRoomId && actor.guestRoomId !== id) return;
     const record = this.store.get(id);
     if (record.visibility === 'private' && !Policy.assigned(record, actor.userId) && !this.watch.hub.isAdmin(actor))
@@ -113,7 +113,7 @@ class WatchRooms {
             media.roomServerId = saved.serverId;
           }
           await this.eligible(actor, current);
-          if (this.recoveries.get(id) !== recovery || recovery.until <= Date.now()) return;
+          if (this.recoveries.get(id) !== recovery || recovery.until <= this.watch.clock.now()) return;
           const latest = this.store.get(id);
           if (latest.checkpointRevision !== record.checkpointRevision || latest.revision !== record.revision)
             throw failure('Room changed during recovery', 409);
@@ -148,7 +148,7 @@ class WatchRooms {
   }
   async maybeRecover(room) {
     const recovery = room.recovery;
-    if (!recovery || room.recovering || recovery.until <= Date.now() || !recovery.wasPlaying || !room.media) return;
+    if (!recovery || room.recovering || recovery.until <= this.watch.clock.now() || !recovery.wasPlaying || !room.media) return;
     if (
       this.recoveryState(room).missing ||
       [...room.viewers.values()].some(v => !v.ready || v.version !== room.mediaVersion)
@@ -166,7 +166,7 @@ class WatchRooms {
         (controller.alive && !(await controller.alive())) ||
         !(await this.watch.canView(room, controller.actor)) ||
         room.recovery !== recovery ||
-        recovery.until <= Date.now()
+        recovery.until <= this.watch.clock.now()
       )
         return;
       if (
@@ -186,7 +186,7 @@ class WatchRooms {
     room.recovery = undefined;
     this.recoveries.delete(room.roomId);
   }
-  async maintain(now = Date.now()) {
+  async maintain(now = this.watch.clock.now()) {
     if (this.stopped || this.maintaining || !this.readyAt) return;
     this.maintaining = true;
     try {
@@ -486,7 +486,7 @@ class WatchRooms {
   participants(id) {
     const record = this.store.get(id),
       room = this.watch.rooms.get(id);
-    const now = Date.now();
+    const now = this.watch.clock.now();
     const activeAndRecovering = [
       ...(room?.viewers.values() || []),
       ...[...(room?.disconnectedViewers.values() || [])].filter(viewer => viewer.expires > now),
@@ -659,10 +659,10 @@ class WatchRooms {
     await this.watch.remove(id);
     return { ok: true };
   }
-  freeze(room, at = Date.now()) {
+  freeze(room, at = this.watch.clock.now()) {
     this.watch.cancelAutoplay(room);
     room.position = this.watch.position(room, Math.max(room.changedAt, at));
-    room.changedAt = Date.now();
+    room.changedAt = this.watch.clock.now();
     room.pauseAt = room.startAt = undefined;
     room.state.paused = true;
     room.manualPaused = true;
@@ -859,7 +859,7 @@ class WatchRooms {
     );
     if (
       current &&
-      Date.now() - current.at < 10000 &&
+      this.watch.clock.now() - current.at < 10000 &&
       (isHost(room, current.actor) ||
         this.watch.hub.isAdmin(current.actor) ||
         (!hasHostCandidate && this.watch.hub.authorize(current.actor, room, 'continueWithoutHost').ok))
@@ -893,7 +893,7 @@ class WatchRooms {
           !(await this.watch.canView(room, viewer.actor)) ||
           this.watch.rooms.get(room.roomId) !== room ||
           room.viewers.get(viewerId) !== viewer ||
-          Date.now() - viewer.at >= 10000
+          this.watch.clock.now() - viewer.at >= 10000
         )
           continue;
         room.hostId = viewer.userId;
@@ -915,7 +915,7 @@ class WatchRooms {
       void this.save(room);
     }
   }
-  capture(room, { closing = false, at = Date.now() } = {}) {
+  capture(room, { closing = false, at = this.watch.clock.now() } = {}) {
     const media = room.media;
     const bookmark = media
       ? {
@@ -951,7 +951,7 @@ class WatchRooms {
   }
   save(room, { closing = false, final = false } = {}) {
     if (room.transitionCommit) return this.track(room.transitionCommit.then(() => this.save(room, { closing, final })));
-    const captured = final ? this.capture(room, { closing, at: room.removalAt ?? Date.now() }) : undefined;
+    const captured = final ? this.capture(room, { closing, at: room.removalAt ?? this.watch.clock.now() }) : undefined;
     const previous = room.saving ? room.saving.catch(() => {}) : Promise.resolve();
     const saving = previous
       .then(async () => {
