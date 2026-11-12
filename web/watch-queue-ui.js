@@ -31,10 +31,6 @@
     },
   ) {
     const doc = host.ownerDocument;
-    let view = 'cards';
-    try {
-      if (localStorage.getItem('uburoom-queue-view') === 'list') view = 'list';
-    } catch {}
     let centerPending = true;
     let centerAfterFetch = true;
     let currentKey = '';
@@ -66,7 +62,6 @@
     let lastAutoplayError = '';
     let lastFetchedRevision = -1;
     let lastFetchedRoomId = null;
-    let moveFollow = null;
 
     function node(tag, parent, text, className) {
       const el = doc.createElement(tag);
@@ -95,7 +90,7 @@
     const confirm = message => popups.confirm(message, { destructive: true });
 
     host.replaceChildren();
-    host.dataset.view = view;
+    host.dataset.view = 'list';
     const header = node('header', host, undefined, 'queue-header watch-panel-header');
     const heading = node('h2', header, undefined, 'queue-heading watch-panel-heading');
     const symbol = node('span', heading, undefined, 'watch-panel-symbol');
@@ -104,48 +99,20 @@
     symbol.append(root.uburoomIcons.icon(doc, 'player-track-next'));
     const queueTitle = node('span', heading, 'Queue', 'watch-panel-title');
     queueTitle.id = 'queue-title';
-    const views = node('div', header, undefined, 'queue-view-switch watch-segmented watch-segmented-view');
-    views.setAttribute('role', 'group');
-    views.setAttribute('aria-label', 'Queue layout');
-    const viewButtons = ['cards', 'list'].map(value => {
-      const b = button(
-        views,
-        value === 'cards' ? 'Cards' : 'List',
-        value === 'cards' ? 'libraryCards' : 'libraryList',
-        () => {
-          view = value;
-          host.dataset.view = view;
-          try {
-            localStorage.setItem('uburoom-queue-view', view);
-          } catch {}
-          centerPending = true;
-          renderNowPlaying();
-          renderTab();
-          updateView();
-        },
-        false,
-        'queue-view-button group-button',
-      );
-      node('span', b, value === 'cards' ? 'Cards' : 'List');
-      b.id = 'queue-view-' + value;
-      return b;
-    });
-    root.uburoomControls.segmented(views);
     const body = node('div', host);
     body.id = 'queue-body';
     const toolbar = node('div', header, undefined, 'queue-toolbar watch-toolbar');
-    toolbar.append(views);
     const centerButton = button(toolbar, 'Center Now Playing', 'center', () => centerCurrent(true));
     root.uburoomControls.content(centerButton, { label: 'Center Now Playing', icon: 'center' });
     centerButton.id = 'queue-center';
     const timeline = node('div', body, undefined, 'queue-timeline');
     const navigation = node('div', timeline, undefined, 'queue-navigation');
-    const previousCard = button(navigation, 'Scroll toward history', 'left', () => scrollCards(-1));
-    previousCard.id = 'queue-scroll-previous';
-    const previousCount = node('span', previousCard, '', 'queue-navigation-count');
-    const nextCard = button(navigation, 'Scroll toward upcoming videos', 'right', () => scrollCards(1));
-    const nextCount = node('span', nextCard, '', 'queue-navigation-count');
-    nextCard.id = 'queue-scroll-next';
+    const previousButton = button(navigation, 'Scroll toward history', 'up', () => scrollEntries(-1));
+    previousButton.id = 'queue-scroll-previous';
+    const previousCount = node('span', previousButton, '', 'queue-navigation-count');
+    const nextButton = button(navigation, 'Scroll toward upcoming videos', 'down', () => scrollEntries(1));
+    const nextCount = node('span', nextButton, '', 'queue-navigation-count');
+    nextButton.id = 'queue-scroll-next';
     const layout = node('div', timeline, undefined, 'queue-layout');
     layout.tabIndex = 0;
     layout.setAttribute('role', 'region');
@@ -692,25 +659,11 @@
 
     function centerCurrent(smooth = false) {
       if (!layout.clientWidth) return;
-      if (view === 'list') {
-        layout.style.paddingBlock = Math.max(0, (layout.clientHeight - nowPlayingBox.offsetHeight) / 2) + 'px';
-        const r = nowPlayingBox.getBoundingClientRect(),
-          bounds = layout.getBoundingClientRect();
-        layout.scrollTo({
-          top: layout.scrollTop + r.top - bounds.top - (layout.clientHeight - r.height) / 2,
-          behavior: smooth ? motion() : 'instant',
-        });
-        centerPending = false;
-        return;
-      }
-      layout.style.paddingBlock = '';
-      layout.style.paddingInline = '0px';
-      const inset = Math.max(0, (layout.clientWidth - nowPlayingBox.offsetWidth) / 2);
-      layout.style.paddingInline = inset + 'px';
+      layout.style.paddingBlock = Math.max(0, (layout.clientHeight - nowPlayingBox.offsetHeight) / 2) + 'px';
       const r = nowPlayingBox.getBoundingClientRect(),
         bounds = layout.getBoundingClientRect();
       layout.scrollTo({
-        left: layout.scrollLeft + r.left - bounds.left - inset,
+        top: layout.scrollTop + r.top - bounds.top - (layout.clientHeight - r.height) / 2,
         behavior: smooth ? motion() : 'instant',
       });
       centerPending = false;
@@ -723,14 +676,13 @@
       );
     }
     function nearestEntry() {
-      const bounds = layout.getBoundingClientRect(),
-        horizontal = view === 'cards';
-      const center = horizontal ? bounds.left + layout.clientWidth / 2 : bounds.top + layout.clientHeight / 2;
+      const bounds = layout.getBoundingClientRect();
+      const center = bounds.top + layout.clientHeight / 2;
       let closest,
         distance = Infinity;
       for (const row of entries()) {
         const rect = row.getBoundingClientRect();
-        const delta = Math.abs((horizontal ? rect.left + rect.width / 2 : rect.top + rect.height / 2) - center);
+        const delta = Math.abs(rect.top + rect.height / 2 - center);
         if (delta < distance) {
           closest = row;
           distance = delta;
@@ -742,17 +694,10 @@
       if (!target || timeline.hidden) return;
       const rect = target.getBoundingClientRect(),
         bounds = layout.getBoundingClientRect();
-      layout.scrollTo(
-        view === 'cards'
-          ? {
-              left: layout.scrollLeft + rect.left - bounds.left - (layout.clientWidth - rect.width) / 2,
-              behavior: smooth ? motion() : 'instant',
-            }
-          : {
-              top: layout.scrollTop + rect.top - bounds.top - (layout.clientHeight - rect.height) / 2,
-              behavior: smooth ? motion() : 'instant',
-            },
-      );
+      layout.scrollTo({
+        top: layout.scrollTop + rect.top - bounds.top - (layout.clientHeight - rect.height) / 2,
+        behavior: smooth ? motion() : 'instant',
+      });
       updateNavigation();
     }
     function directionTarget(direction) {
@@ -762,13 +707,13 @@
       if (index === -1) return undefined;
       return rows[index + direction];
     }
-    function scrollCards(direction) {
+    function scrollEntries(direction) {
       centerEntry(directionTarget(direction));
     }
     function updateNavigation() {
       if (!layout.clientWidth) return;
-      previousCard.disabled = !directionTarget(-1);
-      nextCard.disabled = !directionTarget(1);
+      previousButton.disabled = !directionTarget(-1);
+      nextButton.disabled = !directionTarget(1);
     }
     let navFrame;
     function scheduleNavigation() {
@@ -779,25 +724,13 @@
       });
     }
 
-    function updateView() {
-      renderHeaderBadge(getState()?.queueSummary);
-      viewButtons.forEach((b, i) => b.setAttribute('aria-pressed', String(view === (i ? 'list' : 'cards'))));
-      navigation.hidden = false;
-      previousCard.querySelector('svg')?.replaceWith(root.uburoomIcons.icon(doc, view === 'cards' ? 'left' : 'up'));
-      nextCard.querySelector('svg')?.replaceWith(root.uburoomIcons.icon(doc, view === 'cards' ? 'right' : 'down'));
-      layout.tabIndex = 0;
-      layout.style.paddingBlock = '';
-      if (view === 'list') layout.style.paddingInline = '';
-      requestAnimationFrame(() => centerCurrent());
-    }
-
     layout.addEventListener('scroll', scheduleNavigation, { passive: true });
     layout.addEventListener('keydown', event => {
       if (event.target !== layout) return;
-      if ((view === 'cards' ? ['ArrowLeft', 'ArrowRight'] : ['ArrowUp', 'ArrowDown']).includes(event.key)) {
+      if (['ArrowUp', 'ArrowDown'].includes(event.key)) {
         event.preventDefault();
         event.stopPropagation();
-        scrollCards(['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1);
+        scrollEntries(event.key === 'ArrowUp' ? -1 : 1);
       } else if (event.key === 'Home') {
         event.preventDefault();
         event.stopPropagation();
@@ -811,7 +744,8 @@
       measuredWidth = layout.clientWidth;
       if (resized || centerPending) centerCurrent();
     }).observe(layout);
-    updateView();
+    renderHeaderBadge(getState()?.queueSummary);
+    requestAnimationFrame(() => centerCurrent());
 
     const images = new Map();
     const imageRequests = new Map();
@@ -963,10 +897,10 @@
           state.queueSummary?.historyCount ||
           currentHistory.items.length
         );
-      views.hidden = toolbar.hidden = timeline.hidden = noEntries;
+      toolbar.hidden = timeline.hidden = noEntries;
       emptyScreen.hidden = !noEntries;
       continuation.hidden = !state;
-      host.dataset.view = noEntries ? 'empty' : view;
+      host.dataset.view = noEntries ? 'empty' : 'list';
       host.classList.toggle('queue-is-empty', noEntries);
       emptyTitle.textContent = state ? 'The queue is empty' : 'The queue lives in a room';
       emptyText.hidden = !!state;
@@ -1017,7 +951,6 @@
         state?.capabilities?.playPause,
         state?.capabilities?.editQueue,
         state?.capabilities?.chooseMedia,
-        view,
       ]);
       if (currentKey !== key) {
         const changedItem = currentId !== current?.id;
@@ -1044,7 +977,7 @@
         const progress = node('progress', body, undefined, 'queue-progress');
         progress.setAttribute('aria-label', 'Current video progress');
         const actions = node('div', nowPlayingBox, undefined, 'queue-entry-actions');
-        node('span', actions, '', 'queue-card-caption queue-playback-state');
+        node('span', actions, '', 'queue-entry-caption queue-playback-state');
         const playBtn = button(
           actions,
           'Play',
@@ -1115,7 +1048,7 @@
       const duration = state?.queueSummary?.current?.duration || state?.state?.duration || 0;
       let remaining = Math.max(0, duration - (state?.state?.position || 0));
       const ranks = upcomingView.querySelectorAll('.queue-rank');
-      const captions = upcomingView.querySelectorAll('.queue-card-caption');
+      const captions = upcomingView.querySelectorAll('.queue-entry-caption');
       const items = currentQueue.items || [];
       items.forEach((item, i) => {
         if (ranks[i]) {
@@ -1127,9 +1060,8 @@
       });
       const autoRow = upcomingView.querySelector('.queue-entry-auto');
       if (autoRow) {
-        const autoCaption = autoRow.querySelector('.queue-card-caption');
-        if (autoCaption)
-          autoCaption.textContent = view === 'list' ? 'Auto · Up in ' + formatTime(remaining) : 'Auto-queue';
+        const autoCaption = autoRow.querySelector('.queue-entry-caption');
+        if (autoCaption) autoCaption.textContent = 'Auto · Up in ' + formatTime(remaining);
       }
     }
 
@@ -1159,7 +1091,7 @@
         action(
           moves,
           'Move earlier',
-          view === 'cards' ? 'left' : 'up',
+          'up',
           () => moveItem(item.id, item.rank - 1),
           !canEdit || i === 0,
           'queue-action-up',
@@ -1167,7 +1099,7 @@
         action(
           moves,
           'Move later',
-          view === 'cards' ? 'right' : 'down',
+          'down',
           () => moveItem(item.id, item.rank + 1),
           !canEdit || item.rank === currentQueue.total - 1,
           'queue-action-down',
@@ -1178,7 +1110,7 @@
         title(info, item, 'queue-entry-title');
         node('span', info, formatTime(item.duration), 'queue-meta');
         const actions = node('div', row, undefined, 'queue-entry-actions');
-        node('span', actions, 'Queue', 'queue-card-caption');
+        node('span', actions, 'Queue', 'queue-entry-caption');
         action(actions, 'Play now', 'play', () => playEntry(item.id, false), !canChoose, 'queue-action-play');
         const skipLabel = i === 0 ? 'Skip to' : 'Skip ' + i + (i === 1 ? ' item to' : ' items to');
         action(
@@ -1225,7 +1157,7 @@
         title(info, autoNext, 'queue-entry-title');
         node('span', info, formatTime(autoNext.duration), 'queue-meta');
         const actions = node('div', row, undefined, 'queue-entry-actions');
-        node('span', actions, 'Auto-queue', 'queue-card-caption');
+        node('span', actions, 'Auto-queue', 'queue-entry-caption');
         action(
           actions,
           'Play now',
@@ -1419,7 +1351,7 @@
           'queue-meta',
         );
         const actions = node('div', row, undefined, 'queue-entry-actions');
-        node('span', actions, 'History', 'queue-card-caption');
+        node('span', actions, 'History', 'queue-entry-caption');
         action(
           actions,
           'Restart from here',
@@ -1440,8 +1372,7 @@
     }
 
     function renderTab() {
-      const scroll = layout.scrollLeft,
-        scrollTop = layout.scrollTop;
+      const scrollTop = layout.scrollTop;
       footer.querySelector('.queue-footer-actions')?.remove();
       renderUpcoming();
       renderHistory();
@@ -1451,27 +1382,9 @@
           imageObserver.unobserve(img);
           observedImages.delete(img);
         }
-      layout.scrollLeft = scroll;
       layout.scrollTop = scrollTop;
-      if (moveFollow && view === 'cards') {
-        const follow = moveFollow;
-        requestAnimationFrame(() => {
-          const row = [...upcomingView.querySelectorAll('.queue-entry')].find(
-            item => item.dataset.entryId === follow.entryId,
-          );
-          if (!row || moveFollow !== follow) return;
-          const delta = row.getBoundingClientRect().left - layout.getBoundingClientRect().left - follow.offset;
-          layout.scrollTo({ left: layout.scrollLeft + delta, behavior: motion() });
-          if (follow.focus)
-            row
-              .querySelector(follow.direction < 0 ? '.queue-action-up' : '.queue-action-down')
-              ?.focus({ preventScroll: true });
-        });
-      } else if (centerPending) requestAnimationFrame(() => centerCurrent());
-      else {
-        layout.scrollLeft = scroll;
-        updateNavigation();
-      }
+      if (centerPending) requestAnimationFrame(() => centerCurrent());
+      else updateNavigation();
       scheduleNavigation();
     }
 
@@ -1574,32 +1487,14 @@
     async function moveItem(entryId, targetRank) {
       const state = getState();
       if (!state?.id) return;
-      const item = currentQueue.items.find(item => item.id === entryId);
-      const row = [...upcomingView.querySelectorAll('.queue-entry')].find(row => row.dataset.entryId === entryId);
-      const follow =
-        view === 'cards' && row
-          ? {
-              entryId,
-              direction: targetRank - item.rank,
-              offset: row.getBoundingClientRect().left - layout.getBoundingClientRect().left,
-              focus: row.contains(doc.activeElement),
-            }
-          : null;
-      moveFollow = follow;
-      try {
-        await request('/api/watch/rooms/' + state.id + '/queue', {
-          action: 'move',
-          entryId,
-          targetRank,
-          expectedRevision: queueRevision(state),
-        });
-        await changed();
-        await fetchData(true);
-        // renderTab schedules the follow after the new order has been laid out.
-        await new Promise(resolve => requestAnimationFrame(resolve));
-      } finally {
-        if (moveFollow === follow) moveFollow = null;
-      }
+      await request('/api/watch/rooms/' + state.id + '/queue', {
+        action: 'move',
+        entryId,
+        targetRank,
+        expectedRevision: queueRevision(state),
+      });
+      await changed();
+      await fetchData(true);
     }
 
     async function removeItem(entryId) {
@@ -1736,15 +1631,14 @@
     let rememberedPosition;
     return {
       rememberPosition() {
-        if (layout.clientWidth)
-          rememberedPosition = { room: getState()?.id, view, left: layout.scrollLeft, top: layout.scrollTop };
+        if (layout.clientWidth) rememberedPosition = { room: getState()?.id, top: layout.scrollTop };
       },
       restorePosition() {
         const saved = rememberedPosition;
-        if (layout.clientWidth && saved?.room === getState()?.id && saved.view === view)
+        if (layout.clientWidth && saved?.room === getState()?.id)
           requestAnimationFrame(() => {
             if (!layout.clientWidth) return;
-            layout.scrollTo({ left: saved.left, top: saved.top, behavior: 'instant' });
+            layout.scrollTo({ top: saved.top, behavior: 'instant' });
             updateNavigation();
           });
       },

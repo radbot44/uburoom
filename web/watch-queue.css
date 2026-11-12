@@ -5,7 +5,6 @@
   container-name: queue;
 }
 #queue-content {
-  --queue-card-width: clamp(220px, 30cqw, 290px);
   min-width: 0;
 }
 #queue-content svg {
@@ -18,15 +17,14 @@
   stroke-linejoin: round;
   flex: none;
 }
-#queue-content :is(.queue-heading, .watch-control, .queue-view-switch) > svg,
-#queue-content :is(.queue-view-button, #queue-symbol) > svg {
+#queue-content :is(.queue-heading, .watch-control) > svg,
+#queue-content #queue-symbol > svg {
   width: var(--watch-icon-size);
   height: var(--watch-icon-size);
 }
 .queue-header,
 .queue-toolbar,
 .queue-heading,
-.queue-view-switch,
 .queue-navigation {
   display: flex;
   align-items: center;
@@ -45,19 +43,6 @@
 }
 .queue-heading > svg {
   color: var(--accent-text);
-}
-.queue-view-switch {
-  flex: none;
-}
-.queue-view-button {
-  display: flex;
-  align-items: center;
-  white-space: nowrap;
-  padding-inline: var(--space-8);
-  flex: 1 0 auto;
-}
-.queue-view-button span {
-  white-space: nowrap;
 }
 .queue-toolbar {
   margin-bottom: var(--space-16);
@@ -238,7 +223,7 @@ button.queue-title-link:hover {
   background: var(--hover);
   color: var(--text);
 }
-.queue-card-caption {
+.queue-entry-caption {
   margin-right: auto;
   font-size: var(--font-size-12);
   color: var(--muted);
@@ -344,7 +329,7 @@ button.queue-title-link:hover {
   margin-left: auto;
 }
 
-/* One timeline, horizontal posters or vertically scrolling rows. */
+/* One timeline of vertically scrolling rows. */
 .queue-header {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -364,14 +349,6 @@ button.queue-title-link:hover {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   min-height: 48px;
-  margin: 0;
-}
-.queue-header .queue-view-switch {
-  grid-column: 3;
-  grid-row: 1;
-  justify-self: end;
-  flex-basis: auto;
-  width: auto;
   margin: 0;
 }
 #queue-center {
@@ -411,111 +388,6 @@ button.queue-title-link:hover {
 }
 .queue-layout {
   overflow-anchor: none;
-}
-[data-view='cards'] .queue-layout {
-  display: flex;
-  align-items: stretch;
-  gap: var(--space-14);
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-  scrollbar-color: var(--border) transparent;
-  padding-bottom: var(--space-12);
-}
-[data-view='cards'] .queue-view,
-[data-view='cards'] .queue-list {
-  display: contents;
-}
-[data-view='cards'] :is(.queue-entry, .queue-history-entry, .queue-now-playing) {
-  position: relative;
-  isolation: isolate;
-  flex: 0 0 var(--queue-card-width);
-  width: var(--queue-card-width);
-  height: auto;
-  aspect-ratio: 2/3;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  border: 0;
-  border-radius: var(--radius-12);
-  --text: var(--chrome-text);
-  --muted: var(--chrome-muted);
-  color: var(--text);
-  background: var(--chrome-background);
-}
-[data-view='cards'] .queue-now-playing {
-  outline: 2px solid var(--primary);
-  outline-offset: -2px;
-}
-[data-view='cards'] .queue-art {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  border-radius: inherit;
-  aspect-ratio: auto;
-  background: var(--chrome-background);
-  z-index: var(--z-behind-2);
-}
-[data-view='cards'] :is(.queue-entry, .queue-history-entry, .queue-now-playing)::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    var(--chrome-background-a80),
-    transparent 28%,
-    transparent 35%,
-    var(--chrome-background-a93) 78%
-  );
-  z-index: var(--z-behind);
-  pointer-events: none;
-}
-[data-view='cards'] :is(.queue-entry-top, .queue-now-playing-header) {
-  position: absolute;
-  inset: 8px 8px auto 12px;
-  min-height: 34px;
-  align-items: center;
-}
-[data-view='cards'] .queue-history-status {
-  min-height: 34px;
-  padding-top: var(--space-8);
-}
-[data-view='cards'] :is(.queue-entry-info, .queue-now-playing-body) {
-  position: absolute;
-  inset: auto 12px 58px;
-}
-[data-view='cards'] .queue-entry-actions {
-  position: absolute;
-  inset: auto 8px 10px 12px;
-  margin: 0;
-}
-[data-view='cards'] .queue-title-link {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-}
-[data-view='cards'] .queue-entry-subtitle {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-}
-[data-view='cards'] .queue-column-heading,
-[data-view='cards'] .queue-history-heading {
-  display: none;
-}
-[data-view='cards'] .queue-empty {
-  flex: 0 0 var(--queue-card-width);
-  align-self: center;
-  text-align: center;
-}
-[data-view='cards'] .queue-history-older {
-  flex: 0 0 110px;
-  align-self: center;
-  min-height: 44px;
-  font-size: var(--font-size-12);
 }
 [data-view='list'] .queue-layout {
   display: flex;
@@ -606,20 +478,6 @@ button.queue-title-link:hover {
   flex: none;
   font-size: var(--font-size-12);
 }
-@container queue (max-width:560px) {
-  .queue-view-button span {
-    display: none;
-  }
-  .queue-badge {
-    font-size: var(--font-size-12);
-  }
-  .queue-card-caption {
-    font-size: var(--font-size-12);
-  }
-  .queue-header .queue-view-switch {
-    flex-basis: auto;
-  }
-}
 @container queue (max-width:440px) {
   .queue-quick-controls .watch-toggle-label {
     display: none;
@@ -636,16 +494,12 @@ button.queue-title-link:hover {
     grid-column: 1/-1;
     justify-self: end;
   }
-  .queue-header .queue-view-switch {
-    grid-row: 1;
-  }
   .queue-toolbar {
     grid-row: 3;
   }
 }
 @media (pointer: coarse) {
-  .queue-navigation button,
-  .queue-view-button {
+  .queue-navigation button {
     min-height: 40px;
     min-width: 40px;
   }
@@ -680,7 +534,6 @@ button.queue-title-link:hover {
 .queue-timeline[hidden],
 .queue-empty-screen[hidden],
 .queue-toolbar[hidden],
-.queue-view-switch[hidden],
 .queue-quick-controls[hidden] {
   display: none !important;
 }
@@ -819,12 +672,8 @@ button.queue-title-link:hover {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--secondary) 35%, transparent);
 }
 .queue-entry-auto .queue-rank-auto,
-.queue-entry-auto .queue-card-caption {
+.queue-entry-auto .queue-entry-caption {
   color: var(--secondary) !important;
-}
-[data-view='cards'] .queue-entry-auto {
-  outline: 2px solid color-mix(in srgb, var(--secondary) 75%, transparent);
-  outline-offset: -2px;
 }
 [data-view='list'] .queue-entry-auto {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--secondary) 55%, transparent);
