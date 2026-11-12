@@ -2,9 +2,9 @@
   bottom: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 28px 12px 10px;
-  background: linear-gradient(transparent, #000d);
+  gap: var(--space-2);
+  padding: var(--space-28) var(--space-12) var(--space-10);
+  background: linear-gradient(transparent, var(--black-a87));
 }
 .timeline-row,
 .transport-row,
@@ -13,12 +13,12 @@
 .volume-control {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-6);
   min-width: 0;
 }
 .timeline-row {
   width: 100%;
-  gap: 8px;
+  gap: var(--space-8);
   position: relative;
 }
 .timeline-row #timeline {
@@ -31,17 +31,17 @@
   bottom: calc(100% + 6px);
   left: 50%;
   transform: translateX(-50%);
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: #101217f2;
+  padding: var(--space-4) var(--space-8);
+  border-radius: var(--radius-6);
+  background: var(--chrome-background-a95);
   border: 1px solid var(--border);
   color: var(--text);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   pointer-events: none;
-  z-index: 20;
-  box-shadow: 0 4px 12px #0008;
+  z-index: var(--z-timeline-tooltip);
+  box-shadow: 0 4px 12px var(--black-a53);
 }
 .skip-marker {
   position: absolute;
@@ -49,19 +49,19 @@
   right: 18px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
   height: 40px;
-  padding: 0 14px;
-  border-radius: 10px;
+  padding: 0 var(--space-14);
+  border-radius: var(--radius-10);
   background: color-mix(in srgb, var(--card) 92%, transparent);
   border: 1px solid var(--border);
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  z-index: 15;
+  z-index: var(--z-skip-marker);
   backdrop-filter: blur(8px);
-  box-shadow: 0 4px 16px #0008;
+  box-shadow: 0 4px 16px var(--black-a53);
 }
 .skip-marker:hover:not(:disabled) {
   background: var(--hover);
@@ -79,22 +79,22 @@
 }
 .transport-row {
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--space-10);
 }
 .playback-buttons,
 .player-tools {
-  gap: 4px;
+  gap: var(--space-4);
 }
 .volume-control {
   gap: 0;
 }
 .volume-control #player-volume {
   width: 86px;
-  margin: 0 3px 0 0;
+  margin: 0 var(--space-3) 0 0;
   flex-shrink: 1;
 }
 .time {
-  font-size: 12px;
+  font-size: var(--font-size-12);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   min-width: 32px;
@@ -112,8 +112,8 @@
   color: var(--on-primary);
   font-size: 8px;
   line-height: 12px;
-  padding: 0 2px;
-  border-radius: 3px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-3);
   font-weight: 750;
   pointer-events: none;
 }
@@ -226,26 +226,26 @@
 .player-media-columns {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
-  column-gap: 28px;
+  column-gap: var(--space-28);
 }
 .player-settings-column {
   min-width: 0;
 }
 #tracks-dialog .settings-group {
-  margin-top: 20px;
-  padding-top: 18px;
+  margin-top: var(--space-20);
+  padding-top: var(--space-18);
   border-top: 1px solid var(--border);
   min-width: 0;
 }
 #tracks-dialog .player-settings-column > .settings-group:first-child {
-  margin-top: 8px;
+  margin-top: var(--space-8);
 }
 #tracks-dialog h3 {
   font-size: 13px;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  margin: 0 0 12px;
+  margin: 0 0 var(--space-12);
 }
 #tracks-dialog h4 {
   font-size: 13px;
@@ -258,21 +258,21 @@
   overflow-wrap: anywhere;
 }
 #tracks-dialog .video-check {
-  margin-top: 16px;
+  margin-top: var(--space-16);
 }
 #tracks-dialog .video-check h4 {
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-8);
 }
 #video-check-items {
   list-style: none;
-  margin: 0 0 12px;
+  margin: 0 0 var(--space-12);
   padding: 0;
   display: grid;
-  gap: 8px;
+  gap: var(--space-8);
 }
 #video-check-items li {
   display: flex;
-  gap: 10px;
+  gap: var(--space-10);
   align-items: flex-start;
 }
 #video-check-items li > svg {
@@ -302,12 +302,12 @@
   font-weight: 600;
 }
 #video-check-items .hint {
-  margin: 2px 0 0;
+  margin: var(--space-2) 0 0;
 }
 #video-check-refresh {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
 }
 #video-check-refresh svg {
   width: 20px;
@@ -322,8 +322,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
-  margin-top: 12px;
+  gap: var(--space-8) var(--space-12);
+  margin-top: var(--space-12);
 }
 #tracks-dialog .diagnostic-report .hint {
   margin: 0;
@@ -331,7 +331,7 @@
 #copy-diagnostics {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
 }
 #copy-diagnostics svg {
   width: 20px;
@@ -354,23 +354,23 @@
 #tracks-dialog label {
   font-size: 13px;
   font-weight: 600;
-  margin-top: 12px;
+  margin-top: var(--space-12);
 }
 #tracks-dialog select {
   width: 100%;
   max-width: 100%;
-  font-size: 14px;
-  padding: 10px;
+  font-size: var(--font-size-14);
+  padding: var(--space-10);
 }
 #tracks-dialog .personal-sync {
   display: block;
-  margin: 16px 0 0;
+  margin: var(--space-16) 0 0;
 }
 #tracks-dialog .personal-sync label {
-  margin-bottom: 6px;
+  margin-bottom: var(--space-6);
 }
 #tracks-dialog .personal-sync .hint {
-  margin-top: 8px;
+  margin-top: var(--space-8);
 }
 #tracks-dialog #subtitle-offset {
   width: 100%;
@@ -381,8 +381,8 @@
 .subtitle-color-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 6px;
+  gap: var(--space-8);
+  margin-top: var(--space-6);
 }
 .subtitle-color-row select {
   flex: 1;
@@ -391,13 +391,13 @@
 .subtitle-color-custom {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-6);
   flex: none;
 }
 #subtitle-color-hex {
   width: 86px;
   min-width: 0;
-  padding: 9px 8px;
+  padding: var(--space-9) var(--space-8);
   font-family: monospace;
   font-size: 13px;
   text-transform: uppercase;
@@ -407,9 +407,9 @@
   height: 40px;
   min-width: 40px;
   min-height: 40px;
-  padding: 2px;
+  padding: var(--space-2);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-10);
   background: var(--elevated);
   cursor: pointer;
   -webkit-appearance: none;
@@ -421,24 +421,24 @@
 }
 #subtitle-color-picker::-webkit-color-swatch {
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-7);
 }
 #subtitle-color-picker::-moz-color-swatch {
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-7);
 }
 #subtitle-color-picker:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 #tracks-dialog .button-group {
-  margin-top: 6px;
+  margin-top: var(--space-6);
 }
 .subtitle-slider-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 6px;
+  gap: var(--space-12);
+  margin-top: var(--space-6);
 }
 .subtitle-slider-row input[type='range'] {
   flex: 1;
@@ -458,10 +458,10 @@
     row-gap: 0;
   }
   #tracks-dialog .player-settings-column + .player-settings-column > .settings-group:first-child {
-    margin-top: 20px;
+    margin-top: var(--space-20);
   }
   #tracks-dialog .player-media-columns {
-    row-gap: 12px;
+    row-gap: var(--space-12);
   }
 }
 .player-settings-menu {
@@ -471,13 +471,13 @@
   width: 280px;
   max-width: calc(100vw - 16px);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 6px;
+  border-radius: var(--radius-12);
+  padding: var(--space-6);
   background: var(--card);
   color: var(--text);
-  box-shadow: 0 8px 30px #0008;
+  box-shadow: 0 8px 30px var(--black-a53);
   font-size: 13px;
-  z-index: 25;
+  z-index: var(--z-player-menu);
   overflow: hidden;
 }
 .settings-main,
@@ -522,7 +522,7 @@
   flex: none;
   margin-top: auto;
   border-top: 1px solid var(--border);
-  border-radius: 0 0 7px 7px;
+  border-radius: 0 0 var(--radius-7) var(--radius-7);
 }
 .player-settings-menu #settings-back > svg {
   margin-left: 0;
@@ -531,12 +531,12 @@
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-10);
   text-align: left;
   background: transparent;
   color: var(--text);
-  border-radius: 7px;
-  padding: 10px;
+  border-radius: var(--radius-7);
+  padding: var(--space-10);
   min-height: 40px;
 }
 .settings-main > button {
@@ -579,7 +579,7 @@
   font-size: 11px;
   color: var(--muted);
   font-weight: 400;
-  margin-top: 3px;
+  margin-top: var(--space-3);
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -587,7 +587,7 @@
   display: block;
   color: var(--accent-text);
   font-size: 11px;
-  margin-top: 4px;
+  margin-top: var(--space-4);
 }
 .settings-submenu button[aria-checked='true'] {
   background: var(--elevated);
@@ -595,17 +595,17 @@
 }
 #settings-more {
   border-top: 1px solid var(--border);
-  border-radius: 0 0 7px 7px;
-  margin-top: 4px;
+  border-radius: 0 0 var(--radius-7) var(--radius-7);
+  margin-top: var(--space-4);
 }
 #seek-feedback {
   position: absolute;
   top: 40%;
-  z-index: 4;
-  padding: 10px 14px;
+  z-index: var(--z-local-4);
+  padding: var(--space-10) var(--space-14);
   margin: 0;
-  background: #101217d9;
-  border-radius: 20px;
+  background: var(--chrome-background-a85);
+  border-radius: var(--radius-20);
   font-size: 15px;
   color: var(--text);
   pointer-events: none;
@@ -623,7 +623,7 @@ body.mobile-player main {
   padding: 0;
 }
 body.mobile-player main > #account {
-  margin-inline: 12px;
+  margin-inline: var(--space-12);
 }
 body.mobile-player .stage {
   border-radius: 0;
@@ -632,24 +632,24 @@ html:has(body.mobile-player:not(.immersive)) {
   overflow-y: scroll;
 }
 body.mobile-player #viewing-section > #room-bar {
-  margin: 12px 12px 0;
+  margin: var(--space-12) var(--space-12) 0;
   width: calc(100% - 24px);
 }
 body.mobile-player:not(.immersive) #app :is(#queue-panel, #options-panel, #library-panel) {
-  margin-inline: 12px;
+  margin-inline: var(--space-12);
   width: calc(100% - 24px);
 }
 body.mobile-player:not(.immersive) #section-tabs {
-  margin-inline: 12px;
+  margin-inline: var(--space-12);
 }
 body.mobile-player main > :is(#status, #error, #diagnostic-actions, #acceleration-help) {
-  margin-inline: 12px;
+  margin-inline: var(--space-12);
 }
 body.mobile-player :is(#theater, #seek-back, #seek-forward) {
   display: none !important;
 }
 body.mobile-player .transport {
-  padding: 20px 6px 6px;
+  padding: var(--space-20) var(--space-6) var(--space-6);
   gap: 0;
 }
 body.mobile-player :is(.transport-row, .playback-buttons, .player-tools) {
@@ -667,7 +667,7 @@ body.mobile-player .player-button svg {
 }
 body.mobile-player .volume-control #player-volume {
   width: clamp(40px, 14vw, 72px);
-  margin: 0 2px 0 0;
+  margin: 0 var(--space-2) 0 0;
 }
 body.mobile-player .center-play {
   width: 48px;
@@ -683,10 +683,10 @@ body.mobile-player #ready-status {
   font-size: 10px;
 }
 body.mobile-player .title-bar {
-  padding: 8px 10px 20px;
+  padding: var(--space-8) var(--space-10) var(--space-20);
 }
 body.mobile-player .media-heading h1 {
-  font-size: 14px;
+  font-size: var(--font-size-14);
 }
 body.mobile-player #empty-stage {
   max-height: calc(100% - 136px);
@@ -696,18 +696,18 @@ body.mobile-player #empty-stage {
   aspect-ratio: 16/9;
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-10);
   display: grid;
   place-items: center;
   text-align: center;
-  padding: 24px;
+  padding: var(--space-24);
 }
 .pip-placeholder[hidden] {
   display: none !important;
 }
 .pip-placeholder-content {
   display: grid;
-  gap: 12px;
+  gap: var(--space-12);
   place-items: center;
 }
 .pip-placeholder-content p {
@@ -719,7 +719,7 @@ body.mobile-player #empty-stage {
 body.pip-window {
   margin: 0;
   padding: 0;
-  background: black;
+  background: var(--black);
   overflow: hidden;
   width: 100vw;
   height: 100vh;
@@ -731,7 +731,7 @@ body.pip-window .stage {
   height: 100%;
   aspect-ratio: auto;
   border-radius: 0;
-  background: black;
+  background: var(--black);
 }
 body.pip-window :is(#theater, #drawer-open) {
   display: none !important;
