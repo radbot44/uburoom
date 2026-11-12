@@ -306,7 +306,10 @@ test('every room-scoped library route rejects inaccessible viewers and rechecks 
       finish = resolve;
     });
   };
-  const hub = { access: { isMember: () => true }, canManage: (s, actor) => manage && actor.userId === 'host' };
+  const hub = {
+    access: { isMember: () => true },
+    authorize: (actor, s, action) => ({ ok: action === 'roomSettings' && manage && actor.userId === 'host' }),
+  };
   const routes = watchHttp({
     config: { publicUrl: 'https://localhost' },
     hub,
@@ -449,7 +452,7 @@ test('room watch party history takes priority over personal Plex progress in lib
     media: { id: '10', duration: 7200 },
   };
   const rooms = new Map([['room-1', room]]);
-  const hub = { access: { isMember: () => true }, canManage: () => true };
+  const hub = { access: { isMember: () => true }, authorize: () => ({ ok: true }) };
   const mockItems = [
     { id: '10', title: 'Live In Room', duration: 7200, viewOffset: 300 },
     { id: '20', title: 'Personal Only', duration: 7200, viewOffset: 450 },

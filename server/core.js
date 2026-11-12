@@ -16,7 +16,9 @@ const COMMAND_MS = COMMAND_TTL_MS;
 const isOwner = (actor, config) => (actor?.discordId || actor?.userId) === config.ownerId;
 // A guest session is never a host, whatever the room's roles say.
 const isHost = (room, actor) => !actor.guestRoomId && RoomPolicy.role(room, actor.userId) !== 'viewer';
-const privileged = (room, actor, config, admin = false) => isHost(room, actor) || admin;
+const ALLOW = Object.freeze({ ok: true });
+const NO_ROOM = Object.freeze({ ok: false, reason: 'room' });
+const NO_PERMISSION = Object.freeze({ ok: false, reason: 'permission' });
 const canWatch = (access, id, actor) => (access?.canWatch ? access.canWatch(id, actor) : !!access?.isMember(id));
 function sameVoice(room, actor, access) {
   const channel = access?.voiceChannel?.(room.hostId || room.ownerId);
@@ -26,22 +28,6 @@ function watching(room, actor, now = Date.now()) {
   return [...(room.viewers?.values() || [])].some(v => v.userId === actor.userId && now - v.at < PRESENCE_MS);
 }
 
-function viewEligible(room, actor, config, now = Date.now(), access, admin = false) {
-  // A guest session opens one room only.
-  if (actor.guestRoomId && (room.roomId ?? room.id) !== actor.guestRoomId) return false;
-  return (
-    canWatch(access, actor.userId, actor) &&
-    (admin ||
-      room.visibility === 'public' ||
-      RoomPolicy.admitted(room, actor.userId) ||
-      actor.guestRoomId === (room.roomId ?? room.id))
-  );
-}
-function eligible(room, actor, config, now = Date.now(), access, manage = false, admin = false) {
-  if (!viewEligible(room, actor, config, now, access, admin)) return false;
-  if (privileged(room, actor, config, admin)) return true;
-  return watching(room, actor, now);
-}
 class Hub {
   constructor(config) {
     this.config = config;
@@ -62,6 +48,8 @@ class Hub {
     this.watchCanView = undefined;
     /** @type {((roomId: string) => boolean) | undefined} */
     this.watchIdle = undefined;
+    /** @type {((roomId: string) => Set<string>) | undefined} Accounts holding the room's current guest passes. */
+    this.guestMembers = undefined;
     /** @type {((roomId: string, actor: Actor, permitted: () => boolean) => Promise<any>) | undefined} */
     this.publicationExecute = undefined;
     /** @type {((roomId: string, actor: Actor, permitted: () => boolean) => Promise<any>) | undefined} */
@@ -84,37 +72,70 @@ class Hub {
     }
     return this.isOwner(actor) ? this.adminMode : this.adminUsers.has(actor.userId);
   }
-  canRoom(room, actor, capability) {
-    return (
-      this.isAdmin(actor) ||
-      RoomPolicy.allowed(actor.guestRoomId ? { ...room, guests: [actor.userId] } : room, actor.userId, capability)
-    );
-  }
-  canManage(room, actor) {
-    return this.canRoom(room, actor, 'roomSettings');
-  }
-  roomCommandAllowed(room, actor, command, personal = false) {
-    if (personal) return true;
-    if (['room.publish', 'room.unpublish'].includes(command.action))
-      return !actor.guestRoomId && (isHost(room, actor) || this.isAdmin(actor));
-    const capability = RoomPolicy.commandCapability(command.action);
-    if (['queue.auto.playNow', 'media.next', 'queue.history.replay'].includes(command.action)) {
-      if (
-        !this.canRoom(room, actor, 'chooseMedia') &&
-        !(this.watchIdle?.(room.roomId) && this.canRoom(room, actor, 'playPause'))
-      )
-        return false;
-    } else if (!capability || !this.canRoom(room, actor, capability)) return false;
-    if (command.action === 'queue.offer.start' && !this.canRoom(room, actor, 'playPause')) return false;
+  /**
+   * The one authorization decision for room work: may `actor` perform `action` in `room`?
+   * `room` is an open room or a stored room record. `action` is one of:
+   * - a command from the command table (shared/room-protocol.js): room access,
+   *   presence for room-scoped commands, and the command's permission rule;
+   * - a room capability (RoomPolicy.CAPABILITIES or CREATOR_ONLY);
+   * - 'room.view': see and join the room (admission, visibility, guest scope);
+   * - 'room.remain': stay in the room's private membership (members, guests, Admin mode);
+   * - 'room.host': act as one of the room's hosts (hosts and Admin mode, never guests).
+   * Returns `{ok: true}`, or `{ok: false, reason}` where reason 'room' means the
+   * actor has no access to the room and 'permission' means the room's permissions
+   * deny the action. Provider checks (membership refresh, Plex item access) are
+   * asynchronous and stay with Watch.canView.
+   * @param {Actor} actor
+   * @param {any} room
+   * @param {string} action
+   * @returns {{ok: boolean, reason?: 'room'|'permission'}}
+   */
+  authorize(actor, room, action) {
+    const admin = this.isAdmin(actor);
+    const roomId = room.roomId ?? room.id;
+    if (action === 'room.remain')
+      return room.visibility !== 'private' ||
+        RoomPolicy.admitted(room.saved, actor.userId) ||
+        !!this.guestMembers?.(room.roomId).has(actor.userId) ||
+        admin
+        ? ALLOW
+        : NO_ROOM;
+    if (action === 'room.host') return !actor.guestRoomId && (isHost(room, actor) || admin) ? ALLOW : NO_PERMISSION;
+    const command = Engine.command(action);
+    if (!command && action !== 'room.view')
+      return admin ||
+        RoomPolicy.allowed(actor.guestRoomId ? { ...room, guests: [actor.userId] } : room, actor.userId, action)
+        ? ALLOW
+        : NO_PERMISSION;
+    // A guest session opens one room only.
+    const view =
+      (!actor.guestRoomId || roomId === actor.guestRoomId) &&
+      canWatch(this.access, actor.userId, actor) &&
+      (admin ||
+        room.visibility === 'public' ||
+        RoomPolicy.admitted(room, actor.userId) ||
+        actor.guestRoomId === roomId);
+    if (!view) return NO_ROOM;
+    // Only the authenticated watch endpoint attaches a viewer identity; personal
+    // commands change only that viewer's player.
+    if (!command || (command.scope === 'personal' && actor.watchViewerId)) return ALLOW;
+    if (!isHost(room, actor) && !admin && !watching(room, actor)) return NO_ROOM;
+    if (command.host) return this.authorize(actor, room, 'room.host').ok ? ALLOW : NO_PERMISSION;
+    const can = capability => this.authorize(actor, room, capability).ok;
     if (
-      ['media.play', 'media.toggle', 'media.ready.start'].includes(command.action) &&
+      !command.capability ||
+      !(can(command.capability) || (command.idle && this.watchIdle?.(room.roomId) && can(command.idle))) ||
+      (command.also && !can(command.also))
+    )
+      return NO_PERMISSION;
+    if (
+      command.hostless &&
       !isHost(room, actor) &&
-      !this.isAdmin(actor) &&
+      !admin &&
       ![...(room.viewers?.values() || [])].some(viewer => isHost(room, viewer.actor) || this.isAdmin(viewer.actor))
-    ) {
-      return this.canRoom(room, actor, 'continueWithoutHost');
-    }
-    return true;
+    )
+      return can('continueWithoutHost') ? ALLOW : NO_PERMISSION;
+    return ALLOW;
   }
   clearAdmin(actor) {
     const changed = this.adminUsers.delete(actor.userId) || (this.isOwner(actor) && this.adminMode);
@@ -156,9 +177,15 @@ class Hub {
     } catch {
       return { status: 'unsupported', message: 'Unsupported command or value.' };
     }
-    const savedUnpublish = command.action === 'room.unpublish' && !!this.savedPublicationExecute;
-    const publishing = command.action === 'room.publish' && !!this.publicationExecute;
-    if ((command.action.startsWith('room.event.') && this.scheduledEventExecute) || savedUnpublish || publishing) {
+    const declared = /** @type {NonNullable<ReturnType<typeof Engine.command>>} */ (Engine.command(command.action));
+    const service =
+      declared.service &&
+      {
+        publish: this.publicationExecute,
+        unpublish: this.savedPublicationExecute,
+        event: this.scheduledEventExecute,
+      }[declared.service];
+    if (service) {
       const deadlines = resolveCommandDeadlines({
         acceptedAt: Date.now(),
         expiresAt: input.expiresAt,
@@ -172,10 +199,9 @@ class Hub {
         this.adminEpoch === adminEpoch &&
         canWatch(this.access, actor.userId, actor);
       try {
-        if (publishing) return await this.publicationExecute(input.roomId, actor, permitted);
-        return savedUnpublish
-          ? await this.savedPublicationExecute(input.roomId, actor, permitted)
-          : await this.scheduledEventExecute(input.roomId, command, actor, permitted);
+        return declared.service === 'event'
+          ? await this.scheduledEventExecute(input.roomId, command, actor, permitted)
+          : await service(input.roomId, actor, permitted);
       } catch (error) {
         return {
           status: error.status === 403 ? 'forbidden' : 'failed',
@@ -186,21 +212,11 @@ class Hub {
     }
     if (command.action.startsWith('queue.') && !this.rooms.has(input.roomId) && this.savedQueueExecute) {
       const acceptedAt = Date.now();
-      const extendedTtlMs = [
-        'queue.bulk',
-        'queue.auto',
-        'queue.auto.skip',
-        'queue.auto.pin',
-        'queue.add',
-        'queue.playNow',
-      ].includes(command.action)
-        ? 30000
-        : undefined;
       const deadlines = resolveCommandDeadlines({
         acceptedAt,
         expiresAt: input.expiresAt,
         commandTtlMs: COMMAND_MS,
-        extendedTtlMs,
+        extendedTtlMs: declared.preparesSaved ? 30000 : undefined,
       });
       if (!deadlines.admitted) return { status: 'unavailable', message: 'Room changed or command expired.' };
       const deadline = deadlines.executionDeadline,
@@ -220,32 +236,12 @@ class Hub {
         };
       }
     }
-    // Only the authenticated watch endpoint can attach a viewer identity.
-    // Personal audio/quality never changes the room for other viewers.
-    const personal =
-      this.rooms.has(input.roomId) &&
-      !!actor.watchViewerId &&
-      [
-        'media.quality.set',
-        'media.tracks.set',
-        'media.stream.refresh',
-        'media.volume.set',
-        'media.mute',
-        'media.unmute',
-        'media.reporting.set',
-      ].includes(command.action);
-    const manage = Engine.MANAGEMENT.includes(command.action) && !personal;
     const s = this.rooms.get(input.roomId);
-    if (
-      !s ||
-      !(personal
-        ? viewEligible(s, actor, this.config, Date.now(), this.access, this.isAdmin(actor))
-        : eligible(s, actor, this.config, Date.now(), this.access, manage, this.isAdmin(actor)))
-    )
+    if (!s || this.authorize(actor, s, command.action).reason === 'room')
       return { status: 'forbidden', message: 'No controllable room.' };
     if (this.watchCanView && !(await this.watchCanView(s, actor)))
       return { status: 'forbidden', message: 'No controllable room.' };
-    if (!this.roomCommandAllowed(s, actor, command, personal))
+    if (!this.authorize(actor, s, command.action).ok)
       return { status: 'forbidden', message: 'Your room permissions do not allow this action.' };
     if (s.execute) {
       const acceptedAt = Date.now();
@@ -253,24 +249,9 @@ class Hub {
       // preparation can take longer than the default command deadline.
       // Keep completion bounded and recheck the same live authorization below.
       const preparing =
-        (personal && ['media.quality.set', 'media.tracks.set', 'media.stream.refresh'].includes(command.action)) ||
-        ['media.load', 'room.publish'].includes(command.action) ||
-        [
-          'queue.bulk',
-          'queue.auto',
-          'queue.auto.skip',
-          'queue.auto.pin',
-          'queue.auto.playNow',
-          'queue.offer.start',
-          'queue.history.replay',
-          'queue.history.goBack',
-          'queue.playNow',
-          'queue.playEntry',
-          'queue.skipTo',
-          'media.next',
-          'media.previous',
-        ].includes(command.action) ||
-        (['media.play', 'media.toggle'].includes(command.action) && this.watchIdle?.(s.roomId));
+        declared.prepares === true ||
+        (declared.prepares === 'personal' && !!actor.watchViewerId) ||
+        (declared.prepares === 'idle' && this.watchIdle?.(s.roomId));
       const deadlines = resolveCommandDeadlines({
         acceptedAt,
         expiresAt: input.expiresAt,
@@ -286,10 +267,7 @@ class Hub {
         s.epoch === epoch &&
         Date.now() < deadline &&
         this.adminEpoch === adminEpoch &&
-        (personal
-          ? viewEligible(s, actor, this.config, Date.now(), this.access, this.isAdmin(actor))
-          : eligible(s, actor, this.config, Date.now(), this.access, manage, this.isAdmin(actor))) &&
-        this.roomCommandAllowed(s, actor, command, personal);
+        this.authorize(actor, s, command.action).ok;
       try {
         return await s.execute(command, actor, permitted);
       } catch (error) {
@@ -316,8 +294,6 @@ class Hub {
 }
 module.exports = {
   Hub,
-  eligible,
-  viewEligible,
   isHost,
   sameVoice,
   watching,

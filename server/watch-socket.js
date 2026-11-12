@@ -7,9 +7,10 @@ const {
   validateSyncQualityMessage,
   reduceViewerSyncQuality,
   createSubscriptionBroker,
-  isRoomLocalAction,
   classifyMutationScope,
 } = require('../shared/sync');
+const Engine = require('../shared/engine');
+const roomLocal = action => !!Engine.command(action)?.roomLocal;
 /** @typedef {import('ws').WebSocket & {watchKick?: (roomId: string) => void, watchRtts?: Array<{at:number,ms:number}>}} WatchSocket */
 /**
  * @typedef {Object} ControlRequest
@@ -216,7 +217,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
       return await dispatch(...args);
     } finally {
       const hasMedia = Boolean(roomId && watch.rooms.get(roomId)?.media);
-      const roomOnly = Boolean(roomId && isRoomLocalAction(cmd?.action) && hadMedia === hasMedia);
+      const roomOnly = Boolean(roomId && roomLocal(cmd?.action) && hadMedia === hasMedia);
       broker.notify(roomOnly ? { roomId, includeLobby: false } : { includeLobby: true });
     }
   };
@@ -398,7 +399,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
           try {
             const scope =
               message.data !== undefined && !message.path.endsWith('/observe')
-                ? classifyMutationScope(message.path, message.data)
+                ? classifyMutationScope(message.path, message.data, roomLocal)
                 : undefined;
             const hadMedia = Boolean(scope?.roomId && watch.rooms.get(scope.roomId)?.media);
             const operation = request(client, message.path, message.data, signal);

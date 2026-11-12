@@ -14,7 +14,7 @@ const { SharedTask, currentSignal, runOperation, waitFor } = require('./operatio
 const { isProviderOutage } = require('./resilience');
 const { randomUUID } = require('node:crypto');
 const Engine = require('../shared/engine');
-const { viewEligible, isHost, sameVoice, canWatch } = require('./core');
+const { isHost, sameVoice, canWatch } = require('./core');
 const { PlaybackError } = require('./av1');
 const { PlaybackTracking } = require('./playback-tracking');
 const { PlexReporting } = require('./plex-reporting');
@@ -789,9 +789,7 @@ class Watch {
       if (
         saved.expires <= now ||
         saved.mediaVersion !== room.mediaVersion ||
-        (room.visibility === 'private' &&
-          !this.privateMember(room, saved.userId) &&
-          !this.hub.isAdmin({ userId: saved.userId }))
+        !this.hub.authorize({ userId: saved.userId }, room, 'room.remain').ok
       )
         room.disconnectedViewers.delete(id);
     for (const viewer of room.viewers.values()) {
@@ -800,15 +798,9 @@ class Watch {
       if (hadTracking && !viewer.tracking) void this.reporting?.end(viewer, 'observation-timeout');
     }
     for (const [id, viewer] of room.viewers)
-      if (
-        now - viewer.at > 10000 ||
-        (room.visibility === 'private' && !this.privateMember(room, viewer.userId) && !this.hub.isAdmin(viewer.actor))
-      ) {
+      if (now - viewer.at > 10000 || !this.hub.authorize(viewer.actor, room, 'room.remain').ok) {
         lastPresence = Math.max(lastPresence, viewer.at);
-        if (
-          now - viewer.at > 10000 &&
-          (room.visibility !== 'private' || this.privateMember(room, viewer.userId) || this.hub.isAdmin(viewer.actor))
-        ) {
+        if (now - viewer.at > 10000 && this.hub.authorize(viewer.actor, room, 'room.remain').ok) {
           // Preserve only personal playback settings for the same tab's short
           // reconnect. A fresh stream and observation epoch are always required.
           room.disconnectedViewers.set(id, {
@@ -947,9 +939,8 @@ class Watch {
       ? media
       : undefined;
   }
-  privateMember(room, userId) {
-    return RoomPolicy.admitted(room.saved, userId) || !!this.hub.guestMembers?.(room.roomId).has(userId);
-  }
+  // Room access with the asynchronous provider checks authorize() leaves out:
+  // membership refresh and personal Plex access to the current item.
   async canView(room, actor) {
     if (!room || this.rooms.get(room.roomId) !== room) return false;
     if (!canWatch(this.hub.access, actor.userId, actor)) {
@@ -968,7 +959,7 @@ class Watch {
         if (!this.retainedThroughOutage(room, actor, error)) return false;
       }
     }
-    return viewEligible(room, actor, this.hub.config, Date.now(), this.hub.access, this.hub.isAdmin(actor));
+    return this.hub.authorize(actor, room, 'room.view').ok;
   }
   async list(actor, activity = false) {
     const rooms = [];
@@ -991,16 +982,15 @@ class Watch {
         visibility: room.visibility,
         viewers: members.length,
         ...(accessible
-          ? { title: room.media?.title || '', members, canManage: this.hub.canManage(room, actor) }
+          ? { title: room.media?.title || '', members, canManage: this.hub.authorize(actor, room, 'roomSettings').ok }
           : { locked: true }),
       });
     }
     if (this.roomState)
       for (const [id, recovery] of this.roomState.recoveries) {
         if (this.rooms.has(id) || recovery.until <= Date.now()) continue;
-        const record = this.roomState.store.get(id),
-          now = Date.now();
-        if (!viewEligible(record, actor, this.hub.config, now, this.hub.access, this.hub.isAdmin(actor))) continue;
+        const record = this.roomState.store.get(id);
+        if (!this.hub.authorize(actor, record, 'room.view').ok) continue;
         if (record.bookmark && this.hub.plexFor) {
           try {
             if (!(await (await this.hub.plexFor(actor)).allows(record.bookmark.mediaId))) continue;
@@ -1118,7 +1108,7 @@ class Watch {
     const controller =
       actor.userId === room.hostId ||
       ((isHost(room, actor) || this.hub.isAdmin(actor)) && !hostPresent) ||
-      (!room.viewers.has(room.hostViewerId) && this.hub.canRoom(room, actor, 'continueWithoutHost'));
+      (!room.viewers.has(room.hostViewerId) && this.hub.authorize(actor, room, 'continueWithoutHost').ok);
     if (controller && !oldViewer && room.hostViewerId && room.hostViewerId !== viewerId) {
       room.epoch = randomUUID();
       room.revision++;
@@ -1175,7 +1165,7 @@ class Watch {
     }
     if (!oldViewer) promoteGroupReadinessLead(room, now);
     if (room.initialGate && !oldViewer) room.initialViewers.add(viewerId);
-    const owner = this.hub.canManage(room, actor);
+    const owner = this.hub.authorize(actor, room, 'roomSettings').ok;
     room.transportSequence = (room.transportSequence || 0) + 1;
     const participants = syncQualityParticipants(room, this.roomState.participants(room.roomId), now);
     // Health details (buffer, stalls, device) are for the people who run the room.
@@ -1374,7 +1364,7 @@ class Watch {
       capabilities: Object.fromEntries(
         [...RoomPolicy.CAPABILITIES, 'managePermissions', 'manageHosts'].map(key => [
           key,
-          this.hub.canRoom(room, actor, key),
+          this.hub.authorize(actor, room, key).ok,
         ]),
       ),
       hostName: room.hostName,
@@ -1384,7 +1374,7 @@ class Watch {
       state: Engine.snapshot({ ...room.state, volume: viewer.volume, muted: viewer.muted }),
       canManage: owner,
       visibility: room.visibility,
-      canPlayback: this.hub.roomCommandAllowed(room, actor, { action: 'media.play' }),
+      canPlayback: this.hub.authorize(actor, room, 'media.play').ok,
       viewers: new Set([...room.viewers.values()].map(x => x.userId)).size,
       feedback: room.feedback,
     };
@@ -1479,6 +1469,7 @@ class Watch {
     if (!this.roomState) throw Object.assign(new Error('Saved rooms are unavailable'), { status: 400 });
     const room = this.rooms.get(id),
       { action, args } = command,
+      declared = /** @type {NonNullable<ReturnType<typeof Engine.command>>} */ (Engine.command(action)),
       queue = this.roomState.queue;
     if (room?.mediaTransition || room?.queueEditing)
       throw Object.assign(new Error('Wait for the current queue operation'), { status: 409 });
@@ -1495,22 +1486,18 @@ class Watch {
       ) {
         throw Object.assign(new Error('Room access changed; retry manually'), { status: 403 });
       }
-      if (
-        (action === 'queue.auto.playNow' || action === 'media.next' || action === 'queue.history.replay') &&
-        !room?.media &&
-        !queue.current(id)
-      ) {
+      if (declared.idle && !room?.media && !queue.current(id)) {
         const r = queue.room(id),
           canonical = queue.account(actor.userId);
         if (
           this.roomState.store.isAdmin(canonical) !== true &&
-          !RoomPolicy.allowed(r, canonical, 'chooseMedia') &&
-          !RoomPolicy.allowed(r, canonical, 'playPause')
+          !RoomPolicy.allowed(r, canonical, declared.capability) &&
+          !RoomPolicy.allowed(r, canonical, declared.idle)
         ) {
           throw Object.assign(new Error('Room queue permission required'), { status: 403 });
         }
       } else {
-        queue.assertAllowed(queue.room(id), actor.userId, RoomPolicy.commandCapability(action));
+        queue.assertAllowed(queue.room(id), actor.userId, declared.capability);
       }
     };
     await check();
@@ -1585,7 +1572,7 @@ class Watch {
             : await queue.playNow(id, actor.userId, item);
       } else if (action === 'queue.offer.start') {
         if (!room) throw Object.assign(new Error('Room unavailable'), { status: 404 });
-        if (!this.hub.canRoom(room, actor, 'addQueue') || !this.hub.canRoom(room, actor, 'playPause')) {
+        if (!this.hub.authorize(actor, room, 'addQueue').ok || !this.hub.authorize(actor, room, 'playPause').ok) {
           throw Object.assign(new Error('Room permission required'), { status: 403 });
         }
         if (room.media || queue.current(id) || queue.pending(id).length) {
@@ -1765,23 +1752,7 @@ class Watch {
           expectedRevision: revision,
         });
       }
-      if (
-        [
-          'queue.add',
-          'queue.playNow',
-          'queue.playEntry',
-          'queue.skipTo',
-          'queue.bulk',
-          'queue.move',
-          'queue.remove',
-          'queue.clear',
-          'queue.shuffle',
-          'queue.history.clear',
-          'queue.history.replay',
-          'queue.history.goBack',
-        ].includes(action) &&
-        this.roomState.store.get(id).autoQueue.mode !== 'off'
-      ) {
+      if (declared.refillsAutoQueue && this.roomState.store.get(id).autoQueue.mode !== 'off') {
         try {
           const corpus = await this.autoCorpus(id, actor);
           if (corpus) {
@@ -1948,12 +1919,13 @@ class Watch {
       !room.waitingForHost &&
       [...room.viewers.entries()].find(
         ([, person]) =>
-          (this.hub.canRoom(room, person.actor, 'chooseMedia') || this.hub.canRoom(room, person.actor, 'playPause')) &&
-          this.hub.canRoom(room, person.actor, 'autoplay') &&
+          (this.hub.authorize(person.actor, room, 'chooseMedia').ok ||
+            this.hub.authorize(person.actor, room, 'playPause').ok) &&
+          this.hub.authorize(person.actor, room, 'autoplay').ok &&
           (hostConnected ||
             isHost(room, person.actor) ||
             this.hub.isAdmin(person.actor) ||
-            this.hub.canRoom(room, person.actor, 'continueWithoutHost')),
+            this.hub.authorize(person.actor, room, 'continueWithoutHost').ok),
       );
     if (!controller) return;
     const [viewerId, person] = controller;
@@ -2154,7 +2126,7 @@ class Watch {
           (countdown.currentEntryId || null) === (current?.id || null) &&
           countdown.nextEntryId === next?.id &&
           countdown.queueRevision === record.queueRevision &&
-          this.hub.canRoom(room, actor, 'autoplay')));
+          this.hub.authorize(actor, room, 'autoplay').ok));
     if (!valid()) return { status: 'unavailable', message: 'Autoplay or media selection was cancelled.' };
     const removing = action === 'queue.remove',
       advance = removing && args.advance;
@@ -2411,9 +2383,10 @@ class Watch {
   async execute(room, input, actor, permitted) {
     if (this.shuttingDown || room.removing) return { status: 'unavailable', message: 'Room is closing.' };
     const command = Engine.validate(input),
-      { action, args } = command;
+      { action, args } = command,
+      declared = /** @type {NonNullable<ReturnType<typeof Engine.command>>} */ (Engine.command(action));
     this.roomState.store.healthy();
-    if (['room.publish', 'room.unpublish'].includes(action)) {
+    if (declared.service === 'publish' || declared.service === 'unpublish') {
       return this.publications.command(room, action, actor, permitted);
     }
     if (action === 'room.kick') {
@@ -2423,7 +2396,7 @@ class Watch {
       const record = this.roomState.store.get(room.roomId),
         userId = args.userId;
       if (
-        !this.hub.canRoom(room, actor, 'kickParticipants') ||
+        !this.hub.authorize(actor, room, 'kickParticipants').ok ||
         !RoomPolicy.canKickParticipant(record, actor.userId, userId, { isAdmin: this.hub.isAdmin(actor) })
       )
         return { status: 'forbidden', message: 'You cannot kick this participant.' };
@@ -2460,7 +2433,7 @@ class Watch {
     if (room.transitionCommit)
       return { status: 'unavailable', message: 'Wait for the current queue transition to finish.' };
     if (!room.media && ['media.play', 'media.toggle'].includes(action) && this.nextCandidate(room.roomId)) {
-      if (!this.hub.canRoom(room, actor, 'playPause') && !this.hub.canRoom(room, actor, 'chooseMedia')) {
+      if (!this.hub.authorize(actor, room, 'playPause').ok && !this.hub.authorize(actor, room, 'chooseMedia').ok) {
         return { status: 'forbidden', message: 'Starting the next video requires permission.' };
       }
       this.cancelAutoplay(room);
@@ -2468,7 +2441,7 @@ class Watch {
       return this.changeQueueMedia(room, { action: 'media.next', args: {} }, actor, permitted);
     }
     if (!room.media && room.autoplayCountdown && action === 'media.pause') {
-      if (!this.hub.canRoom(room, actor, 'playPause'))
+      if (!this.hub.authorize(actor, room, 'playPause').ok)
         return { status: 'forbidden', message: 'Pausing requires playback permission.' };
       this.cancelAutoplay(room);
       room.manualPaused = true;
@@ -2476,7 +2449,7 @@ class Watch {
       return { status: 'applied', message: 'Autoplay paused.' };
     }
     if (!room.media && room.endedVersion && (action === 'media.seek.end' || action.startsWith('media.seek.'))) {
-      if (!this.hub.canRoom(room, actor, 'playPause'))
+      if (!this.hub.authorize(actor, room, 'playPause').ok)
         return { status: 'forbidden', message: 'Seeking requires playback permission.' };
       return { status: 'applied', message: 'Current video finished.' };
     }
@@ -2515,11 +2488,7 @@ class Watch {
       }
       return { status: 'applied', message: 'Autoplay updated.' };
     }
-    if (
-      !actor.watchQueueAdvance &&
-      (['media.load', 'media.next', 'media.previous', 'media.pause', 'media.play', 'media.toggle'].includes(action) ||
-        action.startsWith('media.seek.'))
-    ) {
+    if (!actor.watchQueueAdvance && declared.persists) {
       this.cancelAutoplay(room);
       clearPlaybackEnd(room);
       if (action !== 'media.next') room.endedVersion = undefined;
@@ -2528,7 +2497,7 @@ class Watch {
       return this.changeQueueMedia(room, command, actor, permitted);
     this.settle(room);
     if (action.startsWith('media.ready.')) {
-      if (!this.hub.canRoom(room, actor, 'chooseMedia'))
+      if (!this.hub.authorize(actor, room, 'chooseMedia').ok)
         return { status: 'unavailable', message: 'This readiness choice expired.' };
       const outcome = applyReadinessDecision(room, action, args.readinessId);
       if (outcome.status !== 'applied') return { status: outcome.status, message: outcome.message };
@@ -2538,23 +2507,13 @@ class Watch {
     }
     if (room.readinessTimedOut && ['media.play', 'media.toggle', 'media.pause'].includes(action))
       return { status: 'unavailable', message: 'The host must choose whether to start, wait or cancel.' };
-    if (
-      [
-        'media.quality.set',
-        'media.tracks.set',
-        'media.stream.refresh',
-        'media.volume.set',
-        'media.mute',
-        'media.unmute',
-        'media.reporting.set',
-      ].includes(action)
-    ) {
+    if (declared.scope === 'personal') {
       const viewer = room.viewers.get(actor.watchViewerId);
       if (!viewer || viewer.userId !== actor.userId)
         return { status: 'unsupported', message: 'Use your watch player for personal audio and quality.' };
-      if (action === 'media.tracks.set') return this.changeTracks(room, viewer, args, actor, permitted);
-      if (action === 'media.stream.refresh') return this.refreshStream(room, viewer, args, actor, permitted);
-      if (action === 'media.quality.set') {
+      if (declared.handler === 'tracks') return this.changeTracks(room, viewer, args, actor, permitted);
+      if (declared.handler === 'stream') return this.refreshStream(room, viewer, args, actor, permitted);
+      if (declared.handler === 'quality') {
         if (!args.compatible && !args.fallback && args.quality)
           viewer.preferredQuality = Engine.qualityId(args.quality);
         if (!room.media || room.media.kind === 'demo')
@@ -2609,11 +2568,12 @@ class Watch {
         } finally {
           viewer.updating = false;
         }
-      } else if (action === 'media.volume.set') {
-        viewer.volume = args.percent;
-        viewer.muted = false;
-      } else if (action === 'media.mute' || action === 'media.unmute') viewer.muted = action === 'media.mute';
-      else if (action === 'media.reporting.set') {
+      } else if (declared.handler === 'player') {
+        if (action === 'media.volume.set') {
+          viewer.volume = args.percent;
+          viewer.muted = false;
+        } else viewer.muted = action === 'media.mute';
+      } else if (declared.handler === 'reporting') {
         if (typeof args.activity === 'boolean') viewer.plexReporting = args.activity;
         if (typeof args.watchState === 'boolean') viewer.plexWatchState = args.watchState;
         this.reporting?.updateConsent(viewer, { activity: viewer.plexReporting, watchState: viewer.plexWatchState });
@@ -2692,11 +2652,7 @@ class Watch {
     room.lastActivity = now;
     this.refresh(room, now);
     room.feedback = { revision: room.revision, action, args, sender: Engine.senderName(actor.name), at: now };
-    if (
-      ['media.load', 'media.next', 'media.previous', 'media.pause', 'media.play', 'media.toggle'].includes(action) ||
-      action.startsWith('media.seek.')
-    )
-      await this.roomState.save(room);
+    if (declared.persists) await this.roomState.save(room);
     if (['media.play', 'media.toggle', 'room.visibility'].includes(action) && room.initialGate && !room.manualPaused)
       await this.maybeStart(room);
     return {

@@ -6,6 +6,7 @@ const RoomPolicy = require('./room-policy');
 const { validateCommandEnvelope } = require('../shared/sync/envelope.mjs');
 /** @type {import('../shared/room-protocol').MediaIdentityExport} */
 const { mediaIdentity } = require('../shared/room-protocol');
+const Engine = require('../shared/engine');
 const { PlaybackError } = require('./av1');
 const { localFormat } = require('../web/playback-policy');
 const { ObservationError } = require('./playback-tracking');
@@ -305,7 +306,7 @@ function watchOperations({
         if (write) {
           if (!throttle('room-publish:' + auth.actor.userId, 20))
             return result(429, { error: 'Too many event changes. Try again shortly.' });
-          if (!['room.event.create', 'room.event.edit', 'room.event.cancel'].includes(data.action))
+          if (Engine.command(data.action)?.service !== 'event')
             return result(400, { error: 'Unsupported event action' });
           return result(
             200,
@@ -325,7 +326,7 @@ function watchOperations({
         if (write) {
           if (!throttle('room-publish:' + auth.actor.userId, 20))
             return result(429, { error: 'Too many publication requests. Try again shortly.' });
-          if (!['room.publish', 'room.unpublish'].includes(data.action))
+          if (!['publish', 'unpublish'].includes(Engine.command(data.action)?.service))
             return result(400, { error: 'Unsupported sharing action' });
           return result(
             200,
@@ -439,7 +440,8 @@ function watchOperations({
       }
       // The video check is for the people who run the room; it names server details like free space.
       if (!write && match[2] === 'check') {
-        if (!hub.canManage(room, auth.actor)) return result(403, { error: 'Only hosts can see the video check' });
+        if (!hub.authorize(auth.actor, room, 'roomSettings').ok)
+          return result(403, { error: 'Only hosts can see the video check' });
         if (!room.media || room.media.kind !== 'plex')
           return result(200, { items: [], level: 'ok', title: room.media?.title });
         if (url.searchParams.get('refresh') === '1') {

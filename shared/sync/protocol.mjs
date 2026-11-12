@@ -8,31 +8,53 @@ export function createProtocolApi() {
   const READINESS_ID_PATTERN = /^[a-f0-9-]{36}$/;
 
   const CONTROLS = Object.freeze({ playback: true });
-  const SYNC_MANAGEMENT_ACTIONS = Object.freeze([
-    'room.visibility',
-    'media.ready.start',
-    'media.ready.wait',
-    'media.ready.cancel',
-  ]);
-  const SYNC_ACTIONS = Object.freeze([
-    'room.kick',
-    'room.visibility',
-    'media.play',
-    'media.pause',
-    'media.toggle',
-    'media.seek.start',
-    'media.seek.end',
-    'media.seek.relative',
-    'media.seek.absolute',
-    'media.ready.start',
-    'media.ready.wait',
-    'media.ready.cancel',
-    'media.autoplay.set',
-    'media.autoplay.cancel',
-    'media.volume.set',
-    'media.mute',
-    'media.unmute',
-  ]);
+  const none = () => ({});
+  const readiness = (a, { readinessIdPattern }) => {
+    if (typeof a.readinessId !== 'string' || !readinessIdPattern.test(a.readinessId)) {
+      throw new Error('Readiness choice expired.');
+    }
+    return { readinessId: a.readinessId };
+  };
+  // Media-agnostic commands, each declared once with its argument validator.
+  // Host applications add their own facts and extension commands on top.
+  /** @type {Readonly<Record<string, {management?: boolean, args: (a: any, options: {userIdPattern: RegExp, readinessIdPattern: RegExp}) => Record<string, any>}>>} */
+  const SYNC_COMMANDS = Object.freeze({
+    'room.kick': {
+      args(a, { userIdPattern }) {
+        if (typeof a.userId !== 'string' || !userIdPattern.test(a.userId)) throw new Error('Choose a participant');
+        return { userId: a.userId };
+      },
+    },
+    'room.visibility': {
+      management: true,
+      args(a) {
+        if (!['public', 'private'].includes(a.visibility)) throw new Error('Choose Public or Private');
+        return { visibility: a.visibility };
+      },
+    },
+    'media.play': { args: none },
+    'media.pause': { args: none },
+    'media.toggle': { args: none },
+    'media.seek.start': { args: none },
+    'media.seek.end': { args: none },
+    'media.seek.relative': { args: a => ({ seconds: numeric(a.seconds, -600, 600) }) },
+    'media.seek.absolute': { args: a => ({ seconds: numeric(a.seconds, 0, 1e9) }) },
+    'media.ready.start': { management: true, args: readiness },
+    'media.ready.wait': { management: true, args: readiness },
+    'media.ready.cancel': { management: true, args: readiness },
+    'media.autoplay.set': {
+      args(a) {
+        if (typeof a.enabled !== 'boolean') throw new Error('Choose autoplay on or off');
+        return { enabled: a.enabled };
+      },
+    },
+    'media.autoplay.cancel': { args: none },
+    'media.volume.set': { args: a => ({ percent: numeric(a.percent, 0, 100) }) },
+    'media.mute': { args: none },
+    'media.unmute': { args: none },
+  });
+  const SYNC_ACTIONS = Object.freeze(Object.keys(SYNC_COMMANDS));
+  const SYNC_MANAGEMENT_ACTIONS = Object.freeze(SYNC_ACTIONS.filter(action => SYNC_COMMANDS[action].management));
 
   function controls(value = CONTROLS) {
     if (!value || typeof value.playback !== 'boolean') {
@@ -80,57 +102,17 @@ export function createProtocolApi() {
     if (!command || typeof command !== 'object') throw new Error('Invalid command');
     const action = command.action;
     if (typeof action !== 'string') throw new Error('Unsupported command');
-    const a = command.args || {};
-    const args = {};
-    const userIdPattern = options.userIdPattern || DEFAULT_UUID_PATTERN;
-    const readinessIdPattern = options.readinessIdPattern || READINESS_ID_PATTERN;
-
-    switch (action) {
-      case 'room.kick':
-        if (typeof a.userId !== 'string' || !userIdPattern.test(a.userId)) throw new Error('Choose a participant');
-        args.userId = a.userId;
-        return { action, args };
-      case 'room.visibility':
-        if (!['public', 'private'].includes(a.visibility)) throw new Error('Choose Public or Private');
-        args.visibility = a.visibility;
-        return { action, args };
-      case 'media.pause':
-      case 'media.play':
-      case 'media.mute':
-      case 'media.unmute':
-      case 'media.toggle':
-      case 'media.seek.start':
-      case 'media.seek.end':
-      case 'media.autoplay.cancel':
-        return { action, args };
-      case 'media.autoplay.set':
-        if (typeof a.enabled !== 'boolean') throw new Error('Choose autoplay on or off');
-        args.enabled = a.enabled;
-        return { action, args };
-      case 'media.ready.start':
-      case 'media.ready.wait':
-      case 'media.ready.cancel':
-        if (typeof a.readinessId !== 'string' || !readinessIdPattern.test(a.readinessId)) {
-          throw new Error('Readiness choice expired.');
-        }
-        args.readinessId = a.readinessId;
-        return { action, args };
-      case 'media.volume.set':
-        args.percent = numeric(a.percent, 0, 100);
-        return { action, args };
-      case 'media.seek.relative':
-        args.seconds = numeric(a.seconds, -600, 600);
-        return { action, args };
-      case 'media.seek.absolute':
-        args.seconds = numeric(a.seconds, 0, 1e9);
-        return { action, args };
-      default:
-        return undefined;
-    }
+    if (!Object.hasOwn(SYNC_COMMANDS, action)) return undefined;
+    const args = SYNC_COMMANDS[action].args(command.args || {}, {
+      userIdPattern: options.userIdPattern || DEFAULT_UUID_PATTERN,
+      readinessIdPattern: options.readinessIdPattern || READINESS_ID_PATTERN,
+    });
+    return { action, args };
   }
 
   return {
     CONTROLS,
+    SYNC_COMMANDS,
     SYNC_MANAGEMENT_ACTIONS,
     SYNC_ACTIONS,
     numeric,
@@ -144,6 +126,7 @@ export function createProtocolApi() {
 
 export const {
   CONTROLS,
+  SYNC_COMMANDS,
   SYNC_MANAGEMENT_ACTIONS,
   SYNC_ACTIONS,
   numeric,

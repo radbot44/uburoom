@@ -61,6 +61,7 @@ export {
 
 export {
   CONTROLS,
+  SYNC_COMMANDS,
   SYNC_MANAGEMENT_ACTIONS,
   SYNC_ACTIONS,
   controls,

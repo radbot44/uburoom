@@ -102,9 +102,6 @@ class RoomEvents {
     if (actor.guestRoomId) return actor.guestRoomId === record.id;
     return this.hub.isAdmin(actor) || record.visibility === 'public' || RoomPolicy.admitted(record, actor.userId);
   }
-  canManage(record, actor) {
-    return this.watch.publications.canManage(record, actor);
-  }
   canSchedule(actor) {
     return !actor.guestRoomId && !!this.hub.canScheduleEvents?.(actor);
   }
@@ -112,7 +109,7 @@ class RoomEvents {
     return this.watch.publications.safeError(error, 'event');
   }
   present(event, record, actor, now = Date.now()) {
-    const manage = this.canManage(record, actor),
+    const manage = this.hub.authorize(actor, record, 'room.host').ok,
       discord = event.discord;
     return {
       key: event.id,
@@ -166,7 +163,7 @@ class RoomEvents {
   async summary(id, actor) {
     return this.lane(id, async () => {
       const record = this.store.get(id),
-        canManage = this.canManage(record, actor);
+        canManage = this.hub.authorize(actor, record, 'room.host').ok;
       const value = {
         configured: this.discord.configured(),
         canManage,
@@ -212,7 +209,8 @@ class RoomEvents {
     if (actor.watchCurrent && !(await actor.watchCurrent())) throw fail('Room access changed.', 403);
     if (this.stopped || this.watch.shuttingDown || !permitted()) throw fail('Event change timed out. Try again.', 409);
     const record = this.store.get(id);
-    if (!this.canManage(record, actor)) throw fail('Only room hosts can schedule or change events.', 403);
+    if (!this.hub.authorize(actor, record, 'room.host').ok)
+      throw fail('Only room hosts can schedule or change events.', 403);
     if (scheduling && !this.canSchedule(actor)) throw fail('Scheduling events is limited on this server.', 403);
     return record;
   }

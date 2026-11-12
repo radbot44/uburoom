@@ -1,7 +1,6 @@
 'use strict';
 const { randomBytes } = require('node:crypto');
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
-const { isHost } = require('./core');
 const { discordRequest, retryDelay } = require('./discord-request');
 const { waitFor } = require('./operation');
 const fail = (message, status = 503) => Object.assign(new Error(message), { status });
@@ -38,9 +37,6 @@ class DiscordPublications {
       void this.reconcile();
     }, 5000);
     this.timer.unref();
-  }
-  canManage(record, actor) {
-    return !actor.guestRoomId && (isHost(record, actor) || this.hub.isAdmin(actor));
   }
   getRecord(id) {
     try {
@@ -233,7 +229,7 @@ class DiscordPublications {
     const record = this.getRecord(id);
     if (!record) throw fail('Room unavailable', 404);
     const publication = this.records.get(id),
-      canManage = this.canManage(record, actor);
+      canManage = this.hub.authorize(actor, record, 'room.host').ok;
     const value = {
       invite: { code: record.inviteCode, url: this.config.publicUrl + '/join/' + record.inviteCode },
       preview: this.preview(record),
@@ -291,7 +287,8 @@ class DiscordPublications {
     const record = this.getRecord(id);
     if (this.watch.rooms.get(id) !== room || room.removing || !record) throw fail('This room is closed.', 409);
     if (this.stopped || this.watch.shuttingDown || !permitted()) throw fail('Publishing timed out. Try again.', 409);
-    if (!this.canManage(record, actor)) throw fail('Only room hosts can publish or remove the post.', 403);
+    if (!this.hub.authorize(actor, record, 'room.host').ok)
+      throw fail('Only room hosts can publish or remove the post.', 403);
     return record;
   }
   async command(room, action, actor, permitted) {
@@ -396,14 +393,14 @@ class DiscordPublications {
       if (actor.watchCurrent && !(await actor.watchCurrent())) throw fail('Room access changed.', 403);
       const record = this.getRecord(id);
       if (this.stopped || !record || !permitted()) throw fail('Room changed or command expired.', 409);
-      if (!this.canManage(record, actor)) throw fail('Only room hosts can remove the post.', 403);
+      if (!this.hub.authorize(actor, record, 'room.host').ok) throw fail('Only room hosts can remove the post.', 403);
       const publication = this.records.get(id);
       if (publication) {
         await this.save(id, { ...publication, active: false, remove: true });
         await this.update(id, false, async () => {
           if (actor.watchCurrent && !(await actor.watchCurrent())) return false;
           const current = this.getRecord(id);
-          return !this.stopped && !!current && permitted() && this.canManage(current, actor);
+          return !this.stopped && !!current && permitted() && this.hub.authorize(actor, current, 'room.host').ok;
         });
       }
       return { status: 'applied', message: 'Room post removed.' };

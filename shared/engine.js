@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
   const Room = typeof module !== 'undefined' && module.exports ? require('./room-protocol') : root.uburoomRoomProtocol;
-  const { QUALITIES, qualityId, validQuality, MANAGEMENT, senderName } = Room;
+  const { QUALITIES, qualityId, validQuality, COMMANDS, command, senderName } = Room;
   const validate = Room.validate;
   const numeric = (n, min, max) => {
     if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max)
@@ -59,7 +59,8 @@
     QUALITIES,
     qualityId,
     validQuality,
-    MANAGEMENT,
+    COMMANDS,
+    command,
     validate,
     snapshot,
     seekTarget,

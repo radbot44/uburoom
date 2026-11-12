@@ -13,6 +13,8 @@
  * @property {string} name - Sanitized display name.
  * @property {string} [discordId] - Raw Discord user ID if available.
  * @property {boolean} [activity] - Set by the server after verified Activity sign-in.
+ * @property {string} [guestRoomId] - The one room a guest session may open.
+ * @property {string} [watchViewerId] - The sender's own watch tab, attached only by the authenticated watch endpoint.
  */
 
 /**

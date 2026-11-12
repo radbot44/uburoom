@@ -6,7 +6,7 @@ const { RoomStore } = require('../server/room-store');
 const Policy = require('../server/room-policy');
 const { UserDirectory } = require('../server/user-directory');
 const { parseRoster } = require('../server/plex-directory');
-const { viewEligible } = require('../server/core');
+const { Hub } = require('../server/core');
 function fixture(t) {
   const registry = new Accounts(undefined, credentialVault());
   t.after(() => registry.close());
@@ -74,10 +74,11 @@ test('all-hosts changes controls without exposing private rooms or conferring sa
   assert.equal(store.list(viewer.id).total, 0);
   assert.throws(() => store.restore(room.id, viewer.id), { status: 403 });
   const actor = { userId: viewer.id },
-    config = {};
-  assert.equal(viewEligible(room, actor, config, Date.now(), { isMember: () => true }), false);
+    hub = new Hub({});
+  hub.access = { isMember: () => true };
+  assert.equal(hub.authorize(actor, room, 'room.view').ok, false);
   room = await store.edit(room.id, creator.id, room.revision, { action: 'host.add', userId: viewer.id });
-  assert.equal(viewEligible(room, actor, config, Date.now(), { isMember: () => true }), true);
+  assert.equal(hub.authorize(actor, room, 'room.view').ok, true);
 });
 test('pending host grants create no account, require exact verified identity, are cancellable, and follow canonical merges', async t => {
   const { registry, store, creator, host, viewer } = fixture(t);

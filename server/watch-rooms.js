@@ -156,8 +156,8 @@ class WatchRooms {
       return;
     const controller = [...room.viewers.values()].find(
       v =>
-        (isHost(room, v.actor) || this.watch.hub.canRoom(room, v.actor, 'continueWithoutHost')) &&
-        this.watch.hub.canRoom(room, v.actor, 'playPause'),
+        (isHost(room, v.actor) || this.watch.hub.authorize(v.actor, room, 'continueWithoutHost').ok) &&
+        this.watch.hub.authorize(v.actor, room, 'playPause').ok,
     );
     if (!controller) return;
     room.recovering = true;
@@ -653,7 +653,7 @@ class WatchRooms {
     await this.metadata(id, actor);
     const room = this.watch.rooms.get(id);
     if (!room || room.epoch !== epoch) throw failure('Room changed; refresh before closing');
-    if (!this.watch.hub.canRoom(room, actor, 'closeRoom')) throw failure('Room close permission required', 403);
+    if (!this.watch.hub.authorize(actor, room, 'closeRoom').ok) throw failure('Room close permission required', 403);
     if (!(await current()) || this.watch.rooms.get(id) !== room || room.epoch !== epoch)
       throw failure('Room connection changed');
     await this.watch.remove(id);
@@ -862,7 +862,7 @@ class WatchRooms {
       Date.now() - current.at < 10000 &&
       (isHost(room, current.actor) ||
         this.watch.hub.isAdmin(current.actor) ||
-        (!hasHostCandidate && this.watch.hub.canRoom(room, current.actor, 'continueWithoutHost')))
+        (!hasHostCandidate && this.watch.hub.authorize(current.actor, room, 'continueWithoutHost').ok))
     )
       return;
     if (
@@ -871,7 +871,7 @@ class WatchRooms {
         ([, viewer]) =>
           isHost(room, viewer.actor) ||
           this.watch.hub.isAdmin(viewer.actor) ||
-          this.watch.hub.canRoom(room, viewer.actor, 'continueWithoutHost'),
+          this.watch.hub.authorize(viewer.actor, room, 'continueWithoutHost').ok,
       )
     )
       return;
@@ -885,7 +885,7 @@ class WatchRooms {
         if (
           !isHost(room, viewer.actor) &&
           !this.watch.hub.isAdmin(viewer.actor) &&
-          !this.watch.hub.canRoom(room, viewer.actor, 'continueWithoutHost')
+          !this.watch.hub.authorize(viewer.actor, room, 'continueWithoutHost').ok
         )
           continue;
         if (
@@ -900,7 +900,7 @@ class WatchRooms {
         room.hostName = viewer.name;
         room.hostViewerId = viewerId;
         room.waitingForHost = false;
-        if (wasPlaying && this.watch.hub.canRoom(room, viewer.actor, 'playPause')) {
+        if (wasPlaying && this.watch.hub.authorize(viewer.actor, room, 'playPause').ok) {
           await this.watch.hub.dispatch(
             { ...viewer.actor, watchViewerId: viewerId },
             { roomId: room.roomId, action: 'media.play' },
