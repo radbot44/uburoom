@@ -998,6 +998,8 @@ export function nextDeadline(room, now, monoNow) {
 const EVENT_ACTIONS = Object.freeze({ join: 'room.view', ready: 'room.view' });
 // The mailbox entry for a host step (see `step` below); never a reducer event.
 const STEP = Symbol('step');
+// The mailbox entry for a publication (see `publish` below).
+const PUBLISH = Symbol('publish');
 
 /**
  * One room registry. Each room's events are reduced one at a time, in order. When a
@@ -1015,6 +1017,7 @@ const STEP = Symbol('step');
  *   extensions?: {roomKeys?: string[], viewerKeys?: string[], events?: Record<string, Function>, [hook: string]: any},
  *   onPersist?: (state: any, meta: {event: string, reason: string, revision: number}) => Promise<void>,
  *   onEffect?: (room: any, effect: {type: string} & Record<string, any>, removed: Map<string, any>) => void,
+ *   onPublish?: (room: any, change: any) => void,
  *   onError?: (error: unknown) => void,
  *   hold?: (room: any) => boolean,
  *   checkpointMs?: number,
@@ -1102,6 +1105,10 @@ export function createRoomCoordinator(options) {
   }
   // Reduces one event; returns its result, or a promise of it while persisting.
   function process(room, event) {
+    if (event.type === PUBLISH) {
+      options.onPublish?.(room, event.change);
+      return { effects: [] };
+    }
     if (event.type === STEP) {
       const value = event.step(room);
       if (typeof value?.then === 'function') throw new TypeError('A room step must not wait');
@@ -1238,6 +1245,19 @@ export function createRoomCoordinator(options) {
       if (!room || rooms.get(room.roomId) !== room) return refused('Room unavailable');
       const entry = submit(room, { type: STEP, step });
       return entry.done ? entry.result : entry.promise;
+    },
+    /**
+     * Publishes a change to the room's subscribers through `onPublish`, in mailbox order:
+     * after everything the room was asked to do before it. Returns false when the room
+     * is gone (its host then publishes without it).
+     * @param {any} idOrRoom
+     * @param {any} change
+     */
+    publish(idOrRoom, change) {
+      const room = resolveRoom(idOrRoom);
+      if (!room || rooms.get(room.roomId) !== room) return false;
+      submit(room, { type: PUBLISH, change });
+      return true;
     },
     /** Queues an event in the room's mailbox; resolves with its result. */
     dispatch(idOrRoom, event) {

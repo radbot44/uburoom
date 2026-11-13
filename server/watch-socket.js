@@ -210,20 +210,8 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
         });
     }
   }
-  // Commands from Discord or internal room timers wake only affected room subscribers when local.
-  const dispatch = hub.dispatch.bind(hub);
-  hub.dispatch = async (...args) => {
-    const cmd = args[1];
-    const roomId = cmd?.roomId;
-    const hadMedia = Boolean(roomId && watch.rooms.get(roomId)?.media);
-    try {
-      return await dispatch(...args);
-    } finally {
-      const hasMedia = Boolean(roomId && watch.rooms.get(roomId)?.media);
-      const roomOnly = Boolean(roomId && roomLocal(cmd?.action) && hadMedia === hasMedia);
-      broker.notify(roomOnly ? { roomId, includeLobby: false } : { includeLobby: true });
-    }
-  };
+  // Commands from Discord or internal room timers are published by their room (Watch.published).
+  watch.onPublish = (_room, change) => broker.notify(change);
   server.on('upgrade', (req, socket, head) => {
     if (req.url !== '/watch-socket') return socket.destroy();
     if (
