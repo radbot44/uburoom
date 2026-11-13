@@ -11,7 +11,7 @@
 const { MediaChecks } = require('./media-check');
 const { waitFor } = require('./operation');
 const { randomUUID } = require('node:crypto');
-const { canWatch } = require('./core');
+const { canWatch, Hub } = require('./core');
 const { PlaybackTracking } = require('./playback-tracking');
 const { PlexReporting } = require('./plex-reporting');
 const { WatchRooms } = require('./watch-rooms');
@@ -74,19 +74,11 @@ class Watch extends WatchParts {
         this.changed(room, { lobby });
       },
       onError: error =>
-        this.hub?.config?.logger?.warn(
-          'Room',
-          'Room effect failed: ' + (error instanceof Error ? error.message : String(error)),
-        ),
+        this.hub.logger.warn('Room', 'Room effect failed: ' + (error instanceof Error ? error.message : String(error))),
     });
     this.rooms = this.coordinator.rooms;
-    /** @type {((room: any, change: {roomId?: string, includeLobby: boolean}) => void) | undefined} Attached by server/watch-socket.js. */
+    /** @type {((room: any, change: {roomId?: string, includeLobby: boolean}) => void) | undefined} Set by the socket layer when it starts. */
     this.onPublish = undefined;
-    // A finished command is published through its room's mailbox, after everything it did there.
-    hub.onCommand = roomId => {
-      const hadMedia = Boolean(roomId && this.rooms.get(roomId)?.media);
-      return action => this.published(roomId, action, hadMedia);
-    };
     /** @type {WeakMap<Room, number>} Each room's shared-lane version (roomVersion). */
     this.roomVersions = new WeakMap();
     this.publicationCount = 0;
@@ -106,17 +98,6 @@ class Watch extends WatchParts {
     this.roomState = new WatchRooms(this, registry);
     this.publications = new (require('./discord-publications').DiscordPublications)(this, registry);
     this.events = new (require('./room-events').RoomEvents)(this, registry);
-    hub.publicationExecute = this.publications
-      ? (id, actor, ticket) => this.publications.command(this.rooms.get(id), 'room.publish', actor, ticket)
-      : undefined;
-    hub.savedPublicationExecute = this.publications
-      ? (id, actor, ticket) => this.publications.removeSaved(id, actor, ticket)
-      : undefined;
-    hub.scheduledEventExecute = this.events
-      ? (id, command, actor, ticket) => this.events.command(id, command, actor, ticket)
-      : undefined;
-    hub.savedQueueExecute = (id, command, actor, ticket) => this.queueCommand(id, command, actor, ticket);
-    hub.watchIdle = id => !this.rooms.get(id)?.media && !this.roomState.queue.current(id);
     this.autoplayDelayMs = 10000;
     /** @type {Set<MediaWork>} */
     this.mediaWork = new Set();
@@ -179,7 +160,7 @@ class Watch extends WatchParts {
     this.roomState.apply(room, saved);
     this.coordinator.add(room);
     this.hub.rooms.set(id, room);
-    this.hub?.config?.logger?.info('Room', `Room created (${id}) by ${actor.name || actor.userId}`);
+    this.hub.logger.info('Room', `Room created (${id}) by ${actor.name || actor.userId}`);
     return id;
   }
   async leave(room, actor, viewerId, reason = 'left') {
@@ -288,7 +269,7 @@ class Watch extends WatchParts {
     void this.stopMedia(room, room.media);
     this.dropPreload(room);
     this.dropPreload(room, room.adoptable);
-    this.hub?.config?.logger?.info('Room', `Room closed (${id})`);
+    this.hub.logger.info('Room', `Room closed (${id})`);
     this.changed(undefined, { lobby: true });
     return saved.finally(() => this.drainMedia(room));
   }
@@ -326,4 +307,47 @@ class Watch extends WatchParts {
     return this.closing;
   }
 }
-module.exports = { Watch, syncQualityParticipants, REJOIN };
+
+/**
+ * The hub's calls into the rooms. Each reads `rooms()` when it is called, because the
+ * hub is built before the Watch it serves.
+ * @param {() => Watch} rooms
+ */
+function roomPorts(rooms) {
+  return {
+    // A finished command is published through its room's mailbox, after everything it did there.
+    onCommand: roomId => {
+      const watch = rooms();
+      const hadMedia = Boolean(roomId && watch.rooms.get(roomId)?.media);
+      return action => watch.published(roomId, action, hadMedia);
+    },
+    publicationExecute: (id, actor, ticket) => {
+      const watch = rooms();
+      return watch.publications.command(watch.rooms.get(id), 'room.publish', actor, ticket);
+    },
+    savedPublicationExecute: (id, actor, ticket) => rooms().publications.removeSaved(id, actor, ticket),
+    scheduledEventExecute: (id, command, actor, ticket) => rooms().events.command(id, command, actor, ticket),
+    savedQueueExecute: (id, command, actor, ticket) => rooms().queueCommand(id, command, actor, ticket),
+    watchIdle: id => {
+      const watch = rooms();
+      return !watch.rooms.get(id)?.media && !watch.roomState.queue.current(id);
+    },
+    watchCanView: (room, actor) => {
+      const watch = rooms();
+      return watch.canView(watch.rooms.get(room.roomId), actor);
+    },
+  };
+}
+
+/**
+ * A hub and the rooms it serves, wired to each other. `ports` are the hub's other collaborators.
+ * @param {{config: any, ports?: object, plex: any, demoMedia?: any, registry?: any, plexAuth?: any}} options
+ */
+function createRooms({ config, ports = {}, plex, demoMedia, registry, plexAuth }) {
+  /** @type {Watch} */
+  let watch;
+  const hub = new Hub(config, { plexFor: async () => plex, ...roomPorts(() => watch), ...ports });
+  watch = new Watch(hub, plex, demoMedia, registry, plexAuth);
+  return { hub, watch };
+}
+module.exports = { Watch, createRooms, roomPorts, syncQualityParticipants, REJOIN };

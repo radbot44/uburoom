@@ -590,13 +590,13 @@ test('shared HTTP delivery retains viewer grants and own-scope access checks, an
     ['demo-host', root.scope('alpha', 'alice')],
     ['demo-guest', root.scope('beta', 'bob')],
   ]);
-  app.hub.access = {
+  app.access.connect({
     refresh: async () => true,
     isMember: () => true,
     voiceChannel: () => 'call',
     validVoiceChannel: () => true,
     options: () => ({ available: true }),
-  };
+  });
   app.hub.plexFor = async actor => scopes.get(actor.discordId);
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   const port = app.server.address().port;

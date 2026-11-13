@@ -106,13 +106,13 @@ async function runBrowserBufferTests(browserName) {
       throw new Error('Live OAuth disabled.');
     },
   });
-  app.hub.access = {
+  app.access.connect({
     refresh: async () => true,
     isMember: () => true,
     voiceChannel: () => 'call',
     validVoiceChannel: () => true,
     options: () => ({ available: true }),
-  };
+  });
 
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   const port = app.server.address().port;
@@ -247,13 +247,13 @@ async function runPlexSessionLifecycleTests() {
       throw new Error('Live OAuth disabled.');
     },
   });
-  app.hub.access = {
+  app.access.connect({
     refresh: async () => true,
     isMember: () => true,
     voiceChannel: () => 'call',
     validVoiceChannel: () => true,
     options: () => ({ available: true }),
-  };
+  });
 
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   const port = app.server.address().port;

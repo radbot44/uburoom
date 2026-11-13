@@ -52,7 +52,7 @@ module.exports = {
     return this.startMediaWork(
       room,
       async work => {
-        const plex = this.hub.plexFor ? await this.hub.plexFor(viewer.actor) : this.plex,
+        const plex = await this.hub.plexFor(viewer.actor),
           choices = this.streamChoices(viewer);
         const authorized = async () =>
           current() &&
@@ -147,7 +147,7 @@ module.exports = {
     if (!viewer || viewer.userId !== actor.userId) return;
     let plex;
     try {
-      plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
+      plex = await this.hub.plexFor(actor);
     } catch (error) {
       // Plex cannot answer: keep what the viewer has and try again shortly.
       if (this.providerFailed(error)) {
@@ -554,7 +554,7 @@ module.exports = {
             if ((!viewer.alive || (await viewer.alive())) && (await this.canView(room, viewer.actor))) return true;
           return false;
         },
-        event: (event, fields) => this.hub.config.logger?.info('Fallback', event, fields),
+        event: (event, fields) => this.hub.logger.info('Fallback', event, fields),
       });
     }
     const media = room.fallbackStream?.media;

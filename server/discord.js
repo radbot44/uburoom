@@ -1,6 +1,7 @@
 'use strict';
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const { discordAccess } = require('./sharing');
+const { silentLogger } = require('./logger');
 
 function loginFailure(error) {
   const code = error?.cause?.code || error?.code;
@@ -61,14 +62,14 @@ async function connectBot(client, token, timeoutMs = 30000) {
   }
 }
 
-async function startBot(config, hub, { createClient = options => new Client(options) } = {}) {
-  const log = config.logger
-    ? config.logger.child('Discord')
-    : {
-        info: (...args) => console.log('[Discord] ' + args.join(' ')),
-        warn: (...args) => console.warn('[Discord] ' + args.join(' ')),
-        error: (...args) => console.error('[Discord] ' + args.join(' ')),
-      };
+/**
+ * Connects the Discord bot. `link` is what the connection feeds: the access gate that receives
+ * Discord's membership view, the holder of the connected client, and the owner-name hook.
+ * @param {any} config
+ * @param {{access: {connect(raw: any): void}, discord: {client: any}, setOwnerName(name: string): void, logger?: any}} link
+ */
+async function startBot(config, link, { createClient = options => new Client(options) } = {}) {
+  const log = (link.logger || silentLogger).child('Discord');
   if (!config.botToken) {
     log.info('Not configured. Browser playback and HTTPS setup are available.');
     return;
@@ -93,7 +94,7 @@ async function startBot(config, hub, { createClient = options => new Client(opti
       log.warn('Could not check optional directory intents. Known uburoom account search remains available.');
     }
   }
-  hub.access = discordAccess(client, config.guildId, log);
+  link.access.connect(discordAccess(client, config.guildId, log));
   client.on(Events.ClientReady, () => log.info('Connected to the configured guild.'));
   client.on(Events.Error, error => log.error(loginFailure(error).message));
   client.on(Events.ShardError, error => log.error(loginFailure(error).message));
@@ -103,9 +104,9 @@ async function startBot(config, hub, { createClient = options => new Client(opti
   client.on(Events.ShardReconnecting, () => log.info('Reconnecting to the Gateway...'));
   log.info('Connecting... waiting up to 30 seconds for the bot to become ready.');
   await connectBot(client, config.botToken);
-  hub.discordClient = client;
+  link.discord.client = client;
   try {
-    hub.setOwnerName?.((await client.users.fetch(config.ownerId)).username);
+    link.setOwnerName((await client.users.fetch(config.ownerId)).username);
   } catch {
     /* Retain the last authenticated account name if Discord lookup fails. */
   }

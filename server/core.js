@@ -17,6 +17,7 @@ const Engine = require('../shared/engine.mjs');
 const RoomPolicy = require('./room-policy');
 const { COMMAND_TTL_MS, PRESENCE_TIMEOUT_MS, resolveCommandDeadlines } = require('../shared/sync/envelope.mjs');
 const { createServerClock } = require('../shared/sync/server-clock.mjs');
+const { silentLogger } = require('./logger');
 const hash = text => createHash('sha256').update(text).digest('hex');
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const PRESENCE_MS = PRESENCE_TIMEOUT_MS;
@@ -36,8 +37,75 @@ function watching(room, actor, now) {
   return [...(room.viewers?.values() || [])].some(v => v.userId === actor.userId && now - v.at < PRESENCE_MS);
 }
 
+async function unconfiguredPlex() {
+  throw new Error('No Plex service is configured');
+}
+const refused = () => {
+  throw Object.assign(new Error('No controllable room.'), { status: 403 });
+};
+/**
+ * What a Hub is built with. The defaults are inert, for a Hub that stands alone;
+ * server composition (server/compose.js) passes every one of them.
+ * @returns {{
+ *   logger: any, access: any, directory: any, discord: {client: any},
+ *   adminEligible: (actor: Actor) => boolean,
+ *   refreshAdmin: (actor: Actor) => Promise<void>,
+ *   accountActor: (actor: Actor) => Actor,
+ *   watchCanView: (room: RoomDescriptor, actor: Actor) => boolean | Promise<boolean>,
+ *   watchIdle: (roomId: string) => boolean,
+ *   guestMembers: (roomId: string) => Set<string>,
+ *   guestsEnabled: () => boolean,
+ *   canAllowGuests: (record: any, actor: Actor) => boolean,
+ *   canScheduleEvents: (actor: Actor) => boolean,
+ *   endGuestSessions: (roomId: string, userIds?: string[]) => Promise<string[]>,
+ *   plexFor: (actor: Actor) => Promise<any>,
+ *   singleRoomLeader: () => Promise<any>,
+ *   renameAccount: (id: string, name: string) => Promise<any>,
+ *   onCommand: (roomId: string | undefined) => (action: string | undefined) => void,
+ *   publicationExecute: (roomId: string, actor: Actor, ticket: Ticket) => Promise<any>,
+ *   savedPublicationExecute: (roomId: string, actor: Actor, ticket: Ticket) => Promise<any>,
+ *   scheduledEventExecute: (roomId: string, command: EngineCommand, actor: Actor, ticket: Ticket) => Promise<any>,
+ *   savedQueueExecute: (roomId: string, command: EngineCommand, actor: Actor, ticket: Ticket) => Promise<any>,
+ * }}
+ */
+const standalonePorts = () => ({
+  logger: silentLogger,
+  // Discord or test membership policy (isMember, canWatch, refresh, refreshWatch, voiceChannel, ...).
+  access: { isMember: () => false, refresh: async () => false },
+  directory: { connected() {}, disconnected() {}, search: async () => [], candidate: async () => undefined },
+  // The Discord client, once the bot has connected.
+  discord: { client: undefined },
+  adminEligible: () => false,
+  refreshAdmin: async () => {},
+  accountActor: actor => actor,
+  watchCanView: async () => true,
+  watchIdle: () => false,
+  guestMembers: () => new Set(),
+  guestsEnabled: () => false,
+  canAllowGuests: () => false,
+  canScheduleEvents: () => false,
+  endGuestSessions: async () => [],
+  plexFor: unconfiguredPlex,
+  singleRoomLeader: async () => {
+    throw new Error('No single-room leader is configured');
+  },
+  renameAccount: async () => {
+    throw new Error('Accounts cannot be renamed here');
+  },
+  // Called as a command starts; the result is called when it is done.
+  onCommand: () => () => {},
+  publicationExecute: refused,
+  savedPublicationExecute: refused,
+  scheduledEventExecute: refused,
+  savedQueueExecute: refused,
+});
+
 class Hub {
-  constructor(config) {
+  /**
+   * @param {any} config
+   * @param {Partial<ReturnType<typeof standalonePorts>>} [ports] The collaborators this hub calls out to.
+   */
+  constructor(config, ports = {}) {
     this.config = config;
     // The one time base for room timelines and command deadlines (see shared/sync/server-clock.mjs).
     this.clock = createServerClock();
@@ -45,37 +113,44 @@ class Hub {
     this.adminMode = false;
     this.adminEpoch = 0;
     this.adminUsers = new Set();
-    // Integration hooks that server/app.js, server/watch.js and server/discord.js attach after construction.
-    /** @type {any} Discord or test membership policy (isMember, canWatch, refresh, refreshWatch, voiceChannel, ...). */
-    this.access = undefined;
-    /** @type {((actor: Actor) => boolean) | undefined} */
-    this.adminEligible = undefined;
-    /** @type {((actor: Actor) => Promise<void>) | undefined} */
-    this.refreshAdmin = undefined;
-    /** @type {((actor: Actor) => Actor | undefined) | undefined} */
-    this.accountActor = undefined;
-    /** @type {((room: RoomDescriptor, actor: Actor) => boolean | Promise<boolean>) | undefined} */
-    this.watchCanView = undefined;
-    /** @type {((roomId: string) => boolean) | undefined} */
-    this.watchIdle = undefined;
-    /** @type {((roomId: string) => Set<string>) | undefined} Accounts holding the room's current guest passes. */
-    this.guestMembers = undefined;
-    /** @type {((roomId: string | undefined) => (action: string | undefined) => void) | undefined} Called as a command starts; the result is called when it is done. */
-    this.onCommand = undefined;
-    /** @type {((roomId: string, actor: Actor, ticket: Ticket) => Promise<any>) | undefined} */
-    this.publicationExecute = undefined;
-    /** @type {((roomId: string, actor: Actor, ticket: Ticket) => Promise<any>) | undefined} */
-    this.savedPublicationExecute = undefined;
-    /** @type {((roomId: string, command: EngineCommand, actor: Actor, ticket: Ticket) => Promise<any>) | undefined} */
-    this.scheduledEventExecute = undefined;
-    /** @type {((roomId: string, command: EngineCommand, actor: Actor, ticket: Ticket) => Promise<any>) | undefined} */
-    this.savedQueueExecute = undefined;
+    const all = { ...standalonePorts(), ...ports };
+    this.logger = all.logger;
+    this.access = all.access;
+    this.directory = all.directory;
+    this.discord = all.discord;
+    this.adminEligible = all.adminEligible;
+    this.refreshAdmin = all.refreshAdmin;
+    this.accountActor = all.accountActor;
+    this.watchCanView = all.watchCanView;
+    this.watchIdle = all.watchIdle;
+    this.guestMembers = all.guestMembers;
+    this.guestsEnabled = all.guestsEnabled;
+    this.canAllowGuests = all.canAllowGuests;
+    this.canScheduleEvents = all.canScheduleEvents;
+    this.endGuestSessions = all.endGuestSessions;
+    this.plexFor = all.plexFor;
+    this.singleRoomLeader = all.singleRoomLeader;
+    this.renameAccount = all.renameAccount;
+    this.onCommand = all.onCommand;
+    this.publicationExecute = all.publicationExecute;
+    this.savedPublicationExecute = all.savedPublicationExecute;
+    this.scheduledEventExecute = all.scheduledEventExecute;
+    this.savedQueueExecute = all.savedQueueExecute;
+  }
+  /** Whether the account is currently admitted to watch, as last confirmed. */
+  canWatch(id, actor) {
+    return canWatch(this.access, id, actor);
+  }
+  /** Asks the providers whether the account may watch, refreshing what is known. */
+  async admit(id, actor) {
+    const ask = this.access.refreshWatch || this.access.refresh;
+    return !!(await ask?.call(this.access, id, actor));
   }
   isOwner(actor) {
     return isOwner(actor, this.config);
   }
   canAdmin(actor) {
-    return !actor.guestRoomId && (this.isOwner(actor) || this.adminEligible?.(actor) === true);
+    return !actor.guestRoomId && (this.isOwner(actor) || this.adminEligible(actor) === true);
   }
   isAdmin(actor) {
     if (!this.canAdmin(actor)) {
@@ -108,7 +183,7 @@ class Hub {
     if (action === 'room.remain')
       return room.visibility !== 'private' ||
         RoomPolicy.admitted(room.saved, actor.userId) ||
-        !!this.guestMembers?.(room.roomId).has(actor.userId) ||
+        this.guestMembers(room.roomId).has(actor.userId) ||
         admin
         ? ALLOW
         : NO_ROOM;
@@ -140,7 +215,7 @@ class Hub {
     const can = capability => this.authorize(actor, room, capability).ok;
     if (
       !command.capability ||
-      !(can(command.capability) || (command.idle && this.watchIdle?.(room.roomId) && can(command.idle))) ||
+      !(can(command.capability) || (command.idle && this.watchIdle(room.roomId) && can(command.idle))) ||
       (command.also && !can(command.also))
     )
       return NO_PERMISSION;
@@ -192,24 +267,23 @@ class Hub {
   }
   /**
    * Runs one command. When it is done, whatever it answered, the subscribers of its
-   * room (or the lobby) are told through `onCommand`, which the room registry attaches.
+   * room (or the lobby) are told through `onCommand`, which the room registry supplies.
    */
   async dispatch(actor, input) {
-    const done = this.onCommand?.(input?.roomId);
+    const done = this.onCommand(input?.roomId);
     try {
       return await this.runCommand(actor, input);
     } finally {
-      done?.(input?.action);
+      done(input?.action);
     }
   }
   async runCommand(actor, input) {
     if (Object.hasOwn(input, 'sessionId')) return { status: 'unsupported', message: 'Use the current room protocol.' };
-    actor = this.accountActor?.(actor) || actor;
-    if (this.refreshAdmin) await this.refreshAdmin(actor);
+    actor = this.accountActor(actor);
+    await this.refreshAdmin(actor);
     if (!this.isOwner(actor) || this.rooms.size) {
       try {
-        if (!(await (this.access?.refreshWatch || this.access?.refresh)?.(actor.userId, actor)))
-          return { status: 'forbidden', message: 'No controllable room.' };
+        if (!(await this.admit(actor.userId, actor))) return { status: 'forbidden', message: 'No controllable room.' };
       } catch {
         return { status: 'forbidden', message: 'No controllable room.' };
       }
@@ -264,7 +338,7 @@ class Hub {
         };
       }
     }
-    if (command.action.startsWith('queue.') && !this.rooms.has(input.roomId) && this.savedQueueExecute) {
+    if (command.action.startsWith('queue.') && !this.rooms.has(input.roomId)) {
       const acceptedAt = this.clock.now();
       const deadlines = resolveCommandDeadlines({
         acceptedAt,
@@ -295,8 +369,7 @@ class Hub {
     const s = this.rooms.get(input.roomId);
     if (!s || this.authorize(actor, s, command.action).reason === 'room')
       return { status: 'forbidden', message: 'No controllable room.' };
-    if (this.watchCanView && !(await this.watchCanView(s, actor)))
-      return { status: 'forbidden', message: 'No controllable room.' };
+    if (!(await this.watchCanView(s, actor))) return { status: 'forbidden', message: 'No controllable room.' };
     if (!this.authorize(actor, s, command.action).ok)
       return { status: 'forbidden', message: 'Your room permissions do not allow this action.' };
     if (s.execute) {
@@ -307,7 +380,7 @@ class Hub {
       const preparing =
         declared.prepares === true ||
         (declared.prepares === 'personal' && !!actor.watchViewerId) ||
-        (declared.prepares === 'idle' && this.watchIdle?.(s.roomId));
+        (declared.prepares === 'idle' && this.watchIdle(s.roomId));
       const deadlines = resolveCommandDeadlines({
         acceptedAt,
         expiresAt: input.expiresAt,

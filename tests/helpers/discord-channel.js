@@ -127,7 +127,7 @@ function discordChannel(config) {
     guild,
     calls,
     attach: hub => {
-      hub.discordClient = client;
+      hub.discord.client = client;
     },
   };
 }

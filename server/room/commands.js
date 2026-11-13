@@ -82,11 +82,11 @@ module.exports = {
     if (room.closed) await room.removal;
     // Kicking a guest ends their guest access; kicking someone invited into a
     // private room revokes the invite. Either way they stay out until the code changes.
-    const guest = this.hub.guestMembers?.(room.roomId).has(userId);
+    const guest = this.hub.guestMembers(room.roomId).has(userId);
     if (guest) {
       const devices = viewers.map(([, viewer]) => viewer.actor.device).filter(Boolean);
       await this.roomState.store.block(room.roomId, ['user:' + userId, ...devices.map(device => 'device:' + device)]);
-      await this.hub.endGuestSessions?.(room.roomId, [userId]);
+      await this.hub.endGuestSessions(room.roomId, [userId]);
       return { status: 'applied', message: 'Guest removed.' };
     }
     if (room.visibility === 'private' && record.invited?.includes(userId)) {
@@ -226,7 +226,7 @@ module.exports = {
         let plex,
           unconfirmed = false;
         try {
-          plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
+          plex = await this.hub.plexFor(actor);
           if (plex.playableItem) await plex.playableItem(media.id);
         } catch (error) {
           if (!this.providerFailed(error)) throw error;
@@ -234,7 +234,7 @@ module.exports = {
         }
         if (
           !(await this.canView(room, actor)) ||
-          (!unconfirmed && this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal)
+          (!unconfirmed && (await this.hub.plexFor(actor)).principal !== plex.principal)
         )
           return expired();
         const reply = await this.inRoom(room, () =>

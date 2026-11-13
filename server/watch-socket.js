@@ -258,13 +258,13 @@ function watchSockets({
     client.userName = auth.actor.name;
     client.authenticating = false;
     client.authenticated = true;
-    hub.directory?.connected(ws, client.userId);
+    hub.directory.connected(ws, client.userId);
     clearTimeout(timer);
     send(client, { type: 'welcome', protocol: PROTOCOL_VERSION, connectionId: client.connectionId, resyncMs });
     if (!first) return;
     client.resyncAt = watch.clock.now();
     void client.lanes.lobby.request(true);
-    config.logger?.info(
+    hub.logger.info(
       'Socket',
       `conn=${client.connectionId} User authenticated: ${auth.actor.name || auth.actor.userId} (total clients: ${clients.size})`,
     );
@@ -335,7 +335,7 @@ function watchSockets({
     const spread = sampleSyncSpread(room.syncSpread, room, now);
     room.syncSpread = spread.tracker;
     const logSpread = (summary, label) =>
-      config.logger?.info(
+      hub.logger.info(
         'Sync',
         `room=${room.roomId} ${label} viewer spread p50=${summary.p50Ms}ms p95=${summary.p95Ms}ms ` +
           `within50=${summary.within50Percent}% within100=${summary.within100Percent}% samples=${summary.samples}`,
@@ -488,7 +488,7 @@ function watchSockets({
         configurable: true,
       });
       clients.add(client);
-      config.logger?.debug(
+      hub.logger.debug(
         'Socket',
         `conn=${client.connectionId} opened from ${client.remoteAddress || 'local'} (total: ${clients.size})`,
       );
@@ -546,7 +546,7 @@ function watchSockets({
             return send(client, { type: 'error', id: message.id, code: 'invalid', status: 400, message: invalid });
           }
           client.lastSeen = watch.clock.now();
-          hub.directory?.connected(ws, client.userId);
+          hub.directory.connected(ws, client.userId);
           switch (message.type) {
             case 'cancel':
               return client.inflight.get(message.id)?.abort();
@@ -577,7 +577,7 @@ function watchSockets({
         const attached = [...client.viewers].filter(
           ([roomId, viewerId]) => watch.rooms.get(roomId)?.viewers.get(viewerId)?.watchSocket === ws,
         );
-        config.logger?.debug(
+        hub.logger.debug(
           'Socket',
           `conn=${client.connectionId} closed code=${code} reason=${JSON.stringify(reason)} source=${client.terminationCause || 'peer-or-network'} account=${JSON.stringify(client.userName || client.userId || 'unauthenticated')} ageMs=${watch.clock.now() - client.openedAt} attachedViewers=${attached.length} (remaining: ${clients.size - 1})`,
         );
@@ -586,12 +586,12 @@ function watchSockets({
             now = watch.clock.now();
           const count = planned ? 0 : noteDisconnect(client.userId, now),
             quoted = reason ? ` ("${reason}")` : '';
-          config.logger?.[planned ? 'info' : 'warn'](
+          hub.logger[planned ? 'info' : 'warn'](
             'Socket',
             `Viewer ${JSON.stringify(client.userName || client.userId)} ${planned ? 'closed the page' : 'disconnected'}: code ${code}${quoted}, cause ${client.terminationCause || 'browser or network'}, connected ${Math.round((now - client.openedAt) / 1000)}s, last message ${((now - client.lastSeen) / 1000).toFixed(1)}s ago${count > 1 ? `, ${count} unplanned disconnects in the last hour` : ''}`,
           );
         }
-        hub.directory?.disconnected(ws);
+        hub.directory.disconnected(ws);
         clearTimeout(timer);
         clients.delete(client);
         // A transient close can precede the next authenticated socket by only

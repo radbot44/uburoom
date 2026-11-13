@@ -103,7 +103,7 @@ class RoomEvents {
     return this.hub.isAdmin(actor) || record.visibility === 'public' || RoomPolicy.admitted(record, actor.userId);
   }
   canSchedule(actor) {
-    return !actor.guestRoomId && !!this.hub.canScheduleEvents?.(actor);
+    return !actor.guestRoomId && !!this.hub.canScheduleEvents(actor);
   }
   safeError(error) {
     return this.watch.publications.safeError(error, 'event');

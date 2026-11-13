@@ -113,7 +113,6 @@ test('hardware decode falls back to the CPU for the stream only when the CPU pro
     {},
     {
       ffmpegPath: 'fixture',
-      logger: { warn: (_, message) => warnings.push(message) },
       transcoding: { encoder: 'nvenc', cpuFallback: false },
     },
     async (_binary, args) => {
@@ -143,6 +142,7 @@ test('hardware decode falls back to the CPU for the stream only when the CPU pro
       } else cpu++;
       return { video: Buffer.alloc(200), audio: Buffer.alloc(50) };
     },
+    { warn: (_, message) => warnings.push(message) },
   );
   const lease = manager.acquire({ id: '1', duration: 60, start: 'http://fixture' }, 'direct'),
     signal = new AbortController().signal;

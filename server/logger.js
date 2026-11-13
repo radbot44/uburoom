@@ -293,9 +293,21 @@ class Logger {
 
 const defaultLogger = new Logger();
 
+/** A logger that discards everything: the default where nothing configured one (tests, tools). */
+const silentLogger = Object.freeze({
+  error() {},
+  warn() {},
+  info() {},
+  debug() {},
+  isLevelEnabled: () => false,
+  tap: () => () => {},
+  child: () => silentLogger,
+});
+
 module.exports = {
   Logger,
   defaultLogger,
+  silentLogger,
   redact,
   stripAnsi,
   formatTimestamp,

@@ -813,14 +813,14 @@ async function fixture(t, disk = false, settings = {}) {
   let app;
   async function start() {
     app = createApp(config);
-    app.hub.access = {
+    app.access.connect({
       isMember: () => true,
       refresh: async () => true,
       voiceChannel: () => undefined,
       validVoiceChannel: () => false,
       hasRole: (id, requested) => requested === role && roleUsers.has(id),
       options: () => ({ available: true }),
-    };
+    });
     await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
     config.publicUrl = 'https://localhost:' + app.server.address().port;
   }

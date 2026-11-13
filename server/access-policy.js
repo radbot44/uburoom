@@ -1,5 +1,7 @@
 'use strict';
 const { randomBytes, createHash, timingSafeEqual } = require('node:crypto');
+const { silentLogger } = require('./logger');
+const noGuests = Object.freeze({ admits: () => false });
 
 // A viewer the providers confirmed stays admitted without asking them again until
 // the recheck. After that only a provider's own no removes them: one that gives no
@@ -9,7 +11,12 @@ const RECHECK_MS = 5 * 60000,
   CONFIRMED_MS = 12 * 3600000;
 
 class AccessPolicy {
-  constructor(config, registry, plexAuth, discordAccess) {
+  /**
+   * @param {{logger?: any, guests?: {admits(roomId: string, userId: string): boolean}}} [services]
+   */
+  constructor(config, registry, plexAuth, discordAccess, { logger = silentLogger, guests = noGuests } = {}) {
+    this.logger = logger;
+    this.guests = guests;
     this.config = config;
     this.settings = config.accessPolicy;
     this.registry = registry;
@@ -33,7 +40,7 @@ class AccessPolicy {
   }
   viaGuest(id, context) {
     const room = this.guestRoom(context);
-    return !!room && (context.guestUntil ?? Infinity) > Date.now() && !!this.guests?.admits(room, id);
+    return !!room && (context.guestUntil ?? Infinity) > Date.now() && this.guests.admits(room, id);
   }
   password(req, identity) {
     if (!this.passwordRequired) return true;
@@ -100,7 +107,7 @@ class AccessPolicy {
         this.confirmed.set(key, { proof, recheck: Date.now() + RECHECK_MS, expires: Date.now() + CONFIRMED_MS });
       else if (allowed) {
         held.recheck = Date.now() + UNANSWERED_RECHECK_MS;
-        this.config.logger?.warn('Access', `Keeping ${account.name || account.id} admitted: no provider answer`);
+        this.logger.warn('Access', `Keeping ${account.name || account.id} admitted: no provider answer`);
       } else this.confirmed.delete(key);
     }
     if (allowed) this.allowed.set(key, Date.now() + 1000);
@@ -135,7 +142,7 @@ class AccessPolicy {
     } catch (error) {
       if (error.noServerAccess) return withoutServerAccess;
       if (error.revoked) return false;
-      this.config.logger?.warn('Access', `Plex check got no answer: ${error.message}`);
+      this.logger.warn('Access', `Plex check got no answer: ${error.message}`);
       return undefined;
     }
   }

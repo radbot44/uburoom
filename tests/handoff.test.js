@@ -58,13 +58,13 @@ async function fixture(t) {
   };
   const app = createApp(config);
   let member = true;
-  app.hub.access = {
+  app.access.connect({
     refresh: async () => member,
     isMember: () => member,
     voiceChannel: () => 'call',
     validVoiceChannel: () => true,
     options: () => ({ available: true }),
-  };
+  });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(() => app.close());
   const port = app.server.address().port;

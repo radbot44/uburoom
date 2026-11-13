@@ -6,6 +6,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { silentLogger } = require('./logger');
 const { randomBytes, createHash } = require('node:crypto');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
@@ -653,7 +654,7 @@ function decodeRoute(spec, encoder, platform = process.platform, gpuTonemap = tr
 const { SharedTask, runOperation } = require('./operation');
 
 class AV1 {
-  constructor(plex, config, execute = run) {
+  constructor(plex, config, execute = run, logger = silentLogger) {
     this.plex = plex;
     this.ffmpeg = config.ffmpegPath;
     this.jobs = new Set();
@@ -661,7 +662,7 @@ class AV1 {
     this.cpuFallback = config.transcoding?.cpuFallback ?? true;
     this.hardwareDecode = config.transcoding?.hardwareDecode ?? true;
     this.maxQuality = (config.transcoding?.qualities || QUALITIES).find(q => q.id !== 'direct') || QUALITIES[1];
-    this.logger = config.logger;
+    this.logger = logger;
     this.maxBytes = 256 * 1024 * 1024;
     this.jobBytes = 48 * 1024 * 1024;
     this.pendingBytes = 0;
@@ -1216,7 +1217,7 @@ class AV1 {
                   }
                   if (level > (group.decodeLevel || 0)) {
                     group.decodeLevel = level;
-                    this.logger?.warn(
+                    this.logger.warn(
                       'Conversion',
                       `${routes[level] ? 'GPU tonemapping' : 'Hardware decode'} failed for a ${spec.sourceFormat} source; using a slower path for this stream.`,
                     );
@@ -1260,7 +1261,7 @@ class AV1 {
           const took = (Date.now() - entry.began) / 1000,
             waited = (entry.began - entry.queued) / 1000;
           if (took > CHUNK * 0.8 || waited > CHUNK)
-            this.logger?.warn(
+            this.logger.warn(
               'Conversion',
               `Chunk ${index} of ${group.quality} took ${took.toFixed(1)}s to encode and waited ${waited.toFixed(1)}s for a slot (${group.encoder || 'auto'}${group.cpuFallback ? ', software fallback' : ''}); viewers may wait.`,
             );
@@ -1272,7 +1273,7 @@ class AV1 {
           } else {
             // Keep failure local to this chunk and cool down before re-encoding.
             entry.error = error instanceof PlaybackError ? error : new PlaybackError('WebM chunk preparation failed.');
-            this.logger?.warn('Conversion', `Chunk ${index} failed: ${entry.error.message}`);
+            this.logger.warn('Conversion', `Chunk ${index} failed: ${entry.error.message}`);
             entry.failedAt = Date.now();
             this.prune(group, entry);
           }

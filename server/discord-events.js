@@ -23,16 +23,16 @@ class DiscordEventSync {
     return this.events.config;
   }
   configured() {
-    return !!(this.config.guildId && (this.config.botToken || this.hub.discordClient));
+    return !!(this.config.guildId && (this.config.botToken || this.hub.discord.client));
   }
   ready() {
-    return !!this.hub.discordClient?.isReady();
+    return !!this.hub.discord.client?.isReady();
   }
   request(action, current) {
     return discordRequest(action, { signal: this.lifetime.signal, ...(current ? { current } : {}) });
   }
   async guild(guildId = this.config.guildId) {
-    const client = this.hub.discordClient;
+    const client = this.hub.discord.client;
     if (!client?.isReady()) throw fail('Discord is reconnecting. Try again shortly.');
     const guild = await client.guilds.fetch(guildId);
     const member = guild.members.me || (await this.request(() => guild.members.fetchMe()));
@@ -51,7 +51,7 @@ class DiscordEventSync {
   }
   owned(remote) {
     return (
-      remote.creatorId === this.hub.discordClient.user.id &&
+      remote.creatorId === this.hub.discord.client.user.id &&
       remote.entityType === GuildScheduledEventEntityType.External
     );
   }

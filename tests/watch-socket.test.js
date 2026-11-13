@@ -36,7 +36,7 @@ async function fixture(t) {
       ),
   });
   let allowed = true;
-  app.hub.access = { isMember: () => allowed, refresh: async () => allowed, options: () => ({ available: true }) };
+  app.access.connect({ isMember: () => allowed, refresh: async () => allowed, options: () => ({ available: true }) });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   config.publicUrl = 'https://localhost:' + app.server.address().port;
   t.after(() => app.close());
@@ -730,7 +730,11 @@ async function scripted(operations, options = {}) {
       present: () => true,
       roomState: { startRecovery() {}, people: { reserve() {}, enter() {} } },
     },
-    hub: { dispatch: async () => {} },
+    hub: {
+      dispatch: async () => {},
+      logger: { debug() {}, info() {}, warn() {} },
+      directory: { connected() {}, disconnected() {} },
+    },
     throttle: () => true,
     // The slow resync, sped up: it is what publishes here, since nothing changes.
     resyncMs: 100,

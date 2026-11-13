@@ -97,13 +97,13 @@ async function startFixtureServer() {
     );
   };
   const app = createApp(config, { plexFetch, oauthFetch: fixture.discordFetch, plexDemo: fixture });
-  app.hub.access = {
+  app.access.connect({
     isMember: () => true,
     refresh: async () => true,
     voiceChannel: () => 'fixture',
     validVoiceChannel: () => true,
     options: () => ({ available: true }),
-  };
+  });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   config.publicUrl = 'https://localhost:' + app.server.address().port;
   return { app, config, subjects, fixture };

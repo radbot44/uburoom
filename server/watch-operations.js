@@ -145,9 +145,9 @@ function watchOperations({
       if (!auth) return result(401, { error: 'Log in with Discord' });
       context.signal?.throwIfAborted();
       watch.roomState.people.enter(auth.actor.userId);
-      if (context.controlSocket) hub.directory?.connected(context.controlSocket, auth.actor.userId);
+      if (context.controlSocket) hub.directory.connected(context.controlSocket, auth.actor.userId);
       await watch.roomState.claimHosts(auth.actor.userId);
-      await hub.refreshAdmin?.(auth.actor);
+      await hub.refreshAdmin(auth.actor);
       const current = async () =>
         !context.signal?.aborted &&
         (!context.controlSocket || context.controlSocket.readyState === 1) &&
@@ -551,10 +551,10 @@ function watchOperations({
       (lobbyScope || (room && watch.rooms.get(room.roomId) === room && (await watch.canView(room, auth.actor)))) &&
       (await login(context))?.userId === auth.actor.userId;
     if (!(await eligible())) return result(403, { error: 'Library access requires room access' });
-    const plex = hub.plexFor ? await hub.plexFor(auth.actor) : watch.plex;
-    const scopeCurrent = async () => !hub.plexFor || (await hub.plexFor(auth.actor)).principal === plex.principal;
+    const plex = await hub.plexFor(auth.actor);
+    const scopeCurrent = async () => (await hub.plexFor(auth.actor)).principal === plex.principal;
     const itemVisible = async () =>
-      plex.principal === 'discord-shared' || !hub.plexFor || (await plex.visible(text(args.item), text(args.type)));
+      plex.principal === 'discord-shared' || (await plex.visible(text(args.item), text(args.type)));
     let data;
     if (op === 'library.art') {
       const art = await plex.artwork(text(args.item), text(args.kind) || 'poster', text(args.type));

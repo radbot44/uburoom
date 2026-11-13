@@ -38,11 +38,7 @@ function watchIdentity({ config, hub, user, webActor, entryPolicy, validIdentity
       if (!entryPolicy.password(req, identity)) return;
       entryPolicy.entered(identity.userId);
       if (!(await entryPolicy.admit(identity.userId, identity))) return;
-    } else if (
-      !(hub.access?.canWatch ? hub.access.canWatch(identity.userId) : hub.access?.isMember(identity.userId)) &&
-      !(await (hub.access?.refreshWatch || hub.access?.refresh)?.(identity.userId))
-    )
-      return;
+    } else if (!hub.canWatch(identity.userId) && !(await hub.admit(identity.userId))) return;
     const current = await rawLogin(req);
     return current?.userId === identity.userId && current?.accountRevision === identity.accountRevision
       ? current

@@ -66,8 +66,7 @@ module.exports = {
     if (room.frozen && actor.userId !== room.hostId) return false;
     if (!canWatch(this.hub.access, actor.userId, actor) && !(viewer?.access?.ok && viewer.access.media === room.media))
       return false;
-    if (room.media?.kind === 'plex' && this.hub.plexFor && viewer?.access?.media === room.media && !viewer.access.ok)
-      return false;
+    if (room.media?.kind === 'plex' && viewer?.access?.media === room.media && !viewer.access.ok) return false;
     return this.hub.authorize(actor, room, 'room.view').ok;
   },
   // Room access with the asynchronous provider checks authorize() leaves out:
@@ -78,12 +77,12 @@ module.exports = {
     if (room.frozen && actor.userId !== room.hostId) return false;
     if (!canWatch(this.hub.access, actor.userId, actor)) {
       try {
-        if (!(await (this.hub.access?.refreshWatch || this.hub.access?.refresh)?.(actor.userId, actor))) return false;
+        if (!(await this.hub.admit(actor.userId, actor))) return false;
       } catch (error) {
         if (!this.retainedThroughOutage(room, actor, error)) return false;
       }
     }
-    if (room.media?.kind === 'plex' && this.hub.plexFor) {
+    if (room.media?.kind === 'plex') {
       try {
         const allowed = await (await this.hub.plexFor(actor)).allows(room.media.id);
         this.providerResponded();
@@ -123,7 +122,7 @@ module.exports = {
         if (this.rooms.has(id) || recovery.until <= this.clock.now()) continue;
         const record = this.roomState.store.get(id);
         if (!this.hub.authorize(actor, record, 'room.view').ok) continue;
-        if (record.bookmark && this.hub.plexFor) {
+        if (record.bookmark) {
           try {
             if (!(await (await this.hub.plexFor(actor)).allows(record.bookmark.mediaId))) continue;
           } catch {

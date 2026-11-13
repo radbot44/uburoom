@@ -8,10 +8,8 @@ const { Logger } = require('./logger');
 async function main() {
   const config = require('./config').loadConfig();
   const logger = new Logger(config.logging);
-  config.logger = logger;
-  config.cert = fs.readFileSync(config.tlsCert);
-  config.key = fs.readFileSync(config.tlsKey);
-  const app = createApp(config);
+  const tls = { cert: fs.readFileSync(config.tlsCert), key: fs.readFileSync(config.tlsKey) };
+  const app = createApp(config, { logger, tls });
   try {
     await new Promise((resolve, reject) => {
       app.server.once('error', reject);
@@ -57,7 +55,12 @@ async function main() {
   process.once('SIGTERM', stop);
   async function connect() {
     try {
-      const connected = await startBot(config, app.hub);
+      const connected = await startBot(config, {
+        access: app.access,
+        discord: app.hub.discord,
+        setOwnerName: app.setOwnerName,
+        logger,
+      });
       if (stopped) await connected?.destroy();
       else bot = connected;
     } catch (error) {

@@ -306,8 +306,13 @@ test('every room-scoped library route rejects inaccessible viewers and rechecks 
       finish = resolve;
     });
   };
+  const plexStub = { configured: true, browse: wait, details: wait, filters: wait, artwork: wait, availability: wait };
   const hub = {
-    access: { isMember: () => true },
+    plexFor: async () => plexStub,
+    canWatch: () => true,
+    admit: async () => true,
+    refreshAdmin: async () => {},
+    guestsEnabled: () => false,
     authorize: (actor, s, action) => ({ ok: action === 'roomSettings' && manage && actor.userId === 'host' }),
   };
   const routes = watchHttp({
@@ -318,7 +323,7 @@ test('every room-scoped library route rejects inaccessible viewers and rechecks 
       rooms,
       roomState: roomStateStub,
       canView: async (room, actor) => manage && actor.userId === 'host',
-      plex: { configured: true, browse: wait, details: wait, filters: wait, artwork: wait, availability: wait },
+      plex: plexStub,
     },
     user: async req => ({ userId: req.headers.cookie }),
     webActor: identity => identity,
@@ -386,7 +391,13 @@ test('lobby catalog, details, filters and artwork recheck identity and Plex scop
     availability: wait,
     visible: async () => true,
   };
-  const hub = { access: { isMember: () => true }, plexFor: async () => ({ ...plex, principal }) };
+  const hub = {
+    canWatch: () => true,
+    admit: async () => true,
+    refreshAdmin: async () => {},
+    guestsEnabled: () => false,
+    plexFor: async () => ({ ...plex, principal }),
+  };
   const routes = watchHttp({
     config: { publicUrl: 'https://localhost' },
     hub,
@@ -453,7 +464,14 @@ test('room watch party history takes priority over personal Plex progress in lib
     media: { id: '10', duration: 7200 },
   };
   const rooms = new Map([['room-1', room]]);
-  const hub = { access: { isMember: () => true }, authorize: () => ({ ok: true }) };
+  const hub = {
+    canWatch: () => true,
+    admit: async () => true,
+    refreshAdmin: async () => {},
+    guestsEnabled: () => false,
+    plexFor: async () => plex,
+    authorize: () => ({ ok: true }),
+  };
   const mockItems = [
     { id: '10', title: 'Live In Room', duration: 7200, viewOffset: 300 },
     { id: '20', title: 'Personal Only', duration: 7200, viewOffset: 450 },

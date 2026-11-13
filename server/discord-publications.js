@@ -73,7 +73,7 @@ class DiscordPublications {
     return task;
   }
   async channel(channelId = this.config.shareChannelId, guildId = this.config.guildId) {
-    const client = this.hub.discordClient;
+    const client = this.hub.discord.client;
     if (!client?.isReady()) throw fail('Discord is unavailable. Try again when the bot reconnects.');
     if (!channelId) throw fail('Discord publishing is unavailable. Try again shortly.');
     const channel = await client.channels.fetch(channelId);
@@ -177,7 +177,7 @@ class DiscordPublications {
           (async () => {
             if ((person.watchCurrent && !(await person.watchCurrent())) || !(await this.watch.canView(room, person)))
               return;
-            const plex = this.hub.plexFor ? await this.hub.plexFor(person) : this.watch.plex;
+            const plex = await this.hub.plexFor(person);
             if (!plex?.artwork) return;
             const result = await plex.artwork(room.media.id, 'poster', room.media.source?.type);
             if (!(await this.watch.canView(room, person))) return;
@@ -417,7 +417,7 @@ class DiscordPublications {
     if (!publication || publication.messageId) return;
     const messages = await channel.messages.fetch({ limit: 100 });
     const found = [...messages.values()].find(
-      message => message.author?.id === this.hub.discordClient.user.id && String(message.nonce) === publication.nonce,
+      message => message.author?.id === this.hub.discord.client.user.id && String(message.nonce) === publication.nonce,
     );
     if (found) await this.save(id, { ...publication, messageId: found.id });
   }
@@ -491,7 +491,7 @@ class DiscordPublications {
     }
   }
   async reconcile() {
-    if (this.stopped || !this.hub.discordClient?.isReady()) return;
+    if (this.stopped || !this.hub.discord.client?.isReady()) return;
     await Promise.allSettled(
       [...this.records.keys()]
         .filter(id => !this.lanes.has(id) && Date.now() >= (this.retries.get(id) || 0))

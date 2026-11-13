@@ -55,7 +55,7 @@ function watchHttp({
     rawLogin,
     login,
   });
-  const delivery = new PlexDelivery(config, watch.plex, plexAuth, hub.plexFor?.bind(hub));
+  const delivery = new PlexDelivery(config, watch.plex, plexAuth, actor => hub.plexFor(actor));
   watch.delivery = delivery;
   const clockEpoch = randomUUID();
   const handoff = new Handoff();
@@ -405,7 +405,7 @@ function watchHttp({
         // and its current voice channel come from the connected bot's guild.
         if (
           config.accessPolicy?.discord === false ||
-          !(await hub.access?.refresh(identity.id)) ||
+          !(await hub.access.refresh(identity.id)) ||
           !hub.access.validVoiceChannel(hub.access.voiceChannel(identity.id))
         ) {
           json(res, 403, { error: 'Join a voice channel in the configured Discord server first' });

@@ -5,6 +5,7 @@ const { randomUUID } = require('node:crypto');
 const { Accounts, credentialVault } = require('../server/accounts');
 const { Hub } = require('../server/core');
 const { Watch } = require('../server/watch');
+const { wireRooms } = require('./helpers/live-room');
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function waitFor(predicate) {
@@ -89,7 +90,7 @@ async function fixture(t, { fallback = false } = {}) {
     );
     plex.close = () => plex.av1.close();
   }
-  const watch = new Watch(hub, plex, undefined, registry);
+  const watch = wireRooms(hub, plex, new Watch(hub, plex, undefined, registry));
   watch.autoplayDelayMs = 30;
   clearInterval(watch.roomState.timer);
   let controller = creator;
@@ -382,6 +383,7 @@ test('revoked host permissions during media preparation invalidate autoplay befo
     held = gate(),
     prepare = f.plex.prepare;
   await f.hostController();
+  await delay(100);
   f.plex.prepare = async (...args) => {
     if (args[5]?.sourceOnly) {
       held.enter();

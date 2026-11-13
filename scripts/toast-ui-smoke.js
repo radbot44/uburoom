@@ -27,13 +27,13 @@ async function main() {
       plexToken: 'fixture-owner',
     };
     const app = createApp(config, { plexFetch: fixture.fetch, oauthFetch: fixture.discordFetch, plexDemo: fixture });
-    app.hub.access = {
+    app.access.connect({
       isMember: () => true,
       refresh: async () => true,
       voiceChannel: () => 'fixture',
       validVoiceChannel: () => true,
       options: () => ({ available: true }),
-    };
+    });
     let browser;
     try {
       await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));

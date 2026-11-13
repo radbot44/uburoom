@@ -215,13 +215,13 @@ async function main() {
     subtitle: all.find(x => x.ratingKey === id)?.editionTitle || '',
     kind: 'demo',
   });
-  app.hub.access = {
+  app.access.connect({
     refresh: async () => true,
     isMember: () => true,
     voiceChannel: () => 'call',
     validVoiceChannel: () => true,
     options: () => ({ available: true }),
-  };
+  });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   config.publicUrl = `https://localhost:${app.server.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-library-firefox-'));

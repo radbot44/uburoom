@@ -281,7 +281,7 @@ async function fixture(t, deliveryFetch, overrides = {}) {
     oauthFetch: provider.discordFetch,
   });
   const members = new Set(Object.values(provider.subjects));
-  app.hub.access = {
+  app.access.connect({
     identity: async id =>
       Object.values(provider.subjects).includes(id) ? { id, name: 'Known Discord user' } : undefined,
     refresh: async id => members.has(id),
@@ -289,7 +289,7 @@ async function fixture(t, deliveryFetch, overrides = {}) {
     voiceChannel: id => (members.has(id) ? 'call' : undefined),
     validVoiceChannel: id => id === 'call',
     options: () => ({ available: true }),
-  };
+  });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(() => app.close());
   config.publicUrl = `https://localhost:${app.server.address().port}`;
@@ -1594,7 +1594,7 @@ test(
       'owner metadata cannot bypass a restricted user context',
     );
     const actor = { userId: b.id, name: 'Bob' };
-    assert.equal(f.app.hub.access.isMember(b.id), false);
+    assert.equal(f.app.access.isMember(b.id), false);
     assert.equal(
       await f.app.watch.canView(f.app.watch.rooms.get(roomId), actor),
       true,

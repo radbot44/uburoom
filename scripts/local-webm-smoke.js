@@ -48,13 +48,13 @@ async function main() {
     browsers = [],
     pages = [];
   let room;
-  app.hub.access = {
+  app.access.connect({
     refresh: async () => true,
     isMember: () => true,
     voiceChannel: () => 'call',
     validVoiceChannel: () => true,
     options: () => ({ available: true }),
-  };
+  });
   const manager = app.watch.plex.av1,
     run = manager.run;
   let chunks = 0;

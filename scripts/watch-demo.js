@@ -36,13 +36,13 @@ const app = createApp(
   fixture ? { plexFetch: fixture.fetch, oauthFetch: fixture.discordFetch, plexDemo: fixture } : undefined,
 );
 const members = fixture ? Object.values(fixture.subjects) : ['demo-host', 'demo-guest', 'demo-guest2'];
-app.hub.access = {
+app.access.connect({
   refresh: async id => members.includes(id),
   isMember: id => members.includes(id),
   voiceChannel: () => 'demo-voice',
   validVoiceChannel: id => id === 'demo-voice',
   options: () => ({ available: true }),
-};
+});
 app.server.listen(port, '127.0.0.1', () => {
   console.log(`[uburoom demo] Host: ${config.publicUrl}/watch?demo=host`);
   console.log(`[uburoom demo] Guest: ${config.publicUrl}/watch?demo=guest`);

@@ -242,13 +242,13 @@ async function main() {
   });
   if (initialStart === 'immediate') immediateStarts(app.watch);
   app.watch.demoMedia = { ...app.watch.demoMedia, file: media, duration: 40 };
-  app.hub.access = {
+  app.access.connect({
     refresh: async () => true,
     isMember: () => true,
     voiceChannel: () => 'fixture-call',
     validVoiceChannel: () => true,
     options: () => ({ available: true }),
-  };
+  });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   config.publicUrl = 'https://localhost:' + app.server.address().port;
   const report = {

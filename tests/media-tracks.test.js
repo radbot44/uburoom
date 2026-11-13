@@ -601,7 +601,7 @@ test('browser subtitle resources enforce grants, selection generations and expli
   };
   let member = true;
   const app = createApp(config, { plexFetch: fixture.plex.fetch });
-  app.hub.access = { isMember: () => member, refresh: async () => member, options: () => ({ available: true }) };
+  app.access.connect({ isMember: () => member, refresh: async () => member, options: () => ({ available: true }) });
   app.watch.plex.av1.input = async (source, signal, action) => action('http://127.0.0.1/synthetic-capability');
   app.watch.plex.av1.run = async binary =>
     Buffer.from(binary.includes('ffprobe') ? '{"streams":[]}' : '[Script Info]\n[Events]\n');
@@ -790,7 +790,7 @@ test('media grants reject stale playlists, subtitles and revoked viewers during 
       return fixture.plex.fetch(input, options);
     },
   });
-  app.hub.access = { isMember: () => member, refresh: async () => member, options: () => ({ available: true }) };
+  app.access.connect({ isMember: () => member, refresh: async () => member, options: () => ({ available: true }) });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(() => {
     fixture.state.holdPlaylist = false;
@@ -954,7 +954,7 @@ test('streaming media bodies complete with progressing chunks beyond header dead
       return fixture.plex.fetch(input, options);
     },
   });
-  app.hub.access = { isMember: () => true, refresh: async () => true, options: () => ({ available: true }) };
+  app.access.connect({ isMember: () => true, refresh: async () => true, options: () => ({ available: true }) });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(() => {
     fixture.state.holdPlaylist = false;

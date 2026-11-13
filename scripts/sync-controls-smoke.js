@@ -28,7 +28,7 @@ async function main() {
       throw new Error('Live Plex disabled');
     },
   });
-  app.hub.access = { refresh: async () => true, isMember: () => true, options: () => ({ available: true }) };
+  app.access.connect({ refresh: async () => true, isMember: () => true, options: () => ({ available: true }) });
   const ready = app.watch.ready.bind(app.watch);
   let held = true;
   app.watch.ready = (room, actor, viewer, version, value, generation) =>

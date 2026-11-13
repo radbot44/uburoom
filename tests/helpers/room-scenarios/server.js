@@ -75,13 +75,13 @@ async function startServer({ disk = false } = {}) {
   let app, port;
   async function listen() {
     app = createApp(config, { plexFetch, oauthFetch: provider.discordFetch, plexDemo: provider });
-    app.hub.access = {
+    app.access.connect({
       refresh: async () => true,
       isMember: () => true,
       voiceChannel: () => 'fixture',
       validVoiceChannel: () => true,
       options: () => ({ available: true }),
-    };
+    });
     // A restart keeps the same port so the public URL and socket origin stay valid.
     await new Promise((resolve, reject) => {
       app.server.once('error', reject);

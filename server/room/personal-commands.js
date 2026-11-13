@@ -57,7 +57,7 @@ module.exports = {
       }
       const fallback = args.fallback || viewer.fallback;
       if (args.fallback)
-        this.hub?.config?.logger?.info(
+        this.hub.logger.info(
           'Delivery',
           `Viewer "${viewer.name || actor.userId}" moving to ${args.fallback}: ${args.reason || 'no reason given'}`,
         );
@@ -71,7 +71,7 @@ module.exports = {
               this.prepareQuality(
                 room,
                 viewer,
-                await (this.hub.plexFor ? this.hub.plexFor(actor) : this.plex),
+                await this.hub.plexFor(actor),
                 source,
                 args.quality,
                 args.compatible === true || !!viewer.compatible,
@@ -81,10 +81,7 @@ module.exports = {
             { ticket },
           );
           if (result.status !== 'applied') {
-            this.hub?.config?.logger?.warn(
-              'Delivery',
-              `Quality change not applied: ${result.message || result.status}`,
-            );
+            this.hub.logger.warn('Delivery', `Quality change not applied: ${result.message || result.status}`);
             return result;
           }
           viewer.quality = viewer.media.quality;
@@ -93,7 +90,7 @@ module.exports = {
           return this.playerUpdated(room, viewer);
         } catch (error) {
           if (error instanceof PlaybackError) {
-            this.hub?.config?.logger?.warn('Delivery', `Quality change failed: ${error.message}`);
+            this.hub.logger.warn('Delivery', `Quality change failed: ${error.message}`);
             return { status: 'failed', message: error.message };
           }
           throw error;
@@ -171,7 +168,7 @@ module.exports = {
             this.prepareQuality(
               room,
               viewer,
-              await (this.hub.plexFor ? this.hub.plexFor(actor) : this.plex),
+              await this.hub.plexFor(actor),
               source,
               viewer.quality,
               viewer.compatible,
@@ -250,7 +247,7 @@ module.exports = {
             this.prepareQuality(
               room,
               viewer,
-              await (this.hub.plexFor ? this.hub.plexFor(actor) : this.plex),
+              await this.hub.plexFor(actor),
               source,
               viewer.quality,
               viewer.compatible,

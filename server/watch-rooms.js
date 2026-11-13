@@ -27,7 +27,7 @@ class WatchRooms {
           discordId: registry.identities(id).find(identity => identity.provider === 'discord' && identity.verified)
             ?.subject,
         }),
-      guests: id => watch.hub.guestMembers?.(id) || [],
+      guests: id => watch.hub.guestMembers(id) || [],
       defaultAllowGuests: !!(watch.hub.config.guests?.enabled && watch.hub.config.guests?.defaultAllow !== false),
     });
     this.queue = new RoomQueue(registry, this.store);
@@ -98,7 +98,7 @@ class WatchRooms {
           const saved = record.bookmark;
           if (saved) {
             if ((await this.identify(saved)) !== saved.serverId) throw failure('The saved Plex server changed', 409);
-            const plex = this.watch.hub.plexFor ? await this.watch.hub.plexFor(actor) : this.watch.plex;
+            const plex = await this.watch.hub.plexFor(actor);
             media =
               saved.mediaId === 'demo'
                 ? this.watch.demoMedia && { ...this.watch.demoMedia, id: 'demo', resources: new Map() }
@@ -214,12 +214,11 @@ class WatchRooms {
     if (
       this.stopped ||
       !(await current()) ||
-      (!canWatch(hub.access, actor.userId, actor) &&
-        !(await (hub.access?.refreshWatch || hub.access?.refresh)?.(actor.userId, actor)))
+      (!canWatch(hub.access, actor.userId, actor) && !(await hub.admit(actor.userId, actor)))
     ) {
       throw failure('Room access expired; sign in again', 403);
     }
-    await hub.refreshAdmin?.(actor);
+    await hub.refreshAdmin(actor);
     if (this.stopped || !(await current())) throw failure('Room connection changed; retry manually', 403);
   }
   async claimHosts(userId) {
@@ -290,10 +289,10 @@ class WatchRooms {
           scope = config.scope;
         if (!scope?.id || !['show', 'library', 'collection'].includes(scope.type))
           throw failure('Choose an auto-queue source');
-        const plex = this.watch.hub.plexFor ? await this.watch.hub.plexFor(actor) : this.watch.plex;
+        const plex = await this.watch.hub.plexFor(actor);
         const items = await plex.queueItems({ ...scope, includeSpecials: !!config.includeSpecials });
         const serverId = await this.identify(scope);
-        if (this.watch.hub.plexFor && (await this.watch.hub.plexFor(actor)).principal !== plex.principal)
+        if ((await this.watch.hub.plexFor(actor)).principal !== plex.principal)
           throw failure('Plex access changed', 403);
         creation = { ...options, autoQueue: { ...config, scope: { type: scope.type, id: scope.id, serverId } } };
         initialCorpus = items.map(item => this.watch.queueItem(item, serverId));
@@ -388,7 +387,7 @@ class WatchRooms {
               if (!this.watch.demoMedia) throw failure('The saved test video is unavailable');
               media = { ...this.watch.demoMedia, id: 'demo', resources: new Map() };
             } else {
-              const plex = this.watch.hub.plexFor ? await this.watch.hub.plexFor(actor) : this.watch.plex;
+              const plex = await this.watch.hub.plexFor(actor);
               media = await this.savedSource(plex, saved);
             }
             if (
@@ -562,7 +561,7 @@ class WatchRooms {
       await this.metadata(id, actor);
       change = { ...change, name: candidate.name };
     }
-    if (change?.action === 'guests.allow' && !this.watch.hub.canAllowGuests?.(this.store.get(id), actor))
+    if (change?.action === 'guests.allow' && !this.watch.hub.canAllowGuests(this.store.get(id), actor))
       throw failure('You can’t change whether this room allows guests', 403);
     if (
       ['invite.reroll', 'guests.allow', 'guests.removeAll', 'invite.revoke'].includes(change?.action) &&
@@ -571,7 +570,7 @@ class WatchRooms {
       throw failure('Guests can’t change the room invite', 403);
     const record = await this.store.edit(id, actor.userId, revision, change);
     // Removing guests or revoking an invite takes effect at once, through the kick notice.
-    if (change.action === 'guests.removeAll') await this.watch.hub.endGuestSessions?.(id);
+    if (change.action === 'guests.removeAll') await this.watch.hub.endGuestSessions(id);
     if (change.action === 'invite.revoke') await this.removeFromRoom(id, [this.store.account(change.userId)]);
     if (change.action === 'delete') {
       if (room) this.watch.remove(id, false);
@@ -605,8 +604,8 @@ class WatchRooms {
       code: record.inviteCode,
       url: hub.config.publicUrl + '/join/' + record.inviteCode,
       allowGuests: record.allowGuests,
-      guestsEnabled: !!hub.guestsEnabled?.(),
-      canAllowGuests: !!hub.canAllowGuests?.(record, actor),
+      guestsEnabled: !!hub.guestsEnabled(),
+      canAllowGuests: !!hub.canAllowGuests(record, actor),
       canManage: host && !actor.guestRoomId,
       invited:
         record.visibility === 'private' && host
@@ -705,7 +704,7 @@ class WatchRooms {
               adopted = false;
             try {
               if ((await this.identify(saved)) === saved.serverId) {
-                const plex = this.watch.hub.plexFor ? await this.watch.hub.plexFor(actor) : this.watch.plex;
+                const plex = await this.watch.hub.plexFor(actor);
                 media =
                   saved.mediaId === 'demo'
                     ? this.watch.demoMedia && { ...this.watch.demoMedia, id: 'demo', resources: new Map() }

@@ -155,7 +155,7 @@ module.exports = {
       viewers: new Map(),
     }));
     preload.work = this.startMediaWork(room, async work => {
-      const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
+      const plex = await this.hub.plexFor(actor);
       const source = await plex.prepare(next.mediaId, 'direct', false, undefined, undefined, { sourceOnly: true });
       if (preload.dropped || work.signal.aborted) {
         await this.stopMedia(room, source);
@@ -251,7 +251,7 @@ module.exports = {
         return void this.removeRoom(room, effect.save).catch(() => {});
       case 'viewer-joined': {
         const viewer = room.viewers.get(effect.viewerId);
-        this.hub?.config?.logger?.info(
+        this.hub.logger.info(
           'Room',
           `Viewer "${viewer?.name || viewer?.userId}" joined "${room.name || room.roomId}" (viewers: ${room.viewers.size})`,
         );
@@ -270,7 +270,7 @@ module.exports = {
         void this.plex.stop(viewer.media);
         void this.reporting?.end(viewer, effect.reporting);
         if (effect.left)
-          this.hub?.config?.logger?.info(
+          this.hub.logger.info(
             'Room',
             `Viewer "${viewer.name || effect.viewerId}" left "${room.name || room.roomId}" (remaining: ${room.viewers.size})`,
           );

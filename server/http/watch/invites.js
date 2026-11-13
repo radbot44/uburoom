@@ -49,7 +49,7 @@ function roomInvites({
     if (identity?.guestRoom === record.id && (identity.guestUntil ?? Infinity) > Date.now())
       return json(res, 200, { room, guest: true });
     const member = !!identity && !identity.guestRoom && !!(await login(req));
-    const guestsAllowed = !!hub.guestsEnabled?.() && record.allowGuests;
+    const guestsAllowed = !!hub.guestsEnabled() && record.allowGuests;
     const signInRequired = !!config.guests?.requireSignIn;
     if (data.action === 'preview')
       return json(res, 200, {

@@ -1,9 +1,30 @@
 'use strict';
 const { hash } = require('./core');
 const { isServerOperator } = require('./operator-policy');
+const { runningSettings } = require('./operator-settings');
 
 function operatorHttp({ config, registry, editor, user, protectedPost, validIdentity, logins, cookies, body, json }) {
+  // The settings this process is running with. Flush before the final checks, rather than deferring
+  // the response: logout, account changes or operator removal during persistence must win.
+  async function running(req, res, reply) {
+    const login = await user(req);
+    const current = () =>
+      !!login &&
+      logins.get(hash(cookies(req).uburoom || '')) === login &&
+      validIdentity(login) &&
+      (login.expires === null || login.expires > Date.now());
+    if (!current()) return json(res, 401, { error: 'Sign in to read operator settings' });
+    if (!isServerOperator(registry, config, login.userId)) return json(res, 403, { error: 'Server operator required' });
+    await registry.flush();
+    if (!current()) return reply(401, { error: 'Sign in to read operator settings' });
+    if (!isServerOperator(registry, config, login.userId)) return reply(403, { error: 'Server operator required' });
+    return reply(200, runningSettings(config));
+  }
   async function route(req, res, url, reply) {
+    if (req.method === 'GET' && url.pathname === '/api/operator/settings') {
+      await running(req, res, reply);
+      return true;
+    }
     if (url.pathname !== '/api/operator/settings/saved' || !['GET', 'POST'].includes(req.method)) return false;
     let saved = false;
     let current = () => false;

@@ -14,7 +14,7 @@ function pageBootstrap({ config, watch, hub, registry, entryPolicy, diagnosticLo
     plexConfigured: watch.plex.configured,
     testVideo: !!watch.demoMedia,
     access: entryPolicy?.public(),
-    guests: !!hub.guestsEnabled?.(),
+    guests: !!hub.guestsEnabled(),
     singleRoom: !!config.singleRoom,
     localFormats:
       config.transcoding && (!config.transcoding.uburoom || config.transcoding.policy === 'disabled')

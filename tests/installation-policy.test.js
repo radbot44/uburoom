@@ -32,13 +32,13 @@ async function fixture(t, changes = {}) {
   };
   const app = createApp(config, { plexFetch: provider.fetch, oauthFetch: provider.discordFetch, plexDemo: provider });
   const members = new Set(Object.values(provider.subjects));
-  app.hub.access = {
+  app.access.connect({
     refresh: async id => members.has(id),
     isMember: id => members.has(id),
     voiceChannel: () => 'voice',
     validVoiceChannel: id => id === 'voice',
     options: () => ({ available: true }),
-  };
+  });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   config.publicUrl = 'https://localhost:' + app.server.address().port;
   t.after(() => app.close());
@@ -772,8 +772,8 @@ test('Plex exemption belongs only to verified Activity requests and survives bro
     401,
     'Activity admission cannot authorize a browser for the same account',
   );
-  assert.equal(f.app.hub.access.canWatch(me.body.account.id), false);
-  assert.equal(f.app.hub.access.canWatch(me.body.account.id, { activity: true }), true);
+  assert.equal(f.app.access.canWatch(me.body.account.id), false);
+  assert.equal(f.app.access.canWatch(me.body.account.id, { activity: true }), true);
   const handoff = (await activity.request('/api/watch/handoff', {}, headers)).body;
   await browser.request('/auth/handoff');
   const proof = randomBytes(32).toString('hex');

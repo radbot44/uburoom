@@ -9,6 +9,7 @@ const { currentSignal } = require('../server/operation');
 const { Accounts, credentialVault } = require('../server/accounts');
 const { Hub } = require('../server/core');
 const { Watch } = require('../server/watch');
+const { wireRooms } = require('./helpers/live-room');
 
 const turn = () => new Promise(setImmediate);
 async function roomFixture({ disk = false } = {}) {
@@ -46,7 +47,7 @@ async function roomFixture({ disk = false } = {}) {
       events.push('provider-closed');
     },
   };
-  const watch = new Watch(hub, plex, undefined, registry);
+  const watch = wireRooms(hub, plex, new Watch(hub, plex, undefined, registry));
   clearInterval(watch.roomState.timer);
   const id = await watch.roomState.create(actor, { name: 'Writer race' }),
     room = watch.rooms.get(id);
@@ -359,7 +360,7 @@ test('a final checkpoint failure still closes provider/reporting and the applica
     assert.ok(path.basename(directory).startsWith('uburoom-app-lifecycle-'));
     fs.rmSync(directory, { recursive: true, force: true });
   });
-  app.hub.access = { isMember: () => true, refresh: async () => true };
+  app.access.connect({ isMember: () => true, refresh: async () => true });
   const userId = app.registry.resolve('discord', '111111111111111111', 'Fixture').id;
   const actor = { userId, name: 'Fixture' };
   const id = await app.watch.roomState.create(actor, { keepEmpty: true });

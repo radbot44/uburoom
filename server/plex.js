@@ -59,11 +59,11 @@ function parseMarkers(item) {
 // No arbitrary upstream URLs: callers select Plex IDs, and only Plex-produced
 // media paths on the configured server are eligible for proxying.
 class Plex {
-  constructor(config, fetcher = fetch) {
+  constructor(config, fetcher = fetch, { logger } = {}) {
     this.rawFetch = fetcher;
     this.fetch = resilientFetch(fetcher);
     this.token = config.plexToken;
-    this.av1 = new AV1(this, config);
+    this.av1 = new AV1(this, config, undefined, logger);
     this.cacheBudget = new CacheBudget();
     this.fileCache = new Map();
     this.catalogCache = new Map();
@@ -1144,7 +1144,7 @@ class Plex {
       media.doviProfile = null;
       media.bitDepth = 8;
     }
-    this.av1.logger?.info(
+    this.av1.logger.info(
       'Delivery',
       `"${media.title}" ${quality}: ${plan.route}${plan.codec ? ' ' + plan.codec : ''} (${plan.reason}), source ${media.videoCodec}/${media.audioCodec}${fallback ? ', requested ' + fallback : ''}`,
     );
@@ -1404,7 +1404,7 @@ class Plex {
       } catch (error) {
         if (![404, 500].includes(error.status)) return;
         if (attempt) {
-          this.av1.logger?.warn(
+          this.av1.logger.warn(
             'Plex',
             `Plex accepted a session for "${media.title}" and then refused it (HTTP ${error.status}). Check Plex's log and its transcode drive's free space.`,
           );
@@ -1631,7 +1631,7 @@ class Plex {
         this.sessions.delete(id);
     }
     if (ended.length)
-      this.av1.logger?.warn(
+      this.av1.logger.warn(
         'Plex',
         `Ended ${ended.length} Plex transcode ${ended.length === 1 ? 'session' : 'sessions'} that uburoom no longer used (${ended.filter(item => item.stopped).length} had already been asked to stop).`,
       );
