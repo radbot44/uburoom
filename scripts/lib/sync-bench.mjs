@@ -73,7 +73,9 @@ const BASE_POSITION_S = 600;
  * Time is in simulated client-stopwatch milliseconds; the run starts playing at `warmupS`.
  * @param {{profile:keyof typeof PROFILES, seed:number, seconds:number, warmupS?:number, player?:boolean,
  *   fps?:number, initialOffsetMs?:number, startDelayMs?:number, driftPpm?:number, noiseMs?:number,
- *   seekCostMs?:number, rateLagMs?:number, startAheadMs?:number}} options
+ *   seekCostMs?:number, rateLagMs?:number, startAheadMs?:number, presentation?:boolean}} options
+ * With `presentation`, the controller reads its error the way the browser does: per-frame presentation samples
+ * (each with the measurement noise) smoothed by shared/sync/timing.mjs presentation(), chosen by controlSignal().
  */
 export function simulateViewer(options) {
   const {
@@ -90,6 +92,7 @@ export function simulateViewer(options) {
     seekCostMs = 250,
     rateLagMs = 100,
     startAheadMs = 0, // start-delay compensation: the paused player was seeked this far ahead before the alarm
+    presentation: withPresentation = false,
   } = options;
   const profile = PROFILES[profileId];
   const rng = createRng(deriveSeed(seed, 'viewer', profileId));
@@ -97,6 +100,8 @@ export function simulateViewer(options) {
   let mono = 0;
   const clock = timing.clock({ monotonic: () => MONO_BASE_MS + mono, wall: () => MONO_BASE_MS + mono + 777 });
   const control = timing.correction();
+  const frames = timing.presentation();
+  let presentedFrames = 0;
   const startMs = warmupS * 1000;
   const totalMs = startMs + seconds * 1000;
 
@@ -214,6 +219,7 @@ export function simulateViewer(options) {
     const diff = estimate - measured;
     if (Math.abs(diff) > SEEK_THRESHOLD_S) {
       // The client seeks to the expected position; the player then resumes after the seek cost.
+      frames.interrupt('seek');
       seeks++;
       position.p = estimate;
       position.stallUntil = t + seekCostMs;
@@ -221,7 +227,29 @@ export function simulateViewer(options) {
       setRate(control_(false, 0, 1 / fps), t);
       return;
     }
-    setRate(control_(true, diff, 1 / fps), t);
+    if (!withPresentation) return setRate(control_(true, diff, 1 / fps), t);
+    const signal = timing.controlSignal({
+      target: estimate,
+      currentTime: measured,
+      presentation: frames.read(t, { context: 'bench', clockRevision: reading.clockRevision }),
+      clockValid: true,
+    });
+    setRate(control_(true, signal.error, 1 / fps), t);
+  }
+
+  // One presentation sample per displayed frame, as requestVideoFrameCallback reports it.
+  function onFrame(t) {
+    if (!started || t < position.stallUntil || t < startMs) return;
+    const reading = clock.read();
+    if (!reading.valid) return;
+    advance(t);
+    const target = BASE_POSITION_S + (reading.serverTime - SERVER_OFFSET_MS - MONO_BASE_MS - startMs) / 1000;
+    const mediaTime = Math.round(position.p * fps) / fps + (rng.normal() * noiseMs) / 1000;
+    frames.frame(
+      t,
+      { mediaTime, expectedDisplayTime: t, presentedFrames: ++presentedFrames },
+      { target, context: 'bench', clockRevision: reading.clockRevision },
+    );
   }
 
   if (withPlayer) {
@@ -258,6 +286,7 @@ export function simulateViewer(options) {
   }
   const phase = rng.uniform(0, TICK_MS);
   for (let t = phase; t < totalMs; t += TICK_MS) push(t, 2, () => onTick(t));
+  if (withPresentation) for (let t = startMs; t < totalMs; t += 1000 / fps) push(t, 1.5, () => onFrame(t));
 
   events.sort((a, b) => a.t - b.t || a.order - b.order || a.seq - b.seq);
   for (const event of events) {
@@ -396,7 +425,7 @@ function clockRows(seed, trials) {
   return rows;
 }
 
-function convergenceRow(seed, trials, { profile, offsetMs, fps, noiseMs, label }) {
+function convergenceRow(seed, trials, { profile, offsetMs, fps, noiseMs, label, presentation = false }) {
   const seconds = 90;
   const runs = Array.from({ length: trials }, (_, i) =>
     simulateViewer({
@@ -407,6 +436,7 @@ function convergenceRow(seed, trials, { profile, offsetMs, fps, noiseMs, label }
       fps,
       initialOffsetMs: offsetMs,
       noiseMs,
+      presentation,
     }),
   );
   const scenario = `convergence-${label}`;
@@ -625,6 +655,14 @@ export function runBench({ seed = DEFAULT_SEED } = {}) {
     );
   rows.push(
     ...convergenceRow(seed, 6, { profile: 'wired', offsetMs: 95, fps: 24, noiseMs: 25, label: '95ms-24fps-noise25ms' }),
+    ...convergenceRow(seed, 6, {
+      profile: 'wired',
+      offsetMs: 95,
+      fps: 24,
+      noiseMs: 25,
+      presentation: true,
+      label: '95ms-24fps-noise25ms-presentation',
+    }),
   );
   rows.push(...steadyRows(seed, 2), ...spreadRows(seed, 10), ...startRows(seed, 10));
   return { seed, rows };

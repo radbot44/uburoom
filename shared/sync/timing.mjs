@@ -241,21 +241,25 @@ export function createTimingApi() {
     return { begin, add, read, reset };
   }
 
+  // Where a timeline is at `serverTime`. A paused timeline does not move, so it needs no time; a moving one
+  // without a usable `serverTime` has no target (callers hold rather than estimate one).
   function target(state, serverTime) {
     const timeline = state?.state || state;
     if (
       !state ||
       !timeline ||
       (state.state === undefined && !Number.isFinite(timeline.position)) ||
-      !Number.isFinite(serverTime) ||
       !Number.isFinite(state.serverNow)
     )
       return undefined;
+    const clamp = position => Math.max(0, Math.min(timeline.duration || 0, position));
+    if (timeline.paused) return clamp(timeline.position);
+    if (!Number.isFinite(serverTime)) return undefined;
     if (Number.isFinite(state.pauseAt)) serverTime = Math.min(serverTime, state.pauseAt);
     const elapsed = Number.isFinite(state.startAt)
       ? Math.max(0, serverTime - Math.max(state.serverNow, state.startAt))
       : serverTime - state.serverNow;
-    return Math.max(0, Math.min(timeline.duration || 0, timeline.position + (timeline.paused ? 0 : elapsed / 1000)));
+    return clamp(timeline.position + elapsed / 1000);
   }
 
   function alarm({ now, set = setTimeout, clear = clearTimeout }) {
@@ -291,6 +295,11 @@ export function createTimingApi() {
     }
     return { arm, cancel };
   }
+
+  // Presentation-error smoothing time constant, independent of the frame rate (0.35 per frame at 24 fps before).
+  // Longer smoothing lags a correction in progress; the controller's own estimate (correction()) absorbs the
+  // remaining noise across its 500 ms reads.
+  const PRESENTATION_SMOOTHING_MS = 100;
 
   function presentation() {
     let previous,
@@ -390,7 +399,9 @@ export function createTimingApi() {
           smoothedErrorMs = currentErrorMs;
           sampleCount = 1;
         } else {
-          smoothedErrorMs = 0.35 * currentErrorMs + 0.65 * sample.smoothedErrorMs;
+          // Time-based, so the smoothing spans the same time at any frame rate and matches the controller's loop.
+          const weight = 1 - Math.exp(-(now - sample.at) / PRESENTATION_SMOOTHING_MS);
+          smoothedErrorMs = sample.smoothedErrorMs + weight * (currentErrorMs - sample.smoothedErrorMs);
           sampleCount = (sample.samples || 0) + 1;
         }
         sample = {

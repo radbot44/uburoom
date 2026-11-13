@@ -20,7 +20,7 @@ import { normalizePlayerAdapter } from './player-adapter.mjs';
  * @property {boolean} [waitingForReady]
  * @property {string} [readinessVersion]
  * @property {object} [readiness]
- * @property {{duration:number,paused:boolean,volume?:number,muted?:boolean}} state
+ * @property {{duration:number,paused:boolean,position?:number,volume?:number,muted?:boolean}} state
  */
 /**
  * @typedef {Object} SyncSnapshot
@@ -51,7 +51,7 @@ import { normalizePlayerAdapter } from './player-adapter.mjs';
  *   playback?:{bufferedAhead?:(buffered:any, position:number)=>number, localFormat?:(format:string|undefined)=>boolean},
  *   clock:ReturnType<typeof import('./timing.mjs').clock>,
  *   presentation:ReturnType<typeof import('./timing.mjs').presentation>,
- *   expected:()=>number,
+ *   expected:()=>number|undefined,
  *   decodedFrames:()=>number,
  *   unlockLocal:()=>Promise<unknown>,
  *   reportReadiness:()=>Promise<unknown>,
@@ -208,10 +208,20 @@ export function createSync(host) {
       return;
     }
     const currentTime = player.currentTime();
-    const target = expected(),
-      difference = target - currentTime,
-      timing = playbackClock.read(),
+    const timing = playbackClock.read(),
       clockValid = timing.valid;
+    let target = expected();
+    if (!Number.isFinite(target)) {
+      // The room clock is unusable and the timeline moves: hold. A start that is still pending stays paused at
+      // its position; running playback continues uncorrected until the clock is usable again.
+      if (state.startAt > state.serverNow) target = state.state.position;
+      else {
+        resetDriftCorrection();
+        renderTransport();
+        return;
+      }
+    }
+    const difference = target - currentTime;
     // Keep the final decoded frame while the server verifies ending evidence.
     // Calling play() on an ended element can restart this occurrence at zero.
     if (

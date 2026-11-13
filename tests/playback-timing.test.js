@@ -336,7 +336,7 @@ test('presentation measures compositor cadence and callback gaps, never equating
   assert.equal(p.frame(200, { mediaTime: 9, expectedDisplayTime: 200, presentedFrames: 1 }).frameIntervalMs, undefined);
 });
 
-test('presentation tracker manages EMA smoothing, reinitialization, interruption lifecycle and read validity', () => {
+test('presentation tracker manages time-based smoothing, reinitialization, interruption lifecycle and read validity', () => {
   const p = presentation();
   const ctx = 'room:m1:s1:0:0:0:undefined';
 
@@ -363,7 +363,8 @@ test('presentation tracker manages EMA smoothing, reinitialization, interruption
     { target: 10.0, context: ctx, clockRevision: 1 },
   );
   assert.ok(Math.abs(f2.presentationErrorMs - 70) < 1e-4);
-  assert.equal(Math.round(f2.smoothedPresentationErrorMs * 10) / 10, 57.0);
+  // Time-based smoothing: 40 ms after the first frame the new sample weighs 1 - e^(-40/100).
+  assert.ok(Math.abs(f2.smoothedPresentationErrorMs - (50 + (1 - Math.exp(-0.4)) * 20)) < 1e-9);
   assert.equal(f2.presentationReset, false);
 
   const r2 = p.read(1040, { context: ctx, clockRevision: 1 });
