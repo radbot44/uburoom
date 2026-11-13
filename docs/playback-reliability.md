@@ -25,7 +25,7 @@ Fallback does not replace the viewer's selected quality, audio or subtitle prefe
 
 ## Shared playback timing
 
-The server owns the timeline. Authenticated WebSockets carry revisioned state and independent clock exchanges; the HTTP-shaped adapter is removed.
+The server owns the timeline. Each tab's authenticated WebSocket carries typed messages: room state is pushed when it changes, in separately versioned room, viewer and lobby lanes with a slow resync as a safety net, and clock exchanges run independently of it. See the [room connection protocol](wire-protocol.md).
 
 Use server receive/send timestamps with monotonic RTT minus server processing. The low-delay clock filter slews refinements, expires stale mappings and resets on disconnect/clock discontinuity. Playing target is snapshot position plus elapsed estimated server time; pause freezes position. Reject old revisions and expired commands; never replay stale controls.
 

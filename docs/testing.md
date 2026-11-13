@@ -1,6 +1,6 @@
 # Verification dashboard — M1
 
-**Release status: open.** Current HEAD baseline: **442 passed, 0 failed, 0 skipped** on Node v22.13+. Results apply to their recorded revisions/scenarios; they do not combine into an assumed current-HEAD pass. [Release gates](../ROADMAP.md#m1--verified-self-hosted-release) · [Historical digest through 2026-10-22](archive/testing-2026-10-22.md) · [Historical digest 2026-10-23 to 2026-11-08](archive/testing-2026-11-08.md) · [Commands](development.md#tests).
+**Release status: open.** Current HEAD baseline: **509 passed, 0 failed, 0 skipped** on Node v22.13+. Results apply to their recorded revisions/scenarios; they do not combine into an assumed current-HEAD pass. [Release gates](../ROADMAP.md#m1--verified-self-hosted-release) · [Historical digest through 2026-10-22](archive/testing-2026-10-22.md) · [Historical digest 2026-10-23 to 2026-11-08](archive/testing-2026-11-08.md) · [Commands](development.md#tests).
 
 ---
 
@@ -99,6 +99,11 @@ P5/P6 human check: watch together ~3 minutes, pause/resume/seek, background one 
 - **A/B (2026-11-06):** Extracted unified `DeliveryPlan` module for direct file, direct HLS, local conversion, and proxy recovery. In-flight quality switches on local conversion seamlessly transition without resetting viewer positions.
 - **Outage continuity:** During a Plex Media Server outage, admitted viewers continue playing from cached buffers; new admissions fail closed without leaking credentials or crashing.
 - **Open:** Real-time frame-accurate 4K local conversion acceptance on real Plex input.
+
+### M1-P11 — Room connection protocol (typed, pushed on change)
+- **B (2026-11-12, on 74fa521 plus this change):** The room connection speaks typed messages ([protocol](wire-protocol.md), version 2) and pushes room, viewer and lobby state only when it changed. `npm run check` exit 0: **509 passed, 0 failed, 0 skipped**. All 15 room scenario traces replay unchanged through the replaced harness adapter, which now asks for an explicit resync after each scenario second. `tests/watch-socket.test.js` holds ten tabs in a playing room for three seconds and receives no room, viewer or lobby message, then one room message per tab for a pause and none on a connection outside the room; it also covers the version handshake refusal (close 4010) and the resync retry. `node scripts/room-ui-smoke.js --browsers=chrome,firefox` passed in both browsers.
+- **Limits:** Fixture server and demo video on one machine. `scripts/playback-recovery.js` was adapted to the pushed state but not run. The native client (`plezy-uburoom`) was updated and its Dart tests pass; it was not run against this server.
+- **Open:** Owner watch night on the deployed server; native client against a live server; behaviour past the default 256 connections is unmeasured.
 
 ### M1-P5 / M1-P6 — Synchronization core & presentation pacing
 - **A/B (2026-10-30):** Extracted reusable synchronization core into `shared/sync/` (free of Plex, Discord, FFmpeg, TLS, YAML, and SQLite dependencies).
