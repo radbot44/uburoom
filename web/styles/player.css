@@ -307,13 +307,13 @@
   .stage {
     touch-action: manipulation;
   }
-  body.mobile-player .stage {
+  body[data-layout='phone'] .stage {
     border-radius: 0;
   }
-  body.mobile-player .media-heading h1 {
+  body[data-layout='phone'] .media-heading h1 {
     font-size: var(--font-size-14);
   }
-  body.mobile-player .empty-stage {
+  body[data-layout='phone'] .empty-stage {
     max-height: calc(100% - 136px);
   }
   .pip-placeholder {

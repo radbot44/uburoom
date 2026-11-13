@@ -343,8 +343,8 @@ function mount({
     if (top + cardRect.height > window.innerHeight - 10) {
       top = rect.top - cardRect.height - 6;
     }
-    card.style.left = Math.round(left) + 'px';
-    card.style.top = Math.round(top) + 'px';
+    card.style.setProperty('--x', Math.round(left) + 'px');
+    card.style.setProperty('--y', Math.round(top) + 'px');
   }
 
   document.addEventListener('keydown', event => {

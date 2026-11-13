@@ -105,8 +105,8 @@ function show(trigger, options = {}) {
       top = triggerRect.bottom + 8;
     }
 
-    popover.style.top = Math.round(top) + 'px';
-    popover.style.left = Math.round(left) + 'px';
+    popover.style.setProperty('--x', Math.round(left) + 'px');
+    popover.style.setProperty('--y', Math.round(top) + 'px');
   }
 
   position();

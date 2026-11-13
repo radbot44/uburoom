@@ -332,7 +332,7 @@
   .timeline-tooltip {
     position: absolute;
     bottom: calc(100% + 6px);
-    left: 50%;
+    left: var(--x, 50%);
     transform: translateX(-50%);
     padding: var(--space-4) var(--space-8);
     border-radius: var(--radius-6);
@@ -476,41 +476,41 @@
   .seek-feedback[data-side='right'] {
     right: 8%;
   }
-  body.mobile-player .transport {
+  body[data-layout='phone'] .transport {
     padding: var(--space-20) var(--space-6) var(--space-6);
     gap: 0;
   }
-  body.mobile-player :is(.transport-row, .playback-buttons, .player-tools) {
+  body[data-layout='phone'] :is(.transport-row, .playback-buttons, .player-tools) {
     gap: var(--watch-icon-gap);
   }
-  body.mobile-player .player-button {
+  body[data-layout='phone'] .player-button {
     min-width: 40px;
     min-height: 40px;
     width: 40px;
     height: 40px;
   }
-  body.mobile-player .player-button svg {
+  body[data-layout='phone'] .player-button svg {
     width: 21px;
     height: 21px;
   }
-  body.mobile-player .volume-control .player-volume {
+  body[data-layout='phone'] .volume-control .player-volume {
     width: clamp(40px, 14vw, 72px);
     margin: 0 var(--space-2) 0 0;
   }
-  body.mobile-player .center-play {
+  body[data-layout='phone'] .center-play {
     width: 48px;
     height: 48px;
     top: 45%;
   }
-  body.mobile-player .center-play svg {
+  body[data-layout='phone'] .center-play svg {
     width: 28px;
     height: 28px;
   }
-  body.mobile-player .ready-status {
+  body[data-layout='phone'] .ready-status {
     top: calc(45% + 24px);
     font-size: var(--font-size-12);
   }
-  body.mobile-player .title-bar {
+  body[data-layout='phone'] .title-bar {
     padding: var(--space-8) var(--space-10) var(--space-20);
   }
   /* Volume: an inline slider on wider screens; at 600px and below the speaker opens a vertical slider

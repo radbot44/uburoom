@@ -195,7 +195,7 @@ export function mount(host, deps) {
   function canHoldStream(next) {
     if (
       deps.activity ||
-      document.body.classList.contains('mobile-player') ||
+      store.player.layout === 'phone' ||
       !(store.stream.hls || store.stream.av1) ||
       !store.room.state?.mediaUrl ||
       store.player.playbackError

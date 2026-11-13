@@ -233,7 +233,7 @@ export function mount(host, deps) {
     const row = $('timeline-row') || $('timeline').parentElement;
     const rowRect = row.getBoundingClientRect();
     const left = event.clientX - rowRect.left;
-    tooltip.style.left = Math.max(24, Math.min(rowRect.width - 24, left)) + 'px';
+    tooltip.style.setProperty('--x', Math.max(24, Math.min(rowRect.width - 24, left)) + 'px');
   }
   $('timeline').addEventListener('pointerdown', event => {
     store.player.seekDragging = true;
@@ -306,7 +306,7 @@ export function mount(host, deps) {
       $('fullscreen')?.click();
       return;
     }
-    if (event.code === 'KeyT' && !document.body.classList.contains('mobile-player')) {
+    if (event.code === 'KeyT' && store.player.layout !== 'phone') {
       event.preventDefault();
       $('theater')?.click();
       return;

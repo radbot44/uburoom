@@ -105,6 +105,8 @@ export const store = {
     volumeDragging: false,
     volumePending: false,
     theater: undefined,
+    /** 'phone' or 'wide' (web/watch/breakpoints.js), mirrored to body[data-layout]. */
+    layout: undefined,
     immersive: false,
     layoutMode: undefined,
     frameStartedAt: undefined,

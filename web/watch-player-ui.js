@@ -43,7 +43,7 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     stage = $('stage'),
     cog = $('tracks-open'),
     dialog = $('tracks-dialog');
-  const mobile = () => document.body.classList.contains('mobile-player');
+  const mobile = () => document.body.dataset.layout === 'phone';
   const menu = document.createElement('div');
   menu.id = 'player-settings-menu';
   menu.className = 'player-settings-menu';
@@ -145,10 +145,11 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
         340,
         Math.max(40, anchor.top / scale - 28),
       ) + 14;
-    menu.style.height = height + 'px';
+    // Position and height go to the stylesheet as --x, --y and --menu-height (tracks-menu.css).
+    menu.style.setProperty('--menu-height', height + 'px');
     const left = Math.max(8, Math.min(innerWidth - width - 8, anchor.right - width));
-    menu.style.left = left / scale + 'px';
-    menu.style.top = Math.max(8, anchor.top - menu.offsetHeight * scale - 8) / scale + 'px';
+    menu.style.setProperty('--x', left / scale + 'px');
+    menu.style.setProperty('--y', Math.max(8, anchor.top - menu.offsetHeight * scale - 8) / scale + 'px');
   }
   function closeSettings(focus = false) {
     if (opened) menu.hidePopover();

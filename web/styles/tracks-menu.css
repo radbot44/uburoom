@@ -327,6 +327,9 @@
     font-size: var(--font-size-14);
     z-index: var(--z-player-menu);
     overflow: hidden;
+    left: var(--x);
+    top: var(--y);
+    height: var(--menu-height);
   }
   .settings-main,
   .settings-submenu {
@@ -446,7 +449,7 @@
     border-radius: 0 0 var(--radius-7) var(--radius-7);
     margin-top: var(--space-4);
   }
-  body.mobile-player main > :is(.status, .error, .diagnostic-actions, .acceleration-help) {
+  body[data-layout='phone'] main > :is(.status, .error, .diagnostic-actions, .acceleration-help) {
     margin-inline: var(--space-12);
   }
   @media (prefers-reduced-motion: reduce) {

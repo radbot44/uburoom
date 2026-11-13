@@ -127,7 +127,7 @@
   .tracks-dialog .personal-sync label {
     margin-bottom: var(--space-6);
   }
-  body.mobile-player .viewing-section > .current-room-bar {
+  body[data-layout='phone'] .viewing-section > .current-room-bar {
     margin: var(--space-12) var(--space-12) 0;
     width: calc(100% - 24px);
   }

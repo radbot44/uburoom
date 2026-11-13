@@ -27,7 +27,7 @@
       animation: none;
     }
   }
-  .mobile-player .section-tab-inactive {
+  [data-layout='phone'] .section-tab-inactive {
     display: none;
   }
   .activity-pip .section-tabs {
@@ -89,13 +89,13 @@
       display: none;
     }
   }
-  body.mobile-player .ending-header,
-  body.mobile-player .ending-summary {
+  body[data-layout='phone'] .ending-header,
+  body[data-layout='phone'] .ending-summary {
     display: none;
   }
-  body:not(.mobile-player) .options-panel.section-collapsed .options-content,
-  body:not(.mobile-player) .queue-panel.section-collapsed :is(.queue-body, .queue-toolbar),
-  body:not(.mobile-player)
+  body:not([data-layout='phone']) .options-panel.section-collapsed .options-content,
+  body:not([data-layout='phone']) .queue-panel.section-collapsed :is(.queue-body, .queue-toolbar),
+  body:not([data-layout='phone'])
     .library-panel.section-collapsed
     :is(.library-content, .library-header-right, .library-header-left > :not(h2)) {
     display: none;
@@ -163,7 +163,7 @@
   .center-play:disabled {
     display: none;
   }
-  body.mobile-player :is(.theater, .seek-back, .seek-forward) {
+  body[data-layout='phone'] :is(.theater, .seek-back, .seek-forward) {
     display: none;
   }
   .pip-placeholder[hidden] {

@@ -1,5 +1,6 @@
 import * as uburoomIcons from '../icons.js';
 import { $ } from './page.js';
+import { PHONE_LAYOUT } from './breakpoints.js';
 import { store } from './store.js';
 
 /* Page layout: section panels and tabs, the drawer, theater, the phone player, fullscreen and Picture-in-Picture, and the Discord Activity layout. */
@@ -28,7 +29,7 @@ export function mount(host, deps) {
       key === 'room' ? 'options-content' : key === 'media' ? 'library-content' : 'queue-body',
     );
     button.addEventListener('click', () => {
-      if (document.body.classList.contains('mobile-player')) return;
+      if (store.player.layout === 'phone') return;
       panel.classList.toggle('section-collapsed');
       updateSectionTabs();
     });
@@ -70,7 +71,7 @@ export function mount(host, deps) {
     if (focus) $('section-tab-' + key).focus();
   }
   function updateSectionTabs() {
-    const mobile = document.body.classList.contains('mobile-player');
+    const mobile = store.player.layout === 'phone';
     if (!sectionChosen) mobileSection = store.room.state?.durable ? 'room' : 'media';
     if (mobileSection === 'queue' && store.room.state && !store.room.state.durable) mobileSection = 'media';
     sectionTabs.hidden = !mobile;
@@ -153,7 +154,7 @@ export function mount(host, deps) {
   }
   $('library-top').addEventListener('click', returnToVideo);
   function setTheater(enabled, remember = true) {
-    store.player.theater = !deps.activity && !document.body.classList.contains('mobile-player') && !!enabled;
+    store.player.theater = !deps.activity && store.player.layout !== 'phone' && !!enabled;
     document.body.classList.toggle('theater', store.player.theater);
     $('theater').setAttribute('aria-pressed', String(store.player.theater));
     $('theater').title = $('theater').ariaLabel = store.player.theater ? 'Exit theater mode' : 'Theater mode';
@@ -164,12 +165,13 @@ export function mount(host, deps) {
     }
     updateViewingLayout();
   }
+  // The phone layout follows the phone breakpoint, and stays while fullscreen lasts so rotating a phone does
+  // not switch layouts under the video. One value in the store, mirrored to body[data-layout] for the CSS.
+  const phoneLayout = matchMedia(PHONE_LAYOUT);
   function updateMobilePlayer() {
-    const mobile =
-      innerWidth <= 700 ||
-      matchMedia('(pointer:coarse) and (max-height:700px)').matches ||
-      (!!document.fullscreenElement && document.body.classList.contains('mobile-player'));
-    document.body.classList.toggle('mobile-player', mobile);
+    const mobile = phoneLayout.matches || (!!document.fullscreenElement && store.player.layout === 'phone');
+    store.player.layout = mobile ? 'phone' : 'wide';
+    document.body.dataset.layout = store.player.layout;
     if (mobile && store.player.theater && !store.player.immersive && !document.fullscreenElement)
       setTheater(false, false);
     updateSectionTabs();
@@ -239,6 +241,7 @@ export function mount(host, deps) {
     $('brand-link').setAttribute('aria-label', 'uburoom watch');
   }
   updateMobilePlayer();
+  phoneLayout.addEventListener('change', updateMobilePlayer);
   setTheater(store.player.theater, false);
   updateFullscreenLayout();
   updateActivityLayout();

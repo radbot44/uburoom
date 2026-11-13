@@ -97,7 +97,7 @@ export function mount() {
       pageScrollbar.options({ overflow: { y: locked ? 'hidden' : 'scroll' } });
     }
     if (innerStarted) syncInnerScrollbars();
-  }).observe(body, { attributes: true, attributeFilter: ['class'] });
+  }).observe(body, { attributes: true, attributeFilter: ['class', 'data-layout'] });
 
   let innerStarted = false;
   function startInnerScrollbars() {

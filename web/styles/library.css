@@ -41,7 +41,7 @@
     z-index: var(--z-local-5);
     background: var(--card);
   }
-  body.mobile-player:not(.immersive) :is(.app, .screen-column) > .library-panel .library-tools {
+  body[data-layout='phone']:not(.immersive) :is(.app, .screen-column) > .library-panel .library-tools {
     position: sticky;
     top: var(--media-header-height, 80px);
   }
@@ -50,7 +50,7 @@
     top: 0;
     z-index: var(--z-local-6);
   }
-  .mobile-player .drawer .library-panel > .library-header {
+  [data-layout='phone'] .drawer .library-panel > .library-header {
     position: sticky;
     top: 0;
     z-index: var(--z-local-6);

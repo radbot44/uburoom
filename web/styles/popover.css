@@ -24,6 +24,8 @@
     transform: translateY(4px) scale(0.96);
     user-select: none;
     -webkit-user-select: none;
+    left: var(--x);
+    top: var(--y);
   }
   .watch-popover.visible {
     opacity: 1;
