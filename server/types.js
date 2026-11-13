@@ -84,6 +84,7 @@
  *   confidence?:'confident'|'reduced'|'provisional',measurementFreshnessMs?:number,mediaVersion:string,streamVersion:string,
  *   reason?:string}} [syncQuality] - Ephemeral per-tab playback quality from the viewer's authenticated socket.
  * @property {InstanceType<typeof import('./operation').SharedTask> & {bootstrap?:Promise<void>}} [preparing] - One chosen-output preparation lifetime, optionally publishing authorized fallback metadata first.
+ * @property {Promise<any>} [change] - The running personal stream change (quality, tracks, refresh), while it runs.
  * @property {number} [fallbackRetryAt] - Next allowed retry of an unavailable chosen output while fallback plays.
  * @property {Function} [alive] - Optional liveness check callback.
  * @property {() => Promise<boolean>} [reportingAuthorized] - Current login check independent of control-socket liveness, for bounded reporting continuity.

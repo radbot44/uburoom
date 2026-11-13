@@ -111,7 +111,7 @@ test('dispatch grants 30s deadline to personal track/stream refreshes and queue 
   hub.access = { refresh: async () => true, isMember: () => true };
   const host = { ...actor };
   const roomId = randomUUID();
-  let capturedPermitted;
+  let capturedTicket;
   const room = {
     roomId,
     epoch: randomUUID(),
@@ -124,8 +124,8 @@ test('dispatch grants 30s deadline to personal track/stream refreshes and queue 
     permissions: { host: { playPause: true }, viewer: {} },
     viewers: new Map([['viewer-1', { userId: 'owner', at: Date.now(), actor: host }]]),
     state: { paused: true, muted: false, volume: 50, seekable: false },
-    execute: async (command, actor, permitted) => {
-      capturedPermitted = permitted;
+    execute: async (command, actor, ticket) => {
+      capturedTicket = ticket;
       return { status: 'applied' };
     },
   };
@@ -138,17 +138,17 @@ test('dispatch grants 30s deadline to personal track/stream refreshes and queue 
       args: { mediaVersion: randomUUID(), streamVersion: randomUUID(), audioId: '1' },
     },
   );
-  assert.ok(capturedPermitted);
+  assert.ok(capturedTicket);
   const now = Date.now;
   try {
     Date.now = () => now() + 5000;
     assert.equal(
-      capturedPermitted(),
+      hub.current(capturedTicket),
       true,
       'personal track change is still permitted after 5s (exceeding default 2.5s)',
     );
     Date.now = () => now() + 31000;
-    assert.equal(capturedPermitted(), false, 'personal track change expires after 30s');
+    assert.equal(hub.current(capturedTicket), false, 'personal track change expires after 30s');
   } finally {
     Date.now = now;
   }

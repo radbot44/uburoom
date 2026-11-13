@@ -986,6 +986,8 @@ export function nextDeadline(room, now, monoNow) {
 // ---------------------------------------------------------------------------
 
 const EVENT_ACTIONS = Object.freeze({ join: 'room.view', ready: 'room.view' });
+// The mailbox entry for a host step (see `step` below); never a reducer event.
+const STEP = Symbol('step');
 
 /**
  * One room registry. Each room's events are reduced one at a time, in order. When a
@@ -1088,6 +1090,12 @@ export function createRoomCoordinator(options) {
   }
   // Reduces one event; returns its result, or a promise of it while persisting.
   function process(room, event) {
+    if (event.type === STEP) {
+      const value = event.step(room);
+      if (typeof value?.then === 'function') throw new TypeError('A room step must not wait');
+      arm(room);
+      return { value, effects: [] };
+    }
     const action = event.type === 'command' ? event.command?.action : EVENT_ACTIONS[event.type];
     if (action && event.actor) {
       const decision = options.authorize(event.actor, room, action);
@@ -1196,6 +1204,23 @@ export function createRoomCoordinator(options) {
       const room = resolveRoom(idOrRoom);
       if (!room || rooms.get(room.roomId) !== room) return refused('Room unavailable');
       const entry = submit(room, event);
+      return entry.done ? entry.result : entry.promise;
+    },
+    /**
+     * Runs a host step on the live room inside its mailbox, in order with its events.
+     * A host's own commands are steps: admission (check and reserve) is one, and the
+     * completion of the work it started outside, applied only if the room has not moved
+     * on, is another. A step never waits: slow work (a provider, storage) runs outside
+     * between steps. Events the step sends run right after it. Returns `{value}` (or
+     * `{error}` when the step threw or the room is gone) at once when the mailbox is
+     * free, otherwise a promise of it.
+     * @param {any} idOrRoom
+     * @param {(room: any) => any} step
+     */
+    step(idOrRoom, step) {
+      const room = resolveRoom(idOrRoom);
+      if (!room || rooms.get(room.roomId) !== room) return refused('Room unavailable');
+      const entry = submit(room, { type: STEP, step });
       return entry.done ? entry.result : entry.promise;
     },
     /** Queues an event in the room's mailbox; resolves with its result. */

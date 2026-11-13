@@ -4,6 +4,13 @@
 /** @typedef {import('./types').RoomDescriptor} RoomDescriptor */
 /** @typedef {import('./types').Viewer} Viewer */
 /** @typedef {import('./types').EngineCommand} EngineCommand */
+/**
+ * What a command was admitted under: plain data, checked by Hub.current when the
+ * command is dequeued and again before its result is applied. `room` names a live
+ * room's command, `saved` a closed room's queue, `service` a Discord service.
+ * @typedef {{kind: 'room'|'saved'|'service', roomId: string, actor: Actor, action: string,
+ *   deadline: number, adminEpoch: number, room?: any, epoch?: string}} Ticket
+ */
 
 const { createHash } = require('node:crypto');
 const Engine = require('../shared/engine');
@@ -53,13 +60,13 @@ class Hub {
     this.watchIdle = undefined;
     /** @type {((roomId: string) => Set<string>) | undefined} Accounts holding the room's current guest passes. */
     this.guestMembers = undefined;
-    /** @type {((roomId: string, actor: Actor, permitted: () => boolean) => Promise<any>) | undefined} */
+    /** @type {((roomId: string, actor: Actor, ticket: Ticket) => Promise<any>) | undefined} */
     this.publicationExecute = undefined;
-    /** @type {((roomId: string, actor: Actor, permitted: () => boolean) => Promise<any>) | undefined} */
+    /** @type {((roomId: string, actor: Actor, ticket: Ticket) => Promise<any>) | undefined} */
     this.savedPublicationExecute = undefined;
-    /** @type {((roomId: string, command: EngineCommand, actor: Actor, permitted: () => boolean) => Promise<any>) | undefined} */
+    /** @type {((roomId: string, command: EngineCommand, actor: Actor, ticket: Ticket) => Promise<any>) | undefined} */
     this.scheduledEventExecute = undefined;
-    /** @type {((roomId: string, command: EngineCommand, actor: Actor, permitted: () => boolean) => Promise<any>) | undefined} */
+    /** @type {((roomId: string, command: EngineCommand, actor: Actor, ticket: Ticket) => Promise<any>) | undefined} */
     this.savedQueueExecute = undefined;
   }
   isOwner(actor) {
@@ -163,6 +170,24 @@ class Hub {
     else this.adminUsers.add(actor.userId);
     this.adminEpoch++;
   }
+  /**
+   * Whether a command may still act: its deadline has not passed, Admin mode and the
+   * actor's eligibility are as they were, and a live room's command still finds the
+   * same room, under the same epoch, with the actor allowed. A saved queue's command
+   * stops counting once the room opens.
+   * @param {Ticket} ticket
+   */
+  current(ticket) {
+    if (this.clock.now() >= ticket.deadline || this.adminEpoch !== ticket.adminEpoch) return false;
+    if (ticket.kind === 'room')
+      return (
+        this.rooms.get(ticket.roomId) === ticket.room &&
+        ticket.room.epoch === ticket.epoch &&
+        this.authorize(ticket.actor, ticket.room, ticket.action).ok
+      );
+    if (ticket.kind === 'saved' && this.rooms.has(ticket.roomId)) return false;
+    return canWatch(this.access, ticket.actor.userId, ticket.actor);
+  }
   async dispatch(actor, input) {
     if (Object.hasOwn(input, 'sessionId')) return { status: 'unsupported', message: 'Use the current room protocol.' };
     actor = this.accountActor?.(actor) || actor;
@@ -200,15 +225,19 @@ class Hub {
         extendedTtlMs: 12000,
       });
       if (!deadlines.admitted) return { status: 'unavailable', message: 'Select a room and try again.' };
-      const adminEpoch = this.adminEpoch;
-      const permitted = () =>
-        this.clock.now() < deadlines.executionDeadline &&
-        this.adminEpoch === adminEpoch &&
-        canWatch(this.access, actor.userId, actor);
+      /** @type {Ticket} */
+      const ticket = {
+        kind: 'service',
+        roomId: input.roomId,
+        actor,
+        action: command.action,
+        deadline: deadlines.executionDeadline,
+        adminEpoch: this.adminEpoch,
+      };
       try {
         return declared.service === 'event'
-          ? await this.scheduledEventExecute(input.roomId, command, actor, permitted)
-          : await service(input.roomId, actor, permitted);
+          ? await this.scheduledEventExecute(input.roomId, command, actor, ticket)
+          : await service(input.roomId, actor, ticket);
       } catch (error) {
         return {
           status: error.status === 403 ? 'forbidden' : 'failed',
@@ -226,15 +255,17 @@ class Hub {
         extendedTtlMs: declared.preparesSaved ? 30000 : undefined,
       });
       if (!deadlines.admitted) return { status: 'unavailable', message: 'Room changed or command expired.' };
-      const deadline = deadlines.executionDeadline,
-        adminEpoch = this.adminEpoch;
-      const permitted = () =>
-        this.clock.now() < deadline &&
-        this.adminEpoch === adminEpoch &&
-        !this.rooms.has(input.roomId) &&
-        canWatch(this.access, actor.userId, actor);
+      /** @type {Ticket} */
+      const ticket = {
+        kind: 'saved',
+        roomId: input.roomId,
+        actor,
+        action: command.action,
+        deadline: deadlines.executionDeadline,
+        adminEpoch: this.adminEpoch,
+      };
       try {
-        return await this.savedQueueExecute(input.roomId, command, actor, permitted);
+        return await this.savedQueueExecute(input.roomId, command, actor, ticket);
       } catch (error) {
         return {
           status: error.status === 403 ? 'forbidden' : 'failed',
@@ -266,17 +297,19 @@ class Hub {
         extendedTtlMs: preparing ? 30000 : undefined,
       });
       if (!deadlines.admitted) return { status: 'unavailable', message: 'Room changed or command expired.' };
-      const deadline = deadlines.executionDeadline;
-      const epoch = s.epoch,
-        adminEpoch = this.adminEpoch;
-      const permitted = () =>
-        this.rooms.get(s.roomId) === s &&
-        s.epoch === epoch &&
-        this.clock.now() < deadline &&
-        this.adminEpoch === adminEpoch &&
-        this.authorize(actor, s, command.action).ok;
+      /** @type {Ticket} */
+      const ticket = {
+        kind: 'room',
+        roomId: s.roomId,
+        actor,
+        action: command.action,
+        deadline: deadlines.executionDeadline,
+        adminEpoch: this.adminEpoch,
+        room: s,
+        epoch: s.epoch,
+      };
       try {
-        return await s.execute(command, actor, permitted);
+        return await s.execute(command, actor, ticket);
       } catch (error) {
         return command.action.startsWith('queue.')
           ? {

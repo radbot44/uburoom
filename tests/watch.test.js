@@ -1036,7 +1036,7 @@ test('slow personal quality preparation has a bounded completion budget and reta
     assert.equal((await result).status, outcome === 'success' ? 'applied' : 'unavailable', outcome);
     assert.equal(viewer.media, outcome === 'success' ? replacement : old, outcome);
     assert.ok(stopped.includes(outcome === 'success' ? old : replacement), 'discard unused stream');
-    assert.equal(viewer.updating, false);
+    assert.equal(viewer.change, undefined);
     watch.close();
     hub.close();
   }
