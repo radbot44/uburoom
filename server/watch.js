@@ -92,6 +92,8 @@ class Watch {
       monoNow: () => performance.now(),
       // Lifecycle deadlines are acted on at one-second resolution from startup.
       timerResolutionMs: 1000,
+      // Each room's progress is checkpointed this often (see the 'checkpoint' effect).
+      checkpointMs: 5000,
       timerOrigin: this.clock.now(),
       // A durable queue transition owns the room until its write is confirmed (A3.5 removes this).
       hold: room => !!room.transition?.commit,
@@ -915,6 +917,10 @@ class Watch {
       case 'clear-playback-end':
         return clearPlaybackEnd(room);
       case 'save':
+        return void this.roomState.save(room).catch(() => {});
+      case 'checkpoint':
+        // A save or transition already in flight writes the room itself; a frozen room keeps its last save.
+        if (room.saving || room.transition || room.frozen) return;
         return void this.roomState.save(room).catch(() => {});
       case 'hide':
         return void this.hub.rooms.delete(room.roomId);

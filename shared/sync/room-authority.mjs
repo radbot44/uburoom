@@ -356,6 +356,7 @@ export const ROOM_STATE_KEYS = Object.freeze([
   'closed',
   'recovery',
   'disconnectedWasPlaying',
+  'checkpointAt',
 ]);
 /** The viewer fields the core reads and writes; the rest of a live viewer is its host's. */
 export const VIEWER_STATE_KEYS = Object.freeze([
@@ -850,8 +851,14 @@ function command(room, { command: input }, ctx) {
 }
 
 const EVENTS = {
-  /** A deadline came due. */
-  timer: (room, _event, ctx) => void review(room, ctx),
+  /** A deadline came due. A periodic checkpoint is an effect: its host saves the room. */
+  timer(room, _event, ctx) {
+    if (ctx.checkpointMs && room.checkpointAt <= ctx.now) {
+      while (room.checkpointAt <= ctx.now) room.checkpointAt += ctx.checkpointMs;
+      ctx.emit('checkpoint');
+    }
+    review(room, ctx);
+  },
   /** Something outside the core changed the room (a command, new media); recheck its lifecycle. */
   review: (room, _event, ctx) => void review(room, ctx),
   join,
@@ -928,7 +935,8 @@ const EVENTS = {
  * @param {{type: string} & Record<string, any>} event
  * @param {{now: number, monoNow: number, createId?: () => string,
  *   authorize: (actor: any, room: any, action: string) => {ok: boolean, reason?: string},
- *   extensions?: any, keys?: {room: readonly string[], viewer: readonly string[]}, hold?: boolean}} context
+ *   extensions?: any, keys?: {room: readonly string[], viewer: readonly string[]}, hold?: boolean,
+ *   checkpointMs?: number}} context
  * @returns {{state: any, effects: Array<{type: string} & Record<string, any>>, error?: Error, value?: any, persist?: string}}
  */
 export function reduce(state, event, context) {
@@ -944,6 +952,7 @@ export function reduce(state, event, context) {
     authorize: context.authorize,
     extensions,
     hold: !!context.hold,
+    checkpointMs: context.checkpointMs || 0,
     emit: (type, fields = {}) => {
       effects.push({ type, ...fields });
     },
@@ -978,6 +987,7 @@ export function nextDeadline(room, now, monoNow) {
   for (const viewer of room.viewers.values()) consider(viewer.at + PRESENCE_TIMEOUT_MS + 1);
   for (const saved of room.disconnectedViewers.values()) consider(saved.expires);
   if (!room.hadViewers) consider(room.lastActivity + IDLE_ROOM_TIMEOUT_MS + 1);
+  if (room.checkpointAt !== undefined) consider(room.checkpointAt);
   return due === Infinity ? undefined : due;
 }
 
@@ -992,7 +1002,8 @@ const STEP = Symbol('step');
 /**
  * One room registry. Each room's events are reduced one at a time, in order. When a
  * reduced event asks to persist and `onPersist` is given, the new state is committed
- * only after it resolves; effects run only after commit. Timers are effects too: after
+ * only after it resolves; effects run only after commit. With `checkpointMs`, each room
+ * also asks for a `checkpoint` effect on that period, which its host saves. Timers are effects too: after
  * every commit the room's next deadline is armed, rounded up to `timerResolutionMs`.
  *
  * Every actor event (`join`, `ready`, `command`) is checked with `authorize`, the one
@@ -1006,6 +1017,7 @@ const STEP = Symbol('step');
  *   onEffect?: (room: any, effect: {type: string} & Record<string, any>, removed: Map<string, any>) => void,
  *   onError?: (error: unknown) => void,
  *   hold?: (room: any) => boolean,
+ *   checkpointMs?: number,
  *   timerResolutionMs?: number, timerOrigin?: number,
  *   setTimer?: (action: () => void, ms: number) => any, clearTimer?: (timer: any) => void,
  * }} options
@@ -1118,6 +1130,7 @@ export function createRoomCoordinator(options) {
       extensions,
       keys,
       hold: !!options.hold?.(room),
+      checkpointMs: options.checkpointMs,
     });
     if (!result.persist || !options.onPersist) return finish(room, result);
     const persisting = options.onPersist(cloneRoomState(result.state, keys), {
@@ -1185,6 +1198,9 @@ export function createRoomCoordinator(options) {
     /** Registers a live room (built by its host in the core's shape) and arms its timer. */
     add(room) {
       if (rooms.has(room.roomId)) throw new Error('Room already exists');
+      // Checkpoints fall on one grid from the timer origin, whenever the room was added.
+      if (options.checkpointMs)
+        room.checkpointAt ??= origin + (Math.floor((now() - origin) / options.checkpointMs) + 1) * options.checkpointMs;
       rooms.set(room.roomId, room);
       arm(room);
       return room;

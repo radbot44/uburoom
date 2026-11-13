@@ -43,9 +43,8 @@ class WatchRooms {
       const record = this.store.get(id);
       this.recoveries.set(id, { ...record.liveState, until: Infinity });
     }
+    // Storage maintenance; each room's own checkpoint is an effect of its room timer.
     this.timer = setInterval(() => {
-      for (const room of watch.rooms.values())
-        if (!room.saving && !room.transition && !room.frozen) void this.save(room).catch(() => {});
       void this.track(this.maintain()).catch(() => {});
     }, 5000);
     this.timer.unref();
