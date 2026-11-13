@@ -1668,18 +1668,24 @@ class Watch {
     };
     await check();
     const revision = args.expectedRevision ?? queue.room(id).queueRevision;
-    queue.assertRevision(queue.room(id), revision);
-    if (room?.transition) throw Object.assign(new Error('Wait for the current queue operation'), { status: 409 });
-    const priorCountdown = room?.autoplayCountdown;
-    const hadMedia = !!room?.media;
-    const wasEmptyQueue = !priorCountdown && !queue.current(id) && !queue.pending(id).length;
-    if (room) {
-      room.transition = { kind: 'queue' };
-      if (hadMedia) {
-        this.cancelAutoplay(room);
-        clearPlaybackEnd(room);
+    // Reserve the room in its mailbox: one queue or media transition at a time.
+    const reserve = () => {
+      queue.assertRevision(queue.room(id), revision);
+      if (room?.transition) throw Object.assign(new Error('Wait for the current queue operation'), { status: 409 });
+      const priorCountdown = room?.autoplayCountdown;
+      const wasEmptyQueue = !priorCountdown && !queue.current(id) && !queue.pending(id).length;
+      if (room) {
+        room.transition = { kind: 'queue' };
+        if (room.media) {
+          this.cancelAutoplay(room);
+          clearPlaybackEnd(room);
+        }
       }
-    }
+      return { priorCountdown, wasEmptyQueue };
+    };
+    const reserved = room ? await this.inRoom(room, reserve, undefined) : reserve();
+    if (!reserved) throw Object.assign(new Error('Room access changed; retry manually'), { status: 403 });
+    const { priorCountdown, wasEmptyQueue } = reserved;
     try {
       let value;
       if (action === 'queue.remove' && (args.advance || queue.current(id)?.id === args.entryId)) {
@@ -1922,28 +1928,41 @@ class Watch {
           if (room) room.autoQueueError = error.message;
         }
       }
-      if (room && this.rooms.get(id) === room) {
-        const latest = this.roomState.store.get(id);
-        this.roomState.apply(room, latest);
-        if (priorCountdown && !room.media) {
-          const afterNext = this.nextCandidate(id);
-          const afterKey = afterNext ? afterNext.id || afterNext.serverId + ':' + afterNext.mediaId : null;
-          if (!afterNext) {
-            this.cancelAutoplay(room);
-          } else if (afterKey === priorCountdown.nextKey && room.autoplayCountdown === priorCountdown) {
-            priorCountdown.queueRevision = latest.queueRevision;
-          } else {
-            this.cancelAutoplay(room);
-            if (room.transition?.kind === 'queue') room.transition = undefined;
-            await this.startAutoplayCountdown(room);
-          }
-        }
-        void this.refreshEndingMeta(room);
-        room.revision++;
-        room.autoQueueError = undefined;
-        // The queue changed: check its availability and everyone's stream again.
-        this.prepareStreams(room);
-      }
+      // Back in the mailbox: the live room adopts the queue as written.
+      const countdown =
+        room &&
+        (await this.inRoom(
+          room,
+          () => {
+            const latest = this.roomState.store.get(id);
+            this.roomState.apply(room, latest);
+            if (!priorCountdown || room.media) return;
+            const afterNext = this.nextCandidate(id);
+            const afterKey = afterNext ? afterNext.id || afterNext.serverId + ':' + afterNext.mediaId : null;
+            if (!afterNext) this.cancelAutoplay(room);
+            else if (afterKey === priorCountdown.nextKey && room.autoplayCountdown === priorCountdown)
+              priorCountdown.queueRevision = latest.queueRevision;
+            else {
+              this.cancelAutoplay(room);
+              if (room.transition?.kind === 'queue') room.transition = undefined;
+              return { restarting: this.startAutoplayCountdown(room) };
+            }
+          },
+          false,
+        ));
+      if (countdown?.restarting) await countdown.restarting;
+      if (room && countdown !== false)
+        await this.inRoom(
+          room,
+          () => {
+            void this.refreshEndingMeta(room);
+            room.revision++;
+            room.autoQueueError = undefined;
+            // The queue changed: check its availability and everyone's stream again.
+            this.prepareStreams(room);
+          },
+          undefined,
+        );
       return { status: 'applied', ...value };
     } finally {
       if (room?.transition?.kind === 'queue') room.transition = undefined;
@@ -2080,9 +2099,12 @@ class Watch {
       );
     if (!controller) return;
     const [viewerId, person] = controller;
+    if ((person.alive && !(await person.alive())) || !(await this.canView(room, person.actor))) return;
+    // Back in the mailbox: the countdown starts only if the room has not moved on.
+    await this.inRoom(room, () => this.beginCountdown(room, record, viewerId, person, intent, data), undefined);
+  }
+  beginCountdown(room, record, viewerId, person, intent, data) {
     if (
-      (person.alive && !(await person.alive())) ||
-      !(await this.canView(room, person.actor)) ||
       room.viewers.get(viewerId) !== person ||
       this.rooms.get(record.id) !== room ||
       room.manualPaused ||
@@ -2140,12 +2162,17 @@ class Watch {
     }, this.autoplayDelayMs);
     room.autoplayTimer.unref?.();
   }
-  finishQueueMedia(room, data) {
-    if (this.shuttingDown || room.closed) return Promise.resolve();
-    return this.startMediaWork(room, work => this.finishQueueMediaOwned(room, data, work), {
-      kind: 'transition',
-      signal: currentSignal(),
-    }).promise;
+  /** Ends the current video: reserved in the mailbox, written outside, unloaded back inside. */
+  async finishQueueMedia(room, data) {
+    if (this.shuttingDown || room.closed) return;
+    const signal = currentSignal();
+    const work = await this.inRoom(
+      room,
+      () =>
+        this.startMediaWork(room, work => this.finishQueueMediaOwned(room, data, work), { kind: 'transition', signal }),
+      undefined,
+    );
+    await work?.promise;
   }
   async finishQueueMediaOwned(room, data, work) {
     if (room.autoplayCountdown || room.transition || room.endedVersion === room.mediaVersion) return;
@@ -2163,22 +2190,35 @@ class Watch {
       current = this.roomState.queue.current(record.id);
     room.transition = { kind: 'media' };
     try {
+      // The durable write runs outside the mailbox; the room unloads the video back inside.
       const completing = (async () => {
         await room.saving?.catch(() => {});
         work.signal.throwIfAborted();
         work.committing = true;
         if (current) await this.roomState.queue.completeCurrent(record.id);
-        this.unloadQueueMedia(room);
-        room.endedVersion = endedVersion;
-        room.manualPaused = false;
+        await this.inRoom(
+          room,
+          () => {
+            this.unloadQueueMedia(room);
+            room.endedVersion = endedVersion;
+            room.manualPaused = false;
+            delete room.transition?.commit;
+          },
+          undefined,
+        );
       })();
       room.transition.commit = completing;
       await completing;
-      delete room.transition?.commit;
       await this.roomState.save(room);
-      this.roomState.apply(room, this.roomState.store.get(record.id));
-      room.revision++;
-      this.prepareStreams(room);
+      await this.inRoom(
+        room,
+        () => {
+          this.roomState.apply(room, this.roomState.store.get(record.id));
+          room.revision++;
+          this.prepareStreams(room);
+        },
+        undefined,
+      );
     } finally {
       delete room.transition?.commit;
       if (room.transition?.kind === 'media') room.transition = undefined;
