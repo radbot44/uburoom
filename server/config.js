@@ -37,6 +37,7 @@ const KEYS = [
   'server.tls_cert',
   'server.tls_key',
   'server.public_web_app',
+  'server.max_connections',
   'storage.credential_key_file',
   'storage.data_directory',
   'tools.ffmpeg',
@@ -316,6 +317,10 @@ function normalizeConfig(
   config.singleRoomLeaderPlexId = get('rooms.single_room_leader_plex_id');
   if (config.singleRoomLeaderPlexId && !/^\d{1,20}$/.test(config.singleRoomLeaderPlexId))
     throw new Error('rooms.single_room_leader_plex_id must be a quoted Plex account ID');
+  const maxConnections = value.server?.max_connections ?? 256;
+  if (!Number.isSafeInteger(maxConnections) || maxConnections < 1 || maxConnections > 4096)
+    throw new Error('server.max_connections must be an integer from 1 to 4096');
+  config.maxConnections = maxConnections;
   const maxJobs = value.transcoding?.max_jobs ?? 5;
   if (!Number.isSafeInteger(maxJobs) || maxJobs < 1 || maxJobs > 32)
     throw new Error('transcoding.max_jobs must be an integer from 1 to 32');

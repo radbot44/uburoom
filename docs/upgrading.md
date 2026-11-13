@@ -24,4 +24,4 @@ Set `storage.credential_key_file` outside the project or preserve the existing p
 
 Keep prior code and a matched restricted backup. Code rollback alone does not restore schema/state. Crossing incompatible layouts requires a deliberate matched restore and can discard subsequent changes, including sign-outs and revocations. Do not pair a database with a newly generated key.
 
-Historical pre-release configuration versions and prior schema transfer notes are superseded by the selected code, [configuration example](../config.example.yaml) (schema v2n) and baseline 11 above. Offline fixture success is not operator restore verification; open checks remain in [testing](testing.md).
+Historical pre-release configuration versions and prior schema transfer notes are superseded by the selected code, [configuration example](../config.example.yaml) (schema v2o) and baseline 11 above. Offline fixture success is not operator restore verification; open checks remain in [testing](testing.md).

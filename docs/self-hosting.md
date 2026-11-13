@@ -61,6 +61,7 @@ Sign-in, permission to enter uburoom, Plex media access, and server administrati
 | `access.require_plex: true` | Require each viewer's own access to the pinned Plex server and a library. Neither a password nor shared fallback satisfies this. |
 | `access.require_plex_in_activity: false` | Exempt **verified Discord Activities** from the personal-Plex entry requirement, not web visits or browser handoff. |
 | `secrets.entry_password` | Optional extra entry password alongside provider rules. Access lasts 12 hours and resets on restart; it does not grant admin access. |
+| `server.max_connections: 256` | Open room connections (one per browser tab or app window) accepted at once; 1–4096. Further connections are refused until one closes. |
 | `server.public_web_app: false` | Restrict playback to verified Discord Activity. Browser handoff remains available for account linking/management. |
 | `operator.discord_id` / `operator.plex_id` | Exact quoted provider account IDs authorized to open **Server settings** in the browser (the 19-key allowlist across Rooms, Directory and Transcoding). Saved edits write to `config.yaml` and require a manual restart to take effect. |
 

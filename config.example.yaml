@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2n
+# Config schema v2o
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -91,6 +91,7 @@ server:
   port: 5756
   public_url: 'https://localhost:5756' # Public HTTPS origin, without a path.
   public_web_app: true # set false for Discord Activity only
+  max_connections: 256 # Open room connections (one per browser tab or app) the server accepts at once.
   tls_cert: 'certs/server-cert.pem'
   tls_key: 'certs/server-key.pem'
 tools:
