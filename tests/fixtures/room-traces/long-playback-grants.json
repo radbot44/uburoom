@@ -400,5 +400,10 @@
         }
       }
     }
-  ]
+  ],
+  "plexSessions": {
+    "started": 3,
+    "stopped": 3,
+    "open": {}
+  }
 }

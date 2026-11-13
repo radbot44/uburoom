@@ -648,5 +648,10 @@
       "step": "ten seconds pass",
       "views": {}
     }
-  ]
+  ],
+  "plexSessions": {
+    "started": 7,
+    "stopped": 7,
+    "open": {}
+  }
 }

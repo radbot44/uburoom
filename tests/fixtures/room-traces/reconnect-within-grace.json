@@ -587,5 +587,10 @@
         }
       }
     }
-  ]
+  ],
+  "plexSessions": {
+    "started": 0,
+    "stopped": 0,
+    "open": {}
+  }
 }

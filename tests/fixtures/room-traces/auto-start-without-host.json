@@ -690,5 +690,10 @@
         }
       }
     }
-  ]
+  ],
+  "plexSessions": {
+    "started": 4,
+    "stopped": 4,
+    "open": {}
+  }
 }
