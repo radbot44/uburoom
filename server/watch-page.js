@@ -8,78 +8,111 @@ const escapeText = value =>
     /[&<>"']/g,
     char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char],
   );
-function replaceTemplate(html, target, replacement) {
-  if (!html.includes(target)) {
-    throw new Error('watch.html template target missing: ' + target);
+const escapeRegExp = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Edits the watch.html template by element, so its formatting does not matter. An element is found by one
+ * exact attribute (`id="…"`, or `class="…"` for elements without an id); each target must exist exactly once,
+ * or rendering fails rather than sending a page with a stale first paint. Values are escaped by the caller.
+ * @param {string} source
+ */
+function template(source) {
+  let html = source;
+  function find(attribute, value) {
+    const pattern = new RegExp(
+      '<([a-zA-Z][\\w-]*)((?:\\s[^>]*?)?\\s' + attribute + '="' + escapeRegExp(value) + '"[^>]*)>',
+      'g',
+    );
+    const matches = [...html.matchAll(pattern)];
+    if (matches.length !== 1)
+      throw new Error(
+        'watch.html template target ' + (matches.length ? 'repeated' : 'missing') + ': ' + attribute + '=' + value,
+      );
+    const [whole, tag, attributes] = matches[0];
+    return { start: matches[0].index, end: matches[0].index + whole.length, tag, attributes };
   }
-  return html.replace(target, replacement);
+  // The end of the element that opens at `open`, counting nested elements with the same tag name.
+  function closeOf(open) {
+    const pattern = new RegExp('<(/?)' + open.tag + '\\b[^>]*>', 'g');
+    pattern.lastIndex = open.end;
+    let depth = 1;
+    for (let match; (match = pattern.exec(html));) {
+      depth += match[1] ? -1 : 1;
+      if (!depth) return { start: match.index, end: match.index + match[0].length };
+    }
+    throw new Error('watch.html template element is not closed: ' + open.tag);
+  }
+  function attributes(open, change) {
+    let text = open.attributes;
+    for (const [name, value] of Object.entries(change)) {
+      const existing = new RegExp('\\s' + name + '(?:="[^"]*")?(?=[\\s/]|$)');
+      const next =
+        value === false || value === undefined ? '' : value === true ? ' ' + name : ' ' + name + '="' + value + '"';
+      text = existing.test(text) ? text.replace(existing, next) : text.replace(/\s*$/, next + text.match(/\s*$/)[0]);
+    }
+    html = html.slice(0, open.start) + '<' + open.tag + text + '>' + html.slice(open.end);
+  }
+  return {
+    /** Sets (string), adds (true) or removes (false) attributes of one element. */
+    set(attribute, value, change) {
+      attributes(find(attribute, value), change);
+      return this;
+    },
+    /** Replaces one element's contents with markup. */
+    content(attribute, value, markup) {
+      const open = find(attribute, value),
+        close = closeOf(open);
+      html = html.slice(0, open.end) + markup + html.slice(close.start);
+      return this;
+    },
+    /** Replaces one whole element with markup. */
+    replace(attribute, value, markup) {
+      const open = find(attribute, value),
+        close = closeOf(open);
+      html = html.slice(0, open.start) + markup + html.slice(close.end);
+      return this;
+    },
+    /** Inserts markup right before one element. */
+    before(attribute, value, markup) {
+      const open = find(attribute, value);
+      html = html.slice(0, open.start) + markup + html.slice(open.start);
+      return this;
+    },
+    toString: () => html,
+  };
 }
 
 // Personalized HTML is sent with no-store. JSON remains inert, and every value
 // used in the initial visible room rows is escaped independently of that JSON.
-function watchPage(template, initial, scrollbarStyleNonce) {
-  let html = replaceTemplate(
-    template,
-    '<svg id="icon-sprite" hidden aria-hidden="true" width="0" height="0"></svg>',
-    spriteMarkup(),
-  );
-  if (scrollbarStyleNonce) {
-    // The nonce is a server-generated base64 token (no user input).
-    html = replaceTemplate(
-      html,
-      '<script type="module" src="/watch.js"></script>',
-      '<script type="module" src="/watch.js" data-os-style-nonce="' + scrollbarStyleNonce + '"></script>',
-    );
-  }
+function watchPage(source, initial, scrollbarStyleNonce) {
+  const page = template(source).replace('id', 'icon-sprite', spriteMarkup());
+  // The nonce is a server-generated base64 token (no user input).
+  if (scrollbarStyleNonce) page.set('src', '/watch.js', { 'data-os-style-nonce': scrollbarStyleNonce });
   if (initial.me?.status === 200 && initial.rooms?.status === 200) {
     const me = initial.me.value;
-    html = replaceTemplate(
-      html,
-      'id="queue-empty-browse" type="button" class="quiet" aria-label="Browse media" title="Browse media" disabled',
-      'id="queue-empty-browse" type="button" class="quiet" aria-label="Browse media" title="Browse media"',
-    );
+    page.set('id', 'queue-empty-browse', { disabled: false });
     if (me.name) {
       const label = escapeText(me.name + (initial.config?.demo ? ' · local demo' : ''));
-      const disabledAttr = initial.config?.unifiedAccounts ? '' : ' disabled';
-      html = replaceTemplate(
-        html,
-        '<button id="identity" type="button" aria-haspopup="dialog" aria-controls="account-dialog" aria-label="Account settings" title="Account settings" disabled></button>',
-        '<button id="identity" type="button" aria-haspopup="dialog" aria-controls="account-dialog" aria-label="' +
-          label +
-          ' · Account settings" title="Account settings"' +
-          disabledAttr +
-          '>' +
-          label +
-          '</button>',
-      );
+      page
+        .set('id', 'identity', {
+          'aria-label': label + ' · Account settings',
+          disabled: !initial.config?.unifiedAccounts,
+        })
+        .content('id', 'identity', label);
     }
     if (me.adminEligible ?? me.owner) {
       const checked = Boolean(me.adminMode);
-      const title = checked ? 'Admin mode on: turn off' : 'Admin mode off: turn on';
-      html = replaceTemplate(
-        html,
-        '<button id="admin-mode" class="admin-toggle" role="switch" aria-checked="false" aria-label="Admin mode" title="Admin mode" hidden>',
-        '<button id="admin-mode" class="admin-toggle" role="switch" aria-checked="' +
-          checked +
-          '" aria-label="Admin mode" title="' +
-          title +
-          '">',
-      );
+      page.set('id', 'admin-mode', {
+        'aria-checked': String(checked),
+        title: checked ? 'Admin mode on: turn off' : 'Admin mode off: turn on',
+        hidden: false,
+      });
     }
     if (me.durableRooms && !me.guestRoomId && !initial.config?.singleRoom) {
-      html = replaceTemplate(html, 'id="lobby-reopen" class="quiet" hidden', 'id="lobby-reopen" class="quiet"');
-      html = replaceTemplate(
-        html,
-        'id="reopen" class="quiet watch-control watch-control-responsive" aria-label="Reopen room" title="Reopen room" hidden',
-        'id="reopen" class="quiet watch-control watch-control-responsive" aria-label="Reopen room" title="Reopen room"',
-      );
+      page.set('id', 'lobby-reopen', { hidden: false }).set('id', 'reopen', { hidden: false });
     }
     if (initial.events?.status === 200 && initial.events.value?.canSchedule && !initial.config?.singleRoom) {
-      html = replaceTemplate(
-        html,
-        'id="lobby-schedule" class="quiet" type="button" aria-label="Schedule event" hidden',
-        'id="lobby-schedule" class="quiet" type="button" aria-label="Schedule event"',
-      );
+      page.set('id', 'lobby-schedule', { hidden: false });
     }
     if (initial.library?.status === 200) {
       const lib = initial.library.value;
@@ -118,11 +151,7 @@ function watchPage(template, initial, scrollbarStyleNonce) {
         other += '</article>';
         cards.push(other);
       }
-      html = replaceTemplate(
-        html,
-        '<div id="library-content"></div>',
-        '<div id="library-content"><div class="library-landing">' + cards.join('') + '</div></div>',
-      );
+      page.content('id', 'library-content', '<div class="library-landing">' + cards.join('') + '</div>');
     }
     if (!initial.targetRoom && !initial.inviteCode && !me.guestRoomId) {
       const rows = initial.rooms.value.rooms
@@ -143,80 +172,35 @@ function watchPage(template, initial, scrollbarStyleNonce) {
           );
         })
         .join('');
-      html = replaceTemplate(html, 'class="auth-pending outside-room idle-player"', 'class="outside-room idle-player"');
-      html = replaceTemplate(
-        html,
-        'id="auth-overlay" class="lobby-auth"',
-        'id="auth-overlay" class="lobby-auth" hidden',
-      );
-      html = replaceTemplate(html, 'id="room-lobby" hidden', 'id="room-lobby"');
-      html = replaceTemplate(
-        html,
-        '<div id="lobby-rooms" class="lobby-rooms" aria-label="Active rooms"></div>',
-        '<div id="lobby-rooms" class="lobby-rooms" aria-label="Active rooms">' + rows + '</div>',
-      );
+      page
+        .set('id', 'watch-body', { class: 'outside-room idle-player' })
+        .set('id', 'auth-overlay', { hidden: true })
+        .set('id', 'room-lobby', { hidden: false })
+        .content('id', 'lobby-rooms', rows);
     } else if (initial.targetRoom?.name) {
       const roomName = escapeText(initial.targetRoom.name);
       const media = initial.targetRoom.media;
-      html = replaceTemplate(
-        html,
-        'id="auth-overlay" class="lobby-auth"',
-        'id="auth-overlay" class="lobby-auth" hidden',
-      );
-      html = replaceTemplate(
-        html,
-        '<span id="options-title" class="watch-panel-title">Room</span>',
-        '<span id="options-title" class="watch-panel-title">' + roomName + '</span>',
-      );
-      html = replaceTemplate(
-        html,
-        '<div id="current-room" class="room-content-columns" hidden>',
-        '<div id="current-room" class="room-content-columns">',
-      );
-      html = replaceTemplate(
-        html,
-        '<button id="switch-room" class="quiet watch-control" aria-label="Choose room" title="Choose room"><span class="watch-control-label">Choose room</span></button>',
-        '<button id="switch-room" class="quiet watch-control" aria-label="Switch room" title="Switch room"><span class="watch-control-label">Switch room</span></button>',
-      );
-      html = replaceTemplate(
-        html,
-        '<button id="create" class="quiet watch-control" aria-label="New room" title="New room"><span class="watch-control-label">New room</span></button>',
-        '<button id="create" class="quiet watch-control" aria-label="New room" title="New room" hidden><span class="watch-control-label">New room</span></button>',
-      );
-      html = replaceTemplate(
-        html,
-        'id="close-room" class="quiet watch-control watch-control-responsive" aria-label="Leave room" title="Leave room" hidden',
-        'id="close-room" class="quiet watch-control watch-control-responsive" aria-label="Leave room" title="Leave room"',
-      );
+      page
+        .set('id', 'auth-overlay', { hidden: true })
+        .content('id', 'options-title', roomName)
+        .set('id', 'current-room', { hidden: false })
+        .set('id', 'switch-room', { 'aria-label': 'Switch room', title: 'Switch room' })
+        .content('id', 'switch-room', '<span class="watch-control-label">Switch room</span>')
+        .set('id', 'create', { hidden: true })
+        .set('id', 'close-room', { hidden: false });
       if (media?.title) {
-        html = replaceTemplate(html, 'class="auth-pending outside-room idle-player"', 'class=""');
-        html = replaceTemplate(html, '<div id="empty-stage">', '<div id="empty-stage" hidden>');
-        html = replaceTemplate(
-          html,
-          '<h1 id="title">Watch together</h1><p id="details"></p>',
-          '<h1 id="title">' +
-            escapeText(media.title) +
-            '</h1><p id="details">' +
-            escapeText(media.subtitle || '') +
-            '</p>',
-        );
-        html = replaceTemplate(
-          html,
-          '<h3 class="queue-empty-title">The queue lives in a room</h3><p class="queue-empty-text">',
-          '<h3 class="queue-empty-title" hidden>The queue lives in a room</h3><p class="queue-empty-text" hidden>',
-        );
+        page
+          .set('id', 'watch-body', { class: '' })
+          .set('id', 'empty-stage', { hidden: true })
+          .content('id', 'title', escapeText(media.title))
+          .content('id', 'details', escapeText(media.subtitle || ''))
+          .set('class', 'queue-empty-title', { hidden: true })
+          .set('class', 'queue-empty-text', { hidden: true });
       } else {
-        html = replaceTemplate(html, 'class="auth-pending outside-room idle-player"', 'class="idle-player"');
-        html = replaceTemplate(
-          html,
-          '<h1 id="empty-title">Join or create a room</h1>',
-          '<h1 id="empty-title">' + roomName + '</h1>',
-        );
-        html = replaceTemplate(
-          html,
-          '<p id="empty-hint">Choose an active room or create your own.</p>',
-          '<p id="empty-hint"></p>',
-        );
+        page
+          .set('id', 'watch-body', { class: 'idle-player' })
+          .content('id', 'empty-title', roomName)
+          .content('id', 'empty-hint', '');
       }
     }
   }
@@ -224,11 +208,9 @@ function watchPage(template, initial, scrollbarStyleNonce) {
     /[<>&\u2028\u2029]/g,
     char => '\\u' + char.charCodeAt(0).toString(16).padStart(4, '0'),
   );
-  return replaceTemplate(
-    html,
-    '<script type="module" src="/watch.js"',
-    '<script id="watch-bootstrap" type="application/json">' + data + '</script><script type="module" src="/watch.js"',
-  );
+  return page
+    .before('src', '/watch.js', '<script id="watch-bootstrap" type="application/json">' + data + '</script>')
+    .toString();
 }
 
 module.exports = { watchPage };

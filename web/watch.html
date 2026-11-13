@@ -1,114 +1,2000 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#101217"><meta name="darkreader-lock"><title>uburoom watch</title><link rel="preload" href="/assets/fonts/UburoomSans-Regular.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin><link rel="modulepreload" href="/watch-sync.mjs"><link rel="modulepreload" href="/shared/sync/client-sync.mjs"><link rel="modulepreload" href="/shared/sync/timing.mjs"><link rel="modulepreload" href="/shared/sync/player-adapter.mjs"><script src="/theme.js"></script><link rel="stylesheet" href="/watch.css"><link rel="stylesheet" href="/watch-player.css"><link rel="stylesheet" href="/watch-library.css"><link rel="stylesheet" href="/watch-queue.css"><link rel="stylesheet" href="/vendor/overlayscrollbars/overlayscrollbars.css"><link rel="stylesheet" href="/watch-scrollbars.css"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any"></head>
-<body class="auth-pending outside-room idle-player">
-  <svg id="icon-sprite" hidden aria-hidden="true" width="0" height="0"></svg><script src="/watch-layout.js"></script><main>
-<header class="account" id="account"><a id="brand-link" href="/" aria-label="uburoom watch"><img class="brand" src="/assets/branding/uburoom-wordmark-brand.svg" alt="uburoom" width="164" height="51"></a><div class="account-actions"><span class="identity-group"><button id="theme-toggle" aria-label="Theme: Dark. Switch to light." title="Theme: Dark. Switch to light." class="appearance-toggle" type="button" role="switch" aria-checked="false"><span class="appearance-track" aria-hidden="true"><span class="appearance-thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="moon"><use href="#icon-moon"></use></svg></span></span></button><button id="identity" type="button" aria-haspopup="dialog" aria-controls="account-dialog" aria-label="Account settings" title="Account settings" disabled></button><button id="admin-mode" class="admin-toggle" role="switch" aria-checked="false" aria-label="Admin mode" title="Admin mode" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="shield-check"><use href="#icon-shield-check"></use></svg></button></span><button id="open-browser" class="quiet browser-button" hidden><span id="browser-symbol"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="external-link"><use href="#icon-external-link"></use></svg></span><span>Open in Browser</span></button><button id="drawer-close" class="icon-button" aria-label="Close drawer" title="Close drawer" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="x"><use href="#icon-x"></use></svg></button></div></header>
-<section id="app">
-<section class="screen-column">
-<section id="viewing-section" aria-label="Room player">
-<div class="stage paused" id="stage" tabindex="-1">
-<video id="video" playsinline preload="auto"></video>
-<div id="empty-stage"><span id="empty-symbol"><svg class="empty-oomark" viewBox="528.41 544.4 298.99 249.1061" width="68" height="56" aria-hidden="true"><circle class="oomark-eye" cx="618.46" cy="634.45" r="48.3813" fill="none" stroke="currentColor" stroke-width="35.3374"/><circle class="oomark-eye" cx="737.35" cy="634.45" r="48.3813" fill="none" stroke="currentColor" stroke-width="35.3374"/><line class="oomark-mouth" x1="601.9475" x2="753.8625" y1="743.0031" y2="743.0031" stroke="var(--secondary)" stroke-width="53.0061" stroke-linecap="butt"/></svg></span><h1 id="empty-title">Join or create a room</h1><p id="empty-hint">Choose an active room or create your own.</p><div id="auth-overlay" class="lobby-auth"><section id="auth-loading" class="card auth-card" aria-labelledby="auth-title"><h2 id="auth-title" hidden>Unable to load uburoom</h2><p id="auth-status" role="status">Loading rooms...</p><button id="auth-retry" class="quiet" type="button" hidden>Try again</button></section>
-<section id="welcome" class="card auth-card" hidden><h2 id="welcome-title">Welcome to uburoom</h2><p id="entry-status" role="status">Sign in to browse your library and join a room.</p><form id="entry-form" hidden><label for="entry-password">Server password</label><input id="entry-password" type="password" autocomplete="current-password" maxlength="1024" required><button id="entry-submit" class="primary" type="submit">Continue</button></form><form id="guest-join" hidden><label for="guest-name">Name</label><div class="guest-name-row"><input id="guest-name" maxlength="80" autocomplete="nickname" required><button id="guest-name-roll" class="icon-button" type="button"></button></div><p class="hint">Guests appear in italics. Your name isn’t verified.</p><button id="guest-join-submit" class="primary" type="submit">Join</button></form><p id="guest-sign-in-label" class="hint" hidden>Or sign in so your name is verified:</p><form id="invite-code-form" hidden><label for="invite-code">Have an invite code?</label><div class="guest-name-row"><input id="invite-code" maxlength="40" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="ubumfa-ogdave"><button id="invite-code-submit" class="quiet" type="submit">Go</button></div></form><div class="login-options"><a class="provider-button discord-button" href="/auth/discord"><img src="/assets/discord-symbol-white.svg" alt="" width="24" height="18">Log in with Discord</a><a id="plex-login" class="provider-button quiet" href="/auth/plex" hidden><img src="/assets/plex-icon.png" alt="" width="24" height="24">Connect Plex to continue</a><button id="entry-plex-activity" class="primary" type="button" hidden>Connect Plex in your browser</button><button id="entry-recheck" class="quiet" type="button" hidden>Check access again</button></div></section>
-</div><button id="empty-browse" class="primary" type="button" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="video"><use href="#icon-video"></use></svg>Browse media</button><div id="room-lobby" hidden><div class="room-bar" id="lobby-room-bar"><button id="lobby-reopen" class="quiet" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="history"><use href="#icon-history"></use></svg>Reopen room</button><button id="lobby-schedule" class="quiet" type="button" aria-label="Schedule event" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="calendar-event"><use href="#icon-calendar-event"></use></svg><span class="lobby-schedule-label">Schedule</span></button><button id="lobby-create" class="primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="plus"><use href="#icon-plus"></use></svg>New room</button><p id="lobby-error" role="alert"></p><section id="lobby-events" class="lobby-events" aria-labelledby="lobby-events-title" hidden><h3 id="lobby-events-title">Upcoming</h3><div id="lobby-event-list" class="lobby-rooms"></div><button id="lobby-events-more" class="quiet" type="button" hidden>More</button></section><div id="lobby-rooms" class="lobby-rooms" aria-label="Active rooms"></div></div></div></div>
-<section id="ending-stage" class="ending-stage" aria-label="Playback ended" hidden></section>
-<div class="player-chrome title-bar"><div class="media-heading"><h1 id="title">Watch together</h1><p id="details"></p><p id="viewers"></p></div><div class="player-actions"><button id="drawer-open" class="solid-button" hidden title="Menu" aria-label="Menu" aria-expanded="false" aria-controls="drawer"><span id="drawer-symbol"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="layout-sidebar-right"><use href="#icon-layout-sidebar-right"></use></svg></span><span>Menu</span></button></div></div>
-<button id="join-playback" class="center-play" aria-label="Play" title="Play" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="player-play"><use href="#icon-player-play"></use></svg></button>
-<p id="ready-status" role="status"></p>
-<button id="skip-marker" class="skip-marker" type="button" aria-label="Skip intro" hidden><span id="skip-marker-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="player-track-next"><use href="#icon-player-track-next"></use></svg></span><span id="skip-marker-label">Skip intro</span></button>
-<div class="player-chrome transport" role="group" aria-label="Playback controls">
-<div id="timeline-row" class="timeline-row" data-media-controls><span id="time" class="time">0:00</span><input id="timeline" type="range" min="0" max="60" step="0.1" value="0" aria-label="Playback position" disabled><div id="timeline-tooltip" class="timeline-tooltip" hidden></div><span id="duration" class="time">0:00</span><select id="chapters" hidden></select></div>
-<div class="transport-row"><div class="playback-buttons" data-media-controls>
-<button id="player-play" class="player-button" aria-label="Play" title="Play"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="player-play"><use href="#icon-player-play"></use></svg></button>
-<button id="previous" class="player-button" aria-label="Restart / previous episode" title="Restart / previous episode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="player-skip-back"><use href="#icon-player-skip-back"></use></svg></button>
-<button id="seek-back" class="player-button" aria-label="Seek back 15 seconds" title="Seek back 15 seconds"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="rewind-backward-15"><use href="#icon-rewind-backward-15"></use></svg></button>
-<button id="seek-forward" class="player-button" aria-label="Seek forward 15 seconds" title="Seek forward 15 seconds"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="rewind-forward-15"><use href="#icon-rewind-forward-15"></use></svg></button>
-<button id="next" class="player-button" aria-label="Next video" title="Next video"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="player-skip-forward"><use href="#icon-player-skip-forward"></use></svg></button>
-</div><div class="player-tools"><button id="notifications-toggle" class="player-button" type="button" aria-label="Notifications" title="Hide notifications" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="bell"><use href="#icon-bell"></use></svg></button><button id="captions-toggle" data-media-controls class="player-button" aria-label="Enable subtitles" title="Enable subtitles" aria-pressed="false" disabled></button><button id="tracks-open" data-media-controls class="player-button" title="Player settings" aria-label="Player settings" aria-haspopup="true" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="settings"><use href="#icon-settings"></use></svg></button>
-<div class="volume-control" data-media-controls><button id="player-mute" class="player-button" aria-label="Mute" title="Mute" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="volume"><use href="#icon-volume"></use></svg></button><input id="player-volume" type="range" min="0" max="100" step="1" value="30" aria-label="Volume percentage"></div>
-<button id="pip" data-media-controls class="player-button" title="Picture-in-Picture" aria-label="Picture-in-Picture" aria-pressed="false" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="picture-in-picture"><use href="#icon-picture-in-picture"></use></svg></button><button id="theater" class="player-button" title="Theater mode" aria-label="Theater mode" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="rectangle"><use href="#icon-rectangle"></use></svg></button><button id="fullscreen" class="player-button" title="Fullscreen" aria-label="Fullscreen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="maximize"><use href="#icon-maximize"></use></svg></button></div></div>
-</div><div id="pip-placeholder" class="pip-placeholder" hidden aria-label="Picture-in-Picture active"><div class="pip-placeholder-content"><p>Playing in Picture-in-Picture</p><button id="pip-return" class="primary" type="button">Return video</button></div></div><p id="seek-feedback" role="status" hidden></p>
-<div id="watch-toasts" class="watch-toast-region" aria-live="polite"></div>
-<section id="room-recovery" class="readiness-choice" aria-live="polite" hidden><h2>Recovering room</h2><p id="room-recovery-message"></p><button id="room-recovery-start" class="primary" type="button">Start now</button></section>
-<section id="readiness-choice" class="readiness-choice" aria-labelledby="readiness-title" hidden><h2 id="readiness-title">Some viewers need more time</h2><p id="readiness-message">Playback is paused. Start with ready viewers, or give everyone more time.</p><div><button id="ready-start" class="primary">Start with ready viewers</button><button id="ready-wait" class="quiet">Wait another 15 seconds</button><button id="ready-cancel" class="quiet">Cancel</button></div></section>
-<dialog id="tracks-dialog" class="watch-dialog" aria-labelledby="tracks-title"><header><h2 id="tracks-title">Player settings</h2><button id="tracks-close" class="icon-button" aria-label="Close" title="Close" autofocus><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="x"><use href="#icon-x"></use></svg></button></header><p class="hint">These choices apply only to your player.</p>
-<div class="player-settings-grid"><div class="player-settings-column">
-<section class="settings-group"><h3>Playback</h3><p id="quality-notice" class="hint" role="status"></p><label for="quality">Quality</label><select id="quality" aria-label="Playback quality"><option value="direct">Original</option><option value="1080p20">1080p · 20 Mbps</option><option value="1080p12">1080p · 12 Mbps</option><option value="1080p8">1080p · 8 Mbps</option><option value="720p4">720p · 4 Mbps</option><option value="720p2">720p · 2 Mbps</option></select><p id="quality-detail" class="hint" hidden></p><div class="personal-sync"><label for="sync-correction">Sync correction</label><select id="sync-correction" aria-describedby="sync-correction-hint"><option value="speed">Speed adjustments</option><option value="jumps">Occasional jumps</option></select><p id="sync-correction-hint" class="hint"></p></div><div id="plex-reporting-settings" hidden><label class="watch-switch-label"><input id="plex-reporting-activity" type="checkbox" role="switch" class="watch-switch" aria-label="Report playback activity to Plex">Report playback activity to Plex</label><label class="watch-switch-label"><input id="plex-reporting-watch-state" type="checkbox" role="switch" class="watch-switch" aria-label="Update personal Plex watch state">Update personal Plex watch state</label></div></section>
-<section class="settings-group"><h3>Audio</h3><label for="audio-track">Audio track</label><select id="audio-track"></select><p id="audio-track-name" class="hint" hidden></p><p id="audio-track-status" class="hint"></p><label for="audio-mode">Audio mode</label><select id="audio-mode" hidden><option value="normal" data-caption="Original dynamic range">Normal</option><option value="dialogue" data-caption="Boosts speech clarity">Dialogue</option><option value="night" data-caption="Levels peaks for quiet listening">Night</option></select><div id="audio-mode-group" class="button-group watch-segmented" role="group" aria-label="Audio mode"><button type="button" class="group-button" data-value="normal" aria-pressed="true">Normal</button><button type="button" class="group-button" data-value="dialogue" aria-pressed="false">Dialogue</button><button type="button" class="group-button" data-value="night" aria-pressed="false">Night</button></div><p id="audio-mode-hint" class="hint">Original dynamic range and audio balance.</p></section>
-</div><div class="player-settings-column">
-<section class="settings-group"><h3>Subtitles</h3><label for="subtitle-track">Subtitle track</label><select id="subtitle-track"></select><p id="subtitle-track-name" class="hint" hidden></p><label for="subtitle-mode">Rendering</label><select id="subtitle-mode"><option value="auto">Automatic</option><option value="burn">Burn-in</option></select><label for="subtitle-offset">Subtitle delay (seconds)</label><input id="subtitle-offset" aria-describedby="subtitle-delay-hint" type="number" min="-30" max="30" step="0.1" value="0"><p id="subtitle-delay-hint" class="hint">Select subtitles to adjust their timing.</p><label for="subtitle-color-preset">Text color</label><div class="subtitle-color-row"><select id="subtitle-color-preset" aria-label="Subtitle text color preset"><option value="#ffffff">White</option><option value="#ffe600">Yellow</option><option value="#38bdf8">Cyan</option><option value="#4ade80">Green</option><option value="custom">Custom…</option></select><div class="subtitle-color-custom"><input id="subtitle-color-hex" class="hex-input" type="text" maxlength="7" value="#ffffff" placeholder="#ffffff" aria-label="Subtitle hex color" spellcheck="false" autocomplete="off"><input id="subtitle-color-picker" class="color-swatch-input" type="color" value="#ffffff" title="Pick color" aria-label="Pick color"></div></div><label for="subtitle-size">Text size</label><select id="subtitle-size" hidden><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select><div id="subtitle-size-group" class="button-group watch-segmented" role="group" aria-label="Text size"><button type="button" class="group-button" data-value="small" aria-pressed="true">Small</button><button type="button" class="group-button" data-value="medium" aria-pressed="false">Medium</button><button type="button" class="group-button" data-value="large" aria-pressed="false">Large</button></div><label for="subtitle-position">Text position</label><select id="subtitle-position" hidden><option value="video">On video</option><option value="player">On player</option></select><div id="subtitle-position-group" class="button-group watch-segmented" role="group" aria-label="Text position"><button type="button" class="group-button" data-value="video" aria-pressed="true">On video</button><button type="button" class="group-button" data-value="player" aria-pressed="false">On player</button></div><label for="subtitle-bg">Background style</label><select id="subtitle-bg" hidden><option value="shadow">Shadow</option><option value="background">Background</option><option value="off">Off</option></select><div id="subtitle-bg-group" class="button-group watch-segmented" role="group" aria-label="Background style"><button type="button" class="group-button" data-value="shadow" aria-pressed="true">Shadow</button><button type="button" class="group-button" data-value="background" aria-pressed="false">Background</button><button type="button" class="group-button" data-value="off" aria-pressed="false">Off</button></div><label for="subtitle-brightness">Subtitle brightness</label><div class="subtitle-slider-row"><input id="subtitle-brightness" type="range" min="20" max="100" step="5" value="100" aria-label="Subtitle brightness"><span id="subtitle-brightness-value" class="slider-value">100%</span></div><p id="track-status" role="status" class="hint"></p><button id="subtitle-retry" class="quiet" hidden>Retry subtitles</button></section>
-</div></div>
-<section class="settings-group player-media-information"><h3>Media information</h3><div class="player-media-columns"><div><h4>Source</h4><p id="media-information" class="hint"></p></div><details><summary>Technical details</summary><p id="delivery-information" class="hint"></p><p class="diagnostic-report"><button id="copy-diagnostics" type="button" class="quiet">Copy diagnostic report</button><span id="diagnostic-report-hint" class="hint">For bug reports. Copies the last 5 minutes of player activity, without links or sign-in details.</span></p></details></div><div id="video-check" class="video-check" hidden><h4>Video check</h4><ul id="video-check-items"></ul><button id="video-check-refresh" type="button" class="quiet">Check again</button></div></section></dialog>
-</div>
-</section>
-<nav id="section-tabs" role="tablist" aria-label="Room sections"><button id="section-tab-room" type="button" role="tab" aria-controls="options-panel" data-section="room" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="armchair-2"><use href="#icon-armchair-2"></use></svg>Room</button><button id="section-tab-queue" type="button" role="tab" aria-controls="queue-panel" data-section="queue" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="player-track-next"><use href="#icon-player-track-next"></use></svg>Queue</button><button id="section-tab-media" type="button" role="tab" aria-controls="library-panel" data-section="media" aria-selected="true" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="video"><use href="#icon-video"></use></svg>Media</button></nav>
-<section id="library-panel" class="below-video card"><header class="library-header watch-panel-header" id="library-header"><div class="library-header-left" id="library-header-left"><h2 id="library-heading" class="watch-panel-heading"><button id="media-collapse" class="section-toggle" type="button" aria-expanded="true" aria-controls="library-content"><span id="media-symbol" class="watch-panel-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="video"><use href="#icon-video"></use></svg></span><span class="watch-panel-title">Media</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="chevron-down"><use href="#icon-chevron-down"></use></svg></button></h2><div class="library-navigation-history watch-control-group watch-header-actions" role="group" aria-label="Navigation"><button id="library-back" type="button" class="library-key watch-control watch-control-icon watch-control-solid-disabled" aria-label="Back" title="No earlier Media page." disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="arrow-left"><use href="#icon-arrow-left"></use></svg></button><button id="library-forward" type="button" class="library-key watch-control watch-control-icon watch-control-solid-disabled" aria-label="Forward" title="No later Media page." disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="arrow-right"><use href="#icon-arrow-right"></use></svg></button><button id="library-home" type="button" class="library-key watch-control watch-control-icon watch-control-solid-disabled" aria-label="Libraries home" title="Already at Libraries home." disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="home"><use href="#icon-home"></use></svg></button></div></div><div class="library-header-right" id="library-header-right"><div class="library-top"><button id="library-top" class="quiet watch-control watch-control-responsive" type="button" aria-label="Back to top" title="Back to top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="arrow-bar-to-up"><use href="#icon-arrow-bar-to-up"></use></svg><span class="watch-control-label">Back to top</span></button></div></div></header><div id="library-content"></div></section>
-</section>
-<div class="room-column below-video" id="room-column"><section id="options-panel" class="below-video card section-tab-inactive"><header class="watch-panel-header"><h2 class="watch-panel-heading"><button id="options-collapse" class="section-toggle" aria-expanded="true" aria-controls="options-content"><span id="room-symbol" class="watch-panel-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="armchair-2"><use href="#icon-armchair-2"></use></svg></span><span id="options-title" class="watch-panel-title">Room</span><span id="options-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="chevron-down"><use href="#icon-chevron-down"></use></svg></span></button></h2><div class="room-header-actions watch-control-group watch-header-actions"><button id="room-schedule" class="quiet" aria-label="Schedule event" title="Schedule event" hidden></button><button id="room-share" class="quiet" aria-label="Share room invite" hidden></button><button id="room-people-open" class="quiet" aria-label="Viewers" hidden></button><button id="room-settings-open" class="icon-button" aria-label="Room settings" title="Room settings" hidden></button></div></header><div id="options-content"><div id="current-room" class="room-content-columns" hidden><section class="room-participant-column" aria-label="Viewers"><div class="room-roster-frame" id="room-roster-frame"><h4 class="room-control-row room-roster-heading"><span>Viewers</span><span id="room-sync-spread" class="room-sync-spread" hidden></span></h4><div id="room-participants" class="room-roster" tabindex="0" aria-label="Viewers"></div><button id="room-participants-expand" class="icon-button watch-control watch-control-icon watch-header-control" type="button" aria-label="Expand viewers" title="Expand viewers" aria-expanded="false" hidden></button></div></section></div><p id="room-save-error" role="alert"></p><div class="below-video room-bar watch-control-group" id="room-bar"><div id="rooms" class="chips" role="group" aria-label="Active rooms" hidden></div><button id="refresh" class="icon-button watch-control watch-control-icon" aria-label="Refresh rooms" title="Refresh rooms" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="refresh"><use href="#icon-refresh"></use></svg></button><button id="switch-room" class="quiet watch-control" aria-label="Choose room" title="Choose room"><span class="watch-control-label">Choose room</span></button><button id="create" class="quiet watch-control" aria-label="New room" title="New room"><span class="watch-control-label">New room</span></button><button id="reopen" class="quiet watch-control watch-control-responsive" aria-label="Reopen room" title="Reopen room" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="history"><use href="#icon-history"></use></svg><span class="watch-control-label">Reopen room</span></button><button id="admin-end-room" class="quiet watch-control" aria-label="Close room for everyone" title="Close room for everyone" hidden><span class="watch-control-label">Close room for everyone</span></button><button id="close-room" class="quiet watch-control watch-control-responsive" aria-label="Leave room" title="Leave room" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="logout"><use href="#icon-logout"></use></svg><span class="watch-control-label">Leave room</span></button></div></div></section><section id="queue-panel" class="below-video card section-tab-inactive" aria-label="Queue"><div id="queue-content" class="queue-is-empty queue-no-current queue-no-entries" data-view="empty"><header class="queue-header watch-panel-header"><h2 class="queue-heading watch-panel-heading"><button id="queue-collapse" class="section-toggle" type="button" aria-expanded="true" aria-controls="queue-body"><span id="queue-symbol" class="watch-panel-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="player-track-next"><use href="#icon-player-track-next"></use></svg></span><span id="queue-title" class="watch-panel-title">Queue</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="chevron-down"><use href="#icon-chevron-down"></use></svg></button></h2></header><div id="queue-body"><section id="queue-empty-screen" class="queue-empty-screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="playlist-add"><use href="#icon-playlist-add"></use></svg><h3 class="queue-empty-title">The queue lives in a room</h3><p class="queue-empty-text">Join or create a room, then add movies and episodes here. They play in order for everyone.</p><button id="queue-empty-browse" type="button" class="quiet" aria-label="Browse media" title="Browse media" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="video"><use href="#icon-video"></use></svg><span>Browse media</span></button></section></div></div></section></div>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#101217" />
+    <meta name="darkreader-lock" />
+    <title>uburoom watch</title>
+    <link rel="preload" href="/assets/fonts/UburoomSans-Regular.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="modulepreload" href="/watch-sync.mjs" />
+    <link rel="modulepreload" href="/shared/sync/client-sync.mjs" />
+    <link rel="modulepreload" href="/shared/sync/timing.mjs" />
+    <link rel="modulepreload" href="/shared/sync/player-adapter.mjs" />
+    <script src="/theme.js"></script>
+    <link rel="stylesheet" href="/watch.css" />
+    <link rel="stylesheet" href="/watch-player.css" />
+    <link rel="stylesheet" href="/watch-library.css" />
+    <link rel="stylesheet" href="/watch-queue.css" />
+    <link rel="stylesheet" href="/vendor/overlayscrollbars/overlayscrollbars.css" />
+    <link rel="stylesheet" href="/watch-scrollbars.css" />
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
+  </head>
+  <body id="watch-body" class="auth-pending outside-room idle-player">
+    <svg id="icon-sprite" hidden aria-hidden="true" width="0" height="0"></svg>
+    <script src="/watch-layout.js"></script>
+    <main>
+      <header class="account" id="account">
+        <a id="brand-link" href="/" aria-label="uburoom watch"
+          ><img class="brand" src="/assets/branding/uburoom-wordmark-brand.svg" alt="uburoom" width="164" height="51"
+        /></a>
+        <div class="account-actions">
+          <span class="identity-group"
+            ><button
+              id="theme-toggle"
+              aria-label="Theme: Dark. Switch to light."
+              title="Theme: Dark. Switch to light."
+              class="appearance-toggle"
+              type="button"
+              role="switch"
+              aria-checked="false"
+            >
+              <span class="appearance-track" aria-hidden="true"
+                ><span class="appearance-thumb"
+                  ><svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    data-tabler-icon="moon"
+                  >
+                    <use href="#icon-moon"></use></svg></span
+              ></span></button
+            ><button
+              id="identity"
+              type="button"
+              aria-haspopup="dialog"
+              aria-controls="account-dialog"
+              aria-label="Account settings"
+              title="Account settings"
+              disabled
+            ></button
+            ><button
+              id="admin-mode"
+              class="admin-toggle"
+              role="switch"
+              aria-checked="false"
+              aria-label="Admin mode"
+              title="Admin mode"
+              hidden
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                data-tabler-icon="shield-check"
+              >
+                <use href="#icon-shield-check"></use>
+              </svg></button></span
+          ><button id="open-browser" class="quiet browser-button" hidden>
+            <span id="browser-symbol"
+              ><svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                data-tabler-icon="external-link"
+              >
+                <use href="#icon-external-link"></use></svg></span
+            ><span>Open in Browser</span></button
+          ><button id="drawer-close" class="icon-button" aria-label="Close drawer" title="Close drawer" hidden>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              data-tabler-icon="x"
+            >
+              <use href="#icon-x"></use>
+            </svg>
+          </button>
+        </div>
+      </header>
+      <section id="app">
+        <section class="screen-column">
+          <section id="viewing-section" aria-label="Room player">
+            <div class="stage paused" id="stage" tabindex="-1">
+              <video id="video" playsinline preload="auto"></video>
+              <div id="empty-stage">
+                <span id="empty-symbol"
+                  ><svg
+                    class="empty-oomark"
+                    viewBox="528.41 544.4 298.99 249.1061"
+                    width="68"
+                    height="56"
+                    aria-hidden="true"
+                  >
+                    <circle
+                      class="oomark-eye"
+                      cx="618.46"
+                      cy="634.45"
+                      r="48.3813"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="35.3374"
+                    />
+                    <circle
+                      class="oomark-eye"
+                      cx="737.35"
+                      cy="634.45"
+                      r="48.3813"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="35.3374"
+                    />
+                    <line
+                      class="oomark-mouth"
+                      x1="601.9475"
+                      x2="753.8625"
+                      y1="743.0031"
+                      y2="743.0031"
+                      stroke="var(--secondary)"
+                      stroke-width="53.0061"
+                      stroke-linecap="butt"
+                    /></svg
+                ></span>
+                <h1 id="empty-title">Join or create a room</h1>
+                <p id="empty-hint">Choose an active room or create your own.</p>
+                <div id="auth-overlay" class="lobby-auth">
+                  <section id="auth-loading" class="card auth-card" aria-labelledby="auth-title">
+                    <h2 id="auth-title" hidden>Unable to load uburoom</h2>
+                    <p id="auth-status" role="status">Loading rooms...</p>
+                    <button id="auth-retry" class="quiet" type="button" hidden>Try again</button>
+                  </section>
+                  <section id="welcome" class="card auth-card" hidden>
+                    <h2 id="welcome-title">Welcome to uburoom</h2>
+                    <p id="entry-status" role="status">Sign in to browse your library and join a room.</p>
+                    <form id="entry-form" hidden>
+                      <label for="entry-password">Server password</label
+                      ><input
+                        id="entry-password"
+                        type="password"
+                        autocomplete="current-password"
+                        maxlength="1024"
+                        required
+                      /><button id="entry-submit" class="primary" type="submit">Continue</button>
+                    </form>
+                    <form id="guest-join" hidden>
+                      <label for="guest-name">Name</label>
+                      <div class="guest-name-row">
+                        <input id="guest-name" maxlength="80" autocomplete="nickname" required /><button
+                          id="guest-name-roll"
+                          class="icon-button"
+                          type="button"
+                        ></button>
+                      </div>
+                      <p class="hint">Guests appear in italics. Your name isn’t verified.</p>
+                      <button id="guest-join-submit" class="primary" type="submit">Join</button>
+                    </form>
+                    <p id="guest-sign-in-label" class="hint" hidden>Or sign in so your name is verified:</p>
+                    <form id="invite-code-form" hidden>
+                      <label for="invite-code">Have an invite code?</label>
+                      <div class="guest-name-row">
+                        <input
+                          id="invite-code"
+                          maxlength="40"
+                          autocomplete="off"
+                          autocapitalize="none"
+                          spellcheck="false"
+                          placeholder="ubumfa-ogdave"
+                        /><button id="invite-code-submit" class="quiet" type="submit">Go</button>
+                      </div>
+                    </form>
+                    <div class="login-options">
+                      <a class="provider-button discord-button" href="/auth/discord"
+                        ><img src="/assets/discord-symbol-white.svg" alt="" width="24" height="18" />Log in with
+                        Discord</a
+                      ><a id="plex-login" class="provider-button quiet" href="/auth/plex" hidden
+                        ><img src="/assets/plex-icon.png" alt="" width="24" height="24" />Connect Plex to continue</a
+                      ><button id="entry-plex-activity" class="primary" type="button" hidden>
+                        Connect Plex in your browser</button
+                      ><button id="entry-recheck" class="quiet" type="button" hidden>Check access again</button>
+                    </div>
+                  </section>
+                </div>
+                <button id="empty-browse" class="primary" type="button" hidden>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    data-tabler-icon="video"
+                  >
+                    <use href="#icon-video"></use></svg
+                  >Browse media
+                </button>
+                <div id="room-lobby" hidden>
+                  <div class="room-bar" id="lobby-room-bar">
+                    <button id="lobby-reopen" class="quiet" hidden>
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="history"
+                      >
+                        <use href="#icon-history"></use></svg
+                      >Reopen room</button
+                    ><button id="lobby-schedule" class="quiet" type="button" aria-label="Schedule event" hidden>
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="calendar-event"
+                      >
+                        <use href="#icon-calendar-event"></use></svg
+                      ><span class="lobby-schedule-label">Schedule</span></button
+                    ><button id="lobby-create" class="primary">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="plus"
+                      >
+                        <use href="#icon-plus"></use></svg
+                      >New room
+                    </button>
+                    <p id="lobby-error" role="alert"></p>
+                    <section id="lobby-events" class="lobby-events" aria-labelledby="lobby-events-title" hidden>
+                      <h3 id="lobby-events-title">Upcoming</h3>
+                      <div id="lobby-event-list" class="lobby-rooms"></div>
+                      <button id="lobby-events-more" class="quiet" type="button" hidden>More</button>
+                    </section>
+                    <div id="lobby-rooms" class="lobby-rooms" aria-label="Active rooms"></div>
+                  </div>
+                </div>
+              </div>
+              <section id="ending-stage" class="ending-stage" aria-label="Playback ended" hidden></section>
+              <div class="player-chrome title-bar">
+                <div class="media-heading">
+                  <h1 id="title">Watch together</h1>
+                  <p id="details"></p>
+                  <p id="viewers"></p>
+                </div>
+                <div class="player-actions">
+                  <button
+                    id="drawer-open"
+                    class="solid-button"
+                    hidden
+                    title="Menu"
+                    aria-label="Menu"
+                    aria-expanded="false"
+                    aria-controls="drawer"
+                  >
+                    <span id="drawer-symbol"
+                      ><svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="layout-sidebar-right"
+                      >
+                        <use href="#icon-layout-sidebar-right"></use></svg></span
+                    ><span>Menu</span>
+                  </button>
+                </div>
+              </div>
+              <button id="join-playback" class="center-play" aria-label="Play" title="Play" hidden>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                  data-tabler-icon="player-play"
+                >
+                  <use href="#icon-player-play"></use>
+                </svg>
+              </button>
+              <p id="ready-status" role="status"></p>
+              <button id="skip-marker" class="skip-marker" type="button" aria-label="Skip intro" hidden>
+                <span id="skip-marker-icon" aria-hidden="true"
+                  ><svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    data-tabler-icon="player-track-next"
+                  >
+                    <use href="#icon-player-track-next"></use></svg></span
+                ><span id="skip-marker-label">Skip intro</span>
+              </button>
+              <div class="player-chrome transport" role="group" aria-label="Playback controls">
+                <div id="timeline-row" class="timeline-row" data-media-controls>
+                  <span id="time" class="time">0:00</span
+                  ><input
+                    id="timeline"
+                    type="range"
+                    min="0"
+                    max="60"
+                    step="0.1"
+                    value="0"
+                    aria-label="Playback position"
+                    disabled
+                  />
+                  <div id="timeline-tooltip" class="timeline-tooltip" hidden></div>
+                  <span id="duration" class="time">0:00</span
+                  ><select id="chapters" hidden></select>
+                </div>
+                <div class="transport-row">
+                  <div class="playback-buttons" data-media-controls>
+                    <button id="player-play" class="player-button" aria-label="Play" title="Play">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="player-play"
+                      >
+                        <use href="#icon-player-play"></use>
+                      </svg>
+                    </button>
+                    <button
+                      id="previous"
+                      class="player-button"
+                      aria-label="Restart / previous episode"
+                      title="Restart / previous episode"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="player-skip-back"
+                      >
+                        <use href="#icon-player-skip-back"></use>
+                      </svg>
+                    </button>
+                    <button
+                      id="seek-back"
+                      class="player-button"
+                      aria-label="Seek back 15 seconds"
+                      title="Seek back 15 seconds"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="rewind-backward-15"
+                      >
+                        <use href="#icon-rewind-backward-15"></use>
+                      </svg>
+                    </button>
+                    <button
+                      id="seek-forward"
+                      class="player-button"
+                      aria-label="Seek forward 15 seconds"
+                      title="Seek forward 15 seconds"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="rewind-forward-15"
+                      >
+                        <use href="#icon-rewind-forward-15"></use>
+                      </svg>
+                    </button>
+                    <button id="next" class="player-button" aria-label="Next video" title="Next video">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="player-skip-forward"
+                      >
+                        <use href="#icon-player-skip-forward"></use>
+                      </svg>
+                    </button>
+                  </div>
+                  <div class="player-tools">
+                    <button
+                      id="notifications-toggle"
+                      class="player-button"
+                      type="button"
+                      aria-label="Notifications"
+                      title="Hide notifications"
+                      aria-pressed="true"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="bell"
+                      >
+                        <use href="#icon-bell"></use>
+                      </svg></button
+                    ><button
+                      id="captions-toggle"
+                      data-media-controls
+                      class="player-button"
+                      aria-label="Enable subtitles"
+                      title="Enable subtitles"
+                      aria-pressed="false"
+                      disabled
+                    ></button
+                    ><button
+                      id="tracks-open"
+                      data-media-controls
+                      class="player-button"
+                      title="Player settings"
+                      aria-label="Player settings"
+                      aria-haspopup="true"
+                      aria-expanded="false"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="settings"
+                      >
+                        <use href="#icon-settings"></use>
+                      </svg>
+                    </button>
+                    <div class="volume-control" data-media-controls>
+                      <button
+                        id="player-mute"
+                        class="player-button"
+                        aria-label="Mute"
+                        title="Mute"
+                        aria-pressed="false"
+                      >
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          aria-hidden="true"
+                          data-tabler-icon="volume"
+                        >
+                          <use href="#icon-volume"></use>
+                        </svg></button
+                      ><input
+                        id="player-volume"
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="1"
+                        value="30"
+                        aria-label="Volume percentage"
+                      />
+                    </div>
+                    <button
+                      id="pip"
+                      data-media-controls
+                      class="player-button"
+                      title="Picture-in-Picture"
+                      aria-label="Picture-in-Picture"
+                      aria-pressed="false"
+                      disabled
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="picture-in-picture"
+                      >
+                        <use href="#icon-picture-in-picture"></use>
+                      </svg></button
+                    ><button
+                      id="theater"
+                      class="player-button"
+                      title="Theater mode"
+                      aria-label="Theater mode"
+                      aria-pressed="false"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="rectangle"
+                      >
+                        <use href="#icon-rectangle"></use>
+                      </svg></button
+                    ><button id="fullscreen" class="player-button" title="Fullscreen" aria-label="Fullscreen">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="maximize"
+                      >
+                        <use href="#icon-maximize"></use>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div id="pip-placeholder" class="pip-placeholder" hidden aria-label="Picture-in-Picture active">
+                <div class="pip-placeholder-content">
+                  <p>Playing in Picture-in-Picture</p>
+                  <button id="pip-return" class="primary" type="button">Return video</button>
+                </div>
+              </div>
+              <p id="seek-feedback" role="status" hidden></p>
+              <div id="watch-toasts" class="watch-toast-region" aria-live="polite"></div>
+              <section id="room-recovery" class="readiness-choice" aria-live="polite" hidden>
+                <h2>Recovering room</h2>
+                <p id="room-recovery-message"></p>
+                <button id="room-recovery-start" class="primary" type="button">Start now</button>
+              </section>
+              <section id="readiness-choice" class="readiness-choice" aria-labelledby="readiness-title" hidden>
+                <h2 id="readiness-title">Some viewers need more time</h2>
+                <p id="readiness-message">Playback is paused. Start with ready viewers, or give everyone more time.</p>
+                <div>
+                  <button id="ready-start" class="primary">Start with ready viewers</button
+                  ><button id="ready-wait" class="quiet">Wait another 15 seconds</button
+                  ><button id="ready-cancel" class="quiet">Cancel</button>
+                </div>
+              </section>
+              <dialog id="tracks-dialog" class="watch-dialog" aria-labelledby="tracks-title">
+                <header>
+                  <h2 id="tracks-title">Player settings</h2>
+                  <button id="tracks-close" class="icon-button" aria-label="Close" title="Close" autofocus>
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      data-tabler-icon="x"
+                    >
+                      <use href="#icon-x"></use>
+                    </svg>
+                  </button>
+                </header>
+                <p class="hint">These choices apply only to your player.</p>
+                <div class="player-settings-grid">
+                  <div class="player-settings-column">
+                    <section class="settings-group">
+                      <h3>Playback</h3>
+                      <p id="quality-notice" class="hint" role="status"></p>
+                      <label for="quality">Quality</label
+                      ><select id="quality" aria-label="Playback quality">
+                        <option value="direct">Original</option>
+                        <option value="1080p20">1080p · 20 Mbps</option>
+                        <option value="1080p12">1080p · 12 Mbps</option>
+                        <option value="1080p8">1080p · 8 Mbps</option>
+                        <option value="720p4">720p · 4 Mbps</option>
+                        <option value="720p2">720p · 2 Mbps</option>
+                      </select>
+                      <p id="quality-detail" class="hint" hidden></p>
+                      <div class="personal-sync">
+                        <label for="sync-correction">Sync correction</label
+                        ><select id="sync-correction" aria-describedby="sync-correction-hint">
+                          <option value="speed">Speed adjustments</option>
+                          <option value="jumps">Occasional jumps</option>
+                        </select>
+                        <p id="sync-correction-hint" class="hint"></p>
+                      </div>
+                      <div id="plex-reporting-settings" hidden>
+                        <label class="watch-switch-label"
+                          ><input
+                            id="plex-reporting-activity"
+                            type="checkbox"
+                            role="switch"
+                            class="watch-switch"
+                            aria-label="Report playback activity to Plex"
+                          />Report playback activity to Plex</label
+                        ><label class="watch-switch-label"
+                          ><input
+                            id="plex-reporting-watch-state"
+                            type="checkbox"
+                            role="switch"
+                            class="watch-switch"
+                            aria-label="Update personal Plex watch state"
+                          />Update personal Plex watch state</label
+                        >
+                      </div>
+                    </section>
+                    <section class="settings-group">
+                      <h3>Audio</h3>
+                      <label for="audio-track">Audio track</label
+                      ><select id="audio-track"></select>
+                      <p id="audio-track-name" class="hint" hidden></p>
+                      <p id="audio-track-status" class="hint"></p>
+                      <label for="audio-mode">Audio mode</label
+                      ><select id="audio-mode" hidden>
+                        <option value="normal" data-caption="Original dynamic range">Normal</option>
+                        <option value="dialogue" data-caption="Boosts speech clarity">Dialogue</option>
+                        <option value="night" data-caption="Levels peaks for quiet listening">Night</option>
+                      </select>
+                      <div
+                        id="audio-mode-group"
+                        class="button-group watch-segmented"
+                        role="group"
+                        aria-label="Audio mode"
+                      >
+                        <button type="button" class="group-button" data-value="normal" aria-pressed="true">
+                          Normal</button
+                        ><button type="button" class="group-button" data-value="dialogue" aria-pressed="false">
+                          Dialogue</button
+                        ><button type="button" class="group-button" data-value="night" aria-pressed="false">
+                          Night
+                        </button>
+                      </div>
+                      <p id="audio-mode-hint" class="hint">Original dynamic range and audio balance.</p>
+                    </section>
+                  </div>
+                  <div class="player-settings-column">
+                    <section class="settings-group">
+                      <h3>Subtitles</h3>
+                      <label for="subtitle-track">Subtitle track</label
+                      ><select id="subtitle-track"></select>
+                      <p id="subtitle-track-name" class="hint" hidden></p>
+                      <label for="subtitle-mode">Rendering</label
+                      ><select id="subtitle-mode">
+                        <option value="auto">Automatic</option>
+                        <option value="burn">Burn-in</option></select
+                      ><label for="subtitle-offset">Subtitle delay (seconds)</label
+                      ><input
+                        id="subtitle-offset"
+                        aria-describedby="subtitle-delay-hint"
+                        type="number"
+                        min="-30"
+                        max="30"
+                        step="0.1"
+                        value="0"
+                      />
+                      <p id="subtitle-delay-hint" class="hint">Select subtitles to adjust their timing.</p>
+                      <label for="subtitle-color-preset">Text color</label>
+                      <div class="subtitle-color-row">
+                        <select id="subtitle-color-preset" aria-label="Subtitle text color preset">
+                          <option value="#ffffff">White</option>
+                          <option value="#ffe600">Yellow</option>
+                          <option value="#38bdf8">Cyan</option>
+                          <option value="#4ade80">Green</option>
+                          <option value="custom">Custom…</option>
+                        </select>
+                        <div class="subtitle-color-custom">
+                          <input
+                            id="subtitle-color-hex"
+                            class="hex-input"
+                            type="text"
+                            maxlength="7"
+                            value="#ffffff"
+                            placeholder="#ffffff"
+                            aria-label="Subtitle hex color"
+                            spellcheck="false"
+                            autocomplete="off"
+                          /><input
+                            id="subtitle-color-picker"
+                            class="color-swatch-input"
+                            type="color"
+                            value="#ffffff"
+                            title="Pick color"
+                            aria-label="Pick color"
+                          />
+                        </div>
+                      </div>
+                      <label for="subtitle-size">Text size</label
+                      ><select id="subtitle-size" hidden>
+                        <option value="small">Small</option>
+                        <option value="medium">Medium</option>
+                        <option value="large">Large</option>
+                      </select>
+                      <div
+                        id="subtitle-size-group"
+                        class="button-group watch-segmented"
+                        role="group"
+                        aria-label="Text size"
+                      >
+                        <button type="button" class="group-button" data-value="small" aria-pressed="true">Small</button
+                        ><button type="button" class="group-button" data-value="medium" aria-pressed="false">
+                          Medium</button
+                        ><button type="button" class="group-button" data-value="large" aria-pressed="false">
+                          Large
+                        </button>
+                      </div>
+                      <label for="subtitle-position">Text position</label
+                      ><select id="subtitle-position" hidden>
+                        <option value="video">On video</option>
+                        <option value="player">On player</option>
+                      </select>
+                      <div
+                        id="subtitle-position-group"
+                        class="button-group watch-segmented"
+                        role="group"
+                        aria-label="Text position"
+                      >
+                        <button type="button" class="group-button" data-value="video" aria-pressed="true">
+                          On video</button
+                        ><button type="button" class="group-button" data-value="player" aria-pressed="false">
+                          On player
+                        </button>
+                      </div>
+                      <label for="subtitle-bg">Background style</label
+                      ><select id="subtitle-bg" hidden>
+                        <option value="shadow">Shadow</option>
+                        <option value="background">Background</option>
+                        <option value="off">Off</option>
+                      </select>
+                      <div
+                        id="subtitle-bg-group"
+                        class="button-group watch-segmented"
+                        role="group"
+                        aria-label="Background style"
+                      >
+                        <button type="button" class="group-button" data-value="shadow" aria-pressed="true">
+                          Shadow</button
+                        ><button type="button" class="group-button" data-value="background" aria-pressed="false">
+                          Background</button
+                        ><button type="button" class="group-button" data-value="off" aria-pressed="false">Off</button>
+                      </div>
+                      <label for="subtitle-brightness">Subtitle brightness</label>
+                      <div class="subtitle-slider-row">
+                        <input
+                          id="subtitle-brightness"
+                          type="range"
+                          min="20"
+                          max="100"
+                          step="5"
+                          value="100"
+                          aria-label="Subtitle brightness"
+                        /><span id="subtitle-brightness-value" class="slider-value">100%</span>
+                      </div>
+                      <p id="track-status" role="status" class="hint"></p>
+                      <button id="subtitle-retry" class="quiet" hidden>Retry subtitles</button>
+                    </section>
+                  </div>
+                </div>
+                <section class="settings-group player-media-information">
+                  <h3>Media information</h3>
+                  <div class="player-media-columns">
+                    <div>
+                      <h4>Source</h4>
+                      <p id="media-information" class="hint"></p>
+                    </div>
+                    <details>
+                      <summary>Technical details</summary>
+                      <p id="delivery-information" class="hint"></p>
+                      <p class="diagnostic-report">
+                        <button id="copy-diagnostics" type="button" class="quiet">Copy diagnostic report</button
+                        ><span id="diagnostic-report-hint" class="hint"
+                          >For bug reports. Copies the last 5 minutes of player activity, without links or sign-in
+                          details.</span
+                        >
+                      </p>
+                    </details>
+                  </div>
+                  <div id="video-check" class="video-check" hidden>
+                    <h4>Video check</h4>
+                    <ul id="video-check-items"></ul>
+                    <button id="video-check-refresh" type="button" class="quiet">Check again</button>
+                  </div>
+                </section>
+              </dialog>
+            </div>
+          </section>
+          <nav id="section-tabs" role="tablist" aria-label="Room sections">
+            <button
+              id="section-tab-room"
+              type="button"
+              role="tab"
+              aria-controls="options-panel"
+              data-section="room"
+              aria-selected="false"
+              tabindex="-1"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                data-tabler-icon="armchair-2"
+              >
+                <use href="#icon-armchair-2"></use></svg
+              >Room</button
+            ><button
+              id="section-tab-queue"
+              type="button"
+              role="tab"
+              aria-controls="queue-panel"
+              data-section="queue"
+              aria-selected="false"
+              tabindex="-1"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                data-tabler-icon="player-track-next"
+              >
+                <use href="#icon-player-track-next"></use></svg
+              >Queue</button
+            ><button
+              id="section-tab-media"
+              type="button"
+              role="tab"
+              aria-controls="library-panel"
+              data-section="media"
+              aria-selected="true"
+              tabindex="0"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                data-tabler-icon="video"
+              >
+                <use href="#icon-video"></use></svg
+              >Media
+            </button>
+          </nav>
+          <section id="library-panel" class="below-video card">
+            <header class="library-header watch-panel-header" id="library-header">
+              <div class="library-header-left" id="library-header-left">
+                <h2 id="library-heading" class="watch-panel-heading">
+                  <button
+                    id="media-collapse"
+                    class="section-toggle"
+                    type="button"
+                    aria-expanded="true"
+                    aria-controls="library-content"
+                  >
+                    <span id="media-symbol" class="watch-panel-symbol" aria-hidden="true"
+                      ><svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="video"
+                      >
+                        <use href="#icon-video"></use></svg></span
+                    ><span class="watch-panel-title">Media</span
+                    ><svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      data-tabler-icon="chevron-down"
+                    >
+                      <use href="#icon-chevron-down"></use>
+                    </svg>
+                  </button>
+                </h2>
+                <div
+                  class="library-navigation-history watch-control-group watch-header-actions"
+                  role="group"
+                  aria-label="Navigation"
+                >
+                  <button
+                    id="library-back"
+                    type="button"
+                    class="library-key watch-control watch-control-icon watch-control-solid-disabled"
+                    aria-label="Back"
+                    title="No earlier Media page."
+                    disabled
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      data-tabler-icon="arrow-left"
+                    >
+                      <use href="#icon-arrow-left"></use>
+                    </svg></button
+                  ><button
+                    id="library-forward"
+                    type="button"
+                    class="library-key watch-control watch-control-icon watch-control-solid-disabled"
+                    aria-label="Forward"
+                    title="No later Media page."
+                    disabled
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      data-tabler-icon="arrow-right"
+                    >
+                      <use href="#icon-arrow-right"></use>
+                    </svg></button
+                  ><button
+                    id="library-home"
+                    type="button"
+                    class="library-key watch-control watch-control-icon watch-control-solid-disabled"
+                    aria-label="Libraries home"
+                    title="Already at Libraries home."
+                    disabled
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      data-tabler-icon="home"
+                    >
+                      <use href="#icon-home"></use>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="library-header-right" id="library-header-right">
+                <div class="library-top">
+                  <button
+                    id="library-top"
+                    class="quiet watch-control watch-control-responsive"
+                    type="button"
+                    aria-label="Back to top"
+                    title="Back to top"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      data-tabler-icon="arrow-bar-to-up"
+                    >
+                      <use href="#icon-arrow-bar-to-up"></use></svg
+                    ><span class="watch-control-label">Back to top</span>
+                  </button>
+                </div>
+              </div>
+            </header>
+            <div id="library-content"></div>
+          </section>
+        </section>
+        <div class="room-column below-video" id="room-column">
+          <section id="options-panel" class="below-video card section-tab-inactive">
+            <header class="watch-panel-header">
+              <h2 class="watch-panel-heading">
+                <button
+                  id="options-collapse"
+                  class="section-toggle"
+                  aria-expanded="true"
+                  aria-controls="options-content"
+                >
+                  <span id="room-symbol" class="watch-panel-symbol" aria-hidden="true"
+                    ><svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      data-tabler-icon="armchair-2"
+                    >
+                      <use href="#icon-armchair-2"></use></svg></span
+                  ><span id="options-title" class="watch-panel-title">Room</span
+                  ><span id="options-chevron"
+                    ><svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      data-tabler-icon="chevron-down"
+                    >
+                      <use href="#icon-chevron-down"></use></svg
+                  ></span>
+                </button>
+              </h2>
+              <div class="room-header-actions watch-control-group watch-header-actions">
+                <button
+                  id="room-schedule"
+                  class="quiet"
+                  aria-label="Schedule event"
+                  title="Schedule event"
+                  hidden
+                ></button
+                ><button id="room-share" class="quiet" aria-label="Share room invite" hidden></button
+                ><button id="room-people-open" class="quiet" aria-label="Viewers" hidden></button
+                ><button
+                  id="room-settings-open"
+                  class="icon-button"
+                  aria-label="Room settings"
+                  title="Room settings"
+                  hidden
+                ></button>
+              </div>
+            </header>
+            <div id="options-content">
+              <div id="current-room" class="room-content-columns" hidden>
+                <section class="room-participant-column" aria-label="Viewers">
+                  <div class="room-roster-frame" id="room-roster-frame">
+                    <h4 class="room-control-row room-roster-heading">
+                      <span>Viewers</span><span id="room-sync-spread" class="room-sync-spread" hidden></span>
+                    </h4>
+                    <div id="room-participants" class="room-roster" tabindex="0" aria-label="Viewers"></div>
+                    <button
+                      id="room-participants-expand"
+                      class="icon-button watch-control watch-control-icon watch-header-control"
+                      type="button"
+                      aria-label="Expand viewers"
+                      title="Expand viewers"
+                      aria-expanded="false"
+                      hidden
+                    ></button>
+                  </div>
+                </section>
+              </div>
+              <p id="room-save-error" role="alert"></p>
+              <div class="below-video room-bar watch-control-group" id="room-bar">
+                <div id="rooms" class="chips" role="group" aria-label="Active rooms" hidden></div>
+                <button
+                  id="refresh"
+                  class="icon-button watch-control watch-control-icon"
+                  aria-label="Refresh rooms"
+                  title="Refresh rooms"
+                  hidden
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    data-tabler-icon="refresh"
+                  >
+                    <use href="#icon-refresh"></use>
+                  </svg></button
+                ><button id="switch-room" class="quiet watch-control" aria-label="Choose room" title="Choose room">
+                  <span class="watch-control-label">Choose room</span></button
+                ><button id="create" class="quiet watch-control" aria-label="New room" title="New room">
+                  <span class="watch-control-label">New room</span></button
+                ><button
+                  id="reopen"
+                  class="quiet watch-control watch-control-responsive"
+                  aria-label="Reopen room"
+                  title="Reopen room"
+                  hidden
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    data-tabler-icon="history"
+                  >
+                    <use href="#icon-history"></use></svg
+                  ><span class="watch-control-label">Reopen room</span></button
+                ><button
+                  id="admin-end-room"
+                  class="quiet watch-control"
+                  aria-label="Close room for everyone"
+                  title="Close room for everyone"
+                  hidden
+                >
+                  <span class="watch-control-label">Close room for everyone</span></button
+                ><button
+                  id="close-room"
+                  class="quiet watch-control watch-control-responsive"
+                  aria-label="Leave room"
+                  title="Leave room"
+                  hidden
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    data-tabler-icon="logout"
+                  >
+                    <use href="#icon-logout"></use></svg
+                  ><span class="watch-control-label">Leave room</span>
+                </button>
+              </div>
+            </div>
+          </section>
+          <section id="queue-panel" class="below-video card section-tab-inactive" aria-label="Queue">
+            <div id="queue-content" class="queue-is-empty queue-no-current queue-no-entries" data-view="empty">
+              <header class="queue-header watch-panel-header">
+                <h2 class="queue-heading watch-panel-heading">
+                  <button
+                    id="queue-collapse"
+                    class="section-toggle"
+                    type="button"
+                    aria-expanded="true"
+                    aria-controls="queue-body"
+                  >
+                    <span id="queue-symbol" class="watch-panel-symbol" aria-hidden="true"
+                      ><svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                        data-tabler-icon="player-track-next"
+                      >
+                        <use href="#icon-player-track-next"></use></svg></span
+                    ><span id="queue-title" class="watch-panel-title">Queue</span
+                    ><svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      data-tabler-icon="chevron-down"
+                    >
+                      <use href="#icon-chevron-down"></use>
+                    </svg>
+                  </button>
+                </h2>
+              </header>
+              <div id="queue-body">
+                <section id="queue-empty-screen" class="queue-empty-screen">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    data-tabler-icon="playlist-add"
+                  >
+                    <use href="#icon-playlist-add"></use>
+                  </svg>
+                  <h3 class="queue-empty-title">The queue lives in a room</h3>
+                  <p class="queue-empty-text">
+                    Join or create a room, then add movies and episodes here. They play in order for everyone.
+                  </p>
+                  <button
+                    id="queue-empty-browse"
+                    type="button"
+                    class="quiet"
+                    aria-label="Browse media"
+                    title="Browse media"
+                    disabled
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      data-tabler-icon="video"
+                    >
+                      <use href="#icon-video"></use></svg
+                    ><span>Browse media</span>
+                  </button>
+                </section>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+      <p id="status" role="status" class="below-video hint"></p>
+      <p id="error" role="alert" class="below-video"></p>
+      <p id="diagnostic-actions" hidden class="below-video">
+        <button
+          id="probe-control"
+          class="quiet"
+          title="Private single-viewer test: interrupt only this tab's room polls for six seconds."
+          hidden
+          disabled
+        >
+          Test control reconnect (6 seconds)
+        </button>
+        <button id="soak-start" class="quiet" hidden disabled>Start two-hour soak</button
+        ><span id="soak-status" role="status" class="hint" hidden></span>
+      </p>
+      <div id="acceleration-help" hidden class="below-video">
+        <button id="enable-acceleration" class="quiet" hidden>Enable hardware acceleration</button
+        ><button id="watch-website" class="primary">Open in Browser</button>
+      </div>
+      <dialog id="handoff-dialog" class="watch-dialog dialog-small" aria-labelledby="handoff-title">
+        <header><h2 id="handoff-title">Approve browser sign-in?</h2></header>
+        <p id="handoff-status" role="status">Open uburoom in your browser, then check its code.</p>
+        <p id="handoff-code" class="handoff-code" hidden></p>
+        <p class="hint">Approve only if your browser shows this same code.</p>
+        <form method="dialog" class="dialog-footer">
+          <button class="quiet" value="cancel" autofocus>Cancel</button
+          ><button id="approve-browser" class="primary" type="button" disabled>Approve</button>
+        </form>
+      </dialog>
+      <dialog id="account-dialog" class="watch-dialog" aria-labelledby="account-title">
+        <header>
+          <h2 id="account-title">Account</h2>
+          <button id="account-close" class="icon-button" aria-label="Close" title="Close" autofocus>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              data-tabler-icon="x"
+            >
+              <use href="#icon-x"></use>
+            </svg>
+          </button>
+        </header>
+        <p id="account-loading" role="status" hidden>Loading your account…</p>
+        <div id="account-content" hidden>
+          <label for="account-display-name">Display name</label>
+          <div class="dialog-actions">
+            <input id="account-display-name" maxlength="160" autocomplete="nickname" /><button
+              id="account-name-save"
+              type="button"
+              class="quiet"
+            >
+              Save name
+            </button>
+          </div>
+          <h3 class="account-section-title">Connected accounts</h3>
+          <div id="account-identities">
+            <div class="provider-row">
+              <div class="provider-details">
+                <h3>
+                  <span class="discord-symbol"
+                    ><img src="/assets/discord-symbol-white.svg" alt="" width="24" height="18" /></span
+                  >Discord
+                </h3>
+                <p id="discord-identity"></p>
+              </div>
+              <button id="connect-discord" class="provider-connect discord-button" type="button">Connect Discord</button
+              ><button
+                id="remove-discord"
+                class="icon-button provider-remove"
+                type="button"
+                aria-label="Remove Discord"
+                title="Remove Discord"
+                hidden
+              ></button>
+            </div>
+            <div class="provider-row">
+              <div class="provider-details">
+                <h3>
+                  <span class="plex-symbol"><img src="/assets/plex-icon.png" alt="" width="28" height="28" /></span>Plex
+                </h3>
+                <p id="plex-identity"></p>
+              </div>
+              <button id="connect-plex" class="provider-connect primary" type="button">Connect Plex</button
+              ><button
+                id="remove-plex"
+                class="icon-button provider-remove"
+                type="button"
+                aria-label="Remove Plex"
+                title="Remove Plex"
+                hidden
+              ></button>
+            </div>
+          </div>
+          <p id="account-connect-hint" class="hint">
+            Connect another sign-in method before removing your active login.
+          </p>
+          <p id="account-browser-hint" class="hint" hidden>Open in Browser to manage connected accounts.</p>
+          <section id="account-merge" hidden>
+            <h2>Combine your accounts</h2>
+            <div id="account-merge-details"></div>
+            <p class="hint">
+              Leave all watch rooms for both accounts first. Both accounts will be signed out, and this browser will
+              sign back in.
+            </p>
+            <button id="account-merge-confirm" class="primary">Merge accounts</button>
+          </section>
+          <details id="account-admin" hidden>
+            <summary>Match Discord and Plex</summary>
+            <p class="hint">Owner tools: use account IDs to match accounts. Plex sign-in is still required.</p>
+            <div class="account-fields">
+              <label for="match-discord">Discord user ID</label
+              ><input id="match-discord" list="known-discord" autocomplete="off" inputmode="numeric" /><label
+                for="match-plex"
+                >Plex account ID</label
+              ><input id="match-plex" list="known-plex" autocomplete="off" inputmode="numeric" />
+            </div>
+            <datalist id="known-discord"></datalist><datalist id="known-plex"></datalist
+            ><button id="match-preview" class="quiet">Preview match</button>
+            <p id="match-summary"></p>
+            <button id="match-confirm" class="primary" hidden>Assign match</button>
+          </details>
+        </div>
+        <p id="account-error" role="alert"></p>
+        <button id="account-retry" class="quiet" type="button" hidden>Try again</button>
+        <footer id="account-footer" class="dialog-footer with-divider" hidden></footer>
+      </dialog>
+      <dialog
+        id="account-remove-dialog"
+        class="watch-dialog dialog-small"
+        data-destructive="true"
+        aria-labelledby="account-remove-title"
+      >
+        <header><h2 id="account-remove-title">Remove account?</h2></header>
+        <p id="account-remove-description"></p>
+        <p id="account-remove-error" role="alert"></p>
+        <form method="dialog" class="dialog-footer">
+          <button id="account-remove-cancel" class="quiet" value="cancel" autofocus>Cancel</button
+          ><button id="account-remove-confirm" class="danger-button" type="button">Remove</button>
+        </form>
+      </dialog>
+      <dialog id="room-dialog" class="watch-dialog" aria-labelledby="room-dialog-title">
+        <header>
+          <h2 id="room-dialog-title">Rooms</h2>
+          <button id="room-dialog-close" class="icon-button" type="button" aria-label="Close" title="Close" autofocus>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              data-tabler-icon="x"
+            >
+              <use href="#icon-x"></use>
+            </svg>
+          </button>
+        </header>
+        <p id="room-dialog-hint" class="hint"></p>
+        <nav id="room-chooser-nav" class="dialog-actions" aria-label="Room lists">
+          <button id="room-show-active" class="quiet" type="button">Active rooms</button
+          ><button id="room-show-saved" class="quiet" type="button">Your rooms</button
+          ><button id="room-chooser-new" class="primary" type="button">New room</button
+          ><button id="room-create-back" class="quiet" type="button" hidden>Reopen room</button
+          ><button
+            id="room-chooser-refresh"
+            class="icon-button"
+            type="button"
+            aria-label="Refresh rooms"
+            title="Refresh rooms"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              data-tabler-icon="refresh"
+            >
+              <use href="#icon-refresh"></use>
+            </svg>
+          </button>
+        </nav>
+        <section id="room-create-form" hidden>
+          <div id="room-create-details">
+            <label for="room-name">Room name</label
+            ><input id="room-name" maxlength="100" placeholder="Room name" autocomplete="off" />
+          </div>
+          <label for="room-create-visibility">Visibility</label
+          ><select id="room-create-visibility" hidden>
+            <option value="public">Public</option>
+            <option value="private">Private · Hosts only</option>
+          </select>
+          <div id="room-create-visibility-group" class="button-group" role="group" aria-label="Visibility">
+            <button type="button" class="group-button" data-value="public" aria-pressed="true">Public</button
+            ><button type="button" class="group-button" data-value="private" aria-pressed="false">
+              Private · Hosts only
+            </button>
+          </div>
+          <div id="room-create-policy">
+            <label for="room-create-preset">Permissions</label
+            ><select id="room-create-preset" hidden>
+              <option value="host-control">Host control</option>
+              <option value="play-pause">Play/Pause</option>
+              <option value="queue">Queue</option>
+            </select>
+            <div id="room-create-preset-group" class="button-group" role="group" aria-label="Permissions">
+              <button type="button" class="group-button" data-value="host-control" aria-pressed="true">
+                Host control</button
+              ><button type="button" class="group-button" data-value="play-pause" aria-pressed="false">
+                <span>Play/<wbr />Pause</span></button
+              ><button type="button" class="group-button" data-value="queue" aria-pressed="false">Queue</button>
+            </div>
+          </div>
+        </section>
+        <section id="room-join"><div id="room-choices" aria-label="Active rooms"></div></section>
+        <section id="room-reopen" hidden tabindex="-1">
+          <p id="room-saved-status" class="hint" role="status"></p>
+          <div id="saved-rooms"></div>
+          <div id="room-saved-pagination" class="dialog-actions" hidden>
+            <button id="room-saved-previous" class="quiet" type="button" disabled>Previous</button
+            ><button id="room-saved-next" class="quiet" type="button" disabled>Next</button>
+          </div>
+        </section>
+        <p id="room-dialog-error" role="alert"></p>
+        <form method="dialog" id="room-dialog-footer" class="dialog-footer" hidden>
+          <button id="room-create-cancel" class="quiet" type="button" value="cancel">Cancel</button>
+          <div id="room-create-actions" class="room-create-actions">
+            <button id="room-create" class="primary" type="button">Create room</button
+            ><button
+              id="room-create-settings"
+              class="icon-button"
+              type="button"
+              aria-label="Room settings"
+              title="Configure this room before creating it"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                data-tabler-icon="settings"
+              >
+                <use href="#icon-settings"></use>
+              </svg>
+            </button>
+          </div>
+        </form>
+      </dialog>
+      <dialog id="room-share-dialog" class="watch-dialog dialog-small" aria-labelledby="room-share-title">
+        <header>
+          <h2 id="room-share-title">Share room</h2>
+          <button id="room-share-dismiss" class="icon-button" type="button" aria-label="Close" title="Close" autofocus>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              data-tabler-icon="x"
+            >
+              <use href="#icon-x"></use>
+            </svg>
+          </button>
+        </header>
+        <div id="room-share-main">
+          <div id="room-share-invite">
+            <label for="room-share-url-input" class="room-share-label">Invite link</label>
+            <div class="room-share-link-group">
+              <div class="room-share-link-dock">
+                <input
+                  id="room-share-url-input"
+                  type="text"
+                  readonly
+                  autocomplete="off"
+                  spellcheck="false"
+                  aria-label="Invite link"
+                  title="Click to copy invite link"
+                /><button
+                  id="room-share-copy"
+                  class="icon-button room-share-dock-btn"
+                  type="button"
+                  aria-label="Copy invite link"
+                  title="Copy invite link"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    data-tabler-icon="copy"
+                  >
+                    <use href="#icon-copy"></use>
+                  </svg>
+                </button>
+              </div>
+              <button
+                id="room-share-personal"
+                class="icon-button"
+                type="button"
+                aria-label="Share invite…"
+                title="Share invite…"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                  data-tabler-icon="share"
+                >
+                  <use href="#icon-share"></use>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <section id="room-share-publication" hidden>
+            <div class="room-share-heading-row">
+              <h3 id="room-share-destination">Publish to</h3>
+              <span id="room-share-channel-badge" class="room-share-channel-pill" hidden></span>
+            </div>
+            <div class="room-share-preview">
+              <strong id="room-share-preview-name"></strong>
+              <p id="room-share-preview-title"></p>
+              <div class="room-share-preview-status-row">
+                <span id="room-share-preview-dot" class="room-share-status-dot"></span
+                ><span id="room-share-preview-status" class="hint"></span>
+              </div>
+            </div>
+            <p id="room-share-publication-status" class="hint" role="status"></p>
+            <div id="room-share-published-actions" class="dialog-actions room-share-published-row" hidden>
+              <button id="room-share-view" class="quiet" type="button">View Discord post</button
+              ><button id="room-share-remove" class="danger-button" type="button">Remove post</button>
+            </div>
+            <div id="room-share-actions-row" class="dialog-actions room-share-action-row">
+              <button id="room-share-publish" class="primary" type="button">Publish now</button>
+            </div>
+          </section>
+        </div>
+        <p id="room-share-error" role="alert"></p>
+      </dialog>
+      <dialog id="event-dialog" class="watch-dialog dialog-small" aria-labelledby="event-dialog-title">
+        <header>
+          <h2 id="event-dialog-title">Schedule event</h2>
+          <button id="event-dismiss" class="icon-button" type="button" aria-label="Close" title="Close" autofocus>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              data-tabler-icon="x"
+            >
+              <use href="#icon-x"></use>
+            </svg>
+          </button>
+        </header>
+        <form id="event-form">
+          <div class="event-field" id="event-room-row">
+            <label for="event-room">Room</label
+            ><select id="event-room"></select>
+          </div>
+          <div class="event-field">
+            <div class="event-field-header">
+              <label for="event-title">Event title</label><span id="event-title-count" class="hint">0 / 100</span>
+            </div>
+            <input id="event-title" maxlength="100" required placeholder="Event title" />
+          </div>
+          <div class="event-field">
+            <label for="event-description">Description <span class="hint">(optional)</span></label
+            ><textarea
+              id="event-description"
+              maxlength="1000"
+              rows="3"
+              placeholder="Add watch party notes, links, or what to expect…"
+            ></textarea>
+          </div>
+          <div class="event-field">
+            <div class="event-field-header">
+              <label id="event-starts-label">Starts</label
+              ><button
+                id="event-zone-toggle"
+                type="button"
+                class="event-zone-btn"
+                aria-expanded="false"
+                aria-controls="event-zone-wrapper"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                  data-tabler-icon="clock"
+                >
+                  <use href="#icon-clock"></use></svg
+                ><span id="event-zone-display">Time zone</span><span class="event-zone-change">· Change</span>
+              </button>
+            </div>
+            <div id="event-zone-wrapper" hidden class="event-zone-wrapper">
+              <select id="event-zone" required aria-label="Time zone"></select>
+            </div>
+            <div class="event-chips" role="group" aria-label="Start time presets">
+              <button id="event-chip-next30" class="event-chip" type="button" data-preset="next30">
+                Next half-hour</button
+              ><button id="event-chip-tonight8" class="event-chip" type="button" data-preset="tonight8">
+                Tonight 8:00 PM</button
+              ><button id="event-chip-tomorrow8" class="event-chip" type="button" data-preset="tomorrow8">
+                Tomorrow 8:00 PM
+              </button>
+            </div>
+            <div class="event-datetime-row">
+              <input id="event-date" type="date" required aria-label="Event date" /><select
+                id="event-time"
+                required
+                aria-label="Event time"
+              ></select>
+            </div>
+          </div>
+          <div class="event-field">
+            <div class="event-field-header">
+              <label id="event-duration-label">Duration</label
+              ><span id="event-end-badge" class="event-end-badge"></span>
+            </div>
+            <div class="event-duration-pills" role="group" aria-label="Event duration">
+              <button class="event-duration-pill" type="button" data-duration="60">1h</button
+              ><button class="event-duration-pill" type="button" data-duration="120">2h</button
+              ><button class="event-duration-pill" type="button" data-duration="180">3h</button
+              ><button class="event-duration-pill" type="button" data-duration="custom">Custom</button>
+            </div>
+            <div id="event-custom-duration-row" class="event-custom-row" hidden>
+              <label for="event-custom-duration">Custom duration</label
+              ><select id="event-custom-duration" aria-label="Custom duration"></select>
+            </div>
+          </div>
+          <label class="form-checkbox" id="event-discord-row" hidden
+            ><input id="event-discord" type="checkbox" checked /><span>Post to Discord</span></label
+          >
+          <p id="event-error" role="alert"></p>
+          <input id="event-start" type="hidden" /><input id="event-end" type="hidden" />
+          <div class="dialog-footer event-form-actions">
+            <button id="event-discard" class="quiet" type="button">Cancel</button
+            ><button id="event-save" class="primary" type="submit">Schedule</button>
+          </div>
+        </form>
+      </dialog>
 
-</section>
-<p id="status" role="status" class="below-video hint"></p><p id="error" role="alert" class="below-video"></p>
-<p id="diagnostic-actions" hidden class="below-video"><button id="probe-control" class="quiet" title="Private single-viewer test: interrupt only this tab's room polls for six seconds." hidden disabled>Test control reconnect (6 seconds)</button> <button id="soak-start" class="quiet" hidden disabled>Start two-hour soak</button><span id="soak-status" role="status" class="hint" hidden></span></p><div id="acceleration-help" hidden class="below-video"><button id="enable-acceleration" class="quiet" hidden>Enable hardware acceleration</button><button id="watch-website" class="primary">Open in Browser</button></div>
-<dialog id="handoff-dialog" class="watch-dialog dialog-small" aria-labelledby="handoff-title"><header><h2 id="handoff-title">Approve browser sign-in?</h2></header><p id="handoff-status" role="status">Open uburoom in your browser, then check its code.</p><p id="handoff-code" class="handoff-code" hidden></p><p class="hint">Approve only if your browser shows this same code.</p><form method="dialog" class="dialog-footer"><button class="quiet" value="cancel" autofocus>Cancel</button><button id="approve-browser" class="primary" type="button" disabled>Approve</button></form></dialog>
-<dialog id="account-dialog" class="watch-dialog" aria-labelledby="account-title"><header><h2 id="account-title">Account</h2><button id="account-close" class="icon-button" aria-label="Close" title="Close" autofocus><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="x"><use href="#icon-x"></use></svg></button></header><p id="account-loading" role="status" hidden>Loading your account…</p><div id="account-content" hidden><label for="account-display-name">Display name</label><div class="dialog-actions"><input id="account-display-name" maxlength="160" autocomplete="nickname"><button id="account-name-save" type="button" class="quiet">Save name</button></div><h3 class="account-section-title">Connected accounts</h3><div id="account-identities"><div class="provider-row"><div class="provider-details"><h3><span class="discord-symbol"><img src="/assets/discord-symbol-white.svg" alt="" width="24" height="18"></span>Discord</h3><p id="discord-identity"></p></div><button id="connect-discord" class="provider-connect discord-button" type="button">Connect Discord</button><button id="remove-discord" class="icon-button provider-remove" type="button" aria-label="Remove Discord" title="Remove Discord" hidden></button></div><div class="provider-row"><div class="provider-details"><h3><span class="plex-symbol"><img src="/assets/plex-icon.png" alt="" width="28" height="28"></span>Plex</h3><p id="plex-identity"></p></div><button id="connect-plex" class="provider-connect primary" type="button">Connect Plex</button><button id="remove-plex" class="icon-button provider-remove" type="button" aria-label="Remove Plex" title="Remove Plex" hidden></button></div></div><p id="account-connect-hint" class="hint">Connect another sign-in method before removing your active login.</p><p id="account-browser-hint" class="hint" hidden>Open in Browser to manage connected accounts.</p><section id="account-merge" hidden><h2>Combine your accounts</h2><div id="account-merge-details"></div><p class="hint">Leave all watch rooms for both accounts first. Both accounts will be signed out, and this browser will sign back in.</p><button id="account-merge-confirm" class="primary">Merge accounts</button></section><details id="account-admin" hidden><summary>Match Discord and Plex</summary><p class="hint">Owner tools: use account IDs to match accounts. Plex sign-in is still required.</p><div class="account-fields"><label for="match-discord">Discord user ID</label><input id="match-discord" list="known-discord" autocomplete="off" inputmode="numeric"><label for="match-plex">Plex account ID</label><input id="match-plex" list="known-plex" autocomplete="off" inputmode="numeric"></div><datalist id="known-discord"></datalist><datalist id="known-plex"></datalist><button id="match-preview" class="quiet">Preview match</button><p id="match-summary"></p><button id="match-confirm" class="primary" hidden>Assign match</button></details></div><p id="account-error" role="alert"></p><button id="account-retry" class="quiet" type="button" hidden>Try again</button><footer id="account-footer" class="dialog-footer with-divider" hidden></footer></dialog>
-<dialog id="account-remove-dialog" class="watch-dialog dialog-small" data-destructive="true" aria-labelledby="account-remove-title"><header><h2 id="account-remove-title">Remove account?</h2></header><p id="account-remove-description"></p><p id="account-remove-error" role="alert"></p><form method="dialog" class="dialog-footer"><button id="account-remove-cancel" class="quiet" value="cancel" autofocus>Cancel</button><button id="account-remove-confirm" class="danger-button" type="button">Remove</button></form></dialog>
-<dialog id="room-dialog" class="watch-dialog" aria-labelledby="room-dialog-title">
-<header><h2 id="room-dialog-title">Rooms</h2><button id="room-dialog-close" class="icon-button" type="button" aria-label="Close" title="Close" autofocus><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="x"><use href="#icon-x"></use></svg></button></header>
-<p id="room-dialog-hint" class="hint"></p>
-<nav id="room-chooser-nav" class="dialog-actions" aria-label="Room lists"><button id="room-show-active" class="quiet" type="button">Active rooms</button><button id="room-show-saved" class="quiet" type="button">Your rooms</button><button id="room-chooser-new" class="primary" type="button">New room</button><button id="room-create-back" class="quiet" type="button" hidden>Reopen room</button><button id="room-chooser-refresh" class="icon-button" type="button" aria-label="Refresh rooms" title="Refresh rooms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="refresh"><use href="#icon-refresh"></use></svg></button></nav>
-<section id="room-create-form" hidden><div id="room-create-details"><label for="room-name">Room name</label><input id="room-name" maxlength="100" placeholder="Room name" autocomplete="off"></div>
-<label for="room-create-visibility">Visibility</label><select id="room-create-visibility" hidden><option value="public">Public</option><option value="private">Private · Hosts only</option></select>
-<div id="room-create-visibility-group" class="button-group" role="group" aria-label="Visibility"><button type="button" class="group-button" data-value="public" aria-pressed="true">Public</button><button type="button" class="group-button" data-value="private" aria-pressed="false">Private · Hosts only</button></div>
-<div id="room-create-policy"><label for="room-create-preset">Permissions</label><select id="room-create-preset" hidden><option value="host-control">Host control</option><option value="play-pause">Play/Pause</option><option value="queue">Queue</option></select>
-<div id="room-create-preset-group" class="button-group" role="group" aria-label="Permissions"><button type="button" class="group-button" data-value="host-control" aria-pressed="true">Host control</button><button type="button" class="group-button" data-value="play-pause" aria-pressed="false"><span>Play/<wbr>Pause</span></button><button type="button" class="group-button" data-value="queue" aria-pressed="false">Queue</button></div></div>
-</section>
-<section id="room-join"><div id="room-choices" aria-label="Active rooms"></div></section>
-<section id="room-reopen" hidden tabindex="-1"><p id="room-saved-status" class="hint" role="status"></p><div id="saved-rooms"></div><div id="room-saved-pagination" class="dialog-actions" hidden><button id="room-saved-previous" class="quiet" type="button" disabled>Previous</button><button id="room-saved-next" class="quiet" type="button" disabled>Next</button></div></section>
-<p id="room-dialog-error" role="alert"></p><form method="dialog" id="room-dialog-footer" class="dialog-footer" hidden><button id="room-create-cancel" class="quiet" type="button" value="cancel">Cancel</button><div id="room-create-actions" class="room-create-actions"><button id="room-create" class="primary" type="button">Create room</button><button id="room-create-settings" class="icon-button" type="button" aria-label="Room settings" title="Configure this room before creating it"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="settings"><use href="#icon-settings"></use></svg></button></div></form></dialog>
-<dialog id="room-share-dialog" class="watch-dialog dialog-small" aria-labelledby="room-share-title">
-<header><h2 id="room-share-title">Share room</h2><button id="room-share-dismiss" class="icon-button" type="button" aria-label="Close" title="Close" autofocus><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="x"><use href="#icon-x"></use></svg></button></header>
-<div id="room-share-main">
-<div id="room-share-invite"><label for="room-share-url-input" class="room-share-label">Invite link</label>
-<div class="room-share-link-group"><div class="room-share-link-dock"><input id="room-share-url-input" type="text" readonly autocomplete="off" spellcheck="false" aria-label="Invite link" title="Click to copy invite link"><button id="room-share-copy" class="icon-button room-share-dock-btn" type="button" aria-label="Copy invite link" title="Copy invite link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="copy"><use href="#icon-copy"></use></svg></button></div><button id="room-share-personal" class="icon-button" type="button" aria-label="Share invite…" title="Share invite…"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="share"><use href="#icon-share"></use></svg></button></div></div>
-<section id="room-share-publication" hidden><div class="room-share-heading-row"><h3 id="room-share-destination">Publish to</h3><span id="room-share-channel-badge" class="room-share-channel-pill" hidden></span></div>
-<div class="room-share-preview"><strong id="room-share-preview-name"></strong><p id="room-share-preview-title"></p><div class="room-share-preview-status-row"><span id="room-share-preview-dot" class="room-share-status-dot"></span><span id="room-share-preview-status" class="hint"></span></div></div>
-<p id="room-share-publication-status" class="hint" role="status"></p>
-<div id="room-share-published-actions" class="dialog-actions room-share-published-row" hidden><button id="room-share-view" class="quiet" type="button">View Discord post</button><button id="room-share-remove" class="danger-button" type="button">Remove post</button></div>
-<div id="room-share-actions-row" class="dialog-actions room-share-action-row"><button id="room-share-publish" class="primary" type="button">Publish now</button></div></section>
-</div>
-<p id="room-share-error" role="alert"></p>
-</dialog>
-<dialog id="event-dialog" class="watch-dialog dialog-small" aria-labelledby="event-dialog-title">
-<header><h2 id="event-dialog-title">Schedule event</h2><button id="event-dismiss" class="icon-button" type="button" aria-label="Close" title="Close" autofocus><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="x"><use href="#icon-x"></use></svg></button></header>
-<form id="event-form">
-<div class="event-field" id="event-room-row"><label for="event-room">Room</label><select id="event-room"></select></div>
-<div class="event-field"><div class="event-field-header"><label for="event-title">Event title</label><span id="event-title-count" class="hint">0 / 100</span></div><input id="event-title" maxlength="100" required placeholder="Event title"></div>
-<div class="event-field"><label for="event-description">Description <span class="hint">(optional)</span></label><textarea id="event-description" maxlength="1000" rows="3" placeholder="Add watch party notes, links, or what to expect…"></textarea></div>
-<div class="event-field"><div class="event-field-header"><label id="event-starts-label">Starts</label><button id="event-zone-toggle" type="button" class="event-zone-btn" aria-expanded="false" aria-controls="event-zone-wrapper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="clock"><use href="#icon-clock"></use></svg><span id="event-zone-display">Time zone</span><span class="event-zone-change">· Change</span></button></div>
-<div id="event-zone-wrapper" hidden class="event-zone-wrapper"><select id="event-zone" required aria-label="Time zone"></select></div>
-<div class="event-chips" role="group" aria-label="Start time presets"><button id="event-chip-next30" class="event-chip" type="button" data-preset="next30">Next half-hour</button><button id="event-chip-tonight8" class="event-chip" type="button" data-preset="tonight8">Tonight 8:00 PM</button><button id="event-chip-tomorrow8" class="event-chip" type="button" data-preset="tomorrow8">Tomorrow 8:00 PM</button></div>
-<div class="event-datetime-row"><input id="event-date" type="date" required aria-label="Event date"><select id="event-time" required aria-label="Event time"></select></div></div>
-<div class="event-field"><div class="event-field-header"><label id="event-duration-label">Duration</label><span id="event-end-badge" class="event-end-badge"></span></div>
-<div class="event-duration-pills" role="group" aria-label="Event duration"><button class="event-duration-pill" type="button" data-duration="60">1h</button><button class="event-duration-pill" type="button" data-duration="120">2h</button><button class="event-duration-pill" type="button" data-duration="180">3h</button><button class="event-duration-pill" type="button" data-duration="custom">Custom</button></div>
-<div id="event-custom-duration-row" class="event-custom-row" hidden><label for="event-custom-duration">Custom duration</label><select id="event-custom-duration" aria-label="Custom duration"></select></div></div>
-<label class="form-checkbox" id="event-discord-row" hidden><input id="event-discord" type="checkbox" checked><span>Post to Discord</span></label>
-<p id="event-error" role="alert"></p>
-<input id="event-start" type="hidden"><input id="event-end" type="hidden">
-<div class="dialog-footer event-form-actions"><button id="event-discard" class="quiet" type="button">Cancel</button><button id="event-save" class="primary" type="submit">Schedule</button></div>
-</form>
-</dialog>
+      <dialog id="room-settings-dialog" class="watch-dialog" aria-labelledby="room-settings-title">
+        <header>
+          <h2 id="room-settings-title">Room settings</h2>
+          <p id="room-settings-status" role="status" aria-live="polite"></p>
+          <button
+            id="room-settings-refresh"
+            class="icon-button"
+            type="button"
+            aria-label="Refresh settings"
+            title="Refresh settings"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              data-tabler-icon="refresh"
+            >
+              <use href="#icon-refresh"></use>
+            </svg></button
+          ><button
+            id="room-settings-dismiss"
+            class="icon-button"
+            type="button"
+            aria-label="Close"
+            title="Close"
+            autofocus
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              data-tabler-icon="x"
+            >
+              <use href="#icon-x"></use>
+            </svg>
+          </button>
+        </header>
 
-<dialog id="room-settings-dialog" class="watch-dialog" aria-labelledby="room-settings-title">
-<header><h2 id="room-settings-title">Room settings</h2><p id="room-settings-status" role="status" aria-live="polite"></p><button id="room-settings-refresh" class="icon-button" type="button" aria-label="Refresh settings" title="Refresh settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="refresh"><use href="#icon-refresh"></use></svg></button><button id="room-settings-dismiss" class="icon-button" type="button" aria-label="Close" title="Close" autofocus><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="x"><use href="#icon-x"></use></svg></button></header>
-
-<select id="room-settings-section" class="room-mobile-section" aria-label="Settings section" hidden><option value="general">General</option><option value="people">Viewers</option><option value="permissions">Permissions</option><option value="playback">Playback &amp; queue</option><option value="manage">Manage</option></select>
-<div id="room-settings-content" hidden><div id="room-settings-navigation"><nav id="room-settings-nav" aria-label="Room settings sections"></nav></div><div id="room-settings-panels">
-<section data-room-section="general"><div id="room-name-fields"><label for="room-rename">Room name</label><div class="room-actions"><input id="room-rename" maxlength="100"><button id="room-rename-save" class="quiet" type="button">Save name</button></div></div><p id="room-lifetime-details" class="hint"></p><label class="watch-switch-label"><input id="room-keep-empty" type="checkbox" role="switch" class="watch-switch" aria-label="Keep room when empty">Keep room when empty</label><p class="hint">Retains this room’s hosts, permissions and history when empty. Inactivity deletion still applies.</p><label for="room-member-limit">Maximum people</label><div class="room-actions"><input id="room-member-limit" type="number" min="1"><button id="room-member-limit-save" type="button" class="quiet">Save capacity</button></div><p id="room-capacity-details" class="hint"></p><label for="room-settings-visibility">Visibility</label><select id="room-settings-visibility" hidden><option value="public">Public</option><option value="private">Private · Hosts only</option></select><div id="room-settings-visibility-group" class="button-group" role="group" aria-label="Visibility"><button type="button" class="group-button" data-value="public" aria-pressed="true">Public</button><button type="button" class="group-button" data-value="private" aria-pressed="false">Private · Hosts only</button></div><p class="hint">Private rooms: room leader and hosts only.</p></section>
-<section data-room-section="people" hidden><div id="room-invite" class="room-invite"></div><div id="room-host-search"><label for="room-person-search">Add a host</label><input id="room-person-search" type="search" autocomplete="off" placeholder="Search people" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="room-person-results"><div id="room-person-results" role="listbox" aria-label="People matching your search"></div><p id="room-person-search-status" class="hint" role="status"></p></div><p id="room-role" class="hint"></p><div id="room-current-people"></div><div id="room-invited-section" hidden><h4>Invited</h4><p class="hint">People who joined this private room by invite. Revoking removes them and keeps them out until the code changes.</p><div id="room-invited"></div></div></section>
-<section data-room-section="permissions" hidden><label for="room-permission-preset">Preset</label><select id="room-permission-preset" hidden><option value="host-control">Host control</option><option value="play-pause">Play/Pause</option><option value="queue">Queue</option><option value="custom">Custom</option></select><div id="room-permission-preset-group" class="button-group" role="group" aria-label="Preset"><button type="button" class="group-button" id="room-preset-host-control" data-value="host-control" aria-pressed="true">Host control</button><button type="button" class="group-button" id="room-preset-play-pause" data-value="play-pause" aria-pressed="false"><span>Play/<wbr>Pause</span></button><button type="button" class="group-button" id="room-preset-queue" data-value="queue" aria-pressed="false">Queue</button><button type="button" class="group-button" data-value="custom" aria-pressed="false">Custom</button></div><div id="room-permission-custom"><table class="room-permission-table" aria-label="Room permissions"><tbody id="room-permissions"></tbody></table></div><p id="room-host-inheritance" class="hint">Hosts also receive viewer permissions.</p><p class="hint">Add hosts lets hosts appoint more hosts. It never allows removing another host.</p></section>
-<section data-room-section="playback" hidden><div id="room-playback-controls" hidden></div></section>
-<section data-room-section="manage" hidden><h3>Manage</h3><p class="hint">Ends live viewing and saves playback progress.</p><button id="room-settings-close-live" class="quiet" type="button">Close room for everyone</button><h4>Transfer room leadership</h4><label for="room-transfer-target">Transfer room leadership to an assigned host.</label><p id="room-transfer-empty" class="hint" hidden>Assign a host in Viewers before transferring room leadership.</p><div class="room-actions"><select id="room-transfer-target" hidden></select><div id="room-transfer-target-group" class="button-group" role="group" aria-label="Transfer target"></div><button id="room-transfer" class="quiet" type="button">Transfer</button></div><h4>Saved room</h4><div class="room-actions"><button id="room-clear-video" class="quiet" type="button" hidden>Clear saved video</button><button id="room-settings-delete" class="danger-button" type="button">Delete room</button></div></section>
-</div></div><footer id="room-settings-footer" class="dialog-footer"><button id="room-settings-primary" class="primary" type="button" hidden>Reopen room</button></footer></dialog>
-<dialog id="room-confirm-dialog" class="watch-dialog dialog-small" aria-labelledby="room-confirm-title"><header><h2 id="room-confirm-title">Confirm room change</h2></header><p id="room-confirm-message"></p><form method="dialog" class="dialog-footer"><button class="quiet" value="cancel" autofocus>Cancel</button><button id="room-confirm-yes" class="primary" value="yes">Continue</button></form></dialog>
-<dialog id="codec-test-dialog" class="watch-dialog codec-test-dialog" aria-labelledby="codec-test-title"><header><h2 id="codec-test-title">Codec tester</h2><button id="codec-test-close" class="icon-button" type="button" aria-label="Close" title="Close" autofocus><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="x"><use href="#icon-x"></use></svg></button></header><iframe id="codec-test-frame" title="Codec playback test" allow="autoplay; clipboard-write"></iframe></dialog>
-</main><script src="/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js"></script><script type="module" src="/watch.js"></script></body></html>
+        <select id="room-settings-section" class="room-mobile-section" aria-label="Settings section" hidden>
+          <option value="general">General</option>
+          <option value="people">Viewers</option>
+          <option value="permissions">Permissions</option>
+          <option value="playback">Playback &amp; queue</option>
+          <option value="manage">Manage</option>
+        </select>
+        <div id="room-settings-content" hidden>
+          <div id="room-settings-navigation">
+            <nav id="room-settings-nav" aria-label="Room settings sections"></nav>
+          </div>
+          <div id="room-settings-panels">
+            <section data-room-section="general">
+              <div id="room-name-fields">
+                <label for="room-rename">Room name</label>
+                <div class="room-actions">
+                  <input id="room-rename" maxlength="100" /><button id="room-rename-save" class="quiet" type="button">
+                    Save name
+                  </button>
+                </div>
+              </div>
+              <p id="room-lifetime-details" class="hint"></p>
+              <label class="watch-switch-label"
+                ><input
+                  id="room-keep-empty"
+                  type="checkbox"
+                  role="switch"
+                  class="watch-switch"
+                  aria-label="Keep room when empty"
+                />Keep room when empty</label
+              >
+              <p class="hint">
+                Retains this room’s hosts, permissions and history when empty. Inactivity deletion still applies.
+              </p>
+              <label for="room-member-limit">Maximum people</label>
+              <div class="room-actions">
+                <input id="room-member-limit" type="number" min="1" /><button
+                  id="room-member-limit-save"
+                  type="button"
+                  class="quiet"
+                >
+                  Save capacity
+                </button>
+              </div>
+              <p id="room-capacity-details" class="hint"></p>
+              <label for="room-settings-visibility">Visibility</label
+              ><select id="room-settings-visibility" hidden>
+                <option value="public">Public</option>
+                <option value="private">Private · Hosts only</option>
+              </select>
+              <div id="room-settings-visibility-group" class="button-group" role="group" aria-label="Visibility">
+                <button type="button" class="group-button" data-value="public" aria-pressed="true">Public</button
+                ><button type="button" class="group-button" data-value="private" aria-pressed="false">
+                  Private · Hosts only
+                </button>
+              </div>
+              <p class="hint">Private rooms: room leader and hosts only.</p>
+            </section>
+            <section data-room-section="people" hidden>
+              <div id="room-invite" class="room-invite"></div>
+              <div id="room-host-search">
+                <label for="room-person-search">Add a host</label
+                ><input
+                  id="room-person-search"
+                  type="search"
+                  autocomplete="off"
+                  placeholder="Search people"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded="false"
+                  aria-controls="room-person-results"
+                />
+                <div id="room-person-results" role="listbox" aria-label="People matching your search"></div>
+                <p id="room-person-search-status" class="hint" role="status"></p>
+              </div>
+              <p id="room-role" class="hint"></p>
+              <div id="room-current-people"></div>
+              <div id="room-invited-section" hidden>
+                <h4>Invited</h4>
+                <p class="hint">
+                  People who joined this private room by invite. Revoking removes them and keeps them out until the code
+                  changes.
+                </p>
+                <div id="room-invited"></div>
+              </div>
+            </section>
+            <section data-room-section="permissions" hidden>
+              <label for="room-permission-preset">Preset</label
+              ><select id="room-permission-preset" hidden>
+                <option value="host-control">Host control</option>
+                <option value="play-pause">Play/Pause</option>
+                <option value="queue">Queue</option>
+                <option value="custom">Custom</option>
+              </select>
+              <div id="room-permission-preset-group" class="button-group" role="group" aria-label="Preset">
+                <button
+                  type="button"
+                  class="group-button"
+                  id="room-preset-host-control"
+                  data-value="host-control"
+                  aria-pressed="true"
+                >
+                  Host control</button
+                ><button
+                  type="button"
+                  class="group-button"
+                  id="room-preset-play-pause"
+                  data-value="play-pause"
+                  aria-pressed="false"
+                >
+                  <span>Play/<wbr />Pause</span></button
+                ><button
+                  type="button"
+                  class="group-button"
+                  id="room-preset-queue"
+                  data-value="queue"
+                  aria-pressed="false"
+                >
+                  Queue</button
+                ><button type="button" class="group-button" data-value="custom" aria-pressed="false">Custom</button>
+              </div>
+              <div id="room-permission-custom">
+                <table class="room-permission-table" aria-label="Room permissions">
+                  <tbody id="room-permissions"></tbody>
+                </table>
+              </div>
+              <p id="room-host-inheritance" class="hint">Hosts also receive viewer permissions.</p>
+              <p class="hint">Add hosts lets hosts appoint more hosts. It never allows removing another host.</p>
+            </section>
+            <section data-room-section="playback" hidden><div id="room-playback-controls" hidden></div></section>
+            <section data-room-section="manage" hidden>
+              <h3>Manage</h3>
+              <p class="hint">Ends live viewing and saves playback progress.</p>
+              <button id="room-settings-close-live" class="quiet" type="button">Close room for everyone</button>
+              <h4>Transfer room leadership</h4>
+              <label for="room-transfer-target">Transfer room leadership to an assigned host.</label>
+              <p id="room-transfer-empty" class="hint" hidden>
+                Assign a host in Viewers before transferring room leadership.
+              </p>
+              <div class="room-actions">
+                <select id="room-transfer-target" hidden></select>
+                <div
+                  id="room-transfer-target-group"
+                  class="button-group"
+                  role="group"
+                  aria-label="Transfer target"
+                ></div>
+                <button id="room-transfer" class="quiet" type="button">Transfer</button>
+              </div>
+              <h4>Saved room</h4>
+              <div class="room-actions">
+                <button id="room-clear-video" class="quiet" type="button" hidden>Clear saved video</button
+                ><button id="room-settings-delete" class="danger-button" type="button">Delete room</button>
+              </div>
+            </section>
+          </div>
+        </div>
+        <footer id="room-settings-footer" class="dialog-footer">
+          <button id="room-settings-primary" class="primary" type="button" hidden>Reopen room</button>
+        </footer>
+      </dialog>
+      <dialog id="room-confirm-dialog" class="watch-dialog dialog-small" aria-labelledby="room-confirm-title">
+        <header><h2 id="room-confirm-title">Confirm room change</h2></header>
+        <p id="room-confirm-message"></p>
+        <form method="dialog" class="dialog-footer">
+          <button class="quiet" value="cancel" autofocus>Cancel</button
+          ><button id="room-confirm-yes" class="primary" value="yes">Continue</button>
+        </form>
+      </dialog>
+      <dialog id="codec-test-dialog" class="watch-dialog codec-test-dialog" aria-labelledby="codec-test-title">
+        <header>
+          <h2 id="codec-test-title">Codec tester</h2>
+          <button id="codec-test-close" class="icon-button" type="button" aria-label="Close" title="Close" autofocus>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              data-tabler-icon="x"
+            >
+              <use href="#icon-x"></use>
+            </svg>
+          </button>
+        </header>
+        <iframe id="codec-test-frame" title="Codec playback test" allow="autoplay; clipboard-write"></iframe>
+      </dialog>
+    </main>
+    <script src="/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js"></script>
+    <script type="module" src="/watch.js"></script>
+  </body>
+</html>
