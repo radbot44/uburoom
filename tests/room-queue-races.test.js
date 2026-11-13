@@ -168,7 +168,7 @@ test('viewer expiry during a queue commit cannot checkpoint old media onto the n
   assert.equal(f.watch.roomState.queue.current(f.id).mediaId, '101');
   assert.equal(f.room.media.id, '100', 'live adoption waits for the writer');
   f.room.viewers.get(f.actor.watchViewerId).at = Date.now() - 10001;
-  f.watch.refresh(f.room);
+  f.watch.review(f.room);
   await turn();
   f.release();
   await f.transition;

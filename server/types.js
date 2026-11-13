@@ -118,7 +118,8 @@
  * @property {number} [lastPing] - Timestamp (ms) of last transcode session keep-alive ping.
  * @property {number} lastActivity - Timestamp (ms) of last command or viewer interaction.
  * @property {number} [playbackIntent] - Generation of the latest explicit play/pause intent.
- * @property {boolean} [removing] - Set while the room is being torn down.
+ * @property {boolean} [closed] - Set by the room core once the room is closing.
+ * @property {boolean} [frozen] - Empty, waiting for its host's tab within the reconnect grace.
  * @property {boolean} [mediaTransition] - Set while queued media is being prepared and adopted.
  * @property {boolean} [queueEditing] - Set while a queue edit is being committed.
  * @property {boolean} [waitingForHost] - Playback is held until a host returns.

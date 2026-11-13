@@ -97,7 +97,7 @@ class DiscordPublications {
   preview(record) {
     const room = this.watch.rooms.get(record.id),
       recovering = this.watch.roomState.recoveries.has(record.id);
-    const live = !!room && !room.removing;
+    const live = !!room && !room.closed;
     const viewers = new Set(
       [...(room?.viewers.values() || [])]
         .filter(v => !v.watchSocket || v.watchSocket.readyState === 1)
@@ -115,7 +115,7 @@ class DiscordPublications {
         !live && !recovering
           ? 'Closed'
           : !live ||
-              room.reconnecting ||
+              room.frozen ||
               room.mediaTransition ||
               !room.media ||
               room.media.unavailable ||
@@ -278,21 +278,21 @@ class DiscordPublications {
     const id = room.roomId;
     let media;
     do {
-      if (this.watch.rooms.get(id) !== room || room.removing) throw fail('This room is closed.', 409);
+      if (this.watch.rooms.get(id) !== room || room.closed) throw fail('This room is closed.', 409);
       if (this.stopped || this.watch.shuttingDown || !permitted()) throw fail('Publishing timed out. Try again.', 409);
       media = room.media;
       const allowed = await this.watch.canView(room, actor);
       if (media === room.media && !allowed) throw fail('Room access changed.', 403);
     } while (media !== room.media);
     const record = this.getRecord(id);
-    if (this.watch.rooms.get(id) !== room || room.removing || !record) throw fail('This room is closed.', 409);
+    if (this.watch.rooms.get(id) !== room || room.closed || !record) throw fail('This room is closed.', 409);
     if (this.stopped || this.watch.shuttingDown || !permitted()) throw fail('Publishing timed out. Try again.', 409);
     if (!this.hub.authorize(actor, record, 'room.host').ok)
       throw fail('Only room hosts can publish or remove the post.', 403);
     return record;
   }
   async command(room, action, actor, permitted) {
-    if (!room || room.removing) throw fail('This room is closed.', 409);
+    if (!room || room.closed) throw fail('This room is closed.', 409);
     const id = room.roomId;
     return this.lane(id, async () => {
       await this.check(room, actor, permitted);
@@ -375,7 +375,7 @@ class DiscordPublications {
           throw error;
         }
       }
-      if (room.removing || this.watch.rooms.get(id) !== room) {
+      if (room.closed || this.watch.rooms.get(id) !== room) {
         const value = this.records.get(id);
         if (value) await this.save(id, { ...value, active: false });
         await this.update(id);

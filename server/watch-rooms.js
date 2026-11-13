@@ -3,7 +3,7 @@
 const { RoomStore } = require('./room-store');
 const { RoomQueue } = require('./room-queue');
 const Policy = require('./room-policy');
-const { isHost, canWatch } = require('./core');
+const { canWatch } = require('./core');
 const failure = (message, status = 409) => Object.assign(new Error(message), { status });
 
 // Durable lifecycle decisions. Watch retains the player, viewers and live clock.
@@ -45,7 +45,7 @@ class WatchRooms {
     }
     this.timer = setInterval(() => {
       for (const room of watch.rooms.values())
-        if (!room.saving && !room.mediaTransition && !room.reconnecting) void this.save(room).catch(() => {});
+        if (!room.saving && !room.mediaTransition && !room.frozen) void this.save(room).catch(() => {});
       void this.track(this.maintain()).catch(() => {});
     }, 5000);
     this.timer.unref();
@@ -146,42 +146,18 @@ class WatchRooms {
       missing: new Set(room.recovery.viewers.map(id => this.store.account(id)).filter(id => !present.has(id))).size,
     };
   }
-  async maybeRecover(room) {
+  // A recovered room that was playing starts again once everyone it saved is back
+  // and ready (the room core's automatic start; no host actor is needed).
+  recoveryReady(room) {
     const recovery = room.recovery;
-    if (!recovery || room.recovering || recovery.until <= this.watch.clock.now() || !recovery.wasPlaying || !room.media)
-      return;
-    if (
-      this.recoveryState(room).missing ||
-      [...room.viewers.values()].some(v => !v.ready || v.version !== room.mediaVersion)
-    )
-      return;
-    const controller = [...room.viewers.values()].find(
-      v =>
-        (isHost(room, v.actor) || this.watch.hub.authorize(v.actor, room, 'continueWithoutHost').ok) &&
-        this.watch.hub.authorize(v.actor, room, 'playPause').ok,
+    return (
+      !!recovery &&
+      recovery.until > this.watch.clock.now() &&
+      !!recovery.wasPlaying &&
+      !!room.media &&
+      !this.recoveryState(room).missing &&
+      [...room.viewers.values()].every(v => v.ready && v.version === room.mediaVersion)
     );
-    if (!controller) return;
-    room.recovering = true;
-    try {
-      if (
-        (controller.alive && !(await controller.alive())) ||
-        !(await this.watch.canView(room, controller.actor)) ||
-        room.recovery !== recovery ||
-        recovery.until <= this.watch.clock.now()
-      )
-        return;
-      if (
-        this.recoveryState(room).missing ||
-        [...room.viewers.values()].some(v => !v.ready || v.version !== room.mediaVersion)
-      )
-        return;
-      await this.watch.hub.dispatch(
-        { ...controller.actor, watchViewerId: [...room.viewers.entries()].find(([, v]) => v === controller)[0] },
-        { roomId: room.roomId, action: 'media.play' },
-      );
-    } finally {
-      room.recovering = false;
-    }
   }
   finishRecovery(room) {
     room.recovery = undefined;
@@ -253,9 +229,7 @@ class WatchRooms {
       if (room) {
         this.apply(room, this.store.get(id));
         room.revision++;
-        this.watch.invalidateControls(room);
-        this.watch.refresh(room);
-        await this.elect(room);
+        this.watch.coordinator.run(room, { type: 'roles' });
       }
     }
   }
@@ -397,7 +371,7 @@ class WatchRooms {
     if (this.recoveries.has(id)) await this.recover(id, actor, current);
     this.store.restore(id, actor.userId);
     const existing = this.watch.rooms.get(id);
-    if (existing && !existing.reconnecting) return id;
+    if (existing && !existing.frozen) return id;
     if (!this.opening.has(id)) {
       this.reserve(!!existing);
       const opening = (async () => {
@@ -471,7 +445,7 @@ class WatchRooms {
         visibility: record.visibility,
         active:
           this.recoveries.has(record.id) ||
-          (!!this.watch.rooms.get(record.id) && !this.watch.rooms.get(record.id).reconnecting),
+          (!!this.watch.rooms.get(record.id) && !this.watch.rooms.get(record.id).frozen),
         title: record.bookmark?.title,
         position: record.bookmark?.position || 0,
         updatedAt: record.updatedAt,
@@ -534,7 +508,7 @@ class WatchRooms {
       slug: record.slug,
       visibility: record.visibility,
       revision: record.revision,
-      active: !!room && !room.reconnecting,
+      active: !!room && !room.frozen,
       hasLiveRoom: !!room,
       epoch: room?.epoch,
       hasBookmark: !!record.bookmark,
@@ -609,9 +583,7 @@ class WatchRooms {
       room.revision++;
       if (change.action === 'autoplay') this.watch.cancelAutoplay(room);
       else if (!['rename', 'keepEmpty', 'maxMembers', 'auto.reset'].includes(change.action)) {
-        this.watch.invalidateControls(room);
-        this.watch.refresh(room);
-        await this.elect(room);
+        this.watch.coordinator.run(room, { type: 'roles' });
       }
     }
     return this.summary(id, actor);
@@ -716,7 +688,7 @@ class WatchRooms {
         record = this.store.get(id);
         if (this.recoveries.has(id) && !this.watch.rooms.has(id)) await this.recover(id, actor);
         for (const other of [...this.watch.rooms.keys()]) if (other !== id) await this.watch.remove(other);
-        if (this.watch.rooms.get(id)?.reconnecting) {
+        if (this.watch.rooms.get(id)?.frozen) {
           await this.watch.remove(id);
           record = this.store.get(id);
         }
@@ -839,81 +811,11 @@ class WatchRooms {
         room.autoQueueError = undefined;
         room.saveError = undefined;
         this.apply(room, this.store.get(id));
-        this.watch.refresh(room);
-        await this.elect(room);
+        this.watch.coordinator.run(room, { type: 'roles', invalidate: false });
       }
       return this.summary(id, actor);
     } finally {
       if (room) room.mediaTransition = false;
-    }
-  }
-  async elect(room) {
-    if (room.electing || this.watch.rooms.get(room.roomId) !== room) return;
-    const candidates = [...room.viewers.entries()].sort(
-      (a, b) =>
-        Number(isHost(room, b[1].actor) || this.watch.hub.isAdmin(b[1].actor)) -
-          Number(isHost(room, a[1].actor) || this.watch.hub.isAdmin(a[1].actor)) || a[1].joinedAt - b[1].joinedAt,
-    );
-    const current = room.viewers.get(room.hostViewerId);
-    const hasHostCandidate = candidates.some(
-      ([, viewer]) => isHost(room, viewer.actor) || this.watch.hub.isAdmin(viewer.actor),
-    );
-    if (
-      current &&
-      this.watch.clock.now() - current.at < 10000 &&
-      (isHost(room, current.actor) ||
-        this.watch.hub.isAdmin(current.actor) ||
-        (!hasHostCandidate && this.watch.hub.authorize(current.actor, room, 'continueWithoutHost').ok))
-    )
-      return;
-    if (
-      room.waitingForHost &&
-      !candidates.some(
-        ([, viewer]) =>
-          isHost(room, viewer.actor) ||
-          this.watch.hub.isAdmin(viewer.actor) ||
-          this.watch.hub.authorize(viewer.actor, room, 'continueWithoutHost').ok,
-      )
-    )
-      return;
-    // Freeze immediately; permission refresh/media authorization can take time.
-    const wasPlaying = !room.state.paused;
-    this.freeze(room);
-    this.watch.invalidateControls(room);
-    room.electing = true;
-    try {
-      for (const [viewerId, viewer] of candidates) {
-        if (
-          !isHost(room, viewer.actor) &&
-          !this.watch.hub.isAdmin(viewer.actor) &&
-          !this.watch.hub.authorize(viewer.actor, room, 'continueWithoutHost').ok
-        )
-          continue;
-        if (
-          (viewer.alive && !(await viewer.alive())) ||
-          !(await this.watch.canView(room, viewer.actor)) ||
-          this.watch.rooms.get(room.roomId) !== room ||
-          room.viewers.get(viewerId) !== viewer ||
-          this.watch.clock.now() - viewer.at >= 10000
-        )
-          continue;
-        room.hostId = viewer.userId;
-        room.hostName = viewer.name;
-        room.hostViewerId = viewerId;
-        room.waitingForHost = false;
-        if (wasPlaying && this.watch.hub.authorize(viewer.actor, room, 'playPause').ok) {
-          await this.watch.hub.dispatch(
-            { ...viewer.actor, watchViewerId: viewerId },
-            { roomId: room.roomId, action: 'media.play' },
-          );
-        }
-        return;
-      }
-      room.hostViewerId = undefined;
-      room.waitingForHost = room.viewers.size > 0;
-    } finally {
-      room.electing = false;
-      void this.save(room);
     }
   }
   capture(room, { closing = false, at = this.watch.clock.now() } = {}) {
@@ -942,7 +844,7 @@ class WatchRooms {
           wasPlaying:
             !room.state.paused ||
             (room.initialGate && !room.manualPaused) ||
-            (room.reconnecting && !!room.disconnectedWasPlaying),
+            (room.frozen && !!room.disconnectedWasPlaying),
         };
     return {
       bookmark,

@@ -434,62 +434,11 @@
       "at": 167000,
       "step": "bob joins the frozen room",
       "result": {
-        "ok": true
+        "ok": false,
+        "status": 403,
+        "error": "Room unavailable or private"
       },
-      "views": {
-        "bob": {
-          "connection": "open",
-          "room": "joined",
-          "role": "viewer",
-          "host": "alice",
-          "isHost": false,
-          "waitingForHost": true,
-          "canPlayback": false,
-          "participants": [
-            {
-              "who": "alice",
-              "role": "creator",
-              "present": false
-            },
-            {
-              "who": "bob",
-              "role": "viewer",
-              "present": true
-            }
-          ],
-          "epoch": "epoch#5",
-          "media": null,
-          "stream": {
-            "format": null,
-            "version": null,
-            "granted": false
-          },
-          "timeline": {
-            "paused": true,
-            "position": 0,
-            "duration": 0,
-            "startAt": null,
-            "pauseAt": null
-          },
-          "readiness": {
-            "waiting": false,
-            "gate": null
-          },
-          "queue": {
-            "current": null,
-            "next": null,
-            "pending": 0,
-            "history": 0
-          },
-          "autoplay": {
-            "enabled": true,
-            "countdown": null
-          },
-          "ending": null,
-          "recovery": null,
-          "errors": []
-        }
-      }
+      "views": {}
     },
     {
       "at": 177000,

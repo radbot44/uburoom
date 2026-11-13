@@ -1265,7 +1265,7 @@ test(
     await other.request(`/api/watch/rooms/${roomId}?viewer=${otherDisconnected}`);
     room.viewers.get(disconnected).at = Date.now() - 11000;
     room.viewers.get(otherDisconnected).at = Date.now() - 11000;
-    f.app.watch.refresh(room);
+    f.app.watch.review(room);
     assert.equal(room.disconnectedViewers.size, 2);
     assert.equal((await host.request('/api/logout', {})).status, 403);
     assert.equal(

@@ -121,6 +121,14 @@ export {
   snapshotReadiness,
   applyReadinessDecision,
   applyTimelineCommand,
+  ROOM_STATE_KEYS,
+  VIEWER_STATE_KEYS,
+  createRoomState,
+  cloneRoomState,
+  commitRoomState,
+  policyAuthorize,
+  reduce as reduceRoom,
+  nextDeadline as nextRoomDeadline,
   createRoomCoordinator,
 } from './room-authority.mjs';
 

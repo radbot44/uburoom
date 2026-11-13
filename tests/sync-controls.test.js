@@ -34,7 +34,7 @@ async function fixture(t) {
     now += ms;
     mono += ms;
     for (const viewer of room.viewers.values()) viewer.at = now;
-    watch.refresh(room);
+    watch.review(room);
   };
   const load = () => dispatch('media.load', { mediaId: 'demo', quality: 'direct' });
   return { watch, room, host, guest, h, g, dispatch, ready, advance, load, now: () => now, mono: () => mono };
@@ -222,7 +222,7 @@ test('departure and expired viewers release coordination delays without timeline
   await f.dispatch('media.play');
   assert.equal(f.room.startAt, f.now() + 400);
   f.room.viewers.get(f.g).at = f.now() - 10001;
-  f.watch.refresh(f.room);
+  f.watch.review(f.room);
   assert.equal(f.room.viewers.size, 1);
   assert.equal(f.room.startAt, f.now());
   f.watch.join(f.room, f.guest, f.g);

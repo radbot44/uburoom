@@ -25,29 +25,49 @@ const RoomPolicy = require('./room-policy');
 const { observePlaybackEnd, clearPlaybackEnd } = require('./playback-end');
 const {
   aggregateParticipantSyncQuality: syncQualityParticipants,
-  RECONNECT_GRACE_MS,
   timelinePosition,
   controlLead,
   beginReadiness,
-  promoteGroupReadinessLead,
   settleRoomTimeline,
   invalidateEpoch,
-  recordViewerReadiness,
-  areInitialViewersReady,
   snapshotReadiness,
   applyReadinessDecision,
   applyTimelineCommand,
   createServerClock,
+  createRoomCoordinator,
 } = require('../shared/sync');
 
 // A tab the room let go of (privacy, presence timeout) must join again; looking never readmits it.
 const REJOIN = 'You are no longer in this room; join again';
+// Plain room and viewer fields the room core manages beyond its own (see ROOM_STATE_KEYS).
+const ROOM_KEYS = ['saved', 'ownerId', 'ownerName', 'autoplayCountdown', 'endedVersion'];
+const PERSONAL_KEYS = [
+  'quality',
+  'preferredQuality',
+  'volume',
+  'muted',
+  'plexReporting',
+  'plexWatchState',
+  'trackChoice',
+  'subtitleOffset',
+  'compatible',
+  'fallback',
+  'directProxyVersion',
+  'browserSubtitles',
+  'localCodecs',
+  'localDelivery',
+  'browserLoginHash',
+];
+// The access a viewer's republish relies on is rechecked this often from their own presence.
+const ACCESS_RECHECK_MS = 3000;
+// A stream that keeps a Plex transcode open is pinged this often.
+const TRANSCODE_PING_MS = 15000;
 
 function formatEntrySubtitle(entry) {
   if (!entry) return '';
   if (entry.subtitle) return entry.subtitle;
   if (entry.type === 'episode') {
-    return [entry.grandparentTitle, entry.parentTitle].filter(Boolean).join(' · ');
+    return [entry.grandparentTitle, entry.parentTitle].filter(Boolean).join(' Â· ');
   }
   return entry.parentTitle || '';
 }
@@ -60,7 +80,26 @@ class Watch {
     this.hub = hub;
     this.plex = plex;
     this.demoMedia = demoMedia;
-    this.rooms = new Map();
+    // The one room registry. Presence, readiness, the automatic start and every room
+    // lifecycle deadline are events in each room's mailbox (shared/sync/room-authority.mjs).
+    this.coordinator = createRoomCoordinator({
+      authorize: (actor, room, action) => this.hub.authorize(actor, room, action),
+      now: () => this.clock.now(),
+      monoNow: () => performance.now(),
+      // Lifecycle deadlines are acted on at one-second resolution from startup.
+      timerResolutionMs: 1000,
+      timerOrigin: this.clock.now(),
+      // A durable queue transition owns the room until its write is confirmed (A3.5 removes this).
+      hold: room => !!room.transitionCommit,
+      extensions: this.roomExtensions(),
+      onEffect: (room, effect, removed) => this.roomEffect(room, effect, removed),
+      onError: error =>
+        this.hub?.config?.logger?.warn(
+          'Room',
+          'Room effect failed: ' + (error instanceof Error ? error.message : String(error)),
+        ),
+    });
+    this.rooms = this.coordinator.rooms;
     /** @type {WeakMap<Room, number>} */
     this.stateSequences = new WeakMap();
     this.reporting = new PlexReporting({
@@ -166,6 +205,7 @@ class Watch {
       changedAt: this.clock.now(),
       viewers: new Map(),
       disconnectedViewers: new Map(),
+      kickedViewers: new Map(),
       lastActivity: this.clock.now(),
       initialGate: false,
       manualPaused: false,
@@ -174,7 +214,7 @@ class Watch {
     };
     room.execute = (command, actor, permitted) => this.execute(room, command, actor, permitted);
     this.roomState.apply(room, saved);
-    this.rooms.set(id, room);
+    this.coordinator.add(room);
     this.hub.rooms.set(id, room);
     this.hub?.config?.logger?.info('Room', `Room created (${id}) by ${actor.name || actor.userId}`);
     return id;
@@ -187,13 +227,14 @@ class Watch {
   }
   beginReadiness(room, now = this.clock.now(), waitMs = 10000) {
     beginReadiness(room, now, waitMs);
+    this.coordinator.schedule(room);
   }
   settle(room, now = this.clock.now()) {
     settleRoomTimeline(room, now);
   }
-  // The timeline as refresh() would settle it at `now`, worked out on a copy so
-  // that looking at a room never moves it. Like refresh(), it leaves a room whose
-  // durable transition is still committing as it is.
+  // The timeline as the room's next lifecycle review would settle it at `now`,
+  // worked out on a copy so that looking at a room never moves it. Like the review,
+  // it leaves a room whose durable transition is still committing as it is.
   projectTimeline(room, now = this.clock.now()) {
     if (room.transitionCommit) return room;
     const copy = { ...room, state: { ...room.state } };
@@ -292,7 +333,7 @@ class Watch {
    */
   preloadNext(room, countdown, next, actor) {
     this.dropPreload(room);
-    if (this.shuttingDown || room.removing || !next?.mediaId || next.mediaId === 'demo') return;
+    if (this.shuttingDown || room.closed || !next?.mediaId || next.mediaId === 'demo') return;
     const preload = (room.preload = /** @type {Preload} */ ({
       countdown: countdown.id,
       mediaId: next.mediaId,
@@ -358,7 +399,7 @@ class Watch {
   }
   preloadViewer(room, preload, source, viewerId, viewer) {
     const current = () =>
-      !this.shuttingDown && !room.removing && !preload.dropped && room.viewers.get(viewerId) === viewer;
+      !this.shuttingDown && !room.closed && !preload.dropped && room.viewers.get(viewerId) === viewer;
     return this.startMediaWork(
       room,
       async work => {
@@ -502,7 +543,11 @@ class Watch {
     try {
       plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
     } catch (error) {
-      if (this.providerFailed(error)) return viewer.media;
+      // Plex cannot answer: keep what the viewer has and try again shortly.
+      if (this.providerFailed(error)) {
+        this.retryStream(room, viewerId, 1000);
+        return viewer.media;
+      }
       throw error;
     }
     if (room.mediaVersion !== version || room.viewers.get(viewerId) !== viewer) return;
@@ -603,7 +648,10 @@ class Watch {
       ]);
       return room.mediaVersion !== version ? this.prepareViewer(room, actor, viewerId) : viewer.media;
     }
-    if (background) viewer.fallbackRetryAt = this.clock.now() + 60000;
+    if (background) {
+      viewer.fallbackRetryAt = this.clock.now() + 60000;
+      this.retryStream(room, viewerId, 60000);
+    }
     let bootstrapReady;
     const bootstrap = new Promise(resolve => {
       bootstrapReady = resolve;
@@ -647,6 +695,7 @@ class Watch {
           );
           if (viewer.media?.bootstrapFallback) {
             viewer.fallbackRetryAt = this.clock.now() + 60000;
+            this.retryStream(room, viewerId, 60000);
             void job.join(new AbortController().signal).catch(() => {});
             bootstrapReady();
           } else return;
@@ -780,11 +829,7 @@ class Watch {
       }
       // A viewer with no stream can never report ready, so the room stops waiting for them
       // until they have one again.
-      if (room.initialGate) {
-        if (media.format === 'unavailable') room.initialViewers.delete(viewerId);
-        else room.initialViewers.add(viewerId);
-        void this.maybeStart(room);
-      }
+      this.coordinator.run(room, { type: 'stream', viewerId, available: media.format !== 'unavailable' });
       if (current && current !== media) {
         SubtitleResources.transfer(current, media);
         void this.plex.stop(current);
@@ -794,114 +839,273 @@ class Watch {
       if (media && !adopted && media !== current && media !== room.media) await this.plex.stop(media);
     }
   }
-  refresh(room, now = this.clock.now()) {
-    if (room.removing) return;
-    // A durable transition has committed its in-memory queue transaction but
-    // still owns the old live media until the writer acknowledges it.
-    if (room.transitionCommit) return;
-    this.settle(room, now);
-    room.state.waitingForReady = room.initialGate && !room.manualPaused && !room.readinessTimedOut;
-    room.state.position = this.position(room, now);
-    room.state.duration = room.media?.duration || 0;
-    let pruned = false,
-      hostTimedOut = false,
-      lastPresence = 0;
-    for (const [id, saved] of room.disconnectedViewers)
-      if (
-        saved.expires <= now ||
-        saved.mediaVersion !== room.mediaVersion ||
-        !this.hub.authorize({ userId: saved.userId }, room, 'room.remain').ok
-      )
-        room.disconnectedViewers.delete(id);
-    for (const viewer of room.viewers.values()) {
-      const hadTracking = !!viewer.tracking;
-      this.tracking.expire(viewer);
-      if (hadTracking && !viewer.tracking) void this.reporting?.end(viewer, 'observation-timeout');
-    }
-    for (const [id, viewer] of room.viewers)
-      if (now - viewer.at > 10000 || !this.hub.authorize(viewer.actor, room, 'room.remain').ok) {
-        lastPresence = Math.max(lastPresence, viewer.at);
-        if (now - viewer.at > 10000 && this.hub.authorize(viewer.actor, room, 'room.remain').ok) {
-          // Preserve only personal playback settings for the same tab's short
-          // reconnect. A fresh stream and observation epoch are always required.
-          room.disconnectedViewers.set(id, {
-            userId: viewer.userId,
-            mediaVersion: room.mediaVersion,
-            streamVersion: viewer.streamVersion,
-            expires: now + RECONNECT_GRACE_MS,
-            readinessBypassedVersion: viewer.readinessBypassedVersion,
-            trackChoice: viewer.trackChoice && { ...viewer.trackChoice },
-            subtitleOffset: viewer.subtitleOffset,
-            quality: viewer.quality,
-            preferredQuality: viewer.preferredQuality,
-            compatible: viewer.compatible,
-            fallback: viewer.fallback,
-            volume: viewer.volume,
-            muted: viewer.muted,
-            joinedAt: viewer.joinedAt,
-            plexReporting: viewer.plexReporting,
-            plexWatchState: viewer.plexWatchState,
-            browserLoginHash: viewer.browserLoginHash,
-            directProxyVersion: viewer.directProxyVersion,
-            browserSubtitles: viewer.browserSubtitles,
-            localCodecs: viewer.localCodecs,
-            localDelivery: viewer.localDelivery,
-            syncQuality: viewer.syncQuality
-              ? {
-                  ...viewer.syncQuality,
-                  status: 'disconnected',
-                  confidence: viewer.syncQuality.confidence === 'provisional' ? 'provisional' : 'reduced',
-                  updatedAt: now,
-                }
-              : undefined,
-          });
-          if (room.disconnectedViewers.size > 128)
-            room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
+  /** Rechecks a room's lifecycle after a change made outside its mailbox (a command, new media). */
+  review(room) {
+    if (this.rooms.get(room.roomId) !== room) return;
+    return this.coordinator.run(room, { type: 'review' });
+  }
+  /** The server's part of the room core: its own plain fields and lifecycle hooks. */
+  roomExtensions() {
+    return {
+      roomKeys: ROOM_KEYS,
+      viewerKeys: PERSONAL_KEYS,
+      displayName: actor => Engine.senderName(actor.name),
+      // Only personal playback settings survive a short reconnect; streams and observations never do.
+      retain: viewer => ({
+        trackChoice: viewer.trackChoice && { ...viewer.trackChoice },
+        subtitleOffset: viewer.subtitleOffset,
+        quality: viewer.quality,
+        preferredQuality: viewer.preferredQuality,
+        compatible: viewer.compatible,
+        fallback: viewer.fallback,
+        volume: viewer.volume,
+        muted: viewer.muted,
+        plexReporting: viewer.plexReporting,
+        plexWatchState: viewer.plexWatchState,
+        browserLoginHash: viewer.browserLoginHash,
+        directProxyVersion: viewer.directProxyVersion,
+        browserSubtitles: viewer.browserSubtitles,
+        localCodecs: viewer.localCodecs,
+        localDelivery: viewer.localDelivery,
+      }),
+      /** @type {(saved: any, event: {quality?: string | null, preferences?: any}) => any} */
+      admit: (saved, { quality = '720p', preferences = {} }) => ({
+        quality: saved?.quality || (Engine.validQuality(quality) ? quality : '720p4'),
+        preferredQuality:
+          saved?.preferredQuality || (Engine.validQuality(quality) ? Engine.qualityId(quality) : '720p4'),
+        volume: saved?.volume ?? preferences.volume ?? 30,
+        muted: saved?.muted ?? preferences.muted ?? false,
+        plexReporting: saved?.plexReporting ?? preferences.plexReporting ?? true,
+        plexWatchState: saved?.plexWatchState ?? preferences.plexWatchState ?? false,
+        trackChoice: saved?.trackChoice ?? preferences.trackChoice,
+        subtitleOffset: saved?.subtitleOffset,
+        compatible: saved?.compatible,
+        fallback: saved?.fallback,
+        directProxyVersion: saved?.directProxyVersion,
+        browserSubtitles: saved?.browserSubtitles,
+        localCodecs: saved?.localCodecs,
+        localDelivery: saved?.localDelivery ?? false,
+      }),
+      capacity: (room, userId) => {
+        try {
+          this.roomState.checkCapacity(room, userId);
+        } catch (error) {
+          return { message: error.message, status: error.status };
         }
-        if (viewer.userId === room.hostId && now - viewer.at > 10000) hostTimedOut = true;
-        viewer.preparing?.abort();
-        this.tracking.end(viewer, room.visibility === 'private' ? 'privacy-revoked' : 'disconnected');
-        void this.plex.stop(viewer.media);
-        void this.reporting?.end(viewer, 'disconnected');
-        room.viewers.delete(id);
-        room.initialViewers.delete(id);
-        pruned = true;
+      },
+      recoveryReady: room => this.roomState.recoveryReady(room),
+      countdownViewer: room => room.autoplayCountdown?.viewerId,
+      starting: room => {
+        room.endedVersion = undefined;
+      },
+      renamed: (room, userId, name) => {
+        if (room.ownerId === userId) room.ownerName = name;
+      },
+    };
+  }
+  /** Runs what a committed room event asks of the server, in order. */
+  roomEffect(room, effect, removed) {
+    switch (effect.type) {
+      case 'cancel-autoplay':
+        return this.cancelAutoplay(room);
+      case 'clear-playback-end':
+        return clearPlaybackEnd(room);
+      case 'save':
+        return void this.roomState.save(room).catch(() => {});
+      case 'hide':
+        return void this.hub.rooms.delete(room.roomId);
+      case 'reveal':
+        return void this.hub.rooms.set(room.roomId, room);
+      case 'remove':
+        return void this.removeRoom(room, effect.save).catch(() => {});
+      case 'viewer-joined': {
+        const viewer = room.viewers.get(effect.viewerId);
+        this.hub?.config?.logger?.info(
+          'Room',
+          `Viewer "${viewer?.name || viewer?.userId}" joined "${room.name || room.roomId}" (viewers: ${room.viewers.size})`,
+        );
+        this.roomState.store.touch(room.roomId);
+        return void this.roomState.save(room).catch(() => {});
       }
-    this.reporting?.refresh(room, now);
-    if (hostTimedOut) this.invalidateControls(room);
-    if (pruned) this.settle(room, now);
-    this.reconcileFallback(room);
-    if (room.viewers.size && now - (room.lastPing || 0) >= 15000) {
-      room.lastPing = now;
-      for (const viewer of new Map(
-        [...room.viewers.values()].filter(v => v.media?.transcodeId).map(v => [v.media.transcodeId, v]),
-      ).values())
-        void this.plex.ping(viewer.media);
-    }
-    if (room.recovery && !room.viewers.size) return;
-    if (room.hadViewers && !room.viewers.size) {
-      this.cancelAutoplay(room);
-      clearPlaybackEnd(room);
-      if (room.disconnectedViewers.size) {
-        if (!room.reconnecting) {
-          room.disconnectedWasPlaying = !room.state.paused || (room.initialGate && !room.manualPaused);
-          this.roomState.freeze(room, lastPresence || now);
-          void this.roomState.save(room);
-        }
-        // An empty room has no command target. Only its original host tab may
-        // reactivate it during the bounded, same-media reconnect grace.
-        room.reconnecting = true;
-        this.hub.rooms.delete(room.roomId);
+      case 'viewer-reconnected':
+        return this.reporting?.reconnect(room, room.viewers.get(effect.viewerId), effect.saved);
+      case 'viewer-removed': {
+        const viewer = removed.get(effect.viewerId);
+        if (!viewer) return;
+        viewer.preparing?.abort();
+        clearTimeout(viewer.streamRetry);
+        clearTimeout(viewer.observationTimer);
+        this.tracking.end(viewer, effect.tracking);
+        void this.plex.stop(viewer.media);
+        void this.reporting?.end(viewer, effect.reporting);
+        if (effect.left)
+          this.hub?.config?.logger?.info(
+            'Room',
+            `Viewer "${viewer.name || effect.viewerId}" left "${room.name || room.roomId}" (remaining: ${room.viewers.size})`,
+          );
         return;
       }
-      if (!room.reconnecting) this.roomState.freeze(room, lastPresence || now);
-      this.remove(room.roomId);
+      case 'reporting-ended':
+        return void this.reporting?.endViewer(room, effect.viewerId, effect.reason);
+      case 'kicked':
+        for (const socket of new Set(effect.viewerIds.map(id => removed.get(id)?.watchSocket).filter(Boolean)))
+          socket.watchKick?.(room.roomId);
+        return;
+      case 'host-elected':
+        return void this.confirmHost(room, effect.viewerId, effect.replay).catch(() => {});
+      case 'recovery-finished':
+        return void this.roomState.recoveries.delete(room.roomId);
+      case 'started':
+        // The start completes a play someone already asked for; it persists like that play.
+        this.reconcileFallback(room);
+        return void this.roomState.save(room).catch(() => {});
+    }
+  }
+  /**
+   * The election chose this tab using what the room knows. Its connection and media
+   * access are checked here, outside the mailbox; a tab that fails is passed over and
+   * the room elects again. A playing room resumes through its new host's play.
+   */
+  async confirmHost(room, viewerId, replay) {
+    const viewer = room.viewers.get(viewerId);
+    if (!viewer) return;
+    const usable = (!viewer.alive || (await viewer.alive())) && (await this.canView(room, viewer.actor));
+    if (this.rooms.get(room.roomId) !== room || room.hostViewerId !== viewerId || room.viewers.get(viewerId) !== viewer)
+      return;
+    if (!usable) {
+      (room.passedOverHosts ||= new Set()).add(viewerId);
+      this.coordinator.run(room, { type: 'elect', exclude: [...room.passedOverHosts] });
       return;
     }
-    if (room.hadViewers && !room.recovery && ![...room.viewers.values()].some(viewer => viewer.userId === room.hostId))
-      void this.transfer(room);
-    else if (pruned) void this.maybeStart(room);
-    if (!room.hadViewers && now - room.lastActivity > 30000) this.remove(room.roomId);
+    room.passedOverHosts = undefined;
+    if (replay)
+      await this.hub.dispatch(
+        { ...viewer.actor, watchViewerId: viewerId },
+        { roomId: room.roomId, action: 'media.play' },
+      );
+  }
+  /**
+   * Starts preparing every viewer's stream and checking the queue's availability, after
+   * the room's media or queue changed. Each viewer's next state waits for their own stream.
+   */
+  prepareStreams(room) {
+    if (this.rooms.get(room.roomId) !== room) return;
+    for (const [viewerId, viewer] of room.viewers) this.prepareStream(room, viewer.actor, viewerId);
+    this.requestEndingMeta(room);
+    this.reconcileFallback(room);
+  }
+  /**
+   * Prepares one viewer's stream (join, delivery change, retries). Returns the work,
+   * which the viewer's published state waits for; nothing else does.
+   * @returns {Promise<void>}
+   */
+  prepareStream(room, actor, viewerId) {
+    const viewer = room.viewers.get(viewerId);
+    if (!viewer || this.shuttingDown || room.closed) return Promise.resolve();
+    clearTimeout(viewer.streamRetry);
+    const work = this.checkAccess(room, viewer)
+      .then(() => this.prepareViewer(room, actor, viewerId))
+      .then(
+        () => {
+          viewer.streamFailure = undefined;
+          this.keepTranscodes(room);
+        },
+        error => {
+          // Shown to this viewer until a retry succeeds, as the old once-a-second poll did.
+          viewer.streamFailure = error;
+          this.retryStream(room, viewerId, 1000);
+        },
+      );
+    viewer.streamWork = work;
+    void work.finally(() => {
+      if (viewer.streamWork === work) viewer.streamWork = undefined;
+    });
+    return work;
+  }
+  /** Prepares a viewer's stream again after `ms` (a provider outage, a failure, a fallback retry). */
+  retryStream(room, viewerId, ms) {
+    const viewer = room.viewers.get(viewerId);
+    if (!viewer) return;
+    clearTimeout(viewer.streamRetry);
+    viewer.streamRetry = setTimeout(() => {
+      if (this.rooms.get(room.roomId) === room && room.viewers.get(viewerId) === viewer)
+        void this.prepareStream(room, viewer.actor, viewerId);
+    }, ms);
+    viewer.streamRetry.unref?.();
+  }
+  /** Keeps open Plex transcodes alive while any viewer streams through one. */
+  keepTranscodes(room) {
+    const ping = () => {
+      const media = new Map(
+        [...room.viewers.values()].filter(v => v.media?.transcodeId).map(v => [v.media.transcodeId, v.media]),
+      );
+      if (this.rooms.get(room.roomId) !== room || !media.size) {
+        clearInterval(room.transcodePing);
+        room.transcodePing = undefined;
+        return;
+      }
+      for (const item of media.values()) void this.plex.ping(item);
+    };
+    if (room.transcodePing || ![...room.viewers.values()].some(v => v.media?.transcodeId)) return;
+    room.transcodePing = setInterval(ping, TRANSCODE_PING_MS);
+    room.transcodePing.unref?.();
+    ping();
+  }
+  /** Ends a viewer's playback observation once it goes quiet (see PlaybackTracking). */
+  observed(room, viewer) {
+    clearTimeout(viewer.observationTimer);
+    if (!viewer.tracking) return;
+    viewer.observationTimer = setTimeout(() => {
+      if (!viewer.tracking) return;
+      this.tracking.expire(viewer);
+      if (!viewer.tracking) void this.reporting?.end(viewer, 'observation-timeout');
+      else this.observed(room, viewer);
+    }, PlaybackTracking.OBSERVATION_GAP_MS + 1);
+    viewer.observationTimer.unref?.();
+  }
+  /**
+   * A tab's own presence (its clock exchanges and pongs) keeps it in the room and
+   * re-checks, every few seconds and off the publication path, the media access its
+   * published state relies on.
+   */
+  touch(room, viewer, rtts) {
+    if (this.rooms.get(room.roomId) !== room || room.viewers.get(viewer.viewerId) !== viewer) return;
+    this.coordinator.run(room, { type: 'touch', viewerId: viewer.viewerId, rtts });
+    if (viewer.accessChecking || this.clock.now() - (viewer.access?.at ?? -Infinity) < ACCESS_RECHECK_MS) return;
+    viewer.accessChecking = true;
+    void this.checkAccess(room, viewer).finally(() => {
+      viewer.accessChecking = false;
+    });
+  }
+  /** Records whether `viewer` may still see the room's current media (membership and Plex item access). */
+  async checkAccess(room, viewer) {
+    const media = room.media,
+      at = this.clock.now(),
+      ok = await this.canView(room, viewer.actor);
+    if (room.media === media) viewer.access = { media, at, ok };
+    return ok;
+  }
+  /**
+   * The synchronous part of canView for a viewer's published state. The asynchronous
+   * part (membership refresh, Plex item access) comes from the viewer's last check,
+   * which their presence keeps current; a viewer's state never waits on Plex for it.
+   */
+  canSee(room, actor, viewer) {
+    if (!room || this.rooms.get(room.roomId) !== room) return false;
+    if (room.frozen && actor.userId !== room.hostId) return false;
+    if (!canWatch(this.hub.access, actor.userId, actor) && !(viewer?.access?.ok && viewer.access.media === room.media))
+      return false;
+    if (room.media?.kind === 'plex' && this.hub.plexFor && viewer?.access?.media === room.media && !viewer.access.ok)
+      return false;
+    return this.hub.authorize(actor, room, 'room.view').ok;
+  }
+  /** Rechecks every room after a change to who someone is or what they may do (Admin mode). */
+  identityChanged() {
+    for (const room of [...this.rooms.values()]) this.review(room);
+  }
+  /** A person's display name changed. */
+  renamed(userId, name) {
+    for (const room of [...this.rooms.values()]) this.coordinator.run(room, { type: 'identity', userId, name });
   }
   reconcileFallback(room) {
     const settings = this.hub.config.transcoding;
@@ -915,6 +1119,8 @@ class Watch {
     ) {
       room.fallbackStream?.close();
       room.fallbackStream = undefined;
+      clearInterval(room.fallbackTimer);
+      room.fallbackTimer = undefined;
       return;
     }
     if (!room.fallbackStream && room.media.tracks && this.plex.av1) {
@@ -948,6 +1154,17 @@ class Watch {
     )
       media.av1Lease.group.viewerDemandAt = this.clock.now();
     room.fallbackStream?.reconcile(this.position(room), !room.state.paused);
+    // The fallback encoder follows the playhead once a second while it exists.
+    if (room.fallbackStream && !room.fallbackTimer) {
+      room.fallbackTimer = setInterval(() => {
+        if (this.rooms.get(room.roomId) === room) this.reconcileFallback(room);
+        else {
+          clearInterval(room.fallbackTimer);
+          room.fallbackTimer = undefined;
+        }
+      }, 1000);
+      room.fallbackTimer.unref?.();
+    }
   }
   fallbackFor(room, viewer) {
     const media = room.fallbackStream?.media;
@@ -964,6 +1181,8 @@ class Watch {
   // membership refresh and personal Plex access to the current item.
   async canView(room, actor) {
     if (!room || this.rooms.get(room.roomId) !== room) return false;
+    // A frozen room is its host's alone until it wakes or closes.
+    if (room.frozen && actor.userId !== room.hostId) return false;
     if (!canWatch(this.hub.access, actor.userId, actor)) {
       try {
         if (!(await (this.hub.access?.refreshWatch || this.hub.access?.refresh)?.(actor.userId, actor))) return false;
@@ -1033,75 +1252,22 @@ class Watch {
       }
     return rooms;
   }
-  async transfer(room) {
-    return this.roomState.elect(room);
-  }
   async leave(room, actor, viewerId, reason = 'left') {
     if (room.transitionCommit) await room.transitionCommit.catch(() => {});
-    if (room.disconnectedViewers.get(viewerId)?.userId === actor.userId) {
-      void this.reporting?.endViewer(room, viewerId, reason);
-      room.disconnectedViewers.delete(viewerId);
-      if (room.reconnecting && viewerId === room.hostViewerId) {
-        this.remove(room.roomId);
-        return;
-      }
-    }
-    if (room.viewers.get(viewerId)?.userId !== actor.userId) return;
-    const hostLeft = actor.userId === room.hostId;
-    const viewer = room.viewers.get(viewerId);
-    this.tracking.end(viewer, reason);
-    void this.plex.stop(viewer.media);
-    void this.reporting?.end(viewer, reason);
-    viewer.preparing?.abort();
-    room.viewers.delete(viewerId);
-    room.initialViewers.delete(viewerId);
-    room.revision++;
-    this.hub?.config?.logger?.info(
-      'Room',
-      `Viewer "${viewer?.name || viewerId}" left "${room.name || room.roomId}" (remaining: ${room.viewers.size})`,
-    );
-    if (room.autoplayCountdown?.viewerId === viewerId || !room.viewers.size) this.cancelAutoplay(room);
-    this.settle(room);
-    if (!room.viewers.size) {
-      await this.remove(room.roomId);
-      return;
-    }
-    if (hostLeft) {
-      if (reason === 'left') {
-        // An intentional handoff retains room settings, but never old commands.
-        room.epoch = randomUUID();
-      } else this.invalidateControls(room);
-    }
-    if (![...room.viewers.values()].some(v => v.userId === room.hostId)) await this.transfer(room);
-    await this.maybeStart(room);
+    if (this.rooms.get(room.roomId) !== room) return;
+    this.coordinator.run(room, { type: 'leave', actor, viewerId, reason });
+    if (room.closed) await room.removal;
   }
   async ready(room, actor, viewerId, version, ready, readinessVersion) {
-    recordViewerReadiness(room, { userId: actor.userId, viewerId, mediaVersion: version, ready, readinessVersion });
-    await this.maybeStart(room);
-  }
-  async maybeStart(room) {
-    if (room.recovery) return this.roomState.maybeRecover(room);
-    if (room.starting || this.rooms.get(room.roomId) !== room || !areInitialViewersReady(room)) return;
-    const host = [...room.viewers.values()].find(v => v.userId === room.hostId);
-    if (!host) return;
-    room.starting = true;
-    const version = room.mediaVersion,
-      readinessVersion = room.readinessVersion;
-    try {
-      if (host.alive && !(await host.alive())) return;
-      this.settle(room);
-      if (room.mediaVersion !== version || room.readinessVersion !== readinessVersion || !areInitialViewersReady(room))
-        return;
-      room.initialGate = false;
-      const result = await this.hub.dispatch(
-        { ...host.actor, watchAutoplayVersion: version, watchReadinessVersion: readinessVersion },
-        { roomId: room.roomId, action: 'media.play' },
-      );
-      if (result.status !== 'applied' && room.mediaVersion === version && room.readinessVersion === readinessVersion)
-        room.initialGate = true;
-    } finally {
-      room.starting = false;
-    }
+    const result = this.coordinator.run(room, {
+      type: 'ready',
+      actor,
+      viewerId,
+      mediaVersion: version,
+      ready,
+      readinessVersion,
+    });
+    if (result.error) throw result.error;
   }
   /**
    * Admits one tab to the room, or renews the tab that is already in it. This is
@@ -1109,108 +1275,28 @@ class Watch {
    * @param {any} room
    * @param {Actor} actor
    * @param {string} viewerId
-   * @param {{alive?: () => Promise<boolean>, quality?: string | null, preferences?: Object}} [options]
+   * @param {{alive?: () => Promise<boolean>, quality?: string | null, preferences?: Object, rtts?: Array<{at: number, ms: number}>}} [options]
    * @returns {any} The joined viewer.
    */
-  join(room, actor, viewerId, { alive, quality = '720p', preferences = {} } = {}) {
-    if (this.shuttingDown || room.removing) throw new Error('Room unavailable');
-    if ((room.kickedViewers?.get(viewerId) || 0) > this.clock.now())
-      throw Object.assign(new Error('You were removed from this room. You may rejoin.'), { status: 403 });
-    room.kickedViewers?.delete(viewerId);
-    const now = this.clock.now();
-    this.refresh(room, now);
-    room.lastActivity = now;
-    if (this.rooms.get(room.roomId) !== room) throw new Error('Room unavailable');
-    // Existing viewers can keep the room alive between host tabs.
-    this.roomState.checkCapacity(room, actor.userId);
-    const oldViewer = room.viewers.get(viewerId);
-    if (oldViewer && oldViewer.userId !== actor.userId) throw new Error('Viewer identity mismatch');
-    const saved = !oldViewer && room.disconnectedViewers.get(viewerId);
-    if (saved && saved.userId !== actor.userId) throw new Error('Viewer identity mismatch');
-    if (saved) room.disconnectedViewers.delete(viewerId);
-    if (room.reconnecting) {
-      room.reconnecting = false;
-      this.hub.rooms.set(room.roomId, room);
-    }
-    const currentHost = room.viewers.get(room.hostViewerId);
-    const hostPresent = currentHost && (isHost(room, currentHost.actor) || this.hub.isAdmin(currentHost.actor));
-    const controller =
-      actor.userId === room.hostId ||
-      ((isHost(room, actor) || this.hub.isAdmin(actor)) && !hostPresent) ||
-      (!room.viewers.has(room.hostViewerId) && this.hub.authorize(actor, room, 'continueWithoutHost').ok);
-    if (controller && !oldViewer && room.hostViewerId && room.hostViewerId !== viewerId) {
-      room.epoch = randomUUID();
-      room.revision++;
-    }
-    if (controller && !oldViewer) {
-      room.hostViewerId = viewerId;
-      room.hostId = actor.userId;
-      room.hostName = actor.name;
-      room.waitingForHost = false;
-    }
-    room.hadViewers = true;
-    const viewer = oldViewer || {
-      observationEpoch: randomUUID(),
-      quality: saved?.quality || (Engine.validQuality(quality) ? quality : '720p4'),
-      readinessBypassedVersion: saved?.mediaVersion === room.mediaVersion ? saved?.readinessBypassedVersion : undefined,
-      preferredQuality: saved?.preferredQuality || (Engine.validQuality(quality) ? Engine.qualityId(quality) : '720p4'),
-      volume: saved?.volume ?? preferences.volume ?? 30,
-      muted: saved?.muted ?? preferences.muted ?? false,
-      plexReporting: saved?.plexReporting ?? preferences.plexReporting ?? true,
-      plexWatchState: saved?.plexWatchState ?? preferences.plexWatchState ?? false,
-      trackChoice: saved?.trackChoice ?? preferences.trackChoice,
-      subtitleOffset: saved?.subtitleOffset,
-      compatible: saved?.compatible,
-      fallback: saved?.fallback,
-      directProxyVersion: saved?.directProxyVersion,
-      browserSubtitles: saved?.browserSubtitles,
-      localCodecs: saved?.localCodecs,
-      syncQuality: saved?.syncQuality,
-      localDelivery: saved?.localDelivery ?? false,
-      joinedAt: Math.min(
-        now,
-        saved?.joinedAt ?? now,
-        ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt),
-      ),
-    };
-    Object.assign(viewer, {
-      at: now,
-      userId: actor.userId,
-      viewerId,
-      name: Engine.senderName(actor.name),
-      actor: { ...actor },
-      ...(alive ? { alive } : {}),
-    });
-    room.viewers.set(viewerId, viewer);
-    if (saved) this.reporting?.reconnect(room, viewer, saved);
-    if (!oldViewer)
-      this.hub?.config?.logger?.info(
-        'Room',
-        `Viewer "${viewer.name || actor.userId}" joined "${room.name || room.roomId}" (viewers: ${room.viewers.size})`,
-      );
-    if (!oldViewer) {
-      this.roomState.store.touch(room.roomId);
-      void this.roomState.save(room).catch(() => {});
-    }
-    if (!oldViewer) promoteGroupReadinessLead(room, now);
-    if (room.initialGate && !oldViewer) room.initialViewers.add(viewerId);
+  join(room, actor, viewerId, { alive, quality, preferences, rtts } = {}) {
+    if (this.shuttingDown || room.closed || this.rooms.get(room.roomId) !== room) throw new Error('Room unavailable');
+    const result = this.coordinator.run(room, { type: 'join', actor, viewerId, quality, preferences, rtts });
+    if (result.error) throw result.error;
+    const viewer = room.viewers.get(viewerId);
+    if (alive) viewer.alive = alive;
     return viewer;
   }
-  /**
-   * Keeps a tab that is still in the room present and its stored identity current.
-   * Returns undefined when the tab is no longer in the room; it must join again.
-   * @param {any} room
-   * @param {Actor} actor
-   * @param {string} viewerId
-   * @returns {any}
-   */
-  touch(room, actor, viewerId, now = this.clock.now()) {
-    if (this.shuttingDown || room.removing) throw new Error('Room unavailable');
-    const viewer = room.viewers.get(viewerId);
-    if (!viewer) return undefined;
-    if (viewer.userId !== actor.userId) throw new Error('Viewer identity mismatch');
-    Object.assign(viewer, { at: now, name: Engine.senderName(actor.name), actor: { ...actor } });
-    return viewer;
+  /** A tab's connection closed. A planned close leaves now; any other leaves when its presence lapses. */
+  disconnected(socket, planned) {
+    for (const room of [...this.rooms.values()])
+      for (const [viewerId, viewer] of [...room.viewers])
+        if (viewer.watchSocket === socket) this.coordinator.run(room, { type: 'disconnect', viewerId, planned });
+  }
+  /** Presence and grant renewal for the tabs on one connection (its clock exchanges and pongs). */
+  present(socket) {
+    for (const room of [...this.rooms.values()])
+      for (const viewer of [...room.viewers.values()])
+        if (viewer.watchSocket === socket) this.touch(room, viewer, socket.watchRtts);
   }
   // Each state handed to a client carries the next number in its room's
   // publication order, so the browser can drop an older state that arrives late.
@@ -1223,8 +1309,8 @@ class Watch {
   stateSequence(room) {
     return this.stateSequences.get(room) || 0;
   }
-  // Poll-driven: the ending card's details are fetched when someone looks at an
-  // empty room that needs them (A3.4 moves this to queue and media events).
+  // Fetches the ending card's details an empty room needs. Triggered by joins and
+  // by media and queue changes (prepareStreams), never by looking at the room.
   requestEndingMeta(room) {
     if (room.media || room.refreshingEndingMeta) return;
     const queueSummary = this.roomState.queue.summary(room.roomId);
@@ -1253,7 +1339,7 @@ class Watch {
    * @param {string} viewerId
    */
   view(room, actor, viewerId, now = this.clock.now()) {
-    if (this.shuttingDown || room.removing || this.rooms.get(room.roomId) !== room) throw new Error('Room unavailable');
+    if (this.shuttingDown || room.closed || this.rooms.get(room.roomId) !== room) throw new Error('Room unavailable');
     const viewer = room.viewers.get(viewerId);
     if (!viewer) throw Object.assign(new Error(REJOIN), { status: 409 });
     if (viewer.userId !== actor.userId) throw new Error('Viewer identity mismatch');
@@ -1283,7 +1369,7 @@ class Watch {
         : undefined,
       startAt: timeline.startAt,
       pauseAt: timeline.pauseAt,
-      title: room.media?.title || 'Choose something to watch…',
+      title: room.media?.title || 'Choose something to watchâ€¦',
       subtitle: room.media?.subtitle || '',
       mediaId: room.media?.id,
       chapters: room.media?.chapters || [],
@@ -1532,7 +1618,7 @@ class Watch {
     if (item.type === 'episode' && Number.isInteger(epNum)) {
       const epStr = 'Episode ' + epNum;
       if (parentTitle && !parentTitle.includes('Episode')) {
-        parentTitle = parentTitle + ' · ' + epStr;
+        parentTitle = parentTitle + ' Â· ' + epStr;
       } else if (!parentTitle) {
         parentTitle = epStr;
       }
@@ -1865,6 +1951,8 @@ class Watch {
         void this.refreshEndingMeta(room);
         room.revision++;
         room.autoQueueError = undefined;
+        // The queue changed: check its availability and everyone's stream again.
+        this.prepareStreams(room);
       }
       return { status: 'applied', ...value };
     } finally {
@@ -1934,7 +2022,7 @@ class Watch {
       }
       if (changed) {
         room.revision++;
-        this.refresh(room);
+        this.review(room);
       }
       if (!nextItem && summary.lastHistory?.type === 'episode' && record.autoQueue?.mode === 'off') {
         const offerKey = summary.lastHistory.id + ':' + record.queueRevision;
@@ -1984,7 +2072,7 @@ class Watch {
    * @param {{intent?: number, data?: any}} [options]
    */
   async startAutoplayCountdown(room, { intent = room.playbackIntent || 0, data } = {}) {
-    if (this.shuttingDown || room.removing) return;
+    if (this.shuttingDown || room.closed) return;
     const record = this.roomState.store.get(room.roomId);
     if (
       !record ||
@@ -2072,7 +2160,7 @@ class Watch {
     room.autoplayTimer.unref?.();
   }
   finishQueueMedia(room, data) {
-    if (this.shuttingDown || room.removing) return Promise.resolve();
+    if (this.shuttingDown || room.closed) return Promise.resolve();
     return this.startMediaWork(room, work => this.finishQueueMediaOwned(room, data, work), {
       kind: 'transition',
       signal: currentSignal(),
@@ -2110,6 +2198,7 @@ class Watch {
       await this.roomState.save(room);
       this.roomState.apply(room, this.roomState.store.get(record.id));
       room.revision++;
+      this.prepareStreams(room);
     } finally {
       room.transitionCommit = undefined;
       room.mediaTransition = false;
@@ -2160,7 +2249,7 @@ class Watch {
     if (old) void this.stopMedia(room, old);
   }
   changeQueueMedia(room, command, actor, permitted, options) {
-    if (this.shuttingDown || room.removing)
+    if (this.shuttingDown || room.closed)
       return Promise.resolve({ status: 'unavailable', message: 'Room is closing.' });
     return this.startMediaWork(
       room,
@@ -2191,7 +2280,7 @@ class Watch {
       next = record && this.nextCandidate(id);
     const valid = () =>
       !this.shuttingDown &&
-      !room.removing &&
+      !room.closed &&
       permitted() &&
       this.rooms.get(id) === room &&
       room.mediaVersion === version &&
@@ -2437,6 +2526,8 @@ class Watch {
           room.autoQueueError = error.message;
         }
       }
+      // New media (or a restart of the current one): prepare everyone's stream now.
+      this.prepareStreams(room);
       return {
         status: 'applied',
         message: 'Viewing room updated.',
@@ -2462,7 +2553,7 @@ class Watch {
     }
   }
   async execute(room, input, actor, permitted) {
-    if (this.shuttingDown || room.removing) return { status: 'unavailable', message: 'Room is closing.' };
+    if (this.shuttingDown || room.closed) return { status: 'unavailable', message: 'Room is closing.' };
     const command = Engine.validate(input),
       { action, args } = command,
       declared = /** @type {NonNullable<ReturnType<typeof Engine.command>>} */ (Engine.command(action));
@@ -2483,18 +2574,8 @@ class Watch {
         return { status: 'forbidden', message: 'You cannot kick this participant.' };
       const viewers = [...room.viewers.entries()].filter(([, viewer]) => viewer.userId === userId);
       if (!viewers.length) return { status: 'unavailable', message: 'This participant has already left.' };
-      const now = this.clock.now();
-      room.kickedViewers ||= new Map();
-      for (const [id, until] of room.kickedViewers) if (until <= now) room.kickedViewers.delete(id);
-      for (const [id] of viewers) room.kickedViewers.set(id, now + RECONNECT_GRACE_MS);
-      for (const [id, viewer] of room.disconnectedViewers)
-        if (viewer.userId === userId) {
-          room.kickedViewers.set(id, now + RECONNECT_GRACE_MS);
-          room.disconnectedViewers.delete(id);
-        }
-      for (const socket of new Set(viewers.map(([, viewer]) => viewer.watchSocket).filter(Boolean)))
-        socket.watchKick?.(room.roomId);
-      for (const [id, viewer] of viewers) await this.leave(room, viewer.actor, id, 'kicked');
+      this.coordinator.run(room, { type: 'kick', userId });
+      if (room.closed) await room.removal;
       // Kicking a guest ends their guest access; kicking someone invited into a
       // private room revokes the invite. Either way they stay out until the code changes.
       const guest = this.hub.guestMembers?.(room.roomId).has(userId);
@@ -2582,8 +2663,7 @@ class Watch {
         return { status: 'unavailable', message: 'This readiness choice expired.' };
       const outcome = applyReadinessDecision(room, action, args.readinessId);
       if (outcome.status !== 'applied') return { status: outcome.status, message: outcome.message };
-      if (outcome.checkAutoStart) await this.maybeStart(room);
-      this.refresh(room);
+      this.review(room);
       return { status: 'applied', message: outcome.message };
     }
     if (room.readinessTimedOut && ['media.play', 'media.toggle', 'media.pause'].includes(action))
@@ -2724,18 +2804,15 @@ class Watch {
           visibility: args.visibility,
         });
         this.roomState.apply(room, record);
-        room.disconnectedViewers.clear();
-        this.refresh(room);
+        this.coordinator.run(room, { type: 'visibility' });
       }
     }
     if (action.startsWith('room.')) room.epoch = randomUUID();
     room.revision++;
     room.lastActivity = now;
-    this.refresh(room, now);
+    this.review(room);
     room.feedback = { revision: room.revision, action, args, sender: Engine.senderName(actor.name), at: now };
     if (declared.persists) await this.roomState.save(room);
-    if (['media.play', 'media.toggle', 'room.visibility'].includes(action) && room.initialGate && !room.manualPaused)
-      await this.maybeStart(room);
     return {
       status: 'applied',
       message: 'Viewing room updated.',
@@ -2879,11 +2956,17 @@ class Watch {
     }
   }
 
+  /** Closes a room: an event in its mailbox, whose effect is removeRoom. */
   remove(id, save = true) {
     const room = this.rooms.get(id);
     if (!room) return;
+    if (!room.removal) this.coordinator.run(room, { type: 'close', save });
+    return room.removal;
+  }
+  // The server's half of closing a room: drain its media work, save it and let it go.
+  removeRoom(room, save = true) {
+    const id = room.roomId;
     if (room.removal) return room.removal;
-    room.removing = true;
     room.removalAt = this.clock.now();
     if (!this.shuttingDown) this.publications.roomClosed(id);
     this.cancelAutoplay(room);
@@ -2921,15 +3004,17 @@ class Watch {
     room.epoch = randomUUID();
     this.dropMedia(room, 'room-closed');
     this.hub.rooms.delete(id);
-    this.rooms.delete(id);
+    this.coordinator.delete(id);
+    clearInterval(room.transcodePing);
+    clearInterval(room.fallbackTimer);
     void this.stopMedia(room, room.media);
     this.dropPreload(room);
     this.dropPreload(room, room.adoptable);
     this.hub?.config?.logger?.info('Room', `Room closed (${id})`);
     return saved.finally(() => this.drainMedia(room));
   }
-  sweep() {
-    for (const room of this.rooms.values()) this.refresh(room);
+  // Server maintenance, not room lifecycle: Plex transcode sessions nothing holds are ended once a minute.
+  maintainPlexSessions() {
     if (this.plex.configured && !this.shuttingDown && Date.now() - (this.sessionsCheckedAt || 0) >= 60000) {
       this.sessionsCheckedAt = Date.now();
       void this.reconcilePlexSessions().catch(() => {});
@@ -2957,6 +3042,7 @@ class Watch {
     if (this.closing) return this.closing;
     this.shuttingDown = true;
     this.shutdownDeadline = AbortSignal.timeout(this.mediaDrainMs);
+    this.coordinator.close();
     if (this.roomState) {
       this.roomState.stopped = true;
       clearInterval(this.roomState.timer);

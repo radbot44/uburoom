@@ -142,7 +142,16 @@ function watchHttp({
       (await watch.canView(grant.room, grant.actor))
     );
   }
-  function mediaGrant(room, auth, req, viewerId, fallback = false) {
+  // A grant lasts 15 s. Its tab's own presence (clock exchanges, pongs) renews it;
+  // a client's own request renews it too, and the server's republish only reads it.
+  function renewGrants(socket) {
+    const expires = Date.now() + 15000;
+    for (const grant of grants.values()) {
+      const viewer = grant.room.viewers.get(grant.viewerId);
+      if (viewer?.watchSocket === socket && viewer.userId === grant.actor.userId) grant.expires = expires;
+    }
+  }
+  function mediaGrant(room, auth, req, viewerId, fallback = false, renew = true) {
     const viewer = room.viewers.get(viewerId);
     const media = fallback ? watch.fallbackFor(room, viewer || {}) : viewer?.media;
     if (!media || media.playbackError) return;
@@ -159,7 +168,7 @@ function watchHttp({
       ) {
         g.credential = credential;
         g.headers = { cookie: req.headers.cookie, authorization: req.headers.authorization };
-        g.expires = Date.now() + 15000;
+        if (renew) g.expires = Date.now() + 15000;
       }
     }
     const existing = [...grants.values()].find(
@@ -179,7 +188,7 @@ function watchHttp({
     ) {
       existing.credential = credential;
       existing.headers = { cookie: req.headers.cookie, authorization: req.headers.authorization };
-      existing.expires = Date.now() + 15000;
+      if (renew) existing.expires = Date.now() + 15000;
       return existing.id;
     }
     if (existing) grants.delete(existing.id);
@@ -1293,6 +1302,7 @@ function watchHttp({
     return initial;
   }
   return {
+    renewGrants,
     route,
     bootstrap,
     execute: operations.execute,

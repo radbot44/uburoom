@@ -1626,8 +1626,9 @@ test('room and server capacity count accounts once and reserve disconnected peop
   assert.equal((await third.call('/api/watch/me')).status, 429);
   const room = f.app.watch.rooms.get(id);
   for (const v of room.viewers.values()) v.at = Date.now() - 11000;
-  f.app.watch.refresh(room);
-  assert.equal((await guest.call('/api/watch/rooms/' + id + '?viewer=' + randomUUID())).status, 429);
+  f.app.watch.review(room);
+  // Every viewer has lapsed, so the room is frozen: only its returning host may wake it.
+  assert.equal((await guest.call('/api/watch/rooms/' + id + '?viewer=' + randomUUID())).status, 403);
   assert.equal((await creator.call('/api/watch/rooms/' + id + '?viewer=' + a)).status, 200);
 });
 

@@ -136,21 +136,28 @@ class PlexReporting {
     session.suspendedUntil = expires;
     session.lastState = 'buffering';
     session.lastReportedAt = this.now();
+    // A suspended session keeps Plex informed, and ends with its grace, on its own timer.
+    clearInterval(session.suspension);
+    session.suspension = setInterval(() => {
+      if (session.stopped || !session.suspendedUntil) clearInterval(session.suspension);
+      else this.refreshSession(session);
+    }, 1000);
+    session.suspension.unref?.();
     return this.enqueue(session, { state: 'buffering', position: session.lastPositionMs, activityOnly: true });
   }
 
-  // Called by the existing room sweep; no independent timer or persisted lease.
   refresh(room, now = this.now()) {
-    for (const session of this.sessions.values()) {
-      if (session.room !== room) continue;
-      if (!this.present(session) || (session.suspendedUntil && session.suspendedUntil <= now)) {
-        void this.stop(session);
-        continue;
-      }
-      if (session.suspendedUntil && now - session.lastReportedAt >= 10000) {
-        session.lastReportedAt = now;
-        this.enqueue(session, { state: 'buffering', position: session.lastPositionMs, activityOnly: true });
-      }
+    for (const session of this.sessions.values()) if (session.room === room) this.refreshSession(session, now);
+  }
+
+  refreshSession(session, now = this.now()) {
+    if (!this.present(session) || (session.suspendedUntil && session.suspendedUntil <= now)) {
+      void this.stop(session);
+      return;
+    }
+    if (session.suspendedUntil && now - session.lastReportedAt >= 10000) {
+      session.lastReportedAt = now;
+      this.enqueue(session, { state: 'buffering', position: session.lastPositionMs, activityOnly: true });
     }
   }
 
@@ -475,6 +482,7 @@ class PlexReporting {
 
   discard(session) {
     session.stopped = true;
+    clearInterval(session.suspension);
     session.desired = undefined;
     if (this.sessions.get(session.viewerId) === session) this.sessions.delete(session.viewerId);
   }

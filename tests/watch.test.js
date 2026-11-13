@@ -70,10 +70,14 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
     room.pauseAt = watch.clock.now() - 1000;
     room.state.paused = false;
     const before = inspect(room, { depth: Infinity, sorted: true });
-    for (let i = 0; i < 1000; i++)
-      assert.equal(watch.view(room, i % 2 ? guest : host, i % 2 ? guestId : hostId).state.paused, true);
+    // The republish is exactly these reads: its access check and the view.
+    for (let i = 0; i < 1000; i++) {
+      const [person, tab] = i % 2 ? [guest, guestId] : [host, hostId];
+      assert.equal(watch.canSee(room, person, room.viewers.get(tab)), true);
+      assert.equal(watch.view(room, person, tab).state.paused, true);
+    }
     assert.equal(inspect(room, { depth: Infinity, sorted: true }), before);
-    watch.refresh(room);
+    watch.review(room);
   }
   const previous = room.viewers.get(guestId);
   previous.trackChoice = { audioId: '1042', subtitleId: 'off', audioIntent: { language: 'fr' } };
@@ -86,7 +90,7 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
   const occurrence = reports[0].id;
   previous.at = watch.clock.now() - 11000;
   const oldEpoch = previous.observationEpoch;
-  watch.refresh(room);
+  watch.review(room);
   assert.equal(room.viewers.has(guestId), false);
   assert.throws(() => watch.view(room, guest, guestId), /join again/);
   assert.equal(room.viewers.has(guestId), false, 'a removed tab is not readmitted by looking');
@@ -105,14 +109,14 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
   assert.equal(reports.at(-1).id, occurrence, 'fresh decoded observations resume the same reporting identity');
   assert.ok(reports.every(report => report.state !== 'stopped'));
   restored.at = watch.clock.now() - 11000;
-  watch.refresh(room);
+  watch.review(room);
   room.mediaVersion = randomUUID();
-  watch.refresh(room);
+  watch.review(room);
   watch.join(room, guest, guestId);
   assert.equal(room.viewers.get(guestId).trackChoice, undefined, 'a changed title cannot reuse numeric track IDs');
   room.viewers.get(guestId).trackChoice = { audioId: '1042' };
   room.viewers.get(guestId).at = watch.clock.now() - 11000;
-  watch.refresh(room);
+  watch.review(room);
   room.disconnectedViewers.get(guestId).expires = watch.clock.now() - 1;
   watch.join(room, guest, guestId);
   assert.equal(room.viewers.get(guestId).trackChoice, undefined, 'expired reconnect state is ignored');
@@ -120,7 +124,7 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
   assert.notEqual(reports.at(-1).id, occurrence, 'a new media occurrence cannot reuse reporting');
   room.viewers.get(guestId).trackChoice = { audioId: '1042' };
   room.viewers.get(guestId).at = watch.clock.now() - 11000;
-  watch.refresh(room);
+  watch.review(room);
   await watch.leave(room, guest, guestId);
   assert.equal(watch.reporting.sessions.has(guestId), false, 'explicit leave ends suspended reporting');
   watch.join(room, guest, guestId);

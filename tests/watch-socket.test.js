@@ -188,7 +188,7 @@ test(
     await Promise.all([lostAgain, serverLostAgain]);
     assert.equal(room.viewers.get(viewerId), viewer);
     viewer.at = Date.now() - 11000;
-    f.app.watch.refresh(room);
+    f.app.watch.review(room);
     assert.equal(room.viewers.has(viewerId), false, 'normal presence expiry releases the abandoned viewer');
     assert.equal(room.disconnectedViewers.has(viewerId), true, 'cold reconnect still needs a new stream');
   },
@@ -626,7 +626,8 @@ test('a slow room publication retries without telling a healthy browser it disco
     watch: {
       clock: { now: () => Date.now() },
       rooms: new Map(),
-      refresh() {},
+      disconnected() {},
+      present() {},
       roomState: { startRecovery() {}, people: { reserve() {}, enter() {} } },
     },
     hub: { dispatch: async () => {} },
@@ -704,7 +705,8 @@ test('cancelled library work releases admission and stalled discovery cannot blo
     watch: {
       clock: { now: () => Date.now() },
       rooms: new Map(),
-      refresh() {},
+      disconnected() {},
+      present() {},
       roomState: { startRecovery() {}, people: { reserve() {}, enter() {} } },
     },
     hub: { dispatch: async () => {} },

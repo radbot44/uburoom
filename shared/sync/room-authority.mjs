@@ -1,18 +1,14 @@
 // @ts-check
-/* Server-side authoritative room timeline, readiness coordination, control-lead
- * scheduling, and multi-tenant room coordinator.
- * Pure JS state machine: requires no HTTP server, WebSocket, Plex, Discord, or SQLite.
+/* The room core: the authoritative room timeline, readiness, presence and room
+ * lifecycle, as a pure reducer over plain room state plus a per-room mailbox
+ * (createRoomCoordinator). Requires no HTTP server, WebSocket, Plex, Discord or SQLite.
+ *
+ * One room-state shape is used everywhere (the self-hosted server's): `roomId`,
+ * `state.paused`, `media.duration`, `viewers` keyed by viewer id, and so on.
  */
-import { validateSyncCommand, senderName, CONTROLS } from './protocol.mjs';
+import { senderName, validateSyncCommand } from './protocol.mjs';
 import * as Policy from './policy.mjs';
-import {
-  COMMAND_TTL_MS,
-  PRESENCE_TIMEOUT_MS,
-  RECONNECT_GRACE_MS,
-  validateCommandEnvelope,
-  composeRoomSnapshot,
-} from './envelope.mjs';
-import { validateSyncQualityMessage, reduceViewerSyncQuality, aggregateParticipantSyncQuality } from './quality.mjs';
+import { PRESENCE_TIMEOUT_MS, RECONNECT_GRACE_MS, COMMAND_TTL_MS } from './envelope.mjs';
 
 export const INITIAL_START_LEAD_MS = 1750;
 export const READY_START_MARGIN_MS = 400;
@@ -27,23 +23,14 @@ export { PRESENCE_TIMEOUT_MS, RECONNECT_GRACE_MS, COMMAND_TTL_MS };
 const defaultCreateId = () => globalThis.crypto.randomUUID();
 const defaultMonoNow = () => globalThis.performance.now();
 
-function getPaused(room) {
-  return room.state ? room.state.paused : Boolean(room.paused);
-}
-
-function setPaused(room, paused) {
-  if (room.state) room.state.paused = paused;
-  else room.paused = paused;
-}
-
-function getDuration(room) {
-  if (Number.isFinite(room.duration)) return room.duration;
-  return room.media?.duration || 0;
-}
-
-function setEpoch(room, epoch) {
+const getPaused = room => !!room.state.paused;
+const setPaused = (room, paused) => {
+  room.state.paused = paused;
+};
+const getDuration = room => room.media?.duration || 0;
+const setEpoch = (room, epoch) => {
   room.epoch = epoch;
-}
+};
 
 export function position(room, now = Date.now()) {
   if (room.pauseAt) now = Math.min(now, room.pauseAt);
@@ -320,1813 +307,913 @@ export function applyTimelineCommand(room, command, options = {}) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Plain room state
+// ---------------------------------------------------------------------------
+
 /**
- * Create a self-contained, multi-tenant-ready room synchronization coordinator.
- * Does not start servers, timers, or I/O. Persistence, authorization, and event
- * delivery are injected by the host service (such as future Cephalopod).
- * @param {{
- *   now?:()=>number,
- *   monoNow?:()=>number,
- *   createId?:()=>string,
- *   clockEpoch?:string,
- *   commandTtlMs?:number,
- *   presenceAuthIntervalMs?:number,
- *   idPattern?:RegExp,
- *   authorize?:(context:{tenantId:string, room:any, actor:any, operation:string, command?:any})=>boolean|Promise<boolean>,
- *   isRevoked?:(context:{tenantId:string, roomId:string, actor:any, viewerId?:string})=>boolean,
- *   isAdmin?:(actor:any, room:any)=>boolean,
- *   validateExtensionCommand?:(command:any)=>({action:string, args:any}|undefined),
- *   onCreateRoom?:(room:any)=>void|Promise<void>,
- *   onPersist?:(room:any, meta?:{operation:string, reason:string, previousRevision?:number})=>void|Promise<void>,
- *   onDeleteRoom?:(context:{tenantId:string, roomId:string, epoch:string, revision:number, closedAt:number, room:any})=>void|Promise<void>,
- *   onPublish?:(event:{tenantId:string, roomId:string, includeLobby:boolean, reason:string})=>void
- * }} [options]
+ * The room fields the core reads and writes. Everything else on a live room is a
+ * resource its host owns (streams, sockets, timers, provider sessions), which the
+ * reducer never sees. `media` and the role lists are referenced, never changed.
  */
-export function createRoomCoordinator(options = {}) {
-  const nowFn = options.now || Date.now;
-  const monoNowFn = options.monoNow || defaultMonoNow;
-  const createId = options.createId || defaultCreateId;
-  const clockEpoch = options.clockEpoch || createId();
-  const commandTtlMs = options.commandTtlMs ?? COMMAND_TTL_MS;
-  const presenceAuthIntervalMs = options.presenceAuthIntervalMs ?? Math.floor(PRESENCE_TIMEOUT_MS / 2);
-  const rooms = new Map();
-  const roomLocks = new WeakMap();
-  const keyLocks = new Map();
+export const ROOM_STATE_KEYS = Object.freeze([
+  'roomId',
+  'tenantId',
+  'epoch',
+  'revision',
+  'visibility',
+  'creatorId',
+  'hosts',
+  'invited',
+  'guests',
+  'permissions',
+  'hostId',
+  'hostName',
+  'hostViewerId',
+  'waitingForHost',
+  'media',
+  'mediaVersion',
+  'readinessVersion',
+  'readinessId',
+  'readinessSince',
+  'readinessDeadline',
+  'readinessTimedOut',
+  'readinessStartAt',
+  'position',
+  'changedAt',
+  'startAt',
+  'pauseAt',
+  'state',
+  'initialGate',
+  'manualPaused',
+  'initialViewers',
+  'viewers',
+  'disconnectedViewers',
+  'kickedViewers',
+  'hadViewers',
+  'lastActivity',
+  'frozen',
+  'closed',
+  'recovery',
+  'disconnectedWasPlaying',
+]);
+/** The viewer fields the core reads and writes; the rest of a live viewer is its host's. */
+export const VIEWER_STATE_KEYS = Object.freeze([
+  'viewerId',
+  'userId',
+  'name',
+  'actor',
+  'at',
+  'joinedAt',
+  'ready',
+  'version',
+  'readinessBypassedVersion',
+  'observationEpoch',
+  'streamVersion',
+  'syncQuality',
+  'rtts',
+]);
 
-  function cloneValue(value) {
-    if (value === undefined || value === null || typeof value !== 'object') return value;
-    if (typeof globalThis.structuredClone === 'function') {
-      return globalThis.structuredClone(value);
-    }
-    return JSON.parse(JSON.stringify(value));
+const DEFAULT_KEYS = Object.freeze({ room: ROOM_STATE_KEYS, viewer: VIEWER_STATE_KEYS });
+// A cloned viewer remembers the live viewer it came from, so a commit updates that
+// viewer in place and a viewer created by the reducer becomes a new live viewer.
+const ORIGIN = new WeakMap();
+
+function pick(source, keys) {
+  const out = {};
+  for (const key of keys) if (key in source) out[key] = source[key];
+  return out;
+}
+
+/** A fresh room in the core's shape, for standalone hosts. */
+export function createRoomState({
+  roomId,
+  tenantId = undefined,
+  creatorId,
+  creatorName = 'Host',
+  visibility = 'public',
+  hosts = [],
+  invited = [],
+  permissions = undefined,
+  now = Date.now(),
+  createId = defaultCreateId,
+  media = null,
+}) {
+  if (typeof roomId !== 'string' || !roomId) throw new Error('roomId is required');
+  if (typeof creatorId !== 'string' || !creatorId) throw new Error('creatorId is required');
+  if (!['public', 'private'].includes(visibility)) throw new Error('Invalid room visibility');
+  return {
+    roomId,
+    tenantId,
+    epoch: createId(),
+    revision: 0,
+    visibility,
+    creatorId,
+    hosts: [...new Set(hosts)],
+    invited: [...new Set(invited)],
+    permissions: Policy.policy(permissions),
+    hostId: creatorId,
+    hostName: senderName(creatorName, 'Host'),
+    media,
+    mediaVersion: createId(),
+    position: 0,
+    changedAt: now,
+    state: { paused: true, seekable: !!media },
+    initialGate: false,
+    manualPaused: false,
+    initialViewers: new Set(),
+    viewers: new Map(),
+    disconnectedViewers: new Map(),
+    kickedViewers: new Map(),
+    hadViewers: false,
+    lastActivity: now,
+  };
+}
+
+/**
+ * Copies a room's plain state. Collections are copied and viewers are copied field
+ * by field; `media` and role records stay shared and are replaced, never changed.
+ */
+export function cloneRoomState(room, keys = DEFAULT_KEYS) {
+  const draft = pick(room, keys.room);
+  draft.state = { ...room.state };
+  draft.viewers = new Map();
+  for (const [id, viewer] of room.viewers) {
+    const copy = pick(viewer, keys.viewer);
+    ORIGIN.set(copy, viewer);
+    draft.viewers.set(id, copy);
   }
+  draft.disconnectedViewers = new Map(room.disconnectedViewers || []);
+  draft.kickedViewers = new Map(room.kickedViewers || []);
+  draft.initialViewers = new Set(room.initialViewers || []);
+  return draft;
+}
 
-  function cloneViewer(viewer) {
-    return {
-      ...viewer,
-      actor: viewer.actor ? { ...viewer.actor } : undefined,
-      rtts: Array.isArray(viewer.rtts) ? viewer.rtts.map(sample => ({ ...sample })) : [],
-      syncQuality: viewer.syncQuality ? cloneValue(viewer.syncQuality) : undefined,
-    };
+/**
+ * Writes a reduced draft back onto its live room. The live viewer map keeps its
+ * identity and viewers still present keep their live objects (with the resources
+ * on them). Returns the live viewers that left, for the effects that release them.
+ */
+export function commitRoomState(room, draft, keys = DEFAULT_KEYS) {
+  for (const key of keys.room) if (key !== 'viewers' && key in draft) room[key] = draft[key];
+  const next = [];
+  for (const [id, viewer] of draft.viewers) {
+    const live = ORIGIN.get(viewer);
+    if (live) {
+      for (const key of keys.viewer) if (key in viewer) live[key] = viewer[key];
+      next.push([id, live]);
+    } else next.push([id, viewer]);
   }
+  const kept = new Set(next.map(([, viewer]) => viewer));
+  const nextIds = new Set(next.map(([id]) => id));
+  const removed = new Map();
+  for (const [id, viewer] of room.viewers) if (!kept.has(viewer)) removed.set(id, viewer);
+  // Update the live map in place. Clearing and refilling it would make anyone
+  // iterating room.viewers across an event revisit every entry, without end.
+  for (const id of [...room.viewers.keys()]) if (!nextIds.has(id)) room.viewers.delete(id);
+  for (const [id, viewer] of next) if (room.viewers.get(id) !== viewer) room.viewers.set(id, viewer);
+  return removed;
+}
 
-  function cloneRoomState(room) {
-    const viewers = new Map();
-    for (const [id, viewer] of room.viewers) {
-      viewers.set(id, cloneViewer(viewer));
-    }
-    const disconnectedViewers = new Map();
-    for (const [id, saved] of room.disconnectedViewers) {
-      disconnectedViewers.set(id, {
-        ...saved,
-        syncQuality: saved.syncQuality ? cloneValue(saved.syncQuality) : undefined,
-      });
-    }
-    return {
-      ...room,
-      hosts: [...room.hosts],
-      permissions: {
-        host: { ...room.permissions.host },
-        viewer: { ...room.permissions.viewer },
-        allHosts: room.permissions.allHosts,
-      },
-      controls: { ...room.controls },
-      initialViewers: new Set(room.initialViewers),
-      viewers,
-      disconnectedViewers,
-      kickedViewers: new Map(room.kickedViewers),
-      content: cloneValue(room.content),
-    };
-  }
+// ---------------------------------------------------------------------------
+// The reducer
+// ---------------------------------------------------------------------------
 
-  function commitRoomDraft(room, draft) {
-    const previousViewers = room.viewers;
-    const mergedViewers = new Map();
-    for (const [id, draftViewer] of draft.viewers) {
-      const liveViewer = previousViewers.get(id);
-      if (liveViewer && liveViewer.userId === draftViewer.userId) {
-        if (liveViewer.revoked) {
-          mergedViewers.set(id, { ...draftViewer, revoked: true });
-          continue;
+const ALLOW = Object.freeze({ ok: true });
+const NO_ROOM = Object.freeze({ ok: false, reason: 'room' });
+const NO_PERMISSION = Object.freeze({ ok: false, reason: 'permission' });
+
+/**
+ * The standalone authorization policy: room roles and capabilities only. A host
+ * service passes its own `authorize`; the self-hosted server passes Hub.authorize.
+ * @param {{userId: string}} actor @param {any} room @param {string} action
+ * @returns {{ok: boolean, reason?: string}}
+ */
+export function policyAuthorize(actor, room, action) {
+  if (!actor?.userId) return NO_ROOM;
+  const view = room.visibility === 'public' || Policy.admitted(room, actor.userId);
+  if (action === 'room.view' || action === 'room.remain') return view ? ALLOW : NO_ROOM;
+  if (!view) return NO_ROOM;
+  if (action === 'room.host') return Policy.role(room, actor.userId) !== 'viewer' ? ALLOW : NO_PERMISSION;
+  const capability = [...Policy.CAPABILITIES, ...Policy.CREATOR_ONLY].includes(action)
+    ? action
+    : Policy.commandCapability(action);
+  return capability && Policy.allowed(room, actor.userId, capability) ? ALLOW : NO_PERMISSION;
+}
+
+function failure(message, status = undefined) {
+  const error = new Error(message);
+  if (status !== undefined) Object.assign(error, { status });
+  return error;
+}
+
+const allowed = (ctx, actor, room, action) => !!actor && ctx.authorize(actor, room, action)?.ok === true;
+const startPending = room => !!room.initialGate && !room.manualPaused && !room.readinessTimedOut;
+
+// Fields older readers take from room.state between events.
+function derive(room, now) {
+  room.state.waitingForReady = room.initialGate && !room.manualPaused && !room.readinessTimedOut;
+  room.state.position = position(room, now);
+  room.state.duration = room.media?.duration || 0;
+}
+
+function close(room, ctx, save = true) {
+  if (room.closed) return;
+  room.closed = true;
+  ctx.emit('remove', { save });
+}
+
+function invalidateControls(room, ctx) {
+  ctx.emit('cancel-autoplay');
+  invalidateEpoch(room, { createId: ctx.createId });
+}
+
+// Stops the room where it is. An election keeps a start everyone is still getting
+// ready for: someone allowed to already asked for it to play.
+function freeze(room, ctx, at = ctx.now, { keepStart = false } = {}) {
+  ctx.emit('cancel-autoplay');
+  room.position = position(room, Math.max(room.changedAt, at));
+  room.changedAt = ctx.now;
+  room.pauseAt = room.startAt = undefined;
+  room.state.paused = true;
+  if (!(keepStart && startPending(room))) room.manualPaused = true;
+  room.revision++;
+}
+
+function disconnectedRecord(room, viewer, ctx) {
+  const now = ctx.now;
+  return {
+    userId: viewer.userId,
+    mediaVersion: room.mediaVersion,
+    streamVersion: viewer.streamVersion,
+    expires: now + RECONNECT_GRACE_MS,
+    readinessBypassedVersion: viewer.readinessBypassedVersion,
+    joinedAt: viewer.joinedAt,
+    ...ctx.extensions.retain?.(viewer),
+    syncQuality: viewer.syncQuality
+      ? {
+          ...viewer.syncQuality,
+          status: 'disconnected',
+          confidence: viewer.syncQuality.confidence === 'provisional' ? 'provisional' : 'reduced',
+          updatedAt: now,
         }
-        const liveTouchedMoreRecently =
-          (liveViewer.touchSequence || 0) > (draftViewer.touchSequence || 0) || liveViewer.at > draftViewer.at;
-        const sameStream =
-          liveViewer.streamVersion === draftViewer.streamVersion && draft.mediaVersion === room.mediaVersion;
-        mergedViewers.set(id, {
-          ...draftViewer,
-          at: liveTouchedMoreRecently ? liveViewer.at : draftViewer.at,
-          touchSequence: Math.max(draftViewer.touchSequence || 0, liveViewer.touchSequence || 0),
-          authVerifiedAt: Math.max(draftViewer.authVerifiedAt ?? -Infinity, liveViewer.authVerifiedAt ?? -Infinity),
-          rtts:
-            liveTouchedMoreRecently && Array.isArray(liveViewer.rtts)
-              ? liveViewer.rtts.map(sample => ({ ...sample }))
-              : draftViewer.rtts,
-          ...(sameStream && (liveViewer.lastSyncQualityAt ?? -Infinity) > (draftViewer.lastSyncQualityAt ?? -Infinity)
-            ? {
-                syncQuality: liveViewer.syncQuality ? cloneValue(liveViewer.syncQuality) : undefined,
-                lastSyncQualityAt: liveViewer.lastSyncQualityAt,
-                lastSyncQualityStatus: liveViewer.lastSyncQualityStatus,
-                lastSyncQualityConfidence: liveViewer.lastSyncQualityConfidence,
-              }
-            : {}),
-        });
-      } else {
-        mergedViewers.set(id, draftViewer);
+      : undefined,
+  };
+}
+
+/**
+ * Hands the room to the first present host, or to a participant allowed to continue
+ * without one. Freezes first; a playing room resumes through the new host's play.
+ */
+function elect(room, ctx, exclude = new Set()) {
+  if (room.closed) return;
+  const now = ctx.now;
+  const hostish = viewer => allowed(ctx, viewer.actor, room, 'room.host');
+  const continues = viewer => allowed(ctx, viewer.actor, room, 'continueWithoutHost');
+  const candidates = [...room.viewers.entries()]
+    .filter(([id]) => !exclude.has(id))
+    .sort((a, b) => Number(hostish(b[1])) - Number(hostish(a[1])) || a[1].joinedAt - b[1].joinedAt);
+  const current = exclude.has(room.hostViewerId) ? undefined : room.viewers.get(room.hostViewerId);
+  const hostCandidate = candidates.some(([, viewer]) => hostish(viewer));
+  if (current && now - current.at < PRESENCE_TIMEOUT_MS && (hostish(current) || (!hostCandidate && continues(current))))
+    return;
+  if (room.waitingForHost && !candidates.some(([, viewer]) => hostish(viewer) || continues(viewer))) return;
+  const wasPlaying = !room.state.paused;
+  freeze(room, ctx, now, { keepStart: true });
+  invalidateControls(room, ctx);
+  for (const [viewerId, viewer] of candidates) {
+    if ((!hostish(viewer) && !continues(viewer)) || now - viewer.at >= PRESENCE_TIMEOUT_MS) continue;
+    room.hostId = viewer.userId;
+    room.hostName = viewer.name;
+    room.hostViewerId = viewerId;
+    room.waitingForHost = false;
+    ctx.emit('host-elected', { viewerId, replay: wasPlaying && allowed(ctx, viewer.actor, room, 'playPause') });
+    ctx.emit('save');
+    return;
+  }
+  room.hostViewerId = undefined;
+  room.waitingForHost = room.viewers.size > 0;
+  ctx.emit('save');
+}
+
+/**
+ * S6: once everyone the room waits for is ready, the room starts by itself. No host
+ * and no provider is involved: the start completes a play that was already asked for.
+ */
+function autoStart(room, ctx) {
+  if (room.closed || ctx.hold) return false;
+  if (room.recovery) {
+    if (!ctx.extensions.recoveryReady?.(room, ctx)) return false;
+    room.recovery = undefined;
+    ctx.emit('recovery-finished');
+  }
+  if (!areInitialViewersReady(room)) return false;
+  settle(room, ctx.now, ctx.monoNow);
+  if (!areInitialViewersReady(room)) return false;
+  room.initialGate = false;
+  ctx.emit('cancel-autoplay');
+  ctx.extensions.starting?.(room, ctx);
+  applyTimelineCommand(
+    room,
+    { action: 'media.play', args: {} },
+    { now: ctx.now, monoNow: ctx.monoNow, autoplayVersion: room.mediaVersion, createId: ctx.createId },
+  );
+  room.revision++;
+  room.lastActivity = ctx.now;
+  settle(room, ctx.now, ctx.monoNow);
+  derive(room, ctx.now);
+  ctx.emit('started');
+  return true;
+}
+
+/**
+ * The lifecycle review that timers and changes trigger: settles the timeline, expires
+ * presence and reconnect grace, freezes or closes an empty room, hands over the host
+ * and starts the room once everyone is ready.
+ */
+function review(room, ctx) {
+  if (room.closed || ctx.hold) return { elected: false };
+  const { now, monoNow } = ctx;
+  settle(room, now, monoNow);
+  derive(room, now);
+  let pruned = false,
+    hostTimedOut = false,
+    lastPresence = 0;
+  for (const [id, saved] of room.disconnectedViewers)
+    if (
+      saved.expires <= now ||
+      saved.mediaVersion !== room.mediaVersion ||
+      !allowed(ctx, { userId: saved.userId }, room, 'room.remain')
+    )
+      room.disconnectedViewers.delete(id);
+  for (const [id, viewer] of room.viewers) {
+    const timedOut = now - viewer.at > PRESENCE_TIMEOUT_MS,
+      remains = allowed(ctx, viewer.actor, room, 'room.remain');
+    if (!timedOut && remains) continue;
+    lastPresence = Math.max(lastPresence, viewer.at);
+    if (timedOut && remains) {
+      // Only personal playback settings survive, for the same tab's short reconnect.
+      room.disconnectedViewers.set(id, disconnectedRecord(room, viewer, ctx));
+      if (room.disconnectedViewers.size > MAX_DISCONNECTED_VIEWERS)
+        room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
+    }
+    if (viewer.userId === room.hostId && timedOut) hostTimedOut = true;
+    ctx.emit('viewer-removed', {
+      viewerId: id,
+      tracking: room.visibility === 'private' ? 'privacy-revoked' : 'disconnected',
+      reporting: 'disconnected',
+    });
+    room.viewers.delete(id);
+    room.initialViewers.delete(id);
+    pruned = true;
+  }
+  if (hostTimedOut) invalidateControls(room, ctx);
+  if (pruned) settle(room, now, monoNow);
+  if (room.recovery && !room.viewers.size) return { elected: false };
+  if (room.hadViewers && !room.viewers.size) {
+    ctx.emit('cancel-autoplay');
+    ctx.emit('clear-playback-end');
+    if (room.disconnectedViewers.size) {
+      if (!room.frozen) {
+        room.disconnectedWasPlaying = !room.state.paused || (room.initialGate && !room.manualPaused);
+        freeze(room, ctx, lastPresence || now);
+        ctx.emit('save');
       }
+      // An empty room takes no commands. Only its host's own tab may wake it, within the grace.
+      room.frozen = true;
+      ctx.emit('hide');
+      return { elected: false };
     }
-    const nextSequence = Math.max(room.transportSequence || 0, draft.transportSequence || 0);
-    Object.assign(room, draft, {
-      viewers: mergedViewers,
-      transportSequence: nextSequence,
+    if (!room.frozen) freeze(room, ctx, lastPresence || now);
+    close(room, ctx);
+    return { elected: false };
+  }
+  let elected = false;
+  if (room.hadViewers && !room.recovery && ![...room.viewers.values()].some(viewer => viewer.userId === room.hostId)) {
+    elect(room, ctx);
+    elected = true;
+  }
+  autoStart(room, ctx);
+  if (!room.hadViewers && now - room.lastActivity > IDLE_ROOM_TIMEOUT_MS) close(room, ctx);
+  return { elected };
+}
+
+function join(room, event, ctx) {
+  const { viewerId, actor } = event,
+    now = ctx.now;
+  if (room.closed) return ctx.fail('Room unavailable');
+  if ((room.kickedViewers.get(viewerId) || 0) > now)
+    return ctx.fail('You were removed from this room. You may rejoin.', 403);
+  room.kickedViewers.delete(viewerId);
+  review(room, ctx);
+  room.lastActivity = now;
+  if (room.closed) return ctx.fail('Room unavailable');
+  // Existing viewers can keep the room alive between host tabs.
+  const full = ctx.extensions.capacity?.(room, actor.userId, ctx);
+  if (full) return ctx.fail(full.message, full.status);
+  const oldViewer = room.viewers.get(viewerId);
+  if (oldViewer && oldViewer.userId !== actor.userId) return ctx.fail('Viewer identity mismatch');
+  const saved = !oldViewer && room.disconnectedViewers.get(viewerId);
+  if (saved && saved.userId !== actor.userId) return ctx.fail('Viewer identity mismatch');
+  // A frozen room wakes only for its returning host (any of the host's tabs), within the grace.
+  if (room.frozen && actor.userId !== room.hostId) return ctx.fail('Room unavailable or private', 403);
+  if (saved) room.disconnectedViewers.delete(viewerId);
+  if (room.frozen) {
+    room.frozen = false;
+    ctx.emit('reveal');
+  }
+  const currentHost = room.viewers.get(room.hostViewerId);
+  const hostPresent = !!currentHost && allowed(ctx, currentHost.actor, room, 'room.host');
+  const controller =
+    actor.userId === room.hostId ||
+    (allowed(ctx, actor, room, 'room.host') && !hostPresent) ||
+    (!room.viewers.has(room.hostViewerId) && allowed(ctx, actor, room, 'continueWithoutHost'));
+  if (controller && !oldViewer && room.hostViewerId && room.hostViewerId !== viewerId) {
+    room.epoch = ctx.createId();
+    room.revision++;
+  }
+  if (controller && !oldViewer) {
+    room.hostViewerId = viewerId;
+    room.hostId = actor.userId;
+    room.hostName = actor.name;
+    room.waitingForHost = false;
+  }
+  room.hadViewers = true;
+  const viewer = oldViewer || {
+    observationEpoch: ctx.createId(),
+    readinessBypassedVersion: saved?.mediaVersion === room.mediaVersion ? saved?.readinessBypassedVersion : undefined,
+    ...ctx.extensions.admit?.(saved || undefined, event, ctx),
+    syncQuality: saved?.syncQuality,
+    joinedAt: Math.min(
+      now,
+      saved?.joinedAt ?? now,
+      ...[...room.viewers.values()].filter(other => other.userId === actor.userId).map(other => other.joinedAt),
+    ),
+  };
+  Object.assign(viewer, {
+    at: now,
+    userId: actor.userId,
+    viewerId,
+    name: ctx.extensions.displayName ? ctx.extensions.displayName(actor) : senderName(actor.name, 'Participant'),
+    actor: { ...actor },
+    ...(event.rtts ? { rtts: event.rtts.map(sample => ({ ...sample })) } : {}),
+  });
+  room.viewers.set(viewerId, viewer);
+  if (saved) ctx.emit('viewer-reconnected', { viewerId, saved });
+  if (!oldViewer) {
+    ctx.emit('viewer-joined', { viewerId });
+    promoteGroupReadinessLead(room, now);
+    if (room.initialGate) room.initialViewers.add(viewerId);
+  }
+  return viewerId;
+}
+
+function leave(room, event, ctx) {
+  const { viewerId, actor, reason = 'left' } = event;
+  if (room.disconnectedViewers.get(viewerId)?.userId === actor.userId) {
+    ctx.emit('reporting-ended', { viewerId, reason });
+    room.disconnectedViewers.delete(viewerId);
+    if (room.frozen && viewerId === room.hostViewerId) {
+      close(room, ctx);
+      return;
+    }
+  }
+  const viewer = room.viewers.get(viewerId);
+  if (viewer?.userId !== actor.userId) return;
+  const hostLeft = actor.userId === room.hostId;
+  ctx.emit('viewer-removed', { viewerId, tracking: reason, reporting: reason, left: true });
+  room.viewers.delete(viewerId);
+  room.initialViewers.delete(viewerId);
+  room.revision++;
+  if (ctx.extensions.countdownViewer?.(room) === viewerId || !room.viewers.size) ctx.emit('cancel-autoplay');
+  settle(room, ctx.now, ctx.monoNow);
+  if (!room.viewers.size) {
+    close(room, ctx);
+    return;
+  }
+  if (hostLeft) {
+    // An intentional handoff keeps the room's settings, but never its old commands.
+    if (reason === 'left') room.epoch = ctx.createId();
+    else invalidateControls(room, ctx);
+  }
+  if (![...room.viewers.values()].some(other => other.userId === room.hostId)) elect(room, ctx);
+  autoStart(room, ctx);
+}
+
+function kick(room, { userId }, ctx) {
+  const now = ctx.now,
+    viewers = [...room.viewers.entries()].filter(([, viewer]) => viewer.userId === userId);
+  for (const [id, until] of room.kickedViewers) if (until <= now) room.kickedViewers.delete(id);
+  for (const [id] of viewers) room.kickedViewers.set(id, now + RECONNECT_GRACE_MS);
+  for (const [id, saved] of room.disconnectedViewers)
+    if (saved.userId === userId) {
+      room.kickedViewers.set(id, now + RECONNECT_GRACE_MS);
+      room.disconnectedViewers.delete(id);
+    }
+  ctx.emit('kicked', { viewerIds: viewers.map(([id]) => id) });
+  for (const [id, viewer] of viewers) leave(room, { viewerId: id, actor: viewer.actor, reason: 'kicked' }, ctx);
+  return viewers.length;
+}
+
+// Timeline and readiness commands for standalone hosts. The self-hosted server's
+// commands still run through its own command engine.
+function command(room, { command: input }, ctx) {
+  const { now, monoNow } = ctx;
+  let parsed;
+  try {
+    parsed = validateSyncCommand(input);
+  } catch {
+    parsed = undefined;
+  }
+  if (!parsed) return ctx.fail('Unsupported command or value.', 400);
+  settle(room, now, monoNow);
+  if (parsed.action.startsWith('media.ready.')) {
+    const outcome = applyReadinessDecision(room, parsed.action, parsed.args.readinessId, {
+      now,
+      monoNow,
+      createId: ctx.createId,
     });
+    if (outcome.status !== 'applied') return ctx.fail(outcome.message, 409);
+  } else {
+    if (room.readinessTimedOut && ['media.play', 'media.toggle', 'media.pause'].includes(parsed.action))
+      return ctx.fail('The host must choose whether to start, wait or cancel.', 409);
+    if (!room.viewers.size) return ctx.fail('No viewer is connected.', 409);
+    if (!room.media) return ctx.fail('Choose a video first.', 409);
+    if (!applyTimelineCommand(room, parsed, { now, monoNow, createId: ctx.createId }))
+      return ctx.fail('Unsupported command or value.', 400);
   }
+  room.revision++;
+  room.lastActivity = now;
+  review(room, ctx);
+  ctx.persist(parsed.action);
+  return room.revision;
+}
 
-  function durableStateChanged(before, after) {
-    return (
-      before.visibility !== after.visibility ||
-      before.epoch !== after.epoch ||
-      before.mediaVersion !== after.mediaVersion ||
-      before.hasMedia !== after.hasMedia ||
-      before.paused !== after.paused ||
-      before.position !== after.position ||
-      before.duration !== after.duration ||
-      before.seekable !== after.seekable ||
-      before.changedAt !== after.changedAt ||
-      before.startAt !== after.startAt ||
-      before.pauseAt !== after.pauseAt ||
-      before.initialGate !== after.initialGate ||
-      before.manualPaused !== after.manualPaused ||
-      Boolean(before.readinessTimedOut) !== Boolean(after.readinessTimedOut) ||
-      before.readinessVersion !== after.readinessVersion
-    );
-  }
-
-  function advanceRevision(baseRoom, draft) {
-    const floor = Math.max(baseRoom.revision, baseRoom.reservedRevision || 0);
-    draft.revision = Math.max(draft.revision, floor + 1);
-  }
-
-  function normalizeTenantId(value) {
-    if (value === undefined) return 'default';
-    if (typeof value !== 'string' || value.length === 0) return undefined;
-    return value;
-  }
-
-  function resolveActorTenant(actor, requestedTenantId) {
-    if (!actor || typeof actor !== 'object' || typeof actor.userId !== 'string' || !actor.userId) {
-      return undefined;
-    }
-    const actorTenant = normalizeTenantId(actor.tenantId);
-    if (!actorTenant) return undefined;
-    if (requestedTenantId !== undefined) {
-      const requested = normalizeTenantId(requestedTenantId);
-      if (!requested || requested !== actorTenant) return undefined;
-    }
-    return actorTenant;
-  }
-
-  const roomKey = (tenantId, roomId) => `${encodeURIComponent(tenantId)}::${roomId}`;
-
-  function getRoom(roomId, tenantId = 'default') {
-    const normalizedTenant = normalizeTenantId(tenantId);
-    if (!normalizedTenant || typeof roomId !== 'string' || !roomId) return undefined;
-    return rooms.get(roomKey(normalizedTenant, roomId));
-  }
-
-  function withKeyLock(key, fn) {
-    const previous = keyLocks.get(key) || Promise.resolve();
-    const current = previous.then(fn, fn);
-    const settled = current.then(
-      () => undefined,
-      () => undefined,
-    );
-    keyLocks.set(key, settled);
-    settled.then(() => {
-      if (keyLocks.get(key) === settled) keyLocks.delete(key);
-    });
-    return current;
-  }
-
-  function withRoomLock(room, fn) {
-    const previous = roomLocks.get(room) || Promise.resolve();
-    const current = previous.then(fn, fn);
-    roomLocks.set(
-      room,
-      current.then(
-        () => undefined,
-        () => undefined,
-      ),
-    );
-    return current;
-  }
-
-  /**
-   * Run a serialized per-room state transition. Any `queuePublish` events are emitted
-   * only AFTER the lock releases and in-memory state has committed, preventing both
-   * premature publication of failed transitions and re-entrant publication deadlocks.
-   */
-  async function runRoomTransaction(room, fn) {
-    const pendingEvents = [];
-    const outcome = await withRoomLock(room, () => fn(event => pendingEvents.push(event)));
-    for (const event of pendingEvents) {
-      options.onPublish?.(event);
-    }
-    return outcome;
-  }
-
-  async function persistRoomTransition(baseRoom, draft, meta) {
-    if (!options.onPersist) return;
-    advanceRevision(baseRoom, draft);
-    const isolatedPayload = cloneRoomState(draft);
+const EVENTS = {
+  /** A deadline came due. */
+  timer: (room, _event, ctx) => void review(room, ctx),
+  /** Something outside the core changed the room (a command, new media); recheck its lifecycle. */
+  review: (room, _event, ctx) => void review(room, ctx),
+  join,
+  leave,
+  /** A tab's connection closed: a planned close leaves now, any other when presence lapses. */
+  disconnect(room, { viewerId, planned }, ctx) {
+    const viewer = room.viewers.get(viewerId);
+    if (viewer) viewer.at = planned ? ctx.now - PRESENCE_TIMEOUT_MS - 1 : ctx.now;
+    review(room, ctx);
+  },
+  /** Presence from the tab's own connection (clock and pong), with its recent round trips. */
+  touch(room, { viewerId, rtts = undefined }, ctx) {
+    const viewer = room.viewers.get(viewerId);
+    if (!viewer) return false;
+    viewer.at = ctx.now;
+    if (rtts) viewer.rtts = rtts.map(sample => ({ ...sample }));
+    return true;
+  },
+  ready(room, { actor, viewerId, mediaVersion, ready, readinessVersion }, ctx) {
     try {
-      await options.onPersist(isolatedPayload, {
-        operation: meta.operation,
-        reason: meta.reason,
-        previousRevision: baseRoom.revision,
+      recordViewerReadiness(
+        room,
+        { userId: actor.userId, viewerId, mediaVersion, ready, readinessVersion },
+        { now: ctx.now, monoNow: ctx.monoNow },
+      );
+    } catch (error) {
+      return ctx.fail(error.message);
+    }
+    autoStart(room, ctx);
+  },
+  /** A viewer's stream became playable (`available`), or can never be played. */
+  stream(room, { viewerId, available }, ctx) {
+    if (!room.initialGate) return;
+    if (available) room.initialViewers.add(viewerId);
+    else room.initialViewers.delete(viewerId);
+    autoStart(room, ctx);
+  },
+  kick,
+  /** The room's visibility changed: reconnect grace never survives it. */
+  visibility(room, _event, ctx) {
+    room.disconnectedViewers.clear();
+    review(room, ctx);
+  },
+  /** A person's display name changed. */
+  identity(room, { userId, name }, ctx) {
+    if (room.hostId === userId) room.hostName = name;
+    ctx.extensions.renamed?.(room, userId, name);
+    for (const viewer of room.viewers.values())
+      if (viewer.userId === userId) {
+        viewer.name = name;
+        viewer.actor = { ...viewer.actor, name };
+      }
+  },
+  /** Room roles changed: re-elect the host, voiding commands issued under the old roles unless told not to. */
+  roles(room, { invalidate = true }, ctx) {
+    if (invalidate) invalidateControls(room, ctx);
+    if (!review(room, ctx).elected) elect(room, ctx);
+  },
+  /** Elects again without the given tabs (a chosen host turned out to be unavailable). */
+  elect(room, { exclude = [] }, ctx) {
+    elect(room, ctx, new Set(exclude));
+    autoStart(room, ctx);
+  },
+  /** Closes the room; save: false skips its final checkpoint (a deleted room). */
+  close: (room, { save = true }, ctx) => close(room, ctx, save),
+  command,
+};
+
+/**
+ * The room core as a pure function: applies one event to a copy of the room's plain
+ * state and returns the new state with the effects its host runs after commit. No
+ * `await` and no I/O; time and identifiers come from `context`.
+ * @param {any} state A live room or plain room state; never modified.
+ * @param {{type: string} & Record<string, any>} event
+ * @param {{now: number, monoNow: number, createId?: () => string,
+ *   authorize: (actor: any, room: any, action: string) => {ok: boolean, reason?: string},
+ *   extensions?: any, keys?: {room: readonly string[], viewer: readonly string[]}, hold?: boolean}} context
+ * @returns {{state: any, effects: Array<{type: string} & Record<string, any>>, error?: Error, value?: any, persist?: string}}
+ */
+export function reduce(state, event, context) {
+  const extensions = context.extensions || {};
+  const draft = cloneRoomState(state, context.keys || DEFAULT_KEYS);
+  const effects = [];
+  /** @type {{state: any, effects: any[], error?: Error, value?: any, persist?: string}} */
+  const outcome = { state: draft, effects };
+  const ctx = {
+    now: context.now,
+    monoNow: context.monoNow,
+    createId: context.createId || defaultCreateId,
+    authorize: context.authorize,
+    extensions,
+    hold: !!context.hold,
+    emit: (type, fields = {}) => {
+      effects.push({ type, ...fields });
+    },
+    fail(message, status = undefined) {
+      outcome.error = failure(message, status);
+    },
+    persist(reason) {
+      outcome.persist = reason;
+    },
+  };
+  const handler = EVENTS[event.type] || extensions.events?.[event.type];
+  if (!handler) throw new Error('Unknown room event ' + event.type);
+  const value = handler(draft, event, ctx);
+  if (!outcome.error && value !== undefined) outcome.value = value;
+  return outcome;
+}
+
+/**
+ * When the room next needs a timer event: the earliest of a scheduled pause, the
+ * readiness deadline, a presence lapse, the end of a reconnect grace and an unused
+ * room expiring. Undefined when nothing is due.
+ */
+export function nextDeadline(room, now, monoNow) {
+  if (room.closed) return undefined;
+  let due = Infinity;
+  const consider = at => {
+    if (Number.isFinite(at) && at < due) due = at;
+  };
+  if (room.pauseAt) consider(room.pauseAt);
+  if (!room.recovery && startPending(room) && Number.isFinite(room.readinessDeadline))
+    consider(now + (room.readinessDeadline - monoNow));
+  for (const viewer of room.viewers.values()) consider(viewer.at + PRESENCE_TIMEOUT_MS + 1);
+  for (const saved of room.disconnectedViewers.values()) consider(saved.expires);
+  if (!room.hadViewers) consider(room.lastActivity + IDLE_ROOM_TIMEOUT_MS + 1);
+  return due === Infinity ? undefined : due;
+}
+
+// ---------------------------------------------------------------------------
+// The coordinator: one mailbox per room around the reducer
+// ---------------------------------------------------------------------------
+
+const EVENT_ACTIONS = Object.freeze({ join: 'room.view', ready: 'room.view' });
+
+/**
+ * One room registry. Each room's events are reduced one at a time, in order. When a
+ * reduced event asks to persist and `onPersist` is given, the new state is committed
+ * only after it resolves; effects run only after commit. Timers are effects too: after
+ * every commit the room's next deadline is armed, rounded up to `timerResolutionMs`.
+ *
+ * Every actor event (`join`, `ready`, `command`) is checked with `authorize`, the one
+ * authorization decision, before it is reduced; the reducer uses the same hook for
+ * room membership. A multi-tenant host keeps one coordinator per tenant.
+ * @param {{
+ *   authorize: (actor: any, room: any, action: string) => {ok: boolean, reason?: string},
+ *   now?: () => number, monoNow?: () => number, createId?: () => string, tenantId?: string,
+ *   extensions?: {roomKeys?: string[], viewerKeys?: string[], events?: Record<string, Function>, [hook: string]: any},
+ *   onPersist?: (state: any, meta: {event: string, reason: string, revision: number}) => Promise<void>,
+ *   onEffect?: (room: any, effect: {type: string} & Record<string, any>, removed: Map<string, any>) => void,
+ *   onError?: (error: unknown) => void,
+ *   hold?: (room: any) => boolean,
+ *   timerResolutionMs?: number, timerOrigin?: number,
+ *   setTimer?: (action: () => void, ms: number) => any, clearTimer?: (timer: any) => void,
+ * }} options
+ */
+export function createRoomCoordinator(options) {
+  if (typeof options?.authorize !== 'function')
+    throw new TypeError('createRoomCoordinator needs authorize(actor, room, action)');
+  const now = options.now || Date.now,
+    monoNow = options.monoNow || defaultMonoNow,
+    createId = options.createId || defaultCreateId,
+    extensions = options.extensions || {},
+    resolution = options.timerResolutionMs || 0,
+    origin = options.timerOrigin ?? now();
+  const keys = {
+    room: [...ROOM_STATE_KEYS, ...(extensions.roomKeys || [])],
+    viewer: [...VIEWER_STATE_KEYS, ...(extensions.viewerKeys || [])],
+  };
+  const setTimer =
+    options.setTimer ||
+    ((action, ms) => {
+      const timer = setTimeout(action, ms);
+      timer.unref?.();
+      return timer;
+    });
+  const clearTimer = options.clearTimer || (timer => clearTimeout(timer));
+  /** @type {Map<string, any>} */
+  const rooms = new Map();
+  const mailboxes = new WeakMap(),
+    timers = new Map();
+  const report = error => {
+    if (options.onError) options.onError(error);
+    else
+      globalThis.queueMicrotask(() => {
+        throw error;
       });
-    } catch (err) {
-      if (err && typeof err === 'object' && (err.ambiguous === true || err.persistenceUncertain === true)) {
-        baseRoom.persistenceUncertain = true;
-        baseRoom.reservedRevision = Math.max(baseRoom.reservedRevision || baseRoom.revision, draft.revision);
-      }
-      throw err;
-    }
+  };
+  const refused = message => ({ error: failure(message), effects: [] });
+
+  // Deadlines are acted on at the timer resolution, as one periodic sweep would.
+  function align(at, current) {
+    if (at <= current) return current + (resolution || 1000);
+    if (!resolution) return at;
+    return origin + Math.ceil((at - origin) / resolution) * resolution;
   }
-
-  const checkAdmin = (actor, room) =>
-    Boolean(actor && room && resolveActorTenant(actor, room.tenantId) && options.isAdmin?.(actor, room));
-
-  function checkFastRevoked(room, actor, viewerId) {
-    if (!room || !actor) return true;
-    return Boolean(
-      options.isRevoked?.({
-        tenantId: room.tenantId,
-        roomId: room.id,
-        actor,
-        viewerId,
-      }),
+  function arm(room) {
+    const id = room.roomId,
+      existing = timers.get(id),
+      current = now();
+    const due = rooms.get(id) === room ? nextDeadline(room, current, monoNow()) : undefined;
+    if (due === undefined) {
+      if (existing) clearTimer(existing.timer);
+      timers.delete(id);
+      return;
+    }
+    const at = align(due, current);
+    // An earlier timer is kept: it finds nothing due yet and arms the next one.
+    if (existing && existing.at <= at) return;
+    if (existing) clearTimer(existing.timer);
+    const entry = { at, timer: undefined };
+    entry.timer = setTimer(() => {
+      if (timers.get(id) !== entry) return;
+      timers.delete(id);
+      if (rooms.get(id) === room) submit(room, { type: 'timer' });
+    }, at - current);
+    timers.set(id, entry);
+  }
+  function mailboxFor(room) {
+    let mailbox = mailboxes.get(room);
+    if (!mailbox) mailboxes.set(room, (mailbox = { busy: false, queue: [] }));
+    return mailbox;
+  }
+  function finish(room, result) {
+    const removed = commitRoomState(room, result.state, keys);
+    for (const effect of result.effects)
+      try {
+        options.onEffect?.(room, effect, removed);
+      } catch (error) {
+        report(error);
+      }
+    arm(room);
+    return result;
+  }
+  // Reduces one event; returns its result, or a promise of it while persisting.
+  function process(room, event) {
+    const action = event.type === 'command' ? event.command?.action : EVENT_ACTIONS[event.type];
+    if (action && event.actor) {
+      const decision = options.authorize(event.actor, room, action);
+      if (!decision?.ok)
+        return {
+          error: failure(
+            decision?.reason === 'permission'
+              ? 'Your room permissions do not allow this action.'
+              : 'Room unavailable or private',
+            403,
+          ),
+          effects: [],
+        };
+    }
+    const result = reduce(room, event, {
+      now: now(),
+      monoNow: monoNow(),
+      createId,
+      authorize: options.authorize,
+      extensions,
+      keys,
+      hold: !!options.hold?.(room),
+    });
+    if (!result.persist || !options.onPersist) return finish(room, result);
+    const persisting = options.onPersist(cloneRoomState(result.state, keys), {
+      event: event.type,
+      reason: result.persist,
+      revision: result.state.revision,
+    });
+    return Promise.resolve(persisting).then(
+      () => (rooms.get(room.roomId) === room ? finish(room, result) : refused('Room unavailable')),
+      error => ({ error, effects: [] }),
     );
   }
-
-  async function checkAuthorized(room, actor, operation, command, viewerId) {
-    if (!room) return false;
-    const actorTenant = resolveActorTenant(actor, room.tenantId);
-    if (!actorTenant) return false;
-    if (checkFastRevoked(room, actor, viewerId)) return false;
-    const isAdmin = checkAdmin(actor, room);
-    if (room.visibility === 'private' && !isAdmin && !Policy.assigned(room, actor.userId)) return false;
-    if (options.authorize) {
-      // Pass a cloned view of room so `authorize` cannot accidentally mutate live state.
-      const allowedByHost = await options.authorize({
-        tenantId: room.tenantId,
-        room: cloneRoomState(room),
-        actor: { ...actor },
-        operation,
-        command,
-      });
-      if (!allowedByHost) return false;
-    }
-    return true;
-  }
-
-  function applyAutoStartOnDraft(draft, now, monoNow) {
-    if (!areInitialViewersReady(draft)) return false;
-    const hostViewer = [...draft.viewers.values()].find(
-      v =>
-        v.userId === draft.hostId ||
-        Policy.role(draft, v.userId) !== 'viewer' ||
-        Policy.allowed(draft, v.userId, 'continueWithoutHost'),
-    );
-    if (!hostViewer) return false;
-    settle(draft, now, monoNow);
-    if (!areInitialViewersReady(draft)) return false;
-    draft.initialGate = false;
-    applyTimelineCommand(
-      draft,
-      { action: 'media.play', args: {} },
-      {
-        now,
-        monoNow,
-        autoplayVersion: draft.mediaVersion,
-        createId,
-      },
-    );
-    draft.revision++;
-    draft.lastActivity = now;
-    return true;
-  }
-
-  function settleAndPruneDraft(draft, now = nowFn(), monoNow = monoNowFn(), revokedViewerIds = undefined) {
-    settle(draft, now, monoNow);
-    for (const [id, expiry] of draft.kickedViewers) {
-      if (expiry <= now) draft.kickedViewers.delete(id);
-    }
-    let pruned = false,
-      hostRemoved = false,
-      autoStarted = false;
-    for (const [id, saved] of draft.disconnectedViewers) {
-      if (
-        saved.expires <= now ||
-        saved.mediaVersion !== draft.mediaVersion ||
-        (draft.visibility === 'private' && !Policy.assigned(draft, saved.userId))
-      ) {
-        draft.disconnectedViewers.delete(id);
-      }
-    }
-    for (const [id, viewer] of draft.viewers) {
-      const revoked = Boolean(viewer.revoked || revokedViewerIds?.has(id) || checkFastRevoked(draft, viewer.actor, id));
-      const unauthorizedPrivate =
-        draft.visibility === 'private' && !Policy.assigned(draft, viewer.userId) && !checkAdmin(viewer.actor, draft);
-      const timedOut = now - viewer.at > PRESENCE_TIMEOUT_MS;
-      if (timedOut || unauthorizedPrivate || revoked) {
-        if (timedOut && !unauthorizedPrivate && !revoked) {
-          draft.disconnectedViewers.set(id, {
-            userId: viewer.userId,
-            mediaVersion: draft.mediaVersion,
-            streamVersion: viewer.streamVersion,
-            expires: now + RECONNECT_GRACE_MS,
-            readinessBypassedVersion: viewer.readinessBypassedVersion,
-            joinedAt: viewer.joinedAt,
-            syncQuality: viewer.syncQuality
-              ? {
-                  ...viewer.syncQuality,
-                  status: 'disconnected',
-                  confidence: viewer.syncQuality.confidence === 'provisional' ? 'provisional' : 'reduced',
-                  updatedAt: now,
-                }
-              : undefined,
-          });
-          if (draft.disconnectedViewers.size > MAX_DISCONNECTED_VIEWERS) {
-            draft.disconnectedViewers.delete(draft.disconnectedViewers.keys().next().value);
-          }
-        } else {
-          draft.disconnectedViewers.delete(id);
-        }
-        if (viewer.userId === draft.hostId) hostRemoved = true;
-        draft.viewers.delete(id);
-        draft.initialViewers.delete(id);
-        pruned = true;
-      }
-    }
-    if (hostRemoved) invalidateEpoch(draft, { createId });
-    else if (pruned) draft.revision++;
-    if (pruned) {
-      settle(draft, now, monoNow);
-      autoStarted = applyAutoStartOnDraft(draft, now, monoNow);
-    }
-    if (draft.hasMedia && draft.duration > 0 && !draft.paused && position(draft, now) >= draft.duration) {
-      draft.position = draft.duration;
-      draft.changedAt = now;
-      draft.paused = true;
-      draft.revision++;
-    }
-    return { pruned, autoStarted };
-  }
-
-  /**
-   * Project a read-only view of committed `room` state at `(receivedAt, receivedMono)`
-   * without mutating authoritative room fields (`revision`, `paused`, `position`,
-   * `viewers`, `initialGate`, etc.).
-   */
-  function projectRoomReadOnly(room, receivedAt, receivedMono) {
-    const activeViewers = new Map();
-    const projectedDisconnected = new Map();
-    for (const [id, saved] of room.disconnectedViewers) {
-      if (
-        saved.expires > receivedAt &&
-        saved.mediaVersion === room.mediaVersion &&
-        !(room.visibility === 'private' && !Policy.assigned(room, saved.userId))
-      ) {
-        projectedDisconnected.set(id, saved);
-      }
-    }
-    for (const [id, viewer] of room.viewers) {
-      const revoked = Boolean(viewer.revoked || checkFastRevoked(room, viewer.actor, id));
-      const unauthorizedPrivate =
-        room.visibility === 'private' && !Policy.assigned(room, viewer.userId) && !checkAdmin(viewer.actor, room);
-      const timedOut = receivedAt - viewer.at > PRESENCE_TIMEOUT_MS;
-      if (revoked || unauthorizedPrivate) continue;
-      if (timedOut) {
-        const graceExpires = viewer.at + PRESENCE_TIMEOUT_MS + RECONNECT_GRACE_MS;
-        if (graceExpires > receivedAt) {
-          projectedDisconnected.set(id, {
-            userId: viewer.userId,
-            mediaVersion: room.mediaVersion,
-            streamVersion: viewer.streamVersion,
-            expires: graceExpires,
-            joinedAt: viewer.joinedAt,
-            syncQuality: viewer.syncQuality
-              ? {
-                  ...viewer.syncQuality,
-                  status: 'disconnected',
-                  confidence: viewer.syncQuality.confidence === 'provisional' ? 'provisional' : 'reduced',
-                  updatedAt: viewer.at + PRESENCE_TIMEOUT_MS,
-                }
-              : undefined,
-          });
-        }
+  function drain(room, mailbox) {
+    while (!mailbox.busy && mailbox.queue.length) {
+      const { event, settle: resolve } = mailbox.queue.shift();
+      if (rooms.get(room.roomId) !== room) {
+        resolve(refused('Room unavailable'));
         continue;
       }
-      activeViewers.set(id, viewer);
-    }
-
-    const singleViewer = activeViewers.size === 1;
-    let effectiveStartAt = singleViewer && room.startAt > receivedAt ? receivedAt : room.startAt;
-    let effectivePauseAt = singleViewer && room.pauseAt > receivedAt ? receivedAt : room.pauseAt;
-    let effectivePaused = Boolean(room.paused);
-    let effectivePosition = position(
-      {
-        ...room,
-        startAt: effectiveStartAt,
-        pauseAt: effectivePauseAt,
-        paused: effectivePaused,
-      },
-      receivedAt,
-    );
-    if (effectivePauseAt && receivedAt >= effectivePauseAt) {
-      effectivePaused = true;
-      effectivePauseAt = undefined;
-    }
-    if (room.hasMedia && room.duration > 0 && !effectivePaused && effectivePosition >= room.duration) {
-      effectivePosition = room.duration;
-      effectivePaused = true;
-    }
-
-    const effectiveTimedOut = Boolean(
-      room.readinessTimedOut ||
-      (!room.recovery && room.initialGate && !room.manualPaused && receivedMono >= room.readinessDeadline),
-    );
-    const waitingForReady = Boolean(room.initialGate && !room.manualPaused && !effectiveTimedOut);
-    let readiness;
-    if (room.initialGate && !room.manualPaused) {
-      const activeInitialIds = [...room.initialViewers].filter(id => activeViewers.has(id));
-      const blockers =
-        receivedMono - room.readinessSince >= READINESS_BLOCKER_REVEAL_MS
-          ? activeInitialIds
-              .map(id => activeViewers.get(id))
-              .filter(v => v && (!v.ready || v.version !== room.mediaVersion))
-              .map(v => v.name)
-          : [];
-      const canStart = activeInitialIds.some(id => {
-        const v = activeViewers.get(id);
-        return Boolean(v?.ready && v.version === room.mediaVersion);
-      });
-      readiness = {
-        id: room.readinessId,
-        timedOut: effectiveTimedOut,
-        blockers,
-        canStart,
-      };
-    }
-
-    return {
-      activeViewers,
-      projectedDisconnected,
-      effectiveStartAt,
-      effectivePauseAt,
-      effectivePaused,
-      effectivePosition,
-      waitingForReady,
-      readiness,
-    };
-  }
-
-  function formatRoomSnapshot(
-    room,
-    { actor, viewer, receivedAt, receivedMono, envelopeOnly = false, bumpSequence = false },
-  ) {
-    const projected = projectRoomReadOnly(room, receivedAt, receivedMono);
-    if (bumpSequence) room.transportSequence++;
-    const memberIds = [...new Set([...projected.activeViewers.values()].map(v => v.userId))];
-    const participants = aggregateParticipantSyncQuality(
-      {
-        mediaVersion: room.mediaVersion,
-        viewers: projected.activeViewers,
-        disconnectedViewers: projected.projectedDisconnected,
-      },
-      memberIds.map(id => ({ id })),
-      receivedAt,
-    );
-    const isAdmin = actor ? checkAdmin(actor, room) : false;
-    const coordination = {
-      id: room.id,
-      tenantId: room.tenantId,
-      transportSequence: room.transportSequence,
-      epoch: room.epoch,
-      revision: room.revision,
-      mediaVersion: room.mediaVersion,
-      streamVersion: viewer?.streamVersion,
-      observationEpoch: viewer?.observationEpoch,
-      serverNow: receivedAt,
-      startAt: projected.effectiveStartAt,
-      pauseAt: projected.effectivePauseAt,
-      waitingForReady: projected.waitingForReady,
-      readinessVersion: room.readinessVersion,
-      readiness: projected.readiness,
-      visibility: room.visibility,
-      roomRole: actor?.userId ? Policy.role(room, actor.userId) : undefined,
-      canPlayback: actor?.userId ? Policy.allowed(room, actor.userId, 'playPause', { isAdmin }) : false,
-      canManage: actor?.userId ? Policy.allowed(room, actor.userId, 'roomSettings', { isAdmin }) : false,
-      viewers: memberIds.length,
-      timeline: {
-        paused: projected.effectivePaused,
-        position: projected.effectivePosition,
-        duration: room.duration,
-        seekable: room.seekable,
-      },
-      timing: {
-        serverReceivedAt: receivedAt,
-        serverSentAt: nowFn(),
-        serverProcessingMs: monoNowFn() - receivedMono,
-        clockEpoch,
-      },
-    };
-    const content = {
-      ...cloneValue(room.content),
-      participants,
-    };
-    return envelopeOnly ? { coordination, content } : composeRoomSnapshot({ coordination, content });
-  }
-
-  async function createRoom({
-    roomId = createId(),
-    tenantId,
-    actor,
-    creatorId = actor?.userId,
-    creatorName = actor?.name || 'Host',
-    name = '',
-    visibility = 'public',
-    hosts = [],
-    permissions: customPermissions,
-    content = {},
-  }) {
-    const resolvedTenant = actor !== undefined ? resolveActorTenant(actor, tenantId) : normalizeTenantId(tenantId);
-    if (!resolvedTenant) {
-      throw Object.assign(new Error('Invalid or unauthorized tenant'), { status: 403 });
-    }
-    if (actor !== undefined && creatorId !== actor.userId) {
-      throw Object.assign(new Error('Creator identity mismatch'), { status: 403 });
-    }
-    if (typeof roomId !== 'string' || !roomId) throw new Error('roomId is required');
-    if (typeof creatorId !== 'string' || !creatorId) throw new Error('creatorId is required');
-    if (!['public', 'private'].includes(visibility)) throw new Error('Invalid room visibility');
-
-    const key = roomKey(resolvedTenant, roomId);
-    let createdRoom;
-    await withKeyLock(key, async () => {
-      if (rooms.has(key)) throw new Error('Room already exists');
-      const now = nowFn();
-      const proposed = {
-        id: roomId,
-        tenantId: resolvedTenant,
-        name,
-        creatorId,
-        hosts: [...new Set(hosts)],
-        hostId: creatorId,
-        hostName: senderName(creatorName, 'Host'),
-        visibility,
-        permissions: Policy.policy(customPermissions),
-        controls: { ...CONTROLS },
-        epoch: createId(),
-        revision: 0,
-        mediaVersion: createId(),
-        readinessVersion: undefined,
-        hasMedia: false,
-        paused: true,
-        position: 0,
-        duration: 0,
-        seekable: false,
-        changedAt: now,
-        startAt: undefined,
-        pauseAt: undefined,
-        initialGate: false,
-        manualPaused: false,
-        initialViewers: new Set(),
-        hadViewers: false,
-        viewers: new Map(),
-        disconnectedViewers: new Map(),
-        kickedViewers: new Map(),
-        transportSequence: 0,
-        lastActivity: now,
-        persistenceUncertain: false,
-        reservedRevision: 0,
-        content: cloneValue(content || {}),
-      };
-      if (actor !== undefined && !(await checkAuthorized(proposed, actor, 'create'))) {
-        throw Object.assign(new Error('Room creation not authorized'), { status: 403 });
-      }
-      if (options.onCreateRoom) {
-        await options.onCreateRoom(cloneRoomState(proposed));
-      } else if (options.onPersist) {
-        await options.onPersist(cloneRoomState(proposed), {
-          operation: 'create',
-          reason: 'room-created',
-          previousRevision: undefined,
-        });
-      }
-      rooms.set(key, proposed);
-      createdRoom = proposed;
-    });
-    options.onPublish?.({
-      tenantId: createdRoom.tenantId,
-      roomId: createdRoom.id,
-      includeLobby: true,
-      reason: 'room-created',
-    });
-    return createdRoom;
-  }
-
-  /**
-   * @param {string} roomId
-   * @param {any} actor
-   * @param {{tenantId?: string, expectedRevision?: number, duration?: number, position?: number,
-   *   autoplay?: boolean, content?: object}} [options]
-   */
-  async function loadTimeline(
-    roomId,
-    actor,
-    { tenantId, expectedRevision, duration = 0, position: initialPosition = 0, autoplay = true, content = {} } = {},
-  ) {
-    const resolvedTenant = resolveActorTenant(actor, tenantId);
-    if (!resolvedTenant) {
-      return { status: 'forbidden', httpStatus: 403, message: 'Room unavailable or private' };
-    }
-    const room = getRoom(roomId, resolvedTenant);
-    if (!room) {
-      return { status: 'forbidden', httpStatus: 403, message: 'Room unavailable or private' };
-    }
-    return runRoomTransaction(room, async queuePublish => {
-      if (getRoom(roomId, resolvedTenant) !== room || !(await checkAuthorized(room, actor, 'loadTimeline'))) {
-        return { status: 'forbidden', httpStatus: 403, message: 'Room unavailable or private' };
-      }
-      if (room.persistenceUncertain) {
-        return {
-          status: 'unavailable',
-          httpStatus: 503,
-          reason: 'persistence-uncertain',
-          message: 'Room state requires persistence reconciliation.',
-        };
-      }
-      if (!Policy.allowed(room, actor.userId, 'chooseMedia', { isAdmin: checkAdmin(actor, room) })) {
-        return { status: 'forbidden', httpStatus: 403, message: 'Choose media permission required' };
-      }
-      if (expectedRevision !== undefined) {
-        if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-          return {
-            status: 'unavailable',
-            httpStatus: 400,
-            reason: 'invalid-revision',
-            message: 'Invalid expected revision',
-          };
-        }
-        if (expectedRevision !== room.revision) {
-          return {
-            status: 'unavailable',
-            httpStatus: 409,
-            reason: 'revision-mismatch',
-            message: 'Room revision changed; refresh and retry',
-          };
-        }
-      }
-      if (!Number.isFinite(duration) || duration < 0) throw new Error('Invalid timeline duration');
-
-      const now = nowFn(),
-        monoNow = monoNowFn();
-      const draft = cloneRoomState(room);
-      settleAndPruneDraft(draft, now, monoNow);
-      draft.duration = duration;
-      draft.position = Math.max(0, Math.min(duration || Infinity, initialPosition));
-      draft.changedAt = now;
-      draft.startAt = undefined;
-      draft.pauseAt = undefined;
-      draft.hasMedia = true;
-      draft.seekable = duration > 0;
-      draft.mediaVersion = createId();
-      draft.readinessVersion = undefined;
-      draft.paused = true;
-      draft.manualPaused = !autoplay;
-      draft.initialGate = true;
-      draft.disconnectedViewers.clear();
-      for (const viewer of draft.viewers.values()) {
-        viewer.ready = false;
-        viewer.streamVersion = createId();
-        viewer.readinessBypassedVersion = undefined;
-      }
-      beginReadiness(draft, now, READINESS_WAIT_MS, { monoNow, createId });
-      draft.initialViewers = new Set(draft.viewers.keys());
-      draft.content = cloneValue(content || {});
-      advanceRevision(room, draft);
-      draft.lastActivity = now;
-
-      await persistRoomTransition(room, draft, { operation: 'loadTimeline', reason: 'timeline-loaded' });
-      commitRoomDraft(room, draft);
-      queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: true, reason: 'timeline-loaded' });
-      return { status: 'applied', mediaVersion: room.mediaVersion, revision: room.revision };
-    });
-  }
-
-  async function joinViewer(roomId, actor, { viewerId, tenantId, rtts = [], envelopeOnly = false }) {
-    if (typeof viewerId !== 'string' || !viewerId) {
-      throw Object.assign(new Error('Invalid viewer identifier'), { status: 400 });
-    }
-    const resolvedTenant = resolveActorTenant(actor, tenantId);
-    if (!resolvedTenant) {
-      throw Object.assign(new Error('Room unavailable or private'), { status: 403 });
-    }
-    const room = getRoom(roomId, resolvedTenant);
-    if (!room) {
-      throw Object.assign(new Error('Room unavailable or private'), { status: 403 });
-    }
-    return runRoomTransaction(room, async queuePublish => {
-      if (
-        getRoom(roomId, resolvedTenant) !== room ||
-        !(await checkAuthorized(room, actor, 'join', undefined, viewerId))
-      ) {
-        throw Object.assign(new Error('Room unavailable or private'), { status: 403 });
-      }
-      if (room.persistenceUncertain) {
-        throw Object.assign(new Error('Room state requires persistence reconciliation.'), { status: 503 });
-      }
-      const now = nowFn(),
-        monoNow = monoNowFn();
-      if ((room.kickedViewers.get(viewerId) || 0) > now) {
-        throw Object.assign(new Error('You were removed from this room. You may rejoin.'), { status: 403 });
-      }
-      const existingBeforeRefresh = room.viewers.get(viewerId);
-      if (existingBeforeRefresh && existingBeforeRefresh.userId !== actor.userId) {
-        throw Object.assign(new Error('Viewer identity mismatch'), { status: 403 });
-      }
-      const savedBeforeRefresh = !existingBeforeRefresh && room.disconnectedViewers.get(viewerId);
-      if (savedBeforeRefresh && savedBeforeRefresh.userId !== actor.userId) {
-        throw Object.assign(new Error('Viewer identity mismatch'), { status: 403 });
-      }
-
-      const draft = cloneRoomState(room);
-      draft.kickedViewers.delete(viewerId);
-      const { autoStarted } = settleAndPruneDraft(draft, now, monoNow);
-      const existing = draft.viewers.get(viewerId);
-      const saved = !existing && draft.disconnectedViewers.get(viewerId);
-      if (saved) draft.disconnectedViewers.delete(viewerId);
-      const viewer = existing || {
-        viewerId,
-        userId: actor.userId,
-        streamVersion: createId(),
-        observationEpoch: createId(),
-        readinessBypassedVersion:
-          saved?.mediaVersion === draft.mediaVersion ? saved.readinessBypassedVersion : undefined,
-        syncQuality: saved?.syncQuality ? cloneValue(saved.syncQuality) : undefined,
-        ready: false,
-        joinedAt: Math.min(now, saved?.joinedAt ?? now),
-      };
-      viewer.at = now;
-      viewer.touchSequence = (existing?.touchSequence || 0) + 1;
-      viewer.authVerifiedAt = now;
-      viewer.revoked = false;
-      viewer.name = senderName(actor.name, 'Participant');
-      viewer.actor = { ...actor };
-      viewer.rtts = Array.isArray(rtts) ? rtts.map(sample => ({ ...sample })) : [];
-      draft.viewers.set(viewerId, viewer);
-      draft.hadViewers = true;
-      draft.lastActivity = now;
-      if (!existing) {
-        promoteGroupReadinessLead(draft, now);
-        if (draft.initialGate) draft.initialViewers.add(viewerId);
-      }
-
-      if (durableStateChanged(room, draft)) {
-        await persistRoomTransition(room, draft, {
-          operation: 'joinViewer',
-          reason: autoStarted ? 'ready-autostart' : 'viewer-joined',
-        });
-      }
-      commitRoomDraft(room, draft);
-      if (autoStarted) {
-        queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: 'ready-autostart' });
-      }
-      if (!existing) {
-        queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: true, reason: 'viewer-joined' });
-      }
-      const committedViewer = room.viewers.get(viewerId);
-      return formatRoomSnapshot(room, {
-        actor,
-        viewer: committedViewer,
-        receivedAt: now,
-        receivedMono: monoNow,
-        envelopeOnly,
-        bumpSequence: true,
-      });
-    });
-  }
-
-  /**
-   * @param {any} draft
-   * @param {string} viewerId
-   * @param {{reason?: string, now?: number, monoNow?: number, preserveGrace?: boolean}} [options]
-   */
-  function removeViewerFromDraft(draft, viewerId, { reason = 'left', now, monoNow, preserveGrace = false } = {}) {
-    if (!preserveGrace) {
-      draft.disconnectedViewers.delete(viewerId);
-    }
-    const viewer = draft.viewers.get(viewerId);
-    if (!viewer) return { removed: false, autoStarted: false };
-    if (preserveGrace && !viewer.revoked) {
-      const unauthorizedPrivate =
-        draft.visibility === 'private' && !Policy.assigned(draft, viewer.userId) && !checkAdmin(viewer.actor, draft);
-      if (!unauthorizedPrivate) {
-        draft.disconnectedViewers.set(viewerId, {
-          userId: viewer.userId,
-          mediaVersion: draft.mediaVersion,
-          streamVersion: viewer.streamVersion,
-          expires: now + RECONNECT_GRACE_MS,
-          readinessBypassedVersion: viewer.readinessBypassedVersion,
-          joinedAt: viewer.joinedAt,
-          syncQuality: viewer.syncQuality
-            ? {
-                ...viewer.syncQuality,
-                status: 'disconnected',
-                confidence: viewer.syncQuality.confidence === 'provisional' ? 'provisional' : 'reduced',
-                updatedAt: now,
-              }
-            : undefined,
-        });
-        if (draft.disconnectedViewers.size > MAX_DISCONNECTED_VIEWERS) {
-          draft.disconnectedViewers.delete(draft.disconnectedViewers.keys().next().value);
-        }
-      } else {
-        draft.disconnectedViewers.delete(viewerId);
-      }
-    }
-    const hostLeft = viewer.userId === draft.hostId;
-    draft.viewers.delete(viewerId);
-    draft.initialViewers.delete(viewerId);
-    draft.revision++;
-    settle(draft, now, monoNow);
-    if (hostLeft) {
-      if (reason === 'left') draft.epoch = createId();
-      else invalidateEpoch(draft, { createId });
-    }
-    const autoStarted = applyAutoStartOnDraft(draft, now, monoNow);
-    return { removed: true, autoStarted };
-  }
-
-  async function evictRevokedViewer(room, viewerId, reason = 'revoked') {
-    return runRoomTransaction(room, async queuePublish => {
-      if (getRoom(room.id, room.tenantId) !== room) return false;
-      const liveViewer = room.viewers.get(viewerId);
-      const hadDisconnected = room.disconnectedViewers.has(viewerId);
-      if (!liveViewer && !hadDisconnected) return false;
-      const now = nowFn(),
-        monoNow = monoNowFn();
-      const draft = cloneRoomState(room);
-      const { removed, autoStarted } = removeViewerFromDraft(draft, viewerId, {
-        reason,
-        now,
-        monoNow,
-        preserveGrace: false,
-      });
-      if (!removed && !hadDisconnected) return false;
-      if (durableStateChanged(room, draft)) {
-        await persistRoomTransition(room, draft, { operation: 'revokeViewer', reason: 'viewer-left' });
-      }
-      commitRoomDraft(room, draft);
-      if (autoStarted) {
-        queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: 'ready-autostart' });
-      }
-      if (removed) {
-        queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: true, reason: 'viewer-left' });
-      }
-      return true;
-    });
-  }
-
-  async function leaveViewer(
-    roomId,
-    actor,
-    { viewerId, tenantId, reason = 'left', preserveReconnectGrace = reason === 'disconnected' },
-  ) {
-    const resolvedTenant = resolveActorTenant(actor, tenantId);
-    if (!resolvedTenant || typeof viewerId !== 'string' || !viewerId) return false;
-    const room = getRoom(roomId, resolvedTenant);
-    if (!room) return false;
-    return runRoomTransaction(room, async queuePublish => {
-      if (getRoom(roomId, resolvedTenant) !== room) return false;
-      const disconnectedMatch = room.disconnectedViewers.get(viewerId)?.userId === actor.userId;
-      const viewer = room.viewers.get(viewerId);
-      if ((!viewer || viewer.userId !== actor.userId) && !disconnectedMatch) return false;
-      const now = nowFn(),
-        monoNow = monoNowFn();
-      const draft = cloneRoomState(room);
-      if (disconnectedMatch && !preserveReconnectGrace) draft.disconnectedViewers.delete(viewerId);
-      if (!viewer || viewer.userId !== actor.userId) {
-        commitRoomDraft(room, draft);
-        return Boolean(disconnectedMatch && !preserveReconnectGrace);
-      }
-      const { autoStarted } = removeViewerFromDraft(draft, viewerId, {
-        reason,
-        now,
-        monoNow,
-        preserveGrace: Boolean(preserveReconnectGrace),
-      });
-      advanceRevision(room, draft);
-      if (durableStateChanged(room, draft)) {
-        await persistRoomTransition(room, draft, { operation: 'leaveViewer', reason: 'viewer-left' });
-      }
-      commitRoomDraft(room, draft);
-      if (autoStarted) {
-        queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: 'ready-autostart' });
-      }
-      queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: true, reason: 'viewer-left' });
-      return true;
-    });
-  }
-
-  async function reportReadiness(roomId, actor, { viewerId, mediaVersion, ready, readinessVersion, tenantId }) {
-    const resolvedTenant = resolveActorTenant(actor, tenantId);
-    const room = resolvedTenant ? getRoom(roomId, resolvedTenant) : undefined;
-    if (!room) {
-      throw Object.assign(new Error('Room unavailable or private'), { status: 403 });
-    }
-    return runRoomTransaction(room, async queuePublish => {
-      if (
-        getRoom(roomId, resolvedTenant) !== room ||
-        !(await checkAuthorized(room, actor, 'ready', undefined, viewerId))
-      ) {
-        throw Object.assign(new Error('Room unavailable or private'), { status: 403 });
-      }
-      if (room.persistenceUncertain) {
-        throw Object.assign(new Error('Room state requires persistence reconciliation.'), { status: 503 });
-      }
-      const now = nowFn(),
-        monoNow = monoNowFn();
-      const draft = cloneRoomState(room);
-      const viewer = draft.viewers.get(viewerId);
-      if (
-        !viewer ||
-        viewer.userId !== actor.userId ||
-        draft.mediaVersion !== mediaVersion ||
-        typeof ready !== 'boolean' ||
-        draft.readinessVersion !== readinessVersion
-      ) {
-        throw new Error('Invalid readiness');
-      }
-      viewer.authVerifiedAt = now;
-      recordViewerReadiness(
-        draft,
-        { userId: actor.userId, viewerId, mediaVersion, ready, readinessVersion },
-        { now, monoNow },
-      );
-      const autoStarted = applyAutoStartOnDraft(draft, now, monoNow);
-      if (durableStateChanged(room, draft)) {
-        await persistRoomTransition(room, draft, {
-          operation: 'reportReadiness',
-          reason: autoStarted ? 'ready-autostart' : 'viewer-ready',
-        });
-      }
-      commitRoomDraft(room, draft);
-      if (autoStarted) {
-        queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: 'ready-autostart' });
-      }
-      queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: 'viewer-ready' });
-      return { ok: true };
-    });
-  }
-
-  /**
-   * @param {string} roomId
-   * @param {any} actor
-   * @param {any} envelopeInput
-   * @param {{tenantId?: string}} [options]
-   */
-  async function executeCommand(roomId, actor, envelopeInput, { tenantId } = {}) {
-    const resolvedTenant = resolveActorTenant(actor, tenantId);
-    const room = resolvedTenant ? getRoom(roomId, resolvedTenant) : undefined;
-    if (!room) {
-      return { status: 'forbidden', httpStatus: 403, message: 'No controllable room.' };
-    }
-    return runRoomTransaction(room, async queuePublish => {
-      if (
-        getRoom(roomId, resolvedTenant) !== room ||
-        !(await checkAuthorized(room, actor, 'command', envelopeInput?.command, envelopeInput?.viewerId))
-      ) {
-        return { status: 'forbidden', httpStatus: 403, message: 'No controllable room.' };
-      }
-      if (room.persistenceUncertain) {
-        return {
-          status: 'unavailable',
-          httpStatus: 503,
-          reason: 'persistence-uncertain',
-          message: 'Room state requires persistence reconciliation.',
-        };
-      }
-      const now = nowFn(),
-        monoNow = monoNowFn();
-      const checkedEnvelope = validateCommandEnvelope(envelopeInput, {
-        expectedEpoch: room.epoch,
-        currentRevision: room.revision,
-        now,
-        maxTtlMs: commandTtlMs,
-      });
-      if (!checkedEnvelope.ok) {
-        return {
-          status: 'unavailable',
-          httpStatus: checkedEnvelope.status,
-          reason: checkedEnvelope.reason,
-          message: checkedEnvelope.error,
-        };
-      }
-      if (
-        checkedEnvelope.coordination.tenantId !== undefined &&
-        checkedEnvelope.coordination.tenantId !== resolvedTenant
-      ) {
-        return { status: 'forbidden', httpStatus: 403, message: 'No controllable room.' };
-      }
-      if (checkedEnvelope.coordination.roomId !== undefined && checkedEnvelope.coordination.roomId !== roomId) {
-        return { status: 'unavailable', httpStatus: 400, reason: 'room-mismatch', message: 'Invalid command target.' };
-      }
-      if (
-        checkedEnvelope.coordination.senderId !== undefined &&
-        checkedEnvelope.coordination.senderId !== actor.userId
-      ) {
-        return { status: 'forbidden', httpStatus: 403, message: 'Invalid command sender.' };
-      }
-      if (checkedEnvelope.coordination.viewerId !== undefined) {
-        const viewer = room.viewers.get(checkedEnvelope.coordination.viewerId);
-        if (!viewer || viewer.userId !== actor.userId || viewer.revoked || now - viewer.at > PRESENCE_TIMEOUT_MS) {
-          return { status: 'forbidden', httpStatus: 400, message: 'Invalid viewer' };
-        }
-      }
-      let command;
+      mailbox.busy = true;
+      let outcome;
       try {
-        command =
-          validateSyncCommand(checkedEnvelope.payload, { userIdPattern: options.idPattern }) ||
-          options.validateExtensionCommand?.(checkedEnvelope.payload);
-        if (!command) throw new Error('Unsupported command');
-      } catch {
-        return { status: 'unsupported', httpStatus: 400, message: 'Unsupported command or value.' };
+        outcome = process(room, event);
+      } catch (error) {
+        mailbox.busy = false;
+        resolve({ error, effects: [] });
+        continue;
       }
-
-      const isAdmin = checkAdmin(actor, room);
-      const capability = Policy.commandCapability(command.action);
-      if (capability && !Policy.allowed(room, actor.userId, capability, { isAdmin })) {
-        return { status: 'forbidden', httpStatus: 403, message: 'Your room permissions do not allow this action.' };
-      }
-
-      const draft = cloneRoomState(room);
-      if (checkedEnvelope.coordination.viewerId !== undefined) {
-        const draftSenderViewer = draft.viewers.get(checkedEnvelope.coordination.viewerId);
-        if (draftSenderViewer) draftSenderViewer.authVerifiedAt = now;
-      }
-
-      if (
-        ['media.play', 'media.toggle', 'media.ready.start'].includes(command.action) &&
-        Policy.role(draft, actor.userId) === 'viewer' &&
-        !isAdmin &&
-        ![...draft.viewers.values()].some(
-          v =>
-            now - v.at <= PRESENCE_TIMEOUT_MS &&
-            (Policy.role(draft, v.userId) !== 'viewer' || checkAdmin(v.actor, draft)),
-        )
-      ) {
-        if (!Policy.allowed(draft, actor.userId, 'continueWithoutHost', { isAdmin })) {
-          return { status: 'forbidden', httpStatus: 403, message: 'Your room permissions do not allow this action.' };
-        }
-      }
-
-      if (command.action === 'room.kick') {
-        const targetUserId = command.args.userId;
-        if (!Policy.canKickParticipant(draft, actor.userId, targetUserId, { isAdmin })) {
-          return { status: 'forbidden', httpStatus: 403, message: 'You cannot kick this participant.' };
-        }
-        const targetViewers = [...draft.viewers.entries()].filter(([, v]) => v.userId === targetUserId);
-        if (!targetViewers.length)
-          return { status: 'unavailable', httpStatus: 409, message: 'This participant has already left.' };
-        for (const [id] of targetViewers) draft.kickedViewers.set(id, now + RECONNECT_GRACE_MS);
-        for (const [id, v] of draft.disconnectedViewers) {
-          if (v.userId === targetUserId) {
-            draft.kickedViewers.set(id, now + RECONNECT_GRACE_MS);
-            draft.disconnectedViewers.delete(id);
-          }
-        }
-        let autoStarted = false;
-        for (const [id] of targetViewers) {
-          const outcome = removeViewerFromDraft(draft, id, { reason: 'kicked', now, monoNow, preserveGrace: false });
-          if (outcome.autoStarted) autoStarted = true;
-        }
-        advanceRevision(room, draft);
-        if (durableStateChanged(room, draft)) {
-          await persistRoomTransition(room, draft, { operation: 'executeCommand', reason: 'room.kick' });
-        }
-        commitRoomDraft(room, draft);
-        if (autoStarted) {
-          queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: 'ready-autostart' });
-        }
-        queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: true, reason: 'viewer-left' });
-        return { status: 'applied', revision: room.revision, message: 'Participant removed. They may rejoin.' };
-      }
-
-      if (command.action === 'room.visibility') {
-        draft.visibility = command.args.visibility;
-        draft.disconnectedViewers.clear();
-        invalidateEpoch(draft, { createId });
-        const { autoStarted: prunedAutoStart } = settleAndPruneDraft(draft, now, monoNow);
-        const gateAutoStart =
-          !prunedAutoStart && draft.initialGate && !draft.manualPaused
-            ? applyAutoStartOnDraft(draft, now, monoNow)
-            : false;
-        advanceRevision(room, draft);
-        await persistRoomTransition(room, draft, { operation: 'executeCommand', reason: 'visibility-changed' });
-        commitRoomDraft(room, draft);
-        if (prunedAutoStart || gateAutoStart) {
-          queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: 'ready-autostart' });
-        }
-        queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: true, reason: 'visibility-changed' });
-        return { status: 'applied', epoch: room.epoch, revision: room.revision, message: 'Viewing room updated.' };
-      }
-
-      settleAndPruneDraft(draft, now, monoNow);
-
-      if (command.action.startsWith('media.ready.')) {
-        const outcome = applyReadinessDecision(draft, command.action, command.args.readinessId, {
-          now,
-          monoNow,
-          createId,
+      if (typeof outcome?.then === 'function') {
+        outcome.then(result => {
+          mailbox.busy = false;
+          resolve(result);
+          drain(room, mailbox);
         });
-        if (outcome.status !== 'applied') {
-          return { status: outcome.status, httpStatus: 409, message: outcome.message };
-        }
-        const autoStarted = outcome.checkAutoStart ? applyAutoStartOnDraft(draft, now, monoNow) : false;
-        advanceRevision(room, draft);
-        await persistRoomTransition(room, draft, { operation: 'executeCommand', reason: command.action });
-        commitRoomDraft(room, draft);
-        if (autoStarted) {
-          queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: 'ready-autostart' });
-        }
-        queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: command.action });
-        return { status: 'applied', revision: room.revision, message: outcome.message };
-      }
-
-      if (draft.readinessTimedOut && ['media.play', 'media.toggle', 'media.pause'].includes(command.action)) {
-        return {
-          status: 'unavailable',
-          httpStatus: 409,
-          message: 'The host must choose whether to start, wait or cancel.',
-        };
-      }
-      if (!draft.viewers.size) return { status: 'unavailable', httpStatus: 409, message: 'No viewer is connected.' };
-      if (command.action.startsWith('media.') && !draft.hasMedia) {
-        return { status: 'unavailable', httpStatus: 409, message: 'Choose a video first.' };
-      }
-      if (!TIMELINE_ACTIONS.has(command.action)) {
-        return { status: 'unsupported', httpStatus: 400, message: 'Unsupported command or value.' };
-      }
-
-      const applied = applyTimelineCommand(draft, command, { now, monoNow, createId });
-      if (!applied) {
-        return { status: 'unsupported', httpStatus: 400, message: 'Unsupported command or value.' };
-      }
-      draft.revision++;
-      draft.lastActivity = now;
-      const autoStarted =
-        ['media.play', 'media.toggle'].includes(command.action) && draft.initialGate && !draft.manualPaused
-          ? applyAutoStartOnDraft(draft, now, monoNow)
-          : false;
-      advanceRevision(room, draft);
-      await persistRoomTransition(room, draft, { operation: 'executeCommand', reason: command.action });
-      commitRoomDraft(room, draft);
-      if (autoStarted) {
-        queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: 'ready-autostart' });
-      }
-      queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: command.action });
-      return { status: 'applied', revision: room.revision, message: 'Viewing room updated.' };
-    });
-  }
-
-  /**
-   * @param {string} roomId
-   * @param {any} actor
-   * @param {any} message
-   * @param {{tenantId?: string}} [options]
-   */
-  async function recordSyncQuality(roomId, actor, message, { tenantId } = {}) {
-    const resolvedTenant = resolveActorTenant(actor, tenantId);
-    if (!resolvedTenant) return { ok: false, code: 4003 };
-    if (message?.tenantId !== undefined && message.tenantId !== resolvedTenant) return { ok: false, code: 4003 };
-    const room = getRoom(roomId, resolvedTenant);
-    if (!room || message?.roomId !== roomId) return { ok: false, code: 4003 };
-    if (!validateSyncQualityMessage(message, { idPattern: options.idPattern })) return { ok: false, code: 4002 };
-
-    const initialViewer = room.viewers.get(message.viewerId);
-    if (!initialViewer || initialViewer.userId !== actor.userId || initialViewer.revoked) {
-      return { ok: false, code: 4003 };
-    }
-    const nowCheck = nowFn();
-    if (
-      (room.kickedViewers.get(message.viewerId) || 0) > nowCheck ||
-      checkFastRevoked(room, actor, message.viewerId) ||
-      (room.visibility === 'private' && !checkAdmin(actor, room) && !Policy.assigned(room, actor.userId))
-    ) {
-      await evictRevokedViewer(room, message.viewerId, 'revoked');
-      return { ok: false, code: 4003 };
-    }
-    if (room.mediaVersion !== message.mediaVersion || initialViewer.streamVersion !== message.streamVersion) {
-      return { ok: true, ignored: true };
-    }
-    // Check per-viewer telemetry rate limit BEFORE async `authorize` to prevent DB amplification.
-    const statusChanged = initialViewer.lastSyncQualityStatus !== message.status;
-    const confidenceChanged = initialViewer.lastSyncQualityConfidence !== message.confidence;
-    const minimumInterval = statusChanged || confidenceChanged ? 500 : 4000;
-    if (initialViewer.lastSyncQualityAt !== undefined && nowCheck - initialViewer.lastSyncQualityAt < minimumInterval) {
-      return { ok: true, displayChanged: false };
-    }
-
-    if (!(await checkAuthorized(room, actor, 'telemetry', undefined, message.viewerId))) {
-      await evictRevokedViewer(room, message.viewerId, 'revoked');
-      return { ok: false, code: 4003 };
-    }
-
-    return runRoomTransaction(room, async queuePublish => {
-      if (getRoom(roomId, resolvedTenant) !== room) return { ok: false, code: 4003 };
-      const viewer = room.viewers.get(message.viewerId);
-      if (
-        !viewer ||
-        viewer.userId !== actor.userId ||
-        viewer.revoked ||
-        checkFastRevoked(room, actor, message.viewerId)
-      ) {
-        return { ok: false, code: 4003 };
-      }
-      if (room.visibility === 'private' && !checkAdmin(actor, room) && !Policy.assigned(room, actor.userId)) {
-        return { ok: false, code: 4003 };
-      }
-      if (room.mediaVersion !== message.mediaVersion || viewer.streamVersion !== message.streamVersion) {
-        return { ok: true, ignored: true };
-      }
-      const now = nowFn();
-      viewer.authVerifiedAt = now;
-      const outcome = reduceViewerSyncQuality(viewer.syncQuality, message, {
-        now,
-        mediaVersion: room.mediaVersion,
-        streamVersion: viewer.streamVersion,
-        lastAt: viewer.lastSyncQualityAt,
-        lastStatus: viewer.lastSyncQualityStatus,
-        lastConfidence: viewer.lastSyncQualityConfidence,
-      });
-      if (!outcome.throttled) {
-        viewer.syncQuality = outcome.next;
-        viewer.lastSyncQualityAt = now;
-        viewer.lastSyncQualityStatus = message.status;
-        viewer.lastSyncQualityConfidence = message.confidence;
-        if (outcome.displayChanged) {
-          queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: 'sync-quality' });
-        }
-      }
-      return { ok: true, displayChanged: outcome.displayChanged };
-    });
-  }
-
-  /**
-   * Retrieve an authorized, tenant-isolated, read-only room snapshot for `actor`.
-   * Reads committed room state only; never mutates authoritative timeline, revision,
-   * readiness, or membership state, and never exposes uncommitted transitions.
-   * @param {string} roomId
-   * @param {any} actor
-   * @param {{viewerId?: string, tenantId?: string, envelopeOnly?: boolean}} [options]
-   */
-  async function snapshot(roomId, actor, { viewerId, tenantId, envelopeOnly = false } = {}) {
-    const resolvedTenant = resolveActorTenant(actor, tenantId);
-    const room = resolvedTenant ? getRoom(roomId, resolvedTenant) : undefined;
-    if (!room || !(await checkAuthorized(room, actor, 'snapshot', undefined, viewerId))) {
-      throw Object.assign(new Error('Room unavailable or private'), { status: 403 });
-    }
-    const receivedAt = nowFn(),
-      receivedMono = monoNowFn();
-    if (viewerId !== undefined) {
-      if (typeof viewerId !== 'string' || !viewerId) {
-        throw Object.assign(new Error('Viewer identity mismatch'), { status: 403 });
-      }
-      if ((room.kickedViewers.get(viewerId) || 0) > receivedAt) {
-        throw Object.assign(new Error('You were removed from this room. You may rejoin.'), { status: 403 });
-      }
-      const existingViewer = room.viewers.get(viewerId);
-      if (existingViewer && existingViewer.userId !== actor.userId) {
-        throw Object.assign(new Error('Viewer identity mismatch'), { status: 403 });
-      }
-      if (existingViewer && (existingViewer.revoked || checkFastRevoked(room, actor, viewerId))) {
-        throw Object.assign(new Error('Room unavailable or private'), { status: 403 });
-      }
-      const savedViewer = !existingViewer && room.disconnectedViewers.get(viewerId);
-      if (savedViewer && savedViewer.userId !== actor.userId) {
-        throw Object.assign(new Error('Viewer identity mismatch'), { status: 403 });
-      }
-    }
-    const projected = projectRoomReadOnly(room, receivedAt, receivedMono);
-    const viewer = viewerId ? projected.activeViewers.get(viewerId) : undefined;
-    return formatRoomSnapshot(room, {
-      actor,
-      viewer,
-      receivedAt,
-      receivedMono,
-      envelopeOnly,
-      bumpSequence: true,
-    });
-  }
-
-  /**
-   * Privileged server-internal room inspection for trusted diagnostics or monitoring.
-   * Purely read-only over committed room state; never exposes uncommitted transitions
-   * and never mutates `transportSequence` or presence state.
-   *
-   * Trust boundary: NEVER wire `inspectRoomInternal` directly to untrusted client requests
-   * or caller-supplied `tenantId` values; use `await coordinator.snapshot(roomId, actor, ...)`
-   * for all user-facing reads and WebSocket subscriber publications.
-   */
-  function inspectRoomInternal(roomId, { tenantId = 'default', envelopeOnly = true } = {}) {
-    const room = getRoom(roomId, tenantId);
-    if (!room) return undefined;
-    const receivedAt = nowFn(),
-      receivedMono = monoNowFn();
-    return formatRoomSnapshot(room, {
-      actor: undefined,
-      viewer: undefined,
-      receivedAt,
-      receivedMono,
-      envelopeOnly,
-      bumpSequence: false,
-    });
-  }
-
-  /**
-   * @param {any} actor
-   * @param {{tenantId?: string}} [options]
-   */
-  async function listRooms(actor, { tenantId } = {}) {
-    const resolvedTenant = resolveActorTenant(actor, tenantId);
-    if (!resolvedTenant) {
-      throw Object.assign(new Error('Unauthorized tenant access'), { status: 403 });
-    }
-    const visible = [];
-    const now = nowFn(),
-      monoNow = monoNowFn();
-    for (const room of [...rooms.values()]) {
-      if (room.tenantId !== resolvedTenant) continue;
-      if (!(await checkAuthorized(room, actor, 'list'))) continue;
-      if (getRoom(room.id, resolvedTenant) !== room) continue;
-      const projected = projectRoomReadOnly(room, now, monoNow);
-      const members = [...new Map([...projected.activeViewers.values()].map(v => [v.userId, v.name])).values()];
-      visible.push({
-        id: room.id,
-        tenantId: room.tenantId,
-        name: room.name,
-        hostName: room.hostName,
-        visibility: room.visibility,
-        viewers: members.length,
-        members,
-      });
-    }
-    return visible;
-  }
-
-  /**
-   * @param {string} roomId
-   * @param {any} actor
-   * @param {{epoch?: string, expectedRevision?: number, tenantId?: string}} [options]
-   */
-  async function closeRoom(roomId, actor, { epoch, expectedRevision, tenantId } = {}) {
-    const resolvedTenant = resolveActorTenant(actor, tenantId);
-    if (!resolvedTenant) {
-      return { status: 'forbidden', httpStatus: 403, message: 'Room unavailable or private' };
-    }
-    const room = getRoom(roomId, resolvedTenant);
-    if (!room) {
-      return { status: 'forbidden', httpStatus: 403, message: 'Room unavailable or private' };
-    }
-    return runRoomTransaction(room, async queuePublish => {
-      if (getRoom(roomId, resolvedTenant) !== room || !(await checkAuthorized(room, actor, 'close'))) {
-        return { status: 'forbidden', httpStatus: 403, message: 'Room unavailable or private' };
-      }
-      if (!Policy.allowed(room, actor.userId, 'closeRoom', { isAdmin: checkAdmin(actor, room) })) {
-        return { status: 'forbidden', httpStatus: 403, message: 'Room close permission required' };
-      }
-      if (expectedRevision !== undefined) {
-        if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-          return {
-            status: 'unavailable',
-            httpStatus: 400,
-            reason: 'invalid-revision',
-            message: 'Invalid expected revision',
-          };
-        }
-        if (expectedRevision !== room.revision) {
-          return {
-            status: 'unavailable',
-            httpStatus: 409,
-            reason: 'revision-mismatch',
-            message: 'Room revision changed; refresh before closing',
-          };
-        }
-      }
-      if (epoch !== undefined && epoch !== room.epoch) {
-        return {
-          status: 'unavailable',
-          httpStatus: 409,
-          reason: 'epoch-mismatch',
-          message: 'Room changed; refresh before closing',
-        };
-      }
-
-      const closedAt = nowFn();
-      const isolatedRoom = cloneRoomState(room);
-      try {
-        if (options.onDeleteRoom) {
-          await options.onDeleteRoom({
-            tenantId: room.tenantId,
-            roomId: room.id,
-            epoch: room.epoch,
-            revision: room.revision,
-            closedAt,
-            room: isolatedRoom,
-          });
-        } else if (options.onPersist) {
-          await options.onPersist(
-            { ...isolatedRoom, closed: true, closedAt },
-            { operation: 'close', reason: 'room-closed', previousRevision: room.revision },
-          );
-        }
-      } catch (err) {
-        if (err && typeof err === 'object' && (err.ambiguous === true || err.persistenceUncertain === true)) {
-          room.persistenceUncertain = true;
-        }
-        throw err;
-      }
-
-      rooms.delete(roomKey(resolvedTenant, roomId));
-      queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: true, reason: 'room-closed' });
-      return { status: 'applied', ok: true };
-    });
-  }
-
-  /**
-   * Client-facing presence heartbeat & RTT sample recorder.
-   * Enforces tenant isolation, viewer ownership, fast synchronous revocation, and bounded
-   * periodic `options.authorize` revalidation (`presenceAuthIntervalMs`) without hitting
-   * external storage on every rapid clock/pong frame.
-   * @param {string} roomId
-   * @param {any} actor
-   * @param {{viewerId?: string, tenantId?: string, rttMs?: number}} [options]
-   */
-  async function touchViewer(roomId, actor, { viewerId, tenantId, rttMs } = {}) {
-    const resolvedTenant = resolveActorTenant(actor, tenantId);
-    if (!resolvedTenant || typeof viewerId !== 'string' || !viewerId) return false;
-    const room = getRoom(roomId, resolvedTenant);
-    const viewer = room?.viewers.get(viewerId);
-    if (!room || !viewer || viewer.userId !== actor.userId || viewer.revoked) return false;
-    const now = nowFn();
-    if ((room.kickedViewers.get(viewerId) || 0) > now) return false;
-
-    if (
-      checkFastRevoked(room, actor, viewerId) ||
-      (room.visibility === 'private' && !checkAdmin(actor, room) && !Policy.assigned(room, actor.userId))
-    ) {
-      viewer.revoked = true;
-      await evictRevokedViewer(room, viewerId, 'revoked');
-      return false;
-    }
-
-    const needsAuthRecheck = Boolean(
-      options.authorize &&
-      (viewer.authVerifiedAt === undefined || now - viewer.authVerifiedAt >= presenceAuthIntervalMs),
-    );
-    if (needsAuthRecheck) {
-      const stillAllowed = await checkAuthorized(room, actor, 'presence', undefined, viewerId);
-      if (!stillAllowed) {
-        viewer.revoked = true;
-        await evictRevokedViewer(room, viewerId, 'revoked');
-        return false;
-      }
-      const latestViewer = getRoom(roomId, resolvedTenant)?.viewers.get(viewerId);
-      if (!latestViewer || latestViewer.userId !== actor.userId || latestViewer.revoked) return false;
-      const refreshedNow = nowFn(),
-        refreshedMono = monoNowFn();
-      latestViewer.authVerifiedAt = refreshedNow;
-      latestViewer.at = refreshedNow;
-      latestViewer.touchSequence = (latestViewer.touchSequence || 0) + 1;
-      if (Number.isFinite(rttMs) && rttMs >= 0 && rttMs <= 10000) {
-        latestViewer.rtts = [...(latestViewer.rtts || []), { at: refreshedMono, ms: rttMs }]
-          .filter(sample => refreshedMono - sample.at <= 30000)
-          .slice(-16);
-      }
-      return true;
-    }
-
-    const monoNow = monoNowFn();
-    viewer.at = now;
-    viewer.touchSequence = (viewer.touchSequence || 0) + 1;
-    if (Number.isFinite(rttMs) && rttMs >= 0 && rttMs <= 10000) {
-      viewer.rtts = [...(viewer.rtts || []), { at: monoNow, ms: rttMs }]
-        .filter(sample => monoNow - sample.at <= 30000)
-        .slice(-16);
-    }
-    return true;
-  }
-
-  /**
-   * Privileged server-internal immediate revocation helper.
-   * Evicts matching viewer session(s) under per-room serialization so revoked users
-   * lose presence, readiness membership, and snapshot access immediately.
-   * @param {{userId?: string, tenantId?: string, roomId?: string, viewerId?: string}} [target]
-   */
-  async function revokeActor({ userId, tenantId = 'default', roomId, viewerId } = {}) {
-    const normalizedTenant = normalizeTenantId(tenantId);
-    if (!normalizedTenant || typeof userId !== 'string' || !userId) return 0;
-    const candidateRooms =
-      roomId !== undefined
-        ? [getRoom(roomId, normalizedTenant)].filter(Boolean)
-        : [...rooms.values()].filter(r => r.tenantId === normalizedTenant);
-    let evictedCount = 0;
-    await Promise.all(
-      candidateRooms.map(room =>
-        runRoomTransaction(room, async queuePublish => {
-          if (getRoom(room.id, normalizedTenant) !== room) return;
-          const now = nowFn(),
-            monoNow = monoNowFn();
-          const draft = cloneRoomState(room);
-          let roomChanged = false,
-            autoStarted = false,
-            removedLive = false;
-          for (const [id, v] of [...draft.viewers.entries()]) {
-            if (v.userId === userId && (viewerId === undefined || id === viewerId)) {
-              const live = room.viewers.get(id);
-              if (live) live.revoked = true;
-              const res = removeViewerFromDraft(draft, id, { reason: 'revoked', now, monoNow, preserveGrace: false });
-              if (res.removed) {
-                removedLive = true;
-                roomChanged = true;
-                evictedCount++;
-              }
-              if (res.autoStarted) autoStarted = true;
-            }
-          }
-          for (const [id, saved] of [...draft.disconnectedViewers.entries()]) {
-            if (saved.userId === userId && (viewerId === undefined || id === viewerId)) {
-              draft.disconnectedViewers.delete(id);
-              roomChanged = true;
-            }
-          }
-          if (!roomChanged) return;
-          if (removedLive) advanceRevision(room, draft);
-          if (durableStateChanged(room, draft)) {
-            await persistRoomTransition(room, draft, { operation: 'revokeActor', reason: 'viewer-left' });
-          }
-          commitRoomDraft(room, draft);
-          if (autoStarted) {
-            queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: 'ready-autostart' });
-          }
-          if (removedLive) {
-            queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: true, reason: 'viewer-left' });
-          }
-        }),
-      ),
-    );
-    return evictedCount;
-  }
-
-  /**
-   * Privileged server-internal startup restoration & ambiguous-persistence reconciliation helpers.
-   */
-  function restoreRoomInternal(persisted) {
-    if (!persisted || typeof persisted !== 'object') throw new Error('Invalid persisted room');
-    const normalizedTenant = normalizeTenantId(persisted.tenantId);
-    if (!normalizedTenant) throw new Error('Invalid persisted tenantId');
-    if (typeof persisted.id !== 'string' || !persisted.id) throw new Error('Invalid persisted roomId');
-    if (typeof persisted.creatorId !== 'string' || !persisted.creatorId) throw new Error('Invalid persisted creatorId');
-    const key = roomKey(normalizedTenant, persisted.id);
-    if (rooms.has(key)) throw new Error('Room already exists');
-    const now = nowFn();
-    const baseRevision = Number.isSafeInteger(persisted.revision) && persisted.revision >= 0 ? persisted.revision : 0;
-    const restored = {
-      id: persisted.id,
-      tenantId: normalizedTenant,
-      name: persisted.name || '',
-      creatorId: persisted.creatorId,
-      hosts: [...new Set(persisted.hosts || [])],
-      hostId: persisted.hostId || persisted.creatorId,
-      hostName: senderName(persisted.hostName, 'Host'),
-      visibility: persisted.visibility === 'private' ? 'private' : 'public',
-      permissions: Policy.policy(persisted.permissions),
-      controls: { ...CONTROLS },
-      epoch: createId(),
-      revision: baseRevision + 1,
-      mediaVersion: persisted.mediaVersion || createId(),
-      readinessVersion: undefined,
-      hasMedia: Boolean(persisted.hasMedia),
-      paused: true,
-      position: Number.isFinite(persisted.position) ? Math.max(0, persisted.position) : 0,
-      duration: Number.isFinite(persisted.duration) ? Math.max(0, persisted.duration) : 0,
-      seekable: Boolean(persisted.hasMedia && persisted.duration > 0),
-      changedAt: now,
-      startAt: undefined,
-      pauseAt: undefined,
-      initialGate: false,
-      manualPaused: Boolean(persisted.hasMedia),
-      initialViewers: new Set(),
-      hadViewers: false,
-      viewers: new Map(),
-      disconnectedViewers: new Map(),
-      kickedViewers: new Map(),
-      transportSequence: 0,
-      lastActivity: now,
-      persistenceUncertain: false,
-      reservedRevision: baseRevision + 1,
-      content: cloneValue(persisted.content || {}),
-    };
-    rooms.set(key, restored);
-    return restored;
-  }
-
-  async function reconcileRoomInternal(roomId, authoritative, { tenantId = 'default' } = {}) {
-    const normalizedTenant = normalizeTenantId(tenantId);
-    const room = normalizedTenant ? getRoom(roomId, normalizedTenant) : undefined;
-    if (!room) return undefined;
-    return runRoomTransaction(room, async queuePublish => {
-      if (getRoom(roomId, normalizedTenant) !== room) return undefined;
-      if (authoritative?.closed) {
-        rooms.delete(roomKey(normalizedTenant, roomId));
-        queuePublish({ tenantId: normalizedTenant, roomId, includeLobby: true, reason: 'room-closed' });
-        return null;
-      }
-      const now = nowFn();
-      const floor = Math.max(room.revision, room.reservedRevision || 0, authoritative?.revision || 0);
-      if (authoritative && typeof authoritative === 'object') {
-        if (authoritative.visibility && ['public', 'private'].includes(authoritative.visibility)) {
-          room.visibility = authoritative.visibility;
-        }
-        if (typeof authoritative.epoch === 'string' && authoritative.epoch) room.epoch = authoritative.epoch;
-        if (typeof authoritative.mediaVersion === 'string' && authoritative.mediaVersion)
-          room.mediaVersion = authoritative.mediaVersion;
-        if (typeof authoritative.hasMedia === 'boolean') room.hasMedia = authoritative.hasMedia;
-        if (typeof authoritative.paused === 'boolean') room.paused = authoritative.paused;
-        if (Number.isFinite(authoritative.position)) room.position = authoritative.position;
-        if (Number.isFinite(authoritative.duration)) room.duration = authoritative.duration;
-        if (typeof authoritative.seekable === 'boolean') room.seekable = authoritative.seekable;
-        if ('startAt' in authoritative) room.startAt = authoritative.startAt;
-        if ('pauseAt' in authoritative) room.pauseAt = authoritative.pauseAt;
-        if (typeof authoritative.initialGate === 'boolean') room.initialGate = authoritative.initialGate;
-        if (typeof authoritative.manualPaused === 'boolean') room.manualPaused = authoritative.manualPaused;
-        if (typeof authoritative.readinessTimedOut === 'boolean')
-          room.readinessTimedOut = authoritative.readinessTimedOut;
-        if ('readinessVersion' in authoritative) room.readinessVersion = authoritative.readinessVersion;
-        if (authoritative.content !== undefined) room.content = cloneValue(authoritative.content);
-        room.changedAt = Number.isFinite(authoritative.changedAt) ? authoritative.changedAt : now;
-      }
-      room.revision = floor + 1;
-      room.reservedRevision = room.revision;
-      room.persistenceUncertain = false;
-      queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: true, reason: 'room-reconciled' });
-      return room;
-    });
-  }
-
-  function roomNeedsSweep(room, now, monoNow) {
-    const singleViewer = room.viewers.size === 1;
-    if (singleViewer && (room.startAt > now || room.pauseAt > now)) return true;
-    if (room.pauseAt && now >= room.pauseAt) return true;
-    if (
-      !room.recovery &&
-      room.initialGate &&
-      !room.manualPaused &&
-      !room.readinessTimedOut &&
-      monoNow >= room.readinessDeadline
-    ) {
-      return true;
-    }
-    if (room.hasMedia && room.duration > 0 && !room.paused && position(room, now) >= room.duration) return true;
-    for (const expiry of room.kickedViewers.values()) {
-      if (expiry <= now) return true;
-    }
-    for (const saved of room.disconnectedViewers.values()) {
-      if (
-        saved.expires <= now ||
-        saved.mediaVersion !== room.mediaVersion ||
-        (room.visibility === 'private' && !Policy.assigned(room, saved.userId))
-      ) {
-        return true;
-      }
-    }
-    for (const [id, viewer] of room.viewers) {
-      if (viewer.revoked || now - viewer.at > PRESENCE_TIMEOUT_MS || checkFastRevoked(room, viewer.actor, id))
-        return true;
-      if (room.visibility === 'private' && !Policy.assigned(room, viewer.userId) && !checkAdmin(viewer.actor, room))
-        return true;
-      if (
-        options.authorize &&
-        (viewer.authVerifiedAt === undefined || now - viewer.authVerifiedAt >= presenceAuthIntervalMs)
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  async function sweepRoom(room, now, monoNow) {
-    if (!roomNeedsSweep(room, now, monoNow)) return;
-    await runRoomTransaction(room, async queuePublish => {
-      if (getRoom(room.id, room.tenantId) !== room || room.persistenceUncertain) return;
-      const currentNow = options.now ? now : Math.max(now, nowFn());
-      const currentMono = options.monoNow ? monoNow : Math.max(monoNow, monoNowFn());
-
-      const revokedIds = new Set();
-      const revalidatedIds = new Set();
-      for (const [id, viewer] of room.viewers) {
-        if (viewer.revoked || checkFastRevoked(room, viewer.actor, id)) {
-          revokedIds.add(id);
-          continue;
-        }
-        const alreadyExpiring =
-          currentNow - viewer.at > PRESENCE_TIMEOUT_MS ||
-          (room.visibility === 'private' && !Policy.assigned(room, viewer.userId) && !checkAdmin(viewer.actor, room));
-        if (
-          !alreadyExpiring &&
-          options.authorize &&
-          (viewer.authVerifiedAt === undefined || currentNow - viewer.authVerifiedAt >= presenceAuthIntervalMs)
-        ) {
-          const allowed = await checkAuthorized(room, viewer.actor, 'sweep', undefined, id);
-          if (!allowed) revokedIds.add(id);
-          else revalidatedIds.add(id);
-        }
-      }
-
-      const draft = cloneRoomState(room);
-      for (const id of revalidatedIds) {
-        const dv = draft.viewers.get(id);
-        if (dv) dv.authVerifiedAt = currentNow;
-      }
-      const prevRevision = draft.revision;
-      const prevKickedSize = draft.kickedViewers.size;
-      const prevDiscSize = draft.disconnectedViewers.size;
-      const { pruned, autoStarted } = settleAndPruneDraft(draft, currentNow, currentMono, revokedIds);
-      const changed =
-        pruned ||
-        autoStarted ||
-        draft.revision !== prevRevision ||
-        draft.kickedViewers.size !== prevKickedSize ||
-        draft.disconnectedViewers.size !== prevDiscSize ||
-        durableStateChanged(room, draft);
-
-      if (!changed) {
-        for (const id of revalidatedIds) {
-          const lv = room.viewers.get(id);
-          if (lv) lv.authVerifiedAt = currentNow;
-        }
         return;
       }
-      if (draft.revision > room.revision) advanceRevision(room, draft);
-      if (durableStateChanged(room, draft)) {
-        await persistRoomTransition(room, draft, {
-          operation: 'sweep',
-          reason: autoStarted ? 'ready-autostart' : 'room-swept',
-        });
-      }
-      commitRoomDraft(room, draft);
-      if (autoStarted) {
-        queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: 'ready-autostart' });
-      }
-      queuePublish({
-        tenantId: room.tenantId,
-        roomId: room.id,
-        includeLobby: pruned,
-        reason: pruned ? 'viewer-pruned' : 'timeline-settled',
+      mailbox.busy = false;
+      resolve(outcome);
+    }
+  }
+  function submit(room, event) {
+    const mailbox = mailboxFor(room);
+    const entry = { done: false, result: undefined, promise: undefined };
+    entry.promise = new Promise(resolve => {
+      mailbox.queue.push({
+        event,
+        settle: value => {
+          entry.done = true;
+          entry.result = value;
+          resolve(value);
+        },
       });
     });
+    // An event submitted by an effect waits until the event that caused it is done.
+    if (!mailbox.busy) drain(room, mailbox);
+    return entry;
   }
-
-  /**
-   * Serialized maintenance sweep across active rooms. Each room settles independently
-   * under its own room lock without locking unrelated rooms together.
-   */
-  async function sweep(now = nowFn(), monoNow = monoNowFn()) {
-    await Promise.all([...rooms.values()].map(room => sweepRoom(room, now, monoNow)));
-  }
+  const resolveRoom = idOrRoom => (typeof idOrRoom === 'string' ? rooms.get(idOrRoom) : idOrRoom);
 
   return {
-    clockEpoch,
+    tenantId: options.tenantId ?? 'default',
+    /** The live rooms by id. Read it; change it only through add, delete and events. */
     rooms,
-    createRoom,
-    getRoom,
-    inspectRoomInternal,
-    restoreRoomInternal,
-    reconcileRoomInternal,
-    revokeActor,
-    listRooms,
-    closeRoom,
-    loadTimeline,
-    joinViewer,
-    leaveViewer,
-    touchViewer,
-    reportReadiness,
-    executeCommand,
-    recordSyncQuality,
-    snapshot,
-    sweep,
+    get: id => rooms.get(id),
+    /** Registers a live room (built by its host in the core's shape) and arms its timer. */
+    add(room) {
+      if (rooms.has(room.roomId)) throw new Error('Room already exists');
+      rooms.set(room.roomId, room);
+      arm(room);
+      return room;
+    },
+    /** Forgets a room; its pending events are refused. */
+    delete(id) {
+      const timer = timers.get(id);
+      if (timer) clearTimer(timer.timer);
+      timers.delete(id);
+      return rooms.delete(id);
+    },
+    /**
+     * Reduces an event and returns its result at once when the room's mailbox is free and
+     * nothing has to be persisted first; otherwise returns a promise of the result.
+     */
+    run(idOrRoom, event) {
+      const room = resolveRoom(idOrRoom);
+      if (!room || rooms.get(room.roomId) !== room) return refused('Room unavailable');
+      const entry = submit(room, event);
+      return entry.done ? entry.result : entry.promise;
+    },
+    /** Queues an event in the room's mailbox; resolves with its result. */
+    dispatch(idOrRoom, event) {
+      const room = resolveRoom(idOrRoom);
+      if (!room || rooms.get(room.roomId) !== room) return Promise.resolve(refused('Room unavailable'));
+      return submit(room, event).promise;
+    },
+    /** Re-arms a room's timer after its host changed a deadline outside an event. */
+    schedule(idOrRoom) {
+      const room = resolveRoom(idOrRoom);
+      if (room && rooms.get(room.roomId) === room) arm(room);
+    },
+    /** When the room's timer is next due, for diagnostics and tests. */
+    timerAt: id => timers.get(id)?.at,
+    close() {
+      for (const { timer } of timers.values()) clearTimer(timer);
+      timers.clear();
+    },
   };
 }

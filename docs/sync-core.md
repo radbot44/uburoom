@@ -65,15 +65,9 @@ All relative imports inside `shared/sync/` use explicit `.mjs` extensions so the
 - `createServerClock({ wallNow, monoNow })` — The server's one time base for room timelines. It reads the wall clock once, at creation (process start), then returns `floor(wall0 + (mono - mono0))` ms from the monotonic clock only, so a wall-clock step (NTP, manual change) never moves a room's position, `changedAt`/`startAt`/`pauseAt`, `serverNow`, or the clock-exchange replies. Clients map to whatever the server reports, so reported time stays continuous across the step; it can drift from true wall time (that is the point) and does not advance while the machine sleeps. `server/core.js` `Hub` owns the instance (`hub.clock`); `Watch`, `WatchRooms`, the socket and the operations layer read it. Every in-memory deadline (presence, reconnect grace, kicks, recovery, command `expiresAt`, autoplay countdown) uses it too. `Date.now()` stays only for stored or external times (playback history, Plex session reconciliation, logins, Discord, scheduled events). Persisted checkpoints hold positions, never live instants. Pass the same clock's `now` to `room-authority.mjs` functions and to `createRoomCoordinator({ now })`.
 
 ### `shared/sync/room-authority.mjs`
-- **Low-level primitives** (used directly by `server/watch.js` on Uburoom rooms): `position` (`timelinePosition`), `controlLead`, `beginReadiness`, `promoteGroupReadinessLead`, `settle` (`settleRoomTimeline`), `invalidateEpoch`, `recordViewerReadiness`, `areInitialViewersReady`, `snapshotReadiness`, `applyReadinessDecision`, `applyTimelineCommand`.
-- **`createRoomCoordinator(options)`** — Standalone, multi-tenant room coordinator managing `(tenantId, roomId)` namespaces with per-room serialized state transitions, copy-on-write persistence atomicity, and strict separation between actor-authorized request handlers and privileged server-internal APIs:
-  - **Actor-authorized async methods** (`await createRoom` with `actor`, `await snapshot`, `await listRooms`, `await joinViewer`, `await leaveViewer`, `await touchViewer`, `await reportReadiness`, `await executeCommand`, `await recordSyncQuality`, `await closeRoom`): Bind every operation to `actor.tenantId` (caller-supplied `tenantId` options never override `actor.tenantId`), enforce private-room membership (`creator`/`host`/admin) plus optional `options.authorize`, reject kicked `viewerId`s and viewer impersonation, and return uniform `403` errors across missing, cross-tenant, and private rooms without mutating state or revealing room existence.
-  - **Per-room serialization & read-only queries:** Every authoritative state transition (`createRoom`, `loadTimeline`, `joinViewer`, `leaveViewer`, `reportReadiness` + synchronous auto-start, `executeCommand`, `recordSyncQuality`, `closeRoom`, `revokeActor`, `reconcileRoomInternal`, and `await sweep`) executes inside an independent per-room FIFO lock (`withRoomLock`) so unrelated rooms never block one another and timers/sweeps/auto-starts never interleave with pending `authorize` or `onPersist` promises. `snapshot()`, `listRooms()`, and `inspectRoomInternal()` are genuinely read-only projections over committed room state: they never mutate `revision`, `paused`, `position`, `viewers`, or readiness gates, never expose in-flight uncommitted proposals, and never deadlock if called from `onPersist` or `onPublish`.
-  - **Persistence atomicity & lifecycle contract:** Durable transitions compute changes on a deep-cloned `draft` (`Map`, `Set`, viewer state, permissions, and `content`), pass an isolated clone to `onCreateRoom(room)`, `onPersist(room, meta)`, or `onDeleteRoom(context)` while holding the room lock, commit `draft` to live memory **only after** persistence resolves, and flush `onPublish` notifications **only after** releasing the room lock. Definite persistence failures leave prior committed state and `revision` intact with zero `onPublish` events. If a storage adapter throws an error marked `{ ambiguous: true }` (e.g., network drop after write submission), live state remains unmutated without publishing success, `room.persistenceUncertain` fences further mutations with `503` `persistence-uncertain` while reserving the attempted revision, and the host resolves the room via `await coordinator.reconcileRoomInternal(...)`. When `onCreateRoom`/`onPersist`/`onDeleteRoom` are omitted, the coordinator operates purely in memory.
-  - **Revocation-aware presence & telemetry:** `await touchViewer(roomId, actor, { viewerId, tenantId, rttMs })` enforces tenant isolation, viewer ownership, optional synchronous `options.isRevoked`, and bounded periodic `options.authorize` revalidation every `presenceAuthIntervalMs` (default `5000 ms`, half of `PRESENCE_TIMEOUT_MS`) so rapid clock/pong frames avoid per-message database lookups while externally revoked viewers are evicted before presence timeout without receiving reconnect grace. `await recordSyncQuality(roomId, actor, message, { tenantId })` checks per-viewer rate limits before calling `options.authorize` and evicts revoked senders under the room lock. `await leaveViewer(roomId, actor, { viewerId, tenantId, reason })` cleans up active presence immediately, preserving `RECONNECT_GRACE_MS` state when `reason === 'disconnected'` and clearing grace when `reason === 'left'`.
-  - **Revision & epoch semantics:** Every room starts at `revision = 0` and increments `revision` monotonically on committed authoritative transitions. When `expectedRevision` is supplied to `executeCommand`, `loadTimeline`, or `closeRoom`, it must match the room's committed `revision` (`409` `revision-mismatch` otherwise, with zero state mutation). When `expectedRevision` is omitted (`undefined`), real-time playback commands (`media.play`, `media.pause`, `media.toggle`, `media.seek.*`) continue using `epoch` + `expiresAt` fencing. (Self-hosted Uburoom durable queue commands continue using their separate `queueRevision` inside `command.args.expectedRevision`.)
-  - **Privileged server-internal methods** (`inspectRoomInternal`, `restoreRoomInternal`, `await reconcileRoomInternal`, `await revokeActor`, `await sweep`, `getRoom`, `rooms`, `createRoom` without `actor`): For trusted server-side diagnostics, startup rehydration, ambiguous-write reconciliation, push session revocation, and periodic maintenance only. Never wire internal methods directly to untrusted client inputs.
-
+- **Timeline primitives:** `position` (`timelinePosition`), `controlLead`, `beginReadiness`, `promoteGroupReadinessLead`, `settle` (`settleRoomTimeline`), `invalidateEpoch`, `recordViewerReadiness`, `areInitialViewersReady`, `snapshotReadiness`, `applyReadinessDecision`, `applyTimelineCommand`. One room shape everywhere: `roomId`, `state.paused`, `media.duration`, `viewers` keyed by viewer id.
+- **The room core, a pure reducer:** `reduce(state, event, context) → { state, effects, error?, value?, persist? }` (exported as `reduceRoom`). It copies the room's plain state (`ROOM_STATE_KEYS`, `VIEWER_STATE_KEYS`, plus a host's extension keys), applies one event, and returns the new state with the effects its host runs after commit. No `await`, no I/O; `now`, `monoNow`, `createId` and the `authorize` hook come from `context`. Events: `join`, `leave`, `disconnect`, `touch`, `ready`, `stream`, `kick`, `visibility`, `identity`, `roles`, `elect`, `close`, `timer`, `review` (recheck after an outside change) and, for standalone hosts, timeline/readiness `command`. Lifecycle reviews expire presence and reconnect grace, freeze an empty room (only its host's own tab may wake it within the grace), hand over the host and close unused rooms. When everyone the room waits for is ready, the reducer starts the room itself (no host actor, no provider call). `nextDeadline` (`nextRoomDeadline`) names when the room next needs a `timer` event. Everything on a live room outside the state keys (streams, sockets, provider sessions, timers) is its host's resource and is never seen by the reducer; `commitRoomState` writes a draft back and keeps live viewer objects.
+- **`createRoomCoordinator(options)`** — one room registry with a mailbox per room: events are reduced one at a time; when an event asks to persist and `onPersist` is given, the state is committed only after it resolves (a failure leaves the room as it was); `onEffect` runs each effect after commit; after every commit the room's next deadline is armed as a timer, rounded up to `timerResolutionMs`. `authorize(actor, room, action)` is required and is the one authorization decision (the self-hosted server passes `Hub.authorize`; `policyAuthorize` is a role/capability policy for standalone use); `join`, `ready` and `command` events are checked with it before they are reduced. `run` reduces at once when nothing must be persisted; `dispatch` queues. Host-specific fields and hooks plug in through `extensions`. A multi-tenant host keeps one coordinator per tenant (`tenantId`).
 ### `shared/sync/subscriptions.mjs`
 - `createSubscriptionBroker({ publish, getRoomId, getTenantId, onError, schedule })` — Coalesces bursts of mutations via `setImmediate` (or custom scheduler) and isolates async `publish` errors per subscriber. `notify({ tenantId, roomId, includeLobby: false })` wakes **only** subscribers of `(tenantId, roomId)`, preventing cross-room wakeups and cross-room/cross-tenant state leakage.
 
@@ -90,51 +84,26 @@ Uburoom does not implement end-to-end encryption; self-hosted Uburoom operates a
 
 ## 4. Integration pattern: `createRoomCoordinator` & `createSubscriptionBroker`
 
-The synchronization core exports two coordination primitives for multi-tenant services: `createSubscriptionBroker` for room/tenant-scoped push notifications and `createRoomCoordinator` for authoritative timeline serialization and copy-on-write persistence.
-
 ```js
-import {
-  createRoomCoordinator,
-  createSubscriptionBroker
-} from './shared/sync/index.mjs';
+import { createRoomCoordinator, createRoomState, createSubscriptionBroker } from './shared/sync/index.mjs';
 
-// 1. Broker delivers updates scoped to (tenantId, roomId) subscribers
-const broker = createSubscriptionBroker({
-  getTenantId: client => client.tenantId,
-  getRoomId: client => client.subscribedRoomId,
-  async publish(client, { roomOnly }) {
-    if (!roomOnly) {
-      const rooms = await coordinator.listRooms(client.actor, { tenantId: client.tenantId });
-      client.send({ type: 'rooms', rooms });
-    }
-    if (client.subscribedRoomId) {
-      const state = await coordinator.snapshot(client.subscribedRoomId, client.actor, {
-        viewerId: client.viewerId,
-        tenantId: client.tenantId,
-        envelopeOnly: true // Keeps `coordination` and opaque/encrypted `content` separated
-      });
-      client.send({ type: 'state', state });
-    }
-  }
-});
-
-// 2. Authoritative multi-tenant coordinator managing per-room serialization and persistence
+const broker = createSubscriptionBroker({ async publish(client) { /* project and send the client's room */ } });
 const coordinator = createRoomCoordinator({
-  presenceAuthIntervalMs: 5000,
-  isAdmin: (actor, room) => actor.tenantRole === 'tenant-admin' && actor.tenantId === room.tenantId,
-  isRevoked: ({ tenantId, actor }) => authService.isRevokedCached(tenantId, actor.userId),
-  async authorize({ tenantId, room, actor, operation }) {
-    return quotaService.allowsOperation(tenantId, room.id, actor.userId, operation);
+  tenantId: 'tenant-a',                               // one coordinator per tenant
+  authorize: (actor, room, action) => policy.authorize(actor, room, action), // required, synchronous
+  async onPersist(state, meta) { await rooms.saveCheckpoint(state, meta); }, // commit waits for it
+  onEffect(room, effect) {
+    if (effect.type === 'remove') coordinator.delete(room.roomId);
+    broker.notify({ tenantId: 'tenant-a', roomId: room.roomId, includeLobby: effect.type === 'remove' });
   },
-  async onCreateRoom(room) { await roomRepository.insertRoom(room); },
-  async onPersist(room, meta) { await roomRepository.saveRoomCheckpoint(room, meta); },
-  async onDeleteRoom(context) { await roomRepository.recordRoomTombstone(context); },
-  onPublish({ tenantId, roomId, includeLobby }) {
-    broker.notify({ tenantId, roomId, includeLobby });
-  }
+  timerResolutionMs: 1000,
 });
+const room = coordinator.add(createRoomState({ roomId, creatorId: actor.userId, creatorName: actor.name }));
+coordinator.run(room, { type: 'join', actor, viewerId });          // presence, readiness and starting are events
+await coordinator.dispatch(room, { type: 'command', actor, command: { action: 'media.play' } });
 ```
 
+The self-hosted server runs one coordinator (tenant `default`) as its room registry (`server/watch.js`): it passes `Hub.authorize`, keeps saves as effects rather than `onPersist`, and adds its personal-settings fields and hooks through `extensions`. Its commands, queue transitions and Plex work still run outside the mailbox and ask the room to `review` itself afterwards.
 ### Tenant identity, ownership/billing, and cross-tenant room invitations
 
 Cephalopod services must keep three identity and authorization concepts distinct:
@@ -151,16 +120,11 @@ In cross-tenant invitation flows, a user whose personal account belongs to Tenan
 
 `createRoomCoordinator` enforces in-process per-room serialization and copy-on-write commit ordering around `onCreateRoom`, `onPersist`, and `onDeleteRoom`, while intentionally delegating database technology and cluster topology to its host service. Specifically:
 
-- **Guaranteed by `createRoomCoordinator`:**
-  - `createRoom` awaits `onCreateRoom` (or `onPersist` with `{ operation: 'create' }`) under a `(tenantId, roomId)` key lock before inserting the room into `coordinator.rooms` or emitting `room-created`.
-  - Durable transitions (`loadTimeline`, `executeCommand`, `leaveViewer`, auto-start in `reportReadiness`/`joinViewer`, `revokeActor`, and `sweep` settlements) compute changes on an isolated deep copy, await `onPersist(proposedRoom, meta)` inside `withRoomLock`, commit in-memory state **only after** `onPersist` resolves, and emit `onPublish` **only after** releasing the room lock.
-  - `closeRoom` awaits `onDeleteRoom` (or `onPersist` with `{ operation: 'close', closed: true }`) inside `withRoomLock` before removing the room from `coordinator.rooms` or emitting `room-closed`.
-  - Definite persistence rejections leave the previously committed room state and `revision` intact and emit zero `onPublish` notifications; errors flagged `{ ambiguous: true }` fence subsequent mutations with `503` `persistence-uncertain` and reserve the uncertain revision until `reconcileRoomInternal` runs.
-
+- **Guaranteed by `createRoomCoordinator`:** each room's events are reduced one at a time in arrival order (an event submitted by an effect waits for the event that caused it); a state that asks to persist is committed only after `onPersist` resolves, and a rejection leaves the room unchanged with no effects; effects run only after commit; timers are armed from the committed state and arrive as `timer` events; rooms are created by the host (`createRoomState`) and registered with `add`, and `delete` drops pending events.
 - **Remaining Cephalopod host responsibilities:**
   1. **Transactional storage & monotonic revision guards:** Cephalopod's `onCreateRoom`, `onPersist`, and `onDeleteRoom` implementations must execute atomic database writes partitioned by `(tenantId, roomId)` with optimistic revision guards (`WHERE tenant_id = ? AND room_id = ? AND revision < ?`) so split-brain or stale worker writes cannot overwrite newer checkpoints.
-  2. **Wall-clock position checkpointing:** `onPersist` fires on discrete transitions and settlements, whereas continuous wall-clock playback between commands is derived via `timelinePosition(room, now)`. If Cephalopod requires crash-resume granularity finer than the latest command or settlement, it can inspect rooms periodically via `inspectRoomInternal` and write bounded position bookmarks.
+  2. **Wall-clock position checkpointing:** `onPersist` fires on discrete transitions, whereas playback between them is derived via `timelinePosition(room, now)`. For finer crash-resume granularity, read `coordinator.rooms` periodically and write bounded position bookmarks.
   3. **Durable deletion tombstones & payload retention:** `onDeleteRoom` must persist a durable closure tombstone and purge any associated encrypted/plaintext `content` blobs before resolving so closed rooms cannot be resurrected from earlier checkpoints after a restart.
-  4. **Startup/lazy rehydration & safe crash recovery:** On worker startup or lazy room activation, Cephalopod must skip tombstoned rooms and pass active persisted checkpoints to `coordinator.restoreRoomInternal(checkpoint)`. `restoreRoomInternal` restores rooms in a safe `paused: true` state at the last verified checkpoint position with empty `viewers`/`disconnectedViewers`, `revision = persistedRevision + 1`, and a fresh `epoch` (paired with a fresh process `clockEpoch`) so pre-crash command envelopes, `expectedRevision` preconditions, and client clock mappings cannot collide or replay.
-  5. **Ambiguous-commit reconciliation:** If a database driver drops a connection after sending a write (so commit vs. rollback is unknown), the adapter should throw an error with `err.ambiguous = true`, query authoritative storage for `(tenantId, roomId)`, and invoke `await coordinator.reconcileRoomInternal(roomId, savedRecord, { tenantId })` before resuming mutations.
+  4. **Startup/lazy rehydration & safe crash recovery:** Skip tombstoned rooms; rebuild each active checkpoint with `createRoomState` (paused, at the checkpoint position, no viewers, a fresh `epoch` and process `clockEpoch`) and `add` it, so pre-crash command envelopes and client clock mappings cannot replay.
+  5. **Ambiguous-commit reconciliation:** If a write's outcome is unknown, `onPersist` should reject; the room stays at its last committed state. Reload the authoritative record and replace the room (`delete`, then `add`) before resuming.
   6. **Single-owner residency, quotas & E2EE:** Horizontal scaling must route each active `(tenantId, roomId)` to a single authoritative worker/shard owner; connection authentication, WebSocket frame rate limits, per-tenant quotas, end-to-end `content` key exchange, and future server-verified cross-tenant room invitation grants remain Cephalopod service responsibilities outside `shared/sync/`.

@@ -178,7 +178,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
           }
         }
       } else {
-        const me = await waitFor(request(client, '/api/watch/me', undefined, signal), signal);
+        const me = await waitFor(request(client, '/api/watch/me', undefined, signal, { republish: true }), signal);
         if (client.ws.readyState !== 1) return;
         if (me.status !== 200) {
           send(client, { type: 'unavailable', ...me });
@@ -265,20 +265,24 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
         send(client, { type: 'room-kicked', roomId });
       };
       ws.watchRtts = [];
+      // The tab's own connection is its presence: it keeps the tab in its room and renews its media grants.
+      const present = () => {
+        watch.present(ws);
+        routes.renewGrants?.(ws);
+      };
       ws.on('pong', () => {
         // Native pongs keep presence alive even when the browser throttles its
         // JavaScript timers. Authorization is still checked by publish/requests.
         client.lastSeen = watch.clock.now();
         if (client.authenticated) watch.roomState.people.reserve(client.userId, client.lastSeen + 60000);
-        if (client.authenticated)
-          for (const room of watch.rooms.values())
-            for (const viewer of room.viewers.values()) if (viewer.watchSocket === ws) viewer.at = client.lastSeen;
-        if (client.pingAt === undefined) return;
-        const now = performance.now(),
-          ms = now - client.pingAt;
-        client.pingAt = undefined;
-        if (ms >= 0 && ms <= 10000)
-          ws.watchRtts = [...ws.watchRtts, { at: now, ms }].filter(sample => now - sample.at <= 30000).slice(-16);
+        if (client.pingAt !== undefined) {
+          const now = performance.now(),
+            ms = now - client.pingAt;
+          client.pingAt = undefined;
+          if (ms >= 0 && ms <= 10000)
+            ws.watchRtts = [...ws.watchRtts, { at: now, ms }].filter(sample => now - sample.at <= 30000).slice(-16);
+        }
+        if (client.authenticated) present();
       });
       const timer = setTimeout(() => ws.close(4003, 'Authentication required'), 5000);
       let windowAt = watch.clock.now(),
@@ -343,9 +347,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
               const serverReceivedAt = watch.clock.now(),
                 received = performance.now();
               if (!(await routes.authorized({ headers: client.headers }, true))) return ws.close(4003, 'Sign in again');
-              for (const room of watch.rooms.values())
-                for (const viewer of room.viewers.values())
-                  if (viewer.watchSocket === ws) viewer.at = watch.clock.now();
+              present();
               send(client, {
                 type: 'clock',
                 id: message.id,
@@ -468,22 +470,15 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
         clients.delete(client);
         // A transient close can precede the next authenticated socket by only
         // a second. Do not tear down the Plex session and revoke its HLS grant
-        // before the same viewer has an opportunity to reattach. The normal
-        // 10-second presence sweep still expires truly disconnected viewers.
+        // before the same viewer has an opportunity to reattach. The viewer's
+        // 10-second presence deadline still expires a truly disconnected viewer.
         // Graceful tab exits and protocol/authorization closures retain the
         // prior immediate-cleanup behavior.
         const unexpected =
           (code === 1005 || code === 1006) &&
           client.terminationCause !== 'server-shutdown' &&
           client.terminationCause !== 'backpressure';
-        const disconnectedAt = watch.clock.now();
-        for (const room of watch.rooms.values()) {
-          for (const viewer of room.viewers.values())
-            if (viewer.watchSocket === ws) {
-              viewer.at = unexpected ? disconnectedAt : disconnectedAt - 10001;
-            }
-          watch.refresh(room);
-        }
+        watch.disconnected(ws, !unexpected);
         if (client.authenticated) broker.notify({ includeLobby: true });
       });
     });

@@ -371,6 +371,10 @@ const scenarios = [
       await s.step('alice closes her tab', () => alice.disconnect({ abrupt: false }));
       await s.step('bob and carol report ready', () => allReady([bob, carol]));
       await s.step('three seconds pass', undefined, { wait: 3000 });
+      // With a Plex item current, Plex answering nothing must not stall anyone's room state.
+      await s.step('Plex becomes slow', () => s.server.plex.hold());
+      await s.step('five seconds pass while Plex is slow', undefined, { wait: 5000 });
+      await s.step('Plex answers', () => s.server.plex.release());
     },
   },
   {

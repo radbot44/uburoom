@@ -595,15 +595,8 @@ function createApp(
       )
         hub.setOwnerName(account.name);
       for (const login of logins.values()) if (login.userId === id) login.name = account.name;
-      for (const room of watch.rooms.values()) {
-        if (room.hostId === id) room.hostName = account.name;
-        if (room.ownerId === id) room.ownerName = account.name;
-        for (const viewer of room.viewers.values())
-          if (viewer.userId === id) {
-            viewer.name = account.name;
-            viewer.actor.name = account.name;
-          }
-      }
+      watch.renamed(id, account.name);
+
       return account;
     };
     hub.watchCanView = (room, actor) => watch.canView(watch.rooms.get(room.roomId), actor);
@@ -1091,6 +1084,7 @@ function createApp(
             if (!login || !hub.canAdmin(webActor(login)) || typeof data.enabled !== 'boolean')
               return json(res, 403, { error: 'Only an authorized administrator can change Admin mode' });
             hub.setAdminMode(webActor(login), data.enabled);
+            watch.identityChanged();
             return json(res, 200, { adminMode: hub.isAdmin(webActor(login)) });
           }
           if (req.method === 'GET' && ['/auth/discord', '/auth/owner'].includes(route)) {
@@ -1301,7 +1295,7 @@ function createApp(
           guestSweep = undefined;
         }));
     const sweep = setInterval(() => {
-      watch.sweep();
+      watch.maintainPlexSessions();
       watchRoutes.sweep();
       accountRoutes.sweep();
       void hub.sweepGuests();

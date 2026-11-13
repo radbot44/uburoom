@@ -20,6 +20,8 @@ function union(intervals) {
 }
 const length = intervals => intervals.reduce((sum, [a, b]) => sum + b - a, 0);
 class PlaybackTracking {
+  /** An observation ends after this long without a sample. */
+  static OBSERVATION_GAP_MS = GAP;
   constructor(registry, now = Date.now) {
     this.registry = registry;
     this.now = now;

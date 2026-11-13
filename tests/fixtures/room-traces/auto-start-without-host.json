@@ -528,11 +528,7 @@
               "present": true
             }
           ],
-          "epoch": "epoch#2",
-          "readiness": {
-            "waiting": false,
-            "gate": null
-          }
+          "epoch": "epoch#2"
         },
         "carol": {
           "waitingForHost": true,
@@ -554,11 +550,7 @@
               "present": true
             }
           ],
-          "epoch": "epoch#2",
-          "readiness": {
-            "waiting": false,
-            "gate": null
-          }
+          "epoch": "epoch#2"
         }
       }
     },
@@ -573,12 +565,130 @@
           "ok": true
         }
       },
-      "views": {}
+      "views": {
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 20.6,
+            "duration": 60,
+            "startAt": 9400,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        },
+        "carol": {
+          "timeline": {
+            "paused": false,
+            "position": 20.6,
+            "duration": 60,
+            "startAt": 9400,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        }
+      }
     },
     {
       "at": 13000,
       "step": "three seconds pass",
-      "views": {}
+      "views": {
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 23.6,
+            "duration": 60,
+            "startAt": 9400,
+            "pauseAt": null
+          }
+        },
+        "carol": {
+          "timeline": {
+            "paused": false,
+            "position": 23.6,
+            "duration": 60,
+            "startAt": 9400,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 14000,
+      "step": "Plex becomes slow",
+      "views": {
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 24.6,
+            "duration": 60,
+            "startAt": 9400,
+            "pauseAt": null
+          }
+        },
+        "carol": {
+          "timeline": {
+            "paused": false,
+            "position": 24.6,
+            "duration": 60,
+            "startAt": 9400,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 19000,
+      "step": "five seconds pass while Plex is slow",
+      "views": {
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 29.6,
+            "duration": 60,
+            "startAt": 9400,
+            "pauseAt": null
+          }
+        },
+        "carol": {
+          "timeline": {
+            "paused": false,
+            "position": 29.6,
+            "duration": 60,
+            "startAt": 9400,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 20000,
+      "step": "Plex answers",
+      "views": {
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 30.6,
+            "duration": 60,
+            "startAt": 9400,
+            "pauseAt": null
+          }
+        },
+        "carol": {
+          "timeline": {
+            "paused": false,
+            "position": 30.6,
+            "duration": 60,
+            "startAt": 9400,
+            "pauseAt": null
+          }
+        }
+      }
     }
   ]
 }

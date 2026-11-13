@@ -190,10 +190,14 @@ function watchOperations({
       const auth = await authorized(context, !!context.controlSocket || write);
       if (!auth) return result(401, { error: 'Log in with Discord' });
       context.signal?.throwIfAborted();
-      watch.roomState.people.enter(auth.actor.userId);
-      if (context.controlSocket) hub.directory?.connected(context.controlSocket, auth.actor.userId);
-      await watch.roomState.claimHosts(auth.actor.userId);
-      await hub.refreshAdmin?.(auth.actor);
+      // The server's own republish only reads; a client's own requests renew its
+      // place, claim pending host invites and refresh its admin standing.
+      if (!context.republish) {
+        watch.roomState.people.enter(auth.actor.userId);
+        if (context.controlSocket) hub.directory?.connected(context.controlSocket, auth.actor.userId);
+        await watch.roomState.claimHosts(auth.actor.userId);
+        await hub.refreshAdmin?.(auth.actor);
+      }
       const current = async () =>
         !context.signal?.aborted &&
         (!context.controlSocket || context.controlSocket.readyState === 1) &&
@@ -240,6 +244,7 @@ function watchOperations({
           return result(403, { error: 'Only an authorized administrator can change Admin mode' });
         }
         hub.setAdminMode(auth.actor, data.enabled);
+        watch.identityChanged();
         return result(200, { adminMode: hub.isAdmin(auth.actor) });
       }
       if (
@@ -518,7 +523,12 @@ function watchOperations({
       const room = watch.rooms.get(match[1]);
       if (room && write && match[2] === 'close')
         return result(200, await watch.roomState.closeRoom(match[1], auth.actor, data.epoch, current));
-      if (!(await watch.canView(room, auth.actor))) {
+      // A republish never waits on Plex for access: it uses the viewer's standing check.
+      if (
+        !(context.republish
+          ? watch.canSee(room, auth.actor, room?.viewers.get(url.searchParams.get('viewer') || ''))
+          : await watch.canView(room, auth.actor))
+      ) {
         return result(403, { error: 'Room unavailable or private' });
       }
       if (context.controlSocket && context.controlSocket.readyState !== 1) {
@@ -593,6 +603,8 @@ function watchOperations({
         }
         viewer.streamVersion = randomUUID();
         viewer.ready = false;
+        // The tab's stream is prepared again for the other delivery.
+        void watch.prepareStream(room, auth.actor, data.viewerId);
         return result(200, { ok: true });
       }
       if (write && match[2] === 'observe') {
@@ -607,6 +619,7 @@ function watchOperations({
         }
         try {
           const observed = watch.tracking.observe(room, viewer, data.viewerId, data);
+          watch.observed(room, viewer);
           await watch.reporting?.observe(room, viewer, data.viewerId, data, observed);
           await watch.observeEnd(room, viewer, data, observed);
           return result(200, observed);
@@ -633,23 +646,32 @@ function watchOperations({
         (await login({ headers: context.controlSocket?.watchHeaders || headers }))?.userId === auth.actor.userId;
       const alive = async () =>
         (!context.controlSocket || context.controlSocket.readyState === 1) && (await authenticated());
-      const viewer = context.republish
-        ? watch.touch(room, auth.actor, viewerId)
-        : join(room, auth, context, url, viewerId, alive, authenticated);
-      // A tab the room let go of (privacy, presence timeout) is not let back in by looking.
-      if (!viewer) return result(409, { error: REJOIN, rejoin: true });
-      // Poll-driven until A3.4: every republish prepares this tab's stream and
-      // renews its media grant, which expires after 15 seconds.
-      watch.reconcileFallback(room);
-      await watch.prepareViewer(room, auth.actor, viewerId);
-      if (!(await watch.canView(room, auth.actor)) || !(await alive()) || room.viewers.get(viewerId) !== viewer) {
-        return result(403, { error: 'Viewing access was revoked' });
+      let viewer;
+      if (context.republish) {
+        // The republish is a view. It starts nothing and never asks Plex; it only
+        // waits for this tab's own stream work, which events start.
+        viewer = room.viewers.get(viewerId);
+        // A tab the room let go of (privacy, presence timeout) is not let back in by looking.
+        if (!viewer) return result(409, { error: REJOIN, rejoin: true });
+        if (viewer.userId !== auth.actor.userId) throw new Error('Viewer identity mismatch');
+        await viewer.streamWork;
+        if (room.media?.kind === 'plex' && viewer.access?.media !== room.media) await watch.checkAccess(room, viewer);
+        if (viewer.streamFailure) throw viewer.streamFailure;
+        if (!watch.canSee(room, auth.actor, viewer) || !(await alive()) || room.viewers.get(viewerId) !== viewer)
+          return result(403, { error: 'Viewing access was revoked' });
+      } else {
+        viewer = join(room, auth, context, url, viewerId, alive, authenticated);
+        await watch.prepareStream(room, auth.actor, viewerId);
+        watch.requestEndingMeta(room);
+        watch.reconcileFallback(room);
+        if (viewer.streamFailure) throw viewer.streamFailure;
+        if (!(await watch.canView(room, auth.actor)) || !(await alive()) || room.viewers.get(viewerId) !== viewer)
+          return result(403, { error: 'Viewing access was revoked' });
       }
       const state = watch.view(room, auth.actor, viewerId);
       state.transportSequence = watch.nextStateSequence(room);
-      watch.requestEndingMeta(room);
       const fallbackMedia = watch.fallbackFor(room, viewer),
-        fallbackGrant = fallbackMedia && mediaGrant(room, auth, context, viewerId, true);
+        fallbackGrant = fallbackMedia && mediaGrant(room, auth, context, viewerId, true, !context.republish);
       if (fallbackGrant)
         state.fallbackStream = {
           mediaUrl: `/api/watch/media/${fallbackGrant}/start`,
@@ -663,7 +685,7 @@ function watchOperations({
       viewer.directDelivery = undefined;
       const grant =
         !viewer.localDelivery && viewer.media?.format !== 'local'
-          ? mediaGrant(room, auth, context, viewerId)
+          ? mediaGrant(room, auth, context, viewerId, false, !context.republish)
           : undefined;
       if (grant) {
         state.mediaUrl = `/api/watch/media/${grant}/start`;

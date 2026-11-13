@@ -344,7 +344,7 @@ test('empty and closed rooms cannot consume the next occurrence', async t => {
       assert.ok(f.room.autoplayCountdown);
       if (mode === 'empty') {
         f.room.viewers.clear();
-        f.watch.refresh(f.room);
+        f.watch.review(f.room);
       } else await f.watch.remove(f.id);
       assert.equal(f.room.autoplayCountdown, undefined);
       await delay(60);
@@ -536,7 +536,7 @@ test('authorized endpoint seeks finish without readiness or watch credit, while 
         assert.equal(f.queue.history(f.id).items[0].outcome, 'completed');
       } else {
         f.room.position = 100;
-        f.watch.refresh(f.room);
+        f.watch.review(f.room);
         await delay(60);
         assert.equal(f.room.autoplayCountdown, undefined);
         assert.equal(f.queue.current(f.id).id, current);
