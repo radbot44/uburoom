@@ -811,30 +811,34 @@ class Watch {
           media.playbackError = error.message;
         }
       }
-      if (!(await authorized())) return { status: 'unavailable', message: 'Room changed or command expired.' };
-      if (!accept(media)) throw new PlaybackError('Plex could not refresh this stream.');
-      this.tracking.end(viewer, 'stream-changed');
-      void this.reporting?.end(viewer, 'stream-changed');
-      viewer.media = media;
-      viewer.mediaVersion = version;
-      viewer.streamVersion = randomUUID();
-      viewer.directDelivery = undefined;
-      adopted = true;
-      if (media.unavailable) {
-        const entry = this.roomState.queue.current(room.roomId);
-        viewer.unavailableMedia = [
-          ...(viewer.unavailableMedia || []).filter(item => item.mediaId !== media.id),
-          { id: entry?.id || media.id, mediaId: media.id, title: media.title },
-        ];
-      }
-      // A viewer with no stream can never report ready, so the room stops waiting for them
-      // until they have one again.
-      this.coordinator.run(room, { type: 'stream', viewerId, available: media.format !== 'unavailable' });
-      if (current && current !== media) {
-        SubtitleResources.transfer(current, media);
-        void this.plex.stop(current);
-      }
-      return { status: 'applied' };
+      const usable = await authorized();
+      // Back in the mailbox: the stream is adopted only by the same viewer, video and stream.
+      return await this.inRoom(room, () => {
+        if (!usable || !admitted()) return expired();
+        if (!accept(media)) throw new PlaybackError('Plex could not refresh this stream.');
+        this.tracking.end(viewer, 'stream-changed');
+        void this.reporting?.end(viewer, 'stream-changed');
+        viewer.media = media;
+        viewer.mediaVersion = version;
+        viewer.streamVersion = randomUUID();
+        viewer.directDelivery = undefined;
+        adopted = true;
+        if (media.unavailable) {
+          const entry = this.roomState.queue.current(room.roomId);
+          viewer.unavailableMedia = [
+            ...(viewer.unavailableMedia || []).filter(item => item.mediaId !== media.id),
+            { id: entry?.id || media.id, mediaId: media.id, title: media.title },
+          ];
+        }
+        // A viewer with no stream can never report ready, so the room stops waiting for them
+        // until they have one again.
+        this.coordinator.run(room, { type: 'stream', viewerId, available: media.format !== 'unavailable' });
+        if (current && current !== media) {
+          SubtitleResources.transfer(current, media);
+          void this.plex.stop(current);
+        }
+        return { status: 'applied' };
+      });
     } finally {
       if (media && !adopted && media !== current && media !== room.media) await this.plex.stop(media);
     }
