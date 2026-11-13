@@ -233,6 +233,7 @@ const scenarios = [
   {
     // Fixture Plex items play as a direct file, so no transcode session starts.
     name: 'plex-item-playback',
+    plexSessions: true,
     async run(s) {
       const { alice, bob } = await together(s);
       await s.step('alice loads a Plex item', () => alice.command('media.load', { mediaId: '1', quality: 'direct' }));
@@ -260,6 +261,7 @@ const scenarios = [
     // Plex answers nothing while held. The demo video keeps playing for everyone
     // meanwhile; a Plex item's own stream would stall the once-a-second republish.
     name: 'slow-plex-during-commands',
+    plexSessions: true,
     async run(s) {
       const { alice, bob } = await together(s);
       const carol = await s.tab('carol'),

@@ -8,11 +8,30 @@ const fs = require('node:fs'),
   path = require('node:path'),
   https = require('node:https');
 const { createApp } = require('../../../server/app');
+const { Plex } = require('../../../server/plex');
 const { accountFixture } = require('../../../scripts/account-fixture');
 const root = path.join(__dirname, '../../..');
 const certFile = path.join(root, 'certs/server-cert.pem');
 
+// Every Plex stream the server prepares and stops, counted for the running scenario,
+// so a scenario can check that nothing it prepared was left open.
+let counting;
+const { prepare, stop } = Plex.prototype;
+Plex.prototype.prepare = async function (...args) {
+  const media = await prepare.apply(this, args);
+  if (counting && media && typeof media === 'object') {
+    counting.started++;
+    counting.open.add(media);
+  }
+  return media;
+};
+Plex.prototype.stop = function (media) {
+  if (counting && media && counting.open.delete(media)) counting.stopped++;
+  return stop.call(this, media);
+};
+
 async function startServer({ disk = false } = {}) {
+  const plexSessions = (counting = { started: 0, stopped: 0, open: new Set() });
   if (!fs.existsSync(certFile)) throw new Error('Room scenarios need development TLS files; run npm run pretest');
   const cert = fs.readFileSync(certFile),
     provider = accountFixture(),
@@ -97,6 +116,7 @@ async function startServer({ disk = false } = {}) {
     cert,
     login,
     plex,
+    plexSessions,
     get app() {
       return app;
     },

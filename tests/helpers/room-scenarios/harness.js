@@ -134,7 +134,8 @@ async function runScenario(definition) {
     server = await startServer({ disk: !!definition.disk });
     scenario = new Scenario(server, clock);
     await definition.run(scenario);
-    return { scenario: definition.name, steps: scenario.steps };
+    // Read after the server closed: what it prepared and what it stopped.
+    return { scenario: definition.name, steps: scenario.steps, plexSessions: server.plexSessions };
   } finally {
     try {
       await Promise.all((scenario?.viewers || []).map(viewer => viewer.disconnect({ abrupt: false })));
