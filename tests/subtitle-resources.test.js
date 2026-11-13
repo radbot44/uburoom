@@ -444,11 +444,12 @@ test('uburoomSubtitles preserves loading status until window scheduler covers me
   };
 
   const originalFetch = global.fetch;
-  const originalRenderers = global.window?.uburoomSubtitleRenderers;
-  if (!global.window) global.window = {};
+  // watch-subtitles.js imports this object; the test replaces its renderer factory and puts it back.
+  const { subtitleRenderers } = require('../web/subtitle-renderers.js');
+  const originalCreate = subtitleRenderers.create;
 
   try {
-    global.window.uburoomSubtitleRenderers = {
+    Object.assign(subtitleRenderers, {
       create: async () => ({
         offset: () => {},
         append: async bytes => {
@@ -458,7 +459,7 @@ test('uburoomSubtitles preserves loading status until window scheduler covers me
           destroyed.push(true);
         },
       }),
-    };
+    });
 
     // Subtitle manifest advertising format 'pgs' with a window URL
     global.fetch = async url => {
@@ -526,7 +527,7 @@ test('uburoomSubtitles preserves loading status until window scheduler covers me
     subs.destroy();
   } finally {
     global.fetch = originalFetch;
-    global.window.uburoomSubtitleRenderers = originalRenderers;
+    subtitleRenderers.create = originalCreate;
   }
 });
 

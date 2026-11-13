@@ -1,9 +1,13 @@
+import * as uburoomControls from '/watch-controls.js';
+import * as uburoomIcons from '/icons.js';
+import * as uburoomPopover from '/watch-popover.js';
+import * as uburoomToasts from '/watch-toasts.js';
+
 /* Development-only control gallery. Builds each shared control with the shipped helpers and classes,
  * in each state they support. Served only by isolated demo servers (see server/app.js). */
-'use strict';
 (() => {
-  const controls = globalThis.uburoomControls,
-    icons = globalThis.uburoomIcons;
+  const controls = uburoomControls,
+    icons = uburoomIcons;
   const root = document.getElementById('gallery');
 
   function element(tag, { className, text, attrs } = {}, ...children) {
@@ -263,7 +267,7 @@
     const trigger = textButton('quiet', 'Trigger');
     const anchor = cell(popovers, label, trigger);
     anchor.classList.add('gallery-anchor');
-    const shown = globalThis.uburoomPopover.show(trigger, { ...options, duration: 0, placement: 'top' });
+    const shown = uburoomPopover.show(trigger, { ...options, duration: 0, placement: 'top' });
     const copy = shown.element.cloneNode(true);
     shown.dismiss();
     copy.classList.add('visible');
@@ -299,7 +303,7 @@
   ]) {
     const region = element('div', { className: 'watch-toast-region', attrs: { 'aria-live': 'polite' } });
     cell(toasts, label, region);
-    globalThis.uburoomToasts.create(region).show('gallery', { ...options, persistent: true });
+    uburoomToasts.create(region).show('gallery', { ...options, persistent: true });
   }
 
   // Dialog archetypes, shown open in place (non-modal) with the shared dialog classes.

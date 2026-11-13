@@ -9,7 +9,7 @@ const { randomUUID } = require('node:crypto'),
 const { WebSocket } = require('ws');
 const { createApp } = require('../server/app');
 const { requestByPath, hello } = require('./helpers/wire-paths');
-const { PROTOCOL_VERSION, serverMessageError } = require('../shared/wire-protocol');
+const { PROTOCOL_VERSION, serverMessageError } = require('../shared/wire-protocol.mjs');
 const certFile = path.join(__dirname, '../certs/server-cert.pem');
 
 async function fixture(t) {
@@ -699,7 +699,7 @@ test(
 async function scripted(operations, options = {}) {
   const http = require('node:http'),
     { watchSockets } = require('../server/watch-socket');
-  const WatchTransport = require('../web/watch-transport');
+  const { WatchTransport } = require('../web/watch-transport');
   const server = http.createServer(),
     roomId = '11111111-1111-4111-8111-111111111111',
     viewerId = '22222222-2222-4222-8222-222222222222';

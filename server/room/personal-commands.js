@@ -9,7 +9,7 @@
 /** @typedef {{countdown: any, mediaId: string, startAt: number, viewers: Map<string, any>, work?: MediaWork, dropped?: boolean, media?: any, fallbackStream?: InstanceType<typeof import('../fallback-stream').FallbackStream>, source?: Promise<any>}} Preload */
 
 const { randomUUID } = require('node:crypto');
-const Engine = require('../../shared/engine');
+const Engine = require('../../shared/engine.mjs');
 const { PlaybackError } = require('../av1');
 const Tracks = require('../media-tracks');
 const SubtitleResources = require('../subtitle-resources');

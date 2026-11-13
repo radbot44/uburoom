@@ -1,5 +1,5 @@
 'use strict';
-const { qualityDefinition, qualityId } = require('../shared/room-protocol');
+const { qualityDefinition, qualityId } = require('../shared/room-protocol.mjs');
 const Sources = require('./plex-source');
 
 // A fixed preference is a ceiling in both resolution and bitrate. Original

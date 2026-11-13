@@ -341,7 +341,7 @@ function normalizeConfig(
     formats,
     maxJobs,
   };
-  const { QUALITIES, qualityDefinition } = require('../shared/room-protocol');
+  const { QUALITIES, qualityDefinition } = require('../shared/room-protocol.mjs');
   const fallbackHeight = value.transcoding?.fallback?.height ?? 720,
     fallbackBitrate = value.transcoding?.fallback?.bitrate ?? 2;
   if (

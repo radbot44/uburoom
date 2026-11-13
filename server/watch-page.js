@@ -27,8 +27,8 @@ function watchPage(template, initial, scrollbarStyleNonce) {
     // The nonce is a server-generated base64 token (no user input).
     html = replaceTemplate(
       html,
-      '<script src="/watch-scrollbars.js"></script>',
-      '<script src="/watch-scrollbars.js" data-os-style-nonce="' + scrollbarStyleNonce + '"></script>',
+      '<script type="module" src="/watch.js"></script>',
+      '<script type="module" src="/watch.js" data-os-style-nonce="' + scrollbarStyleNonce + '"></script>',
     );
   }
   if (initial.me?.status === 200 && initial.rooms?.status === 200) {
@@ -226,8 +226,8 @@ function watchPage(template, initial, scrollbarStyleNonce) {
   );
   return replaceTemplate(
     html,
-    '<script src="/watch.js">',
-    '<script id="watch-bootstrap" type="application/json">' + data + '</script><script src="/watch.js">',
+    '<script type="module" src="/watch.js"',
+    '<script id="watch-bootstrap" type="application/json">' + data + '</script><script type="module" src="/watch.js"',
   );
 }
 

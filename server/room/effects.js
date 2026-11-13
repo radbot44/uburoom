@@ -12,7 +12,7 @@ const { FallbackStream } = require('../fallback-stream');
 const { runOperation, waitFor } = require('../operation');
 const { isProviderOutage } = require('../resilience');
 const { clearPlaybackEnd } = require('../playback-end');
-const Engine = require('../../shared/engine');
+const Engine = require('../../shared/engine.mjs');
 
 /**
  * What the room asks of the server: room effects, media work and Plex sessions, preloads and provider health.

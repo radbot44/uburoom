@@ -1,6 +1,5 @@
 /* Room and Queue scroll with Media; a tall stack sticks at the viewport edge in either direction. */
-'use strict';
-(() => {
+export function mount() {
   const column = document.getElementById('room-column');
   if (!column) return;
 
@@ -55,4 +54,4 @@
     attributeFilter: ['class'],
   });
   update();
-})();
+}

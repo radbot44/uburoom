@@ -383,13 +383,13 @@ test(
           .on('error', reject);
       });
 
-    // Verify browser classic-script and native ESM sync endpoints serve cleanly.
+    // The browser imports the shared modules unchanged.
     const [timingScript, esmModule] = await Promise.all([
-      getText('/playback-timing.js'),
+      getText('/shared/sync/timing.mjs'),
       getText('/shared/sync/client-sync.mjs'),
     ]);
     assert.equal(timingScript.status, 200);
-    assert.match(timingScript.body, /uburoomTiming/);
+    assert.match(timingScript.body, /export function createTimingApi/);
     assert.equal(esmModule.status, 200);
     assert.match(String(esmModule.headers['content-type']), /javascript/);
 

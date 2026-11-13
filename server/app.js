@@ -27,7 +27,6 @@ const RoomPolicy = require('./room-policy');
 const { AccessPolicy } = require('./access-policy');
 const { clientAddress } = require('./plex-delivery');
 const { DiagnosticLog } = require('./diagnostic-log');
-const SharedSync = require('../shared/sync');
 const SHARED_SYNC_MODULES = new Set([
   'index.mjs',
   'timing.mjs',
@@ -40,9 +39,8 @@ const SHARED_SYNC_MODULES = new Set([
   'room-authority.mjs',
   'subscriptions.mjs',
 ]);
-const BROWSER_TIMING_SCRIPT = `'use strict';\nglobalThis.uburoomTiming=(${SharedSync.Timing.createTimingApi.toString()})();\n`;
-const BROWSER_QUALITY_SCRIPT = `'use strict';\nglobalThis.uburoomSyncQuality=(${SharedSync.Quality.createQualityApi.toString()})();\n`;
-const BROWSER_SYNC_PROTOCOL_PREFIX = `'use strict';\nglobalThis.uburoomSyncProtocol=(${SharedSync.Protocol.createProtocolApi.toString()})();\n`;
+// Browser ES modules served unchanged from shared/ (`/shared/<name>`); the page imports them directly.
+const SHARED_MODULES = new Set(['engine.mjs', 'room-protocol.mjs', 'wire-protocol.mjs']);
 
 const BRANDING = {
   '/assets/branding/uburoom-wordmark-brand.svg': ['uburoom-wordmark-brand.svg', 'image/svg+xml; charset=utf-8'],
@@ -104,6 +102,7 @@ const STATIC_ASSETS = {
   '/account.js': ['account.js', 'text/javascript'],
   '/handoff.js': ['handoff.js', 'text/javascript'],
   '/watch.js': ['watch.js', 'text/javascript'],
+  '/trace.js': ['trace.js', 'text/javascript'],
   '/watch-library.js': ['watch-library.js', 'text/javascript'],
   '/watch-library.css': ['watch-library.css', 'text/css'],
   '/watch-av1.js': ['watch-av1.js', 'text/javascript'],
@@ -118,6 +117,16 @@ const STATIC_ASSETS = {
   '/vendor/overlayscrollbars/overlayscrollbars.css': ['vendor/overlayscrollbars/overlayscrollbars.css', 'text/css'],
   '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'],
 };
+// The watch page's own modules (web/watch/*.js) and component stylesheets (web/styles/*.css).
+for (const [dir, ext, type] of [
+  ['watch', '.js', 'text/javascript'],
+  ['styles', '.css', 'text/css'],
+]) {
+  const folder = path.join(__dirname, '../web', dir);
+  if (fs.existsSync(folder))
+    for (const file of fs.readdirSync(folder))
+      if (file.endsWith(ext)) STATIC_ASSETS['/' + dir + '/' + file] = [dir + '/' + file, type];
+}
 
 function createApp(
   config,
@@ -191,7 +200,7 @@ function createApp(
       return data;
     }
     const staticCache = new Map();
-    let themeJsCached, roomProtocolCached;
+    let themeJsCached;
     function etagMatches(clientEtag, serverEtag) {
       if (!clientEtag) return false;
       if (clientEtag === '*') return true;
@@ -827,12 +836,7 @@ function createApp(
               Boolean(subtitleAsset) ||
               Boolean(diagnosticAssets[route]) ||
               route === '/vendor/hls.js' ||
-              route === '/room-protocol.js' ||
-              route === '/engine.js' ||
-              route === '/wire-protocol.js' ||
-              route === '/playback-timing.js' ||
-              route === '/sync-quality.js' ||
-              route.startsWith('/shared/sync/'));
+              route.startsWith('/shared/'));
           if (!isStaticAsset && !throttle(clientAddress(req) || 'local', 180))
             return json(res, 429, { error: 'Too many requests; try again shortly' });
           if (
@@ -1009,12 +1013,6 @@ function createApp(
             }
             return sendStatic(req, res, themeJsCached, 'text/javascript; charset=utf-8', route);
           }
-          if (['GET', 'HEAD'].includes(req.method) && route === '/playback-timing.js') {
-            return sendStatic(req, res, BROWSER_TIMING_SCRIPT, 'text/javascript; charset=utf-8', route);
-          }
-          if (['GET', 'HEAD'].includes(req.method) && route === '/sync-quality.js') {
-            return sendStatic(req, res, BROWSER_QUALITY_SCRIPT, 'text/javascript; charset=utf-8', route);
-          }
           if (['GET', 'HEAD'].includes(req.method) && route.startsWith('/shared/sync/')) {
             const modName = route.slice('/shared/sync/'.length);
             if (SHARED_SYNC_MODULES.has(modName)) {
@@ -1024,12 +1022,11 @@ function createApp(
           }
           if (
             ['GET', 'HEAD'].includes(req.method) &&
-            ['/room-protocol.js', '/engine.js', '/wire-protocol.js'].includes(route)
+            route.startsWith('/shared/') &&
+            SHARED_MODULES.has(route.slice('/shared/'.length))
           ) {
-            const content = await readAsset(path.join(__dirname, '../shared', route.slice(1)), 'utf8');
-            const bodyOut =
-              route === '/room-protocol.js' ? (roomProtocolCached ||= BROWSER_SYNC_PROTOCOL_PREFIX + content) : content;
-            return sendStatic(req, res, bodyOut, 'text/javascript; charset=utf-8', route);
+            const content = await readAsset(path.join(__dirname, '../shared', route.slice('/shared/'.length)));
+            return sendStatic(req, res, content, 'text/javascript; charset=utf-8', route);
           }
           if (['GET', 'HEAD'].includes(req.method) && diagnosticAssets[route]) {
             const [file, type] = diagnosticAssets[route];

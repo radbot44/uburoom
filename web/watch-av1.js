@@ -1,4 +1,6 @@
-'use strict';
+import * as uburoomPlayback from './playback-policy.js';
+
+import { trace } from './trace.js';
 // AV1/VP9/VP8 WebM goes directly to MediaSource, never through hls.js. Each independently
 // encoded chunk starts at zero; timestampOffset maps it to Plex source time.
 const SWITCH_MARGIN = 5,
@@ -349,7 +351,7 @@ class uburoomAV1 {
       if (superseded()) break;
       const seconds = (Date.now() - began) / 1000;
       this.chunkTime = this.chunkTime ? Math.max(seconds, this.chunkTime * 0.7 + seconds * 0.3) : seconds;
-      globalThis.uburoomTrace?.('chunk-loaded', { elapsedMs: seconds * 1000 });
+      trace('chunk-loaded', { elapsedMs: seconds * 1000 });
       if (this.prefetchFailure?.index === index) this.prefetchFailure = undefined;
       const bytes = videoBytes.byteLength + audioBytes.byteLength;
       if (index > first) {
@@ -403,4 +405,4 @@ class uburoomAV1 {
     URL.revokeObjectURL(this.objectUrl);
   }
 }
-window.uburoomAV1 = uburoomAV1;
+export { uburoomAV1 };

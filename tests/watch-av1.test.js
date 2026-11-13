@@ -1,21 +1,12 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const vm = require('node:vm');
 const policy = require('../web/playback-policy');
+const { uburoomAV1 } = require('../web/watch-av1.js');
+// The player's own pump timers never run here; each test drives pump() itself.
+test.mock.timers.enable({ apis: ['setTimeout'] });
 function playerAt(duration = 180) {
-  const context = {
-    window: {},
-    setTimeout: () => 1,
-    clearTimeout: () => {},
-    AbortController,
-    Date,
-    uburoomPlayback: policy,
-  };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../web/watch-av1.js'), 'utf8'), context);
-  const player = Object.create(context.window.uburoomAV1.prototype);
+  const player = Object.create(uburoomAV1.prototype);
   Object.assign(player, {
     abort: new AbortController(),
     duration,

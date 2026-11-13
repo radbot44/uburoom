@@ -5,7 +5,7 @@
 // into facts. A protocol change replaces this file; recorded traces stay valid.
 //
 // Current protocol: the browser's own WatchTransport over the authenticated
-// /watch-socket, typed messages (shared/wire-protocol.js), and room state pushed
+// /watch-socket, typed messages (shared/wire-protocol.mjs), and room state pushed
 // in two lanes when it changes. After every scenario second each tab asks for an
 // explicit `resync`, so its view is the server's at that instant.
 //
@@ -15,8 +15,8 @@
 const { randomUUID } = require('node:crypto');
 const https = require('node:https');
 const { WebSocket } = require('ws');
-const WatchTransport = require('../../../web/watch-transport');
-const { mergeView, lanesAgree } = require('../../../shared/wire-protocol');
+const { WatchTransport } = require('../../../web/watch-transport');
+const { mergeView, lanesAgree } = require('../../../shared/wire-protocol.mjs');
 const { realTimer, scenarioNow } = require('./clock');
 
 const COMMAND_TTL_MS = 2500;

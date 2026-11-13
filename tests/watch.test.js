@@ -491,7 +491,7 @@ test(
       ) < 5,
     );
     assert.equal((await getState()).body.timing.clockEpoch, observedState.timing.clockEpoch);
-    assert.equal((await request('/playback-timing.js')).status, 200, 'timing module is served to the player');
+    assert.equal((await request('/shared/sync/timing.mjs')).status, 200, 'timing module is served to the player');
     const observation = {
       viewerId: viewer,
       mediaVersion: observedState.mediaVersion,

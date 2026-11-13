@@ -656,7 +656,7 @@ test('configured queues above 100 support bounded pages and moves beyond the old
       Array.from({ length: 110 }, (_, i) => sampleItem(i + 1)),
     )
   ).added;
-  const Protocol = require('../shared/room-protocol');
+  const Protocol = require('../shared/room-protocol.mjs');
   const command = Protocol.validate({ action: 'queue.move', args: { entryId: entries[0].id, targetRank: 109 } });
   await f.queue.move(room.id, f.creator, command.args.entryId, command.args.targetRank);
   assert.equal(f.queue.list(room.id, { limit: 100 }).items.length, 100);

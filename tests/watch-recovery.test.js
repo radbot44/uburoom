@@ -2,29 +2,54 @@
 const { install } = require('./helpers/watch-sync');
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const vm = require('node:vm');
-const fs = require('node:fs');
-const path = require('node:path');
 const playback = require('../web/playback-policy');
 const { create: diagnosticLog } = require('../web/playback-diagnostics');
-const source = fs.readFileSync(path.join(__dirname, '../web/watch.js'), 'utf8');
+const recovery = require('../web/watch/recovery.js');
+const { mountModule, AREA } = require('./helpers/watch-module');
 
-async function load(context, name, next) {
+// Mounts web/watch/recovery.js against a test context. The context keeps its shape: its store fields read and
+// write the module's store, its functions and values are the module's dependencies (read when used), its
+// setTimeout/clearTimeout/performance are the module's time, and the module's functions are added to it.
+async function load(context) {
   if (!context.sync) {
     const notify = context.synchronize;
     await install(context);
     if (notify) context.sync.synchronize = notify;
   }
   context.qualityPending ??= false;
-  context.hlsTimelinePending ??= false;
   context.diagnostics ??= diagnosticLog();
-  context.uburoomPlayback ??= playback;
   context.diagnosticSample ??= (event, fields) => context.diagnostics.record(event, fields);
   if (context.Hls) context.Hls.ErrorDetails ??= {};
-  vm.runInNewContext(
-    source.slice(source.indexOf('function ' + name + '('), source.indexOf('function ' + next + '(')),
-    context,
-  );
+  const values = { ...context, sync: context.sync };
+  delete values.hlsTimelinePending;
+  delete values.hlsPreparationUntil;
+  delete values.syncSeekPending;
+  values.time = {
+    mono: () => context.performance?.now() ?? 0,
+    wall: () => Date.now(),
+    setTimeout: (run, ms) => (context.setTimeout || setTimeout)(run, ms),
+    clearTimeout: id => (context.clearTimeout || clearTimeout)(id),
+    get clock() {
+      return context.playbackClock;
+    },
+    get presentation() {
+      return context.presentationTiming;
+    },
+  };
+  const { deps, api } = mountModule(recovery, values);
+  const { store } = require('../web/watch/store.js');
+  for (const key of Object.keys(values)) {
+    if (AREA[key])
+      Object.defineProperty(context, key, {
+        configurable: true,
+        enumerable: true,
+        get: () => store[AREA[key]][key],
+        set: value => (store[AREA[key]][key] = value),
+      });
+    else if (key !== 'time' && !(key in api))
+      Object.defineProperty(deps, key, { configurable: true, enumerable: true, get: () => context[key] });
+  }
+  Object.assign(context, api);
 }
 
 async function alignmentFixture() {
@@ -33,7 +58,7 @@ async function alignmentFixture() {
     position = 0,
     seeks = 0,
     ranges = [];
-  const timing = require('../web/playback-timing');
+  const timing = require('../shared/sync/timing.mjs');
   const ctx = {
     state: {
       mediaUrl: '/current',
@@ -206,7 +231,7 @@ test('HLS timestamp origin anchors once, guards pending sync, loads room target,
   const notify = ctx.synchronize;
   await install(ctx);
   ctx.sync.synchronize = notify;
-  await load(ctx, 'handleHlsFragmentBuffered', 'handleHlsError');
+  await load(ctx);
   ctx.handleHlsFragmentBuffered({});
   assert.equal(ctx.hlsTimelinePending, true, 'obsolete event cannot establish the new origin');
   target = 95;
@@ -250,7 +275,7 @@ test('HLS timestamp origin anchors once, guards pending sync, loads room target,
       return timers.length;
     },
   };
-  await load(errCtx, 'handleHlsError', 'unavailable');
+  await load(errCtx);
   errCtx.handleHlsError(retryClient, { fatal: true, type: 'network' });
   timers[0]();
   assert.deepEqual(retryLoads, [0]);
@@ -292,7 +317,7 @@ test('HLS retries stream with capped backoff, checks online/timeline state, reta
       return timers.length;
     },
   };
-  await load(context, 'handleHlsError', 'unavailable');
+  await load(context);
 
   // Initial backoff steps
   for (let i = 0; i < 4; i++) context.handleHlsError(client, { fatal: true, type: 'network' });
@@ -369,9 +394,9 @@ test('HLS delivery failure plays cached buffer, overrides backoff for outside-ca
     document: { visibilityState: 'visible' },
     syncCorrectionMode: 'speed',
     pauseAlarm: { cancel() {} },
-    driftCorrection: require('../web/playback-timing').correction(),
+    driftCorrection: require('../shared/sync/timing.mjs').correction(),
     startKey: () => 'fixture',
-    presentationTiming: require('../web/playback-timing').presentation(),
+    presentationTiming: require('../shared/sync/timing.mjs').presentation(),
     playerWaiting: false,
     fail: value => {
       message = value;
@@ -404,7 +429,7 @@ test('HLS delivery failure plays cached buffer, overrides backoff for outside-ca
     playbackError: 'Connection failed',
     clearTimeout: () => actions.push('cancel'),
   };
-  await load(seekCtx, 'restartHlsForSeek', 'handleHlsError');
+  await load(seekCtx);
   seekCtx.restartHlsForSeek(20);
   assert.deepEqual(actions, [], 'cached rewind needs no network restart');
   seekCtx.restartHlsForSeek(80);
@@ -434,7 +459,7 @@ test('HLS delivery failure plays cached buffer, overrides backoff for outside-ca
       calls.push(['synchronize']);
     },
   };
-  await load(freshCtx, 'handleHlsFragmentBuffered', 'handleHlsError');
+  await load(freshCtx);
   freshCtx.video.buffered = { length: 1, start: () => 10, end: () => 20 };
   freshCtx.handleHlsFragmentBuffered(freshClient);
   assert.equal(freshCtx.playbackError, '');
@@ -475,11 +500,7 @@ test('expired or dead HLS session bounds personal refresh rate, replaces stream 
       return timers.length;
     },
   };
-  vm.runInNewContext(
-    source.slice(source.indexOf('async function refreshHlsSession('), source.indexOf('function handleHlsError(')),
-    context,
-  );
-  await load(context, 'handleHlsError', 'unavailable');
+  await load(context);
 
   context.handleHlsError(client, { fatal: true, type: 'network', response: { code: 410 } });
   await new Promise(resolve => setImmediate(resolve));
@@ -533,13 +554,7 @@ test('expired or dead HLS session bounds personal refresh rate, replaces stream 
       return timers.length;
     },
   };
-  vm.runInNewContext(
-    source.slice(
-      source.indexOf('async function refreshHlsSession('),
-      source.indexOf('function handleHlsFragmentBuffered('),
-    ),
-    deadCtx,
-  );
+  await load(deadCtx);
   await deadCtx.refreshHlsSession(client);
   assert.equal(commands.length, 4, 'plenty of buffer keeps the stream attached');
   ahead = 5;
@@ -620,8 +635,7 @@ test('brief WebSocket disconnect does not tear down player, and extended disconn
     DISCONNECT_GRACE_MS: 8000,
   };
 
-  const code = source.slice(source.indexOf('function connectionLost('), source.indexOf('async function unlockLocal('));
-  vm.runInNewContext(code, context);
+  await load(context);
 
   // 1. connectionLost arms grace timer without tearing down player
   context.connectionLost({ code: 1006 });
@@ -688,7 +702,7 @@ test('HLS media recovery refills after quiet period, classifies quota/append err
       fallbacks.push(reason);
     },
   };
-  await load(context, 'handleHlsError', 'unavailable');
+  await load(context);
 
   // Recovery retry and quiet period reset
   const failure = { fatal: true, type: 'media', details: 'bufferAppendError' };

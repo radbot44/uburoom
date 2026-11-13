@@ -4,15 +4,14 @@ const { UUID, hash } = require('./core');
 const { randomUUID } = require('node:crypto');
 const RoomPolicy = require('./room-policy');
 const { validateCommandEnvelope } = require('../shared/sync/envelope.mjs');
-/** @type {import('../shared/room-protocol').MediaIdentityExport} */
-const { mediaIdentity } = require('../shared/room-protocol');
-const Engine = require('../shared/engine');
+const { mediaIdentity } = require('../shared/room-protocol.mjs');
+const Engine = require('../shared/engine.mjs');
 const { PlaybackError } = require('./av1');
 const { localFormat } = require('../web/playback-policy');
 const { ObservationError } = require('./playback-tracking');
 const { clientAddress } = require('./plex-delivery');
 const { REJOIN } = require('./watch');
-const { CALLS, splitView } = require('../shared/wire-protocol');
+const { CALLS, splitView } = require('../shared/wire-protocol.mjs');
 
 function applyRoomProgress(watch, roomId, items = []) {
   if (!roomId || !items.length) return;
@@ -282,7 +281,7 @@ function watchOperations({
     return { authenticated, alive };
   };
   /**
-   * One tab's view of its room as its two lanes (shared/wire-protocol.js). The viewer
+   * One tab's view of its room as its two lanes (shared/wire-protocol.mjs). The viewer
    * lane carries the tab's stream with its media grant; `renew` extends that grant (the
    * tab's own request), a publication only reads it.
    * @param {Context} context
@@ -613,7 +612,7 @@ function watchOperations({
     );
   }
   /**
-   * The named calls of shared/wire-protocol.js (`CALLS`), plus `library.art` for its GET route.
+   * The named calls of shared/wire-protocol.mjs (`CALLS`), plus `library.art` for its GET route.
    * @type {Record<string, (input: any) => any>}
    */
   const calls = {

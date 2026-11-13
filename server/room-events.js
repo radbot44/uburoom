@@ -1,7 +1,7 @@
 'use strict';
 const { randomUUID, createHash } = require('node:crypto');
 const RoomPolicy = require('./room-policy');
-const Engine = require('../shared/engine');
+const Engine = require('../shared/engine.mjs');
 const { eventDetails } = require('./event-time');
 const { retryDelay } = require('./discord-request');
 const { DiscordEventSync } = require('./discord-events');

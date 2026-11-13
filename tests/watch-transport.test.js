@@ -3,8 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { WebSocketServer } = require('ws');
-const WatchTransport = require('../web/watch-transport');
-const { PROTOCOL_VERSION } = require('../shared/wire-protocol');
+const { WatchTransport } = require('../web/watch-transport');
+const { PROTOCOL_VERSION } = require('../shared/wire-protocol.mjs');
 const PlaybackDiagnostics = require('../web/playback-diagnostics');
 
 class MockSocket {

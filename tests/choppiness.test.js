@@ -3,8 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const policy = require('../web/playback-policy');
 const toastsApi = require('../web/watch-toasts');
-const vm = require('node:vm');
-const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '../web/watch.js'), 'utf8');
+const player = require('../web/watch/player.js');
+const { mountModule } = require('./helpers/watch-module');
 
 test('choppiness detector detects 10% dropped frames over 10 seconds of active playback with frame and ratio gates', () => {
   const detector = policy.choppinessDetector({ threshold: 0.1, windowMs: 10000, minFrames: 50 });
@@ -434,10 +434,8 @@ function watchFixture() {
   let now = 0,
     total = 0,
     dropped = 0;
-  const ctx = {
+  const { view: ctx } = mountModule(player, {
     ...toast,
-    uburoomPlayback: policy,
-    uburoom: { qualityId: value => value },
     preferredQuality: 'direct',
     selected: 'room',
     hls: undefined,
@@ -468,7 +466,7 @@ function watchFixture() {
     pending: false,
     qualityPending: false,
     document: { visibilityState: 'visible' },
-    performance: { now: () => now },
+    time: { mono: () => now, wall: () => now },
     savePlayerPreferences() {},
     execute: async command => {
       commands.push(command);
@@ -476,12 +474,7 @@ function watchFixture() {
     fail() {},
     diagnostics: { record: (event, fields) => events.push({ event, ...fields }) },
     diagnosticSample: (event, fields) => events.push({ event, ...fields }),
-  };
-  vm.createContext(ctx);
-  vm.runInContext(
-    source.slice(source.indexOf('const choppyDetector ='), source.indexOf('function decodedFrames(')),
-    ctx,
-  );
+  });
   ctx.checkChoppyPlayback();
   return {
     ctx,
@@ -496,11 +489,11 @@ function watchFixture() {
         ctx.checkChoppyPlayback();
       }
     },
-    read: () =>
-      vm.runInContext(
-        '({active:choppyToastActive,dismissed:choppyDetector.isDismissed,cooldown:choppyDetector.inCooldown(performance.now())})',
-        ctx,
-      ),
+    read: () => ({
+      active: ctx.choppyToastActive,
+      dismissed: ctx.choppyDetector.isDismissed,
+      cooldown: ctx.choppyDetector.inCooldown(now),
+    }),
   };
 }
 

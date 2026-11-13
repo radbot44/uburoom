@@ -6,7 +6,7 @@ const { AV1 } = require('../server/av1');
 const { ConversionPolicy } = require('../server/transcoding-policy');
 const { Plex } = require('../server/plex');
 const Playback = require('../web/playback-policy');
-const Engine = require('../shared/engine');
+const Engine = require('../shared/engine.mjs');
 const { accountFixture } = require('../scripts/account-fixture');
 
 test('local codec configuration and fallback commands are ordered, bounded allowlists', () => {

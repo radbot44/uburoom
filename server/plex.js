@@ -1,7 +1,7 @@
 'use strict';
 const { CacheBudget } = require('./cache-budget');
 const { randomUUID, createHash } = require('node:crypto');
-const { QUALITIES, qualityId } = require('../shared/engine');
+const { QUALITIES, qualityId } = require('../shared/engine.mjs');
 const { AV1, PlaybackError, classifyHdr } = require('./av1');
 const Tracks = require('./media-tracks');
 const Output = require('./plex-output');
@@ -11,7 +11,7 @@ const SubtitleResources = require('./subtitle-resources');
 const { resilientFetch } = require('./resilience');
 const { ConversionPolicy } = require('./transcoding-policy');
 const { planDelivery } = require('./delivery-plan');
-const { mediaIdentity } = require('../shared/room-protocol');
+const { mediaIdentity } = require('../shared/room-protocol.mjs');
 const { SharedTask, runOperation, currentSignal } = require('./operation');
 
 function parseChapters(item) {

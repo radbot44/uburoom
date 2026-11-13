@@ -1,10 +1,13 @@
 'use strict';
 const { install } = require('./helpers/watch-sync');
 const test = require('node:test'),
-  assert = require('node:assert/strict'),
-  vm = require('node:vm'),
-  fs = require('node:fs');
-const { clock, target, presentation, controlSignal, correction } = require('../web/playback-timing');
+  assert = require('node:assert/strict');
+const { mountModule } = require('./helpers/watch-module');
+const syncWiring = require('../web/watch/sync-wiring.js');
+const syncQualityReport = require('../web/watch/sync-quality.js');
+const commands = require('../web/watch/commands.js');
+const roomResync = require('../web/watch/room-resync.js');
+const { clock, target, presentation, controlSignal, correction } = require('../shared/sync/timing.mjs');
 const { create } = require('../web/playback-diagnostics');
 const { compare } = require('../scripts/sync-report');
 function fixture() {
@@ -123,7 +126,6 @@ test('shared target removes response-arrival bias and follows pause, seek, repla
   assert.equal(target(state, undefined), undefined);
 });
 test('player uses the mapped server target and tolerates clock loss without drift corrections', async () => {
-  const source = fs.readFileSync(require('node:path').join(__dirname, '../web/watch.js'), 'utf8');
   let valid = true,
     serverTime = 100300;
   const ctx = {
@@ -164,10 +166,9 @@ test('player uses the mapped server target and tolerates clock loss without drif
     renderTransport() {},
     checkVideoFrames() {},
   };
-  vm.runInNewContext(
-    source.slice(source.indexOf('function expected('), source.indexOf('async function reportObservation(')),
-    ctx,
-  );
+  // The page's own expected(): the shared target at the one time base's server time, none without a clock.
+  const time = { target: state => target(state, valid ? serverTime : undefined), mono: () => 100 };
+  ctx.expected = mountModule(syncWiring, { time, state: ctx.state }).api.expected;
   await install(ctx);
   assert.equal(ctx.expected(), 10.3);
   await ctx.synchronize();
@@ -182,21 +183,20 @@ test('player uses the mapped server target and tolerates clock loss without drif
   assert.equal(ctx.video.currentTime, 10.3, 'fresh clock permits meaningful catch-up');
 });
 test('late rejoins and failures cannot overwrite a newer authorized state', async () => {
-  const source = fs.readFileSync(require('node:path').join(__dirname, '../web/watch.js'), 'utf8'),
-    pending = [],
+  const pending = [],
     applied = [];
-  const ctx = {
+  const { view: ctx } = mountModule(roomResync, {
     selected: 'room',
     stateRequestSequence: 0,
-    Date,
-    performance,
     viewerId: 'viewer',
     preferredQuality: 'direct',
-    URLSearchParams,
-    playbackClock: { begin: () => ({ sent: performance.now() }), add() {}, read: () => ({}) },
+    time: {
+      mono: () => performance.now(),
+      clock: { begin: () => ({ sent: performance.now() }), add() {}, read: () => ({}) },
+      observation: { update: () => 0 },
+    },
     diagnostics: { record() {} },
     roomLink: { join: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) },
-    observationClock: { update: () => 0 },
     observationClockRevision: 0,
     playbackError: '',
     applyState: v => applied.push(v.marker),
@@ -205,11 +205,7 @@ test('late rejoins and failures cannot overwrite a newer authorized state', asyn
     unavailable() {
       throw new Error('Old failure must not clear new state');
     },
-  };
-  vm.runInNewContext(
-    source.slice(source.indexOf('async function rejoinRoom('), source.indexOf('async function selectRoom(')),
-    ctx,
-  );
+  });
   const first = ctx.rejoinRoom(),
     second = ctx.rejoinRoom();
   pending[1].resolve({ marker: 'new', serverNow: Date.now() });
@@ -226,10 +222,9 @@ test('late rejoins and failures cannot overwrite a newer authorized state', asyn
   assert.deepEqual(applied, ['new', 'newest']);
 });
 test('command deadlines use fresh mapped time and never queue controls without a clock', async () => {
-  const source = fs.readFileSync(require('node:path').join(__dirname, '../web/watch.js'), 'utf8'),
-    sent = [];
+  const sent = [];
   let valid = true;
-  const ctx = {
+  const { view: ctx } = mountModule(commands, {
     switchingRoom: false,
     reconnecting: false,
     transport: { ready: true },
@@ -238,7 +233,12 @@ test('command deadlines use fresh mapped time and never queue controls without a
     state: { epoch: 'current', state: { paused: false } },
     pending: false,
     qualityPending: false,
-    playbackClock: { read: () => ({ valid, serverTime: 100000 }) },
+    time: {
+      read: () => ({ valid, serverTime: 100000 }),
+      clock: { read: () => ({ valid, serverTime: 100000 }) },
+      mono: () => 0,
+      wall: () => 0,
+    },
     diagnosticSample() {},
     diagnostics: { record() {} },
     fail() {},
@@ -253,11 +253,7 @@ test('command deadlines use fresh mapped time and never queue controls without a
     renderVisibility() {},
     renderTransport() {},
     pumpVolume() {},
-  };
-  vm.runInNewContext(
-    source.slice(source.indexOf('async function execute('), source.indexOf('function renderMediaInformation(')),
-    ctx,
-  );
+  });
   await ctx.execute({ action: 'media.pause' });
   assert.equal(sent[0].data.expiresAt, 102500);
   assert.equal(sent[0].data.epoch, 'current');
@@ -287,9 +283,8 @@ test('command deadlines use fresh mapped time and never queue controls without a
 });
 
 test('ordinary unlocked resume does not play a probe before its shared deadline', async () => {
-  const source = fs.readFileSync(require('node:path').join(__dirname, '../web/watch.js'), 'utf8');
   let probes = 0;
-  const ctx = {
+  const { view: ctx } = mountModule(commands, {
     switchingRoom: false,
     reconnecting: false,
     transport: { ready: true },
@@ -304,7 +299,7 @@ test('ordinary unlocked resume does not play a probe before its shared deadline'
     unlockLocal: async () => {
       probes++;
     },
-    playbackClock: { read: () => ({ valid: true, serverTime: 100000 }) },
+    time: { clock: { read: () => ({ valid: true, serverTime: 100000 }) }, mono: () => 0, wall: () => 0 },
     diagnosticSample() {},
     diagnostics: { record() {} },
     fail() {},
@@ -314,11 +309,7 @@ test('ordinary unlocked resume does not play a probe before its shared deadline'
     renderVisibility() {},
     renderTransport() {},
     pumpVolume() {},
-  };
-  vm.runInNewContext(
-    source.slice(source.indexOf('async function execute('), source.indexOf('function renderMediaInformation(')),
-    ctx,
-  );
+  });
   await ctx.execute({ action: 'media.play' });
   assert.equal(probes, 0);
   ctx.autoplayBlocked = true;
@@ -452,10 +443,9 @@ test('presentation tracker manages EMA smoothing, reinitialization, interruption
 });
 
 test('sync-quality reporting rejects interrupted presentation samples while retaining the 2500ms window for uninterrupted samples', () => {
-  const source = fs.readFileSync(require('node:path').join(__dirname, '../web/watch.js'), 'utf8');
   const p = presentation();
   const samples = [];
-  const ctx = {
+  const { view: ctx } = mountModule(syncQualityReport, {
     selected: 'room',
     viewerId: 'viewer',
     mediaSource: 'https://media',
@@ -464,7 +454,8 @@ test('sync-quality reporting rejects interrupted presentation samples while reta
       mediaUrl: 'https://media',
       streamVersion: 's',
       mediaVersion: 'm',
-      state: { paused: false },
+      serverNow: 100000,
+      state: { paused: false, position: 10, duration: 100 },
       waitingForReady: false,
     },
     video: { currentTime: 10.0, paused: false, seeking: false, readyState: 4, playbackRate: 1 },
@@ -479,9 +470,7 @@ test('sync-quality reporting rejects interrupted presentation samples while reta
     syncQualitySettleUntil: 0,
     lastPresentationBreak: 0,
     sync: { timelinePending: false, contextKey: () => 'room:viewer:m:s' },
-    presentationTiming: p,
-    uburoomTiming: { target: () => 10.0 },
-    uburoomSyncQuality: require('../web/sync-quality'),
+    time: { presentation: p, mono: () => 0 },
     syncQuality: {
       reset() {},
       breakSample() {},
@@ -489,12 +478,7 @@ test('sync-quality reporting rejects interrupted presentation samples while reta
         samples.push(data);
       },
     },
-  };
-  const code = source.slice(
-    source.indexOf('function syncQualityClockUsable('),
-    source.indexOf('function refreshSyncQuality('),
-  );
-  vm.runInNewContext(code, ctx);
+  });
 
   const timingClock = { valid: true, clockAgeMs: 50, clockUncertaintyMs: 20, clockRevision: 1, serverTime: 100000 };
   const syncKey = 'room:viewer:m:s';

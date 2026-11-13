@@ -8,7 +8,7 @@
 /** @typedef {{room: Room, kind: 'preload'|'transition'|'cleanup', controller: AbortController, signal: AbortSignal, committing: boolean, promise: Promise<any>}} MediaWork */
 /** @typedef {{countdown: any, mediaId: string, startAt: number, viewers: Map<string, any>, work?: MediaWork, dropped?: boolean, media?: any, fallbackStream?: InstanceType<typeof import('../fallback-stream').FallbackStream>, source?: Promise<any>}} Preload */
 
-const Engine = require('../../shared/engine');
+const Engine = require('../../shared/engine.mjs');
 const RoomPolicy = require('../room-policy');
 const { clearPlaybackEnd } = require('../playback-end');
 

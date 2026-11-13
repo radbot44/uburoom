@@ -2,7 +2,7 @@
 const { install } = require('./helpers/watch-sync');
 const test = require('node:test'),
   assert = require('node:assert/strict');
-const { alarm, target } = require('../web/playback-timing');
+const { alarm, target } = require('../shared/sync/timing.mjs');
 const { Hub } = require('../server/core'),
   { liveWatch } = require('./helpers/live-room'),
   { randomUUID } = require('node:crypto');
@@ -79,9 +79,9 @@ test('a superseded native play promise cannot mark replacement media ready or au
       document: { visibilityState: 'visible' },
       syncCorrectionMode: 'speed',
       pauseAlarm: { cancel() {} },
-      driftCorrection: require('../web/playback-timing').correction(),
+      driftCorrection: require('../shared/sync/timing.mjs').correction(),
       startKey: () => 'fixture',
-      presentationTiming: require('../web/playback-timing').presentation(),
+      presentationTiming: require('../shared/sync/timing.mjs').presentation(),
       uburoomPlayback: require('../web/playback-policy'),
       playerWaiting: false,
       video: {
@@ -354,9 +354,9 @@ test('mid-playback seek triggers reportReadiness when readyVersion matches media
     document: { visibilityState: 'visible' },
     syncCorrectionMode: 'speed',
     pauseAlarm: { cancel() {} },
-    driftCorrection: require('../web/playback-timing').correction(),
+    driftCorrection: require('../shared/sync/timing.mjs').correction(),
     startKey: () => 'fixture',
-    presentationTiming: require('../web/playback-timing').presentation(),
+    presentationTiming: require('../shared/sync/timing.mjs').presentation(),
     uburoomPlayback: require('../web/playback-policy'),
     playerWaiting: false,
     video: {

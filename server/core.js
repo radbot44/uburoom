@@ -13,7 +13,7 @@
  */
 
 const { createHash } = require('node:crypto');
-const Engine = require('../shared/engine');
+const Engine = require('../shared/engine.mjs');
 const RoomPolicy = require('./room-policy');
 const { COMMAND_TTL_MS, PRESENCE_TIMEOUT_MS, resolveCommandDeadlines } = require('../shared/sync/envelope.mjs');
 const { createServerClock } = require('../shared/sync/server-clock.mjs');
@@ -87,7 +87,7 @@ class Hub {
   /**
    * The one authorization decision for room work: may `actor` perform `action` in `room`?
    * `room` is an open room or a stored room record. `action` is one of:
-   * - a command from the command table (shared/room-protocol.js): room access,
+   * - a command from the command table (shared/room-protocol.mjs): room access,
    *   presence for room-scoped commands, and the command's permission rule;
    * - a room capability (RoomPolicy.CAPABILITIES or CREATOR_ONLY);
    * - 'room.view': see and join the room (admission, visibility, guest scope);
@@ -251,7 +251,11 @@ class Hub {
       try {
         return declared.service === 'event'
           ? await this.scheduledEventExecute(input.roomId, command, actor, ticket)
-          : await service(input.roomId, actor, ticket);
+          : await /** @type {(roomId: string, actor: any, ticket: Ticket) => Promise<any>} */ (service)(
+              input.roomId,
+              actor,
+              ticket,
+            );
       } catch (error) {
         return {
           status: error.status === 403 ? 'forbidden' : 'failed',

@@ -1,44 +1,40 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const vm = require('node:vm');
-const fs = require('node:fs');
 const { PlaybackTracking } = require('../server/playback-tracking');
 const { Accounts, credentialVault } = require('../server/accounts');
 const policy = require('../web/playback-policy');
-const source = fs.readFileSync(require('node:path').join(__dirname, '../web/watch.js'), 'utf8');
+const syncWiring = require('../web/watch/sync-wiring.js');
+const { mountModule } = require('./helpers/watch-module');
 
 function client() {
   let mono = 1000,
     wall = 100000;
   const sent = [];
-  const clock = policy.observationClock?.();
-  clock?.update('epoch', 100000, 1000, 1000);
-  const ctx = {
-    observationPending: false,
-    observationQueued: false,
+  const clock = policy.observationClock();
+  clock.update('epoch', 100000, 1000, 1000);
+  const time = {
+    mono: () => mono,
+    wall: () => wall,
+    observation: clock,
+    clock: { read: () => ({ valid: false }) },
+    presentation: { read: () => undefined, interrupt() {} },
+    target: () => undefined,
+  };
+  const { view: ctx } = mountModule(syncWiring, {
     observing: true,
     selected: 'room',
     state: { mediaUrl: 'url', streamVersion: 'stream', mediaVersion: 'media', observationEpoch: 'epoch' },
     mediaSource: 'url',
-    playbackError: '',
-    autoplayBlocked: false,
-    probing: false,
-    playerWaiting: false,
     viewerId: 'viewer',
-    observationSequence: 0,
-    observationBreak: 0,
     videoFrames: 30,
-    performance: { now: () => mono },
-    Date: { now: () => wall },
-    offset: 0,
-    observationClock: clock,
-    uburoomPlayback: policy,
+    time,
     video: {
       currentTime: 0,
       playbackRate: 1,
       readyState: 4,
       requestVideoFrameCallback() {},
+      addEventListener() {},
       getVideoPlaybackQuality: () => ({ totalVideoFrames: 100, droppedVideoFrames: 0 }),
     },
     diagnostics: { record() {} },
@@ -48,21 +44,15 @@ function client() {
         return { credit: { reason: 'baseline', creditedSeconds: 0 } };
       },
     },
-  };
-  vm.runInNewContext(
-    source.slice(
-      source.indexOf('async function reportObservation('),
-      source.indexOf("for (const event of ['playing'", source.indexOf('async function reportObservation(')),
-    ),
-    ctx,
-  );
+  });
   return {
     ctx,
+    time,
     sent,
     tick(ms = 1000, wallMs = ms) {
       mono += ms;
       wall += wallMs;
-      clock?.update('epoch', 100000 + mono - 1000, mono, mono);
+      clock.update('epoch', 100000 + mono - 1000, mono, mono);
       ctx.video.currentTime += ms / 1000;
       ctx.videoFrames += 30;
     },
@@ -73,7 +63,6 @@ test('observations keep monotonic duration through client wall steps and queue i
   const f = client();
   await f.ctx.reportObservation();
   f.tick(1000, 5745);
-  f.ctx.offset = -2300;
   await f.ctx.reportObservation();
   assert.equal(f.sent[1].observedAt - f.sent[0].observedAt, 1000);
 
@@ -100,7 +89,7 @@ test('observations keep monotonic duration through client wall steps and queue i
   const unanchored = client();
   const rows = [];
   unanchored.ctx.diagnostics.record = (event, fields) => rows.push({ event, ...fields });
-  unanchored.ctx.observationClock = policy.observationClock();
+  unanchored.time.observation = policy.observationClock();
   await unanchored.ctx.reportObservation();
   assert.equal(unanchored.sent.length, 0);
   assert.equal(rows[0].creditReason, 'clock-unavailable');

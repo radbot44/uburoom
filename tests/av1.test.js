@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { AV1, PlaybackError, classifyHdr, outputSpec, decodeRoute, cpuPlaceboRoute, run } = require('../server/av1');
 const { Plex } = require('../server/plex');
-const Engine = require('../shared/engine');
+const Engine = require('../shared/engine.mjs');
 
 test('AV1 derives a bounded source frame clock for CFR film and high frame rate video', () => {
   const spec = rate =>

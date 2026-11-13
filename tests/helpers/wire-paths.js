@@ -1,9 +1,9 @@
 'use strict';
 // Test fixtures name their requests by resource path (`/api/watch/rooms/<id>/queue`),
 // as the suites were written. This turns such a request into the room connection's
-// typed messages (shared/wire-protocol.js) and its answer back into `{status, body}`.
+// typed messages (shared/wire-protocol.mjs) and its answer back into `{status, body}`.
 // Only tests use it: the product has no path-shaped requests.
-const { mergeView, PROTOCOL_VERSION } = require('../../shared/wire-protocol');
+const { mergeView, PROTOCOL_VERSION } = require('../../shared/wire-protocol.mjs');
 
 const ROOM = /^\/api\/watch\/rooms\/([^/]+)(?:\/([a-z]+))?$/;
 const GLOBAL = {

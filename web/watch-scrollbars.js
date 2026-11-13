@@ -1,12 +1,11 @@
 /* Customize the document and selected safe scroll areas without replacing scroll targets. */
-'use strict';
-(() => {
+export function mount() {
   const OverlayScrollbars = window.OverlayScrollbarsGlobal?.OverlayScrollbars;
   if (!OverlayScrollbars) return; // Missing vendor script: keep all scrollbars native.
 
   // OverlayScrollbars injects a temporary <style> to detect scrollbar support.
   // Supply its per-response CSP nonce before the first API call.
-  const styleNonce = document.currentScript?.dataset.osStyleNonce;
+  const styleNonce = document.querySelector('script[data-os-style-nonce]')?.dataset.osStyleNonce;
   if (styleNonce) OverlayScrollbars.nonce(styleNonce);
 
   const body = document.body;
@@ -127,4 +126,4 @@
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', startInnerScrollbars, { once: true });
   } else startInnerScrollbars();
-})();
+}

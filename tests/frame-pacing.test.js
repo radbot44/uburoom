@@ -2,7 +2,7 @@
 const { install } = require('./helpers/watch-sync');
 const test = require('node:test'),
   assert = require('node:assert/strict');
-const { correction, presentation, jumpCorrection } = require('../web/playback-timing');
+const { correction, presentation, jumpCorrection } = require('../shared/sync/timing.mjs');
 
 function fixture() {
   const policy = correction();

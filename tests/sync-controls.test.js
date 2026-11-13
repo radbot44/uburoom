@@ -5,7 +5,7 @@ const test = require('node:test'),
 const { randomUUID } = require('node:crypto');
 const { Hub } = require('../server/core');
 const { liveWatch } = require('./helpers/live-room');
-const { target } = require('../web/playback-timing');
+const { target } = require('../shared/sync/timing.mjs');
 
 async function fixture(t) {
   let now = 100000,

@@ -1,0 +1,417 @@
+import * as uburoomDialogs from '../watch-dialogs.js';
+import * as uburoomIcons from '../icons.js';
+import * as uburoomPopover from '../watch-popover.js';
+import * as uburoomServerSettings from '../server-settings.js';
+import { $ } from './page.js';
+import { store } from './store.js';
+
+/* Account dialog: name, linked providers, merging accounts and server settings for administrators. */
+export function mount(host, deps) {
+  // Uses the watch page's existing authenticated API and shared safe-DOM controls.
+  let accountPreview,
+    accountMerge,
+    accountValue,
+    removeProvider,
+    accountLoad = 0,
+    accountNameDraft,
+    previewLoad = 0,
+    previewSnapshot;
+  const accountDialog = $('account-dialog'),
+    accountPopups = uburoomDialogs;
+  function invalidatePreview() {
+    previewLoad++;
+    accountPreview = undefined;
+    previewSnapshot = undefined;
+    $('match-confirm').hidden = true;
+    $('match-summary').textContent = '';
+    const b = $('match-preview');
+    if (b) b.disabled = false;
+  }
+  accountDialog.addEventListener('close', invalidatePreview);
+  accountPopups.register(accountDialog, {
+    dirty: () =>
+      !!accountValue &&
+      ($('account-display-name').value !== accountValue.name || !!$('match-discord').value || !!$('match-plex').value),
+  });
+  $('account-display-name').addEventListener('input', () => {
+    accountNameDraft = { id: accountValue?.id, name: $('account-display-name').value };
+  });
+  const accountButton = $('identity');
+  const serverSettingsButton = document.createElement('button');
+  serverSettingsButton.id = 'account-server-settings';
+  serverSettingsButton.type = 'button';
+  serverSettingsButton.className = 'quiet';
+  serverSettingsButton.textContent = 'Server settings';
+  serverSettingsButton.hidden = true;
+  serverSettingsButton.setAttribute('aria-haspopup', 'dialog');
+  serverSettingsButton.setAttribute('aria-controls', 'server-settings-dialog');
+  $('account-content').append(serverSettingsButton);
+  let serverSettingsPanel;
+  serverSettingsButton.addEventListener('click', () => {
+    if (deps.activity || store.identity.token || serverSettingsButton.hidden) return;
+    serverSettingsPanel ||= uburoomServerSettings.mount({ request: deps.api, trigger: serverSettingsButton });
+    serverSettingsPanel.open();
+  });
+  $('account-close').replaceChildren(uburoomIcons.icon(document, 'close'));
+  const logoutButton = document.createElement('button');
+  logoutButton.id = 'account-logout';
+  logoutButton.type = 'button';
+  logoutButton.className = 'quiet browser-button';
+  logoutButton.hidden = true;
+  logoutButton.append(uburoomIcons.icon(document, 'logout'), document.createTextNode('Log out'));
+  $('account-footer').append(logoutButton);
+  function updateAccountButton() {
+    accountButton.disabled = !store.identity.config?.unifiedAccounts || !store.identity.me;
+  }
+  function accountError(message = '') {
+    $('account-error').textContent = message;
+  }
+  function identityRows(host, account) {
+    host.replaceChildren();
+    for (const identity of account.identities) {
+      const row = document.createElement('p'),
+        name = document.createElement('strong'),
+        detail = document.createElement('span');
+      name.textContent =
+        (identity.provider === 'plex' ? 'Plex' : 'Discord') +
+        (identity.name !== identity.subject ? ': ' + identity.name : '');
+      detail.className = 'hint';
+      detail.textContent = identity.assigned && !identity.authenticated ? ' · awaiting sign-in' : '';
+      row.append(name, detail);
+      host.append(row);
+    }
+  }
+  async function showAccount() {
+    const load = ++accountLoad;
+    serverSettingsButton.hidden = true;
+    $('account-footer').hidden = true;
+    accountError();
+    invalidatePreview();
+    $('account-content').hidden = true;
+    $('account-loading').hidden = false;
+    $('account-retry').hidden = true;
+    $('account-admin').open = false;
+    logoutButton.hidden = deps.activity || !!store.identity.token;
+    $('account-footer').hidden = logoutButton.hidden;
+    if (!accountDialog.open) accountPopups.open(accountDialog, accountButton);
+    try {
+      const value = deps.activity ? { account: store.identity.me.account } : await deps.api('/api/account');
+      if (!value.account) throw new Error('Restart the server to enable accounts');
+      const known = value.admin && !deps.activity ? await deps.api('/api/account/admin') : undefined;
+      const isOwner = !!(value.owner ?? store.identity.me?.owner);
+      if (load !== accountLoad || !$('account-dialog').open) return;
+      serverSettingsButton.hidden = deps.activity || !!store.identity.token || value.serverOperator !== true;
+      for (const provider of ['discord', 'plex']) {
+        const identity = value.account.identities.find(i => i.provider === provider),
+          label = provider === 'discord' ? 'Discord' : 'Plex';
+        const connected = identity?.authenticated && (provider !== 'plex' || identity.credentialStored);
+        const name = identity && identity.name !== identity.subject ? identity.name : '';
+        const disabledServer =
+          store.identity.config.access?.[provider] === false ||
+          (provider === 'plex' && !store.identity.config.plexConfigured);
+        const button = $('connect-' + provider);
+        button.disabled = disabledServer;
+        button.removeAttribute('title');
+        if (identity) {
+          if (connected) {
+            const note = disabledServer
+              ? provider === 'discord' && isOwner
+                ? ' · owner sign-in'
+                : ' · sign-in disabled'
+              : '';
+            $(provider + '-identity').textContent = (name ? 'Connected as ' + name : 'Connected') + note;
+            button.textContent = 'Reconnect';
+            button.className = 'provider-connect quiet';
+            button.hidden = false;
+            if (disabledServer && provider === 'discord') {
+              button.disabled = true;
+              button.title = isOwner
+                ? 'Ordinary Discord sign-in is disabled; sign in via /auth/owner'
+                : 'Discord sign-in is disabled on this server';
+            }
+          } else {
+            $(provider + '-identity').textContent = 'Sign-in needed' + (name ? ' · ' + name : '');
+            button.textContent = 'Sign in to ' + label;
+            button.className = 'provider-connect ' + (provider === 'discord' ? 'discord-button' : 'primary');
+            button.hidden = false;
+            if (disabledServer && provider === 'discord' && isOwner) {
+              button.disabled = true;
+              button.title = 'Ordinary Discord sign-in is disabled; sign in via /auth/owner';
+            }
+          }
+        } else if (value.account.guest === 1) {
+          // Guest accounts never gain a provider; signing in starts a separate account.
+          $(provider + '-identity').textContent = 'Guests can’t connect accounts';
+          button.hidden = true;
+        } else {
+          $(provider + '-identity').textContent = disabledServer ? 'Unavailable on this server' : 'Not connected';
+          button.textContent = 'Connect ' + label;
+          button.className = 'provider-connect ' + (provider === 'discord' ? 'discord-button' : 'primary');
+          button.hidden = false;
+          if (disabledServer && provider === 'discord') {
+            button.title = isOwner
+              ? 'Ordinary Discord sign-in is disabled; sign in via /auth/owner'
+              : 'Discord sign-in is disabled on this server';
+          }
+        }
+        function isSurvivingProvider(i) {
+          if (!i || !i.authenticated) return false;
+          if (i.provider === 'plex')
+            return (
+              store.identity.config.access?.plex !== false &&
+              store.identity.config.plexConfigured !== false &&
+              !!i.credentialStored
+            );
+          if (i.provider === 'discord') return store.identity.config.access?.discord !== false || isOwner;
+          return false;
+        }
+        const otherEnabled = value.account.identities.some(i => i.provider !== provider && isSurvivingProvider(i));
+        const remove = $('remove-' + provider);
+        remove.hidden = !identity;
+        remove.disabled = !deps.activity && !otherEnabled;
+        remove.title = remove.disabled ? 'Connect another sign-in method before removing ' + label : 'Remove ' + label;
+      }
+      $('account-browser-hint').hidden = !deps.activity;
+      $('account-connect-hint').hidden = deps.activity;
+      $('account-admin').hidden = deps.activity || !value.admin;
+      accountMerge = value.merge;
+      $('account-merge').hidden = !accountMerge;
+      if (accountMerge) {
+        $('account-merge-details').replaceChildren();
+        for (const account of accountMerge.accounts) {
+          const section = document.createElement('div');
+          identityRows(section, account);
+          $('account-merge-details').append(section);
+        }
+      }
+      if (known) {
+        for (const provider of ['discord', 'plex']) {
+          const list = $('known-' + provider);
+          list.replaceChildren();
+          for (const account of known.accounts)
+            for (const identity of account.identities.filter(i => i.provider === provider)) {
+              const option = document.createElement('option');
+              option.value = identity.subject;
+              option.label = identity.name;
+              list.append(option);
+            }
+        }
+      }
+      accountValue = value.account;
+      $('account-display-name').value =
+        accountNameDraft?.id === value.account.id ? accountNameDraft.name : value.account.name;
+      $('account-content').hidden = false;
+    } catch (error) {
+      if (load === accountLoad && $('account-dialog').open) {
+        accountError(error.message);
+        $('account-retry').hidden = false;
+      }
+    } finally {
+      if (load === accountLoad) $('account-loading').hidden = true;
+    }
+  }
+  $('account-name-save').addEventListener('click', async () => {
+    const release = accountPopups.hold(accountDialog);
+    const submittedName = $('account-display-name').value;
+    const button = $('account-name-save');
+    button.disabled = true;
+    accountError();
+    try {
+      await deps.call('profile.rename', { args: { name: submittedName } });
+      store.identity.me = await deps.call('me');
+      deps.renderAccount();
+      accountValue = store.identity.me.account;
+      if ($('account-display-name').value === submittedName) {
+        accountNameDraft = undefined;
+        $('account-display-name').value = store.identity.me.name;
+      }
+      uburoomPopover.show(button, { text: 'Saved', state: 'success' });
+    } catch (error) {
+      accountError(error.message);
+      uburoomPopover.show(button, { text: error.message, state: 'error' });
+    } finally {
+      button.disabled = false;
+      release();
+    }
+  });
+  accountButton.addEventListener('click', showAccount);
+  $('account-retry').addEventListener('click', showAccount);
+  $('account-dialog').addEventListener('close', () => {
+    if (!accountDialog.open) accountLoad++;
+  });
+  logoutButton.addEventListener('click', async () => {
+    const release = accountPopups.hold(accountDialog);
+    logoutButton.disabled = true;
+    accountError();
+    store.room.pending = true;
+    try {
+      await deps.api('/api/logout', {});
+      deps.stopBrowserHandoff();
+      deps.clearPlayer('logout');
+      location.replace('/');
+    } catch (error) {
+      accountError(error.message);
+      logoutButton.disabled = false;
+      store.room.pending = false;
+    } finally {
+      release();
+    }
+  });
+  $('account-close').addEventListener('click', () => accountPopups.close(accountDialog));
+  for (const provider of ['discord', 'plex']) {
+    const button = $('remove-' + provider);
+    button.append(uburoomIcons.icon(document, 'close'));
+    button.addEventListener('click', () => {
+      if (deps.activity) {
+        $('account-dialog').close();
+        void deps.openInBrowser({ account: true });
+        return;
+      }
+      removeProvider = provider;
+      const label = provider === 'discord' ? 'Discord' : 'Plex',
+        identity = accountValue.identities.find(i => i.provider === provider);
+      $('account-remove-title').textContent = 'Remove ' + label + '?';
+      $('account-remove-description').textContent =
+        (identity.name !== identity.subject ? identity.name + ' will be removed from uburoom. ' : '') +
+        'You can connect ' +
+        label +
+        ' again afterward. Your other browsers will be signed out.';
+      $('account-remove-confirm').textContent = 'Remove ' + label;
+      $('account-remove-error').textContent = '';
+      accountPopups.open($('account-remove-dialog'));
+    });
+  }
+  $('account-remove-confirm').addEventListener('click', async () => {
+    const release = accountPopups.hold($('account-remove-dialog'));
+    const button = $('account-remove-confirm'),
+      identity = accountValue.identities.find(i => i.provider === removeProvider);
+    button.disabled = true;
+    $('account-remove-error').textContent = '';
+    try {
+      await deps.api('/api/account/' + removeProvider + '/remove', { subject: identity.subject });
+      location.replace('/?account=1');
+    } catch (error) {
+      $('account-remove-error').textContent = error.message;
+    } finally {
+      button.disabled = false;
+      release();
+    }
+  });
+  for (const provider of ['plex', 'discord'])
+    $('connect-' + provider).addEventListener('click', async () => {
+      if (deps.activity) {
+        $('account-dialog').close();
+        void deps.openInBrowser({ account: true, connectPlex: provider === 'plex' });
+        return;
+      }
+      const release = accountPopups.hold(accountDialog);
+      const button = $('connect-' + provider),
+        label = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Opening ' + (provider === 'plex' ? 'Plex' : 'Discord') + '…';
+      accountError();
+      try {
+        const { url } = await deps.api('/api/account/' + provider + '/connect', {});
+        location.assign(url);
+      } catch (error) {
+        accountError(error.message);
+      } finally {
+        button.disabled = false;
+        button.textContent = label;
+        release();
+      }
+    });
+  $('account-merge-confirm').addEventListener('click', async () => {
+    const release = accountPopups.hold(accountDialog);
+    const button = $('account-merge-confirm');
+    button.disabled = true;
+    accountError();
+    try {
+      await deps.api('/api/account/merge', { id: accountMerge.id });
+      location.replace('/?account=1');
+    } catch (error) {
+      accountError(error.message);
+      button.disabled = false;
+    } finally {
+      release();
+    }
+  });
+  for (const provider of ['discord', 'plex']) $('match-' + provider).addEventListener('input', invalidatePreview);
+  $('match-preview').addEventListener('click', async () => {
+    const discordId = $('match-discord').value.trim(),
+      plexId = $('match-plex').value.trim();
+    const generation = ++previewLoad;
+    accountError();
+    accountPreview = undefined;
+    previewSnapshot = undefined;
+    $('match-confirm').hidden = true;
+    $('match-summary').textContent = '';
+    const previewButton = $('match-preview');
+    previewButton.disabled = true;
+    try {
+      const result = await deps.api('/api/account/admin/preview', { discordId, plexId });
+      if (
+        generation !== previewLoad ||
+        !accountDialog.open ||
+        $('match-discord').value.trim() !== discordId ||
+        $('match-plex').value.trim() !== plexId
+      )
+        return;
+      accountPreview = result;
+      previewSnapshot = { discordId, plexId };
+      $('match-summary').textContent =
+        'Discord ' +
+        accountPreview.discordName +
+        ' (' +
+        accountPreview.discordId +
+        ') ↔ Plex ' +
+        accountPreview.plexName +
+        ' (' +
+        accountPreview.plexId +
+        '). ' +
+        (accountPreview.accounts.length > 1
+          ? 'Merge ' +
+            accountPreview.accounts.map(a => a.name).join(' and ') +
+            '. Both must leave their watch rooms and sign in again.'
+          : accountPreview.accounts.length
+            ? 'Attach to ' + accountPreview.accounts[0].name + '.'
+            : 'Reserve one account before either identity signs in.');
+      $('match-confirm').hidden = false;
+    } catch (error) {
+      if (
+        generation === previewLoad &&
+        accountDialog.open &&
+        $('match-discord').value.trim() === discordId &&
+        $('match-plex').value.trim() === plexId
+      )
+        accountError(error.message);
+    } finally {
+      if (generation === previewLoad) previewButton.disabled = false;
+    }
+  });
+  $('match-confirm').addEventListener('click', async () => {
+    if (!accountPreview || !previewSnapshot) return;
+    if (
+      $('match-discord').value.trim() !== previewSnapshot.discordId ||
+      $('match-plex').value.trim() !== previewSnapshot.plexId
+    )
+      return;
+    const release = accountPopups.hold(accountDialog);
+    const button = $('match-confirm');
+    button.disabled = true;
+    accountError();
+    try {
+      await deps.api('/api/account/admin/assign', { id: accountPreview.id });
+      accountPreview = undefined;
+      previewSnapshot = undefined;
+      await showAccount();
+      $('match-summary').textContent = 'Match assigned.';
+    } catch (error) {
+      accountError(error.message);
+    } finally {
+      button.disabled = false;
+      release();
+    }
+  });
+  return { showAccount, updateAccountButton };
+}

@@ -1,5 +1,5 @@
 'use strict';
-const timing = require('../../web/playback-timing');
+const timing = require('../../shared/sync/timing.mjs');
 const playback = require('../../web/playback-policy');
 async function install(context) {
   const { createSync } = await import('../../web/watch-sync.mjs');
@@ -20,7 +20,7 @@ async function install(context) {
     jumpDriftCorrection: context.jumpDriftCorrection,
     startAlarm: context.startAlarm || { arm: noop, cancel: noop },
     pauseAlarm: context.pauseAlarm || { arm: noop, cancel: noop },
-    expected: () => context.expected?.() || 0,
+    expected: () => (context.expected ? context.expected() : 0),
     decodedFrames: () => context.decodedFrames?.() || 0,
     unlockLocal: () => context.unlockLocal?.(),
     reportReadiness: () => context.reportReadiness?.(),

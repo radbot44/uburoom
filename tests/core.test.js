@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const Engine = require('../shared/engine');
+const Engine = require('../shared/engine.mjs');
 const { Hub } = require('../server/core');
 const config = { ownerId: 'owner' };
 const actor = { userId: 'owner' };

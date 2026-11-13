@@ -1,4 +1,6 @@
-'use strict';
+import { subtitleRenderers as uburoomSubtitleRenderers } from './subtitle-renderers.js';
+
+import { trace } from './trace.js';
 const PGS_MEMORY_LIMIT = 16 * 1024 * 1024;
 // Native TextTrack/VTTCue rendering follows the video into fullscreen. Cue text
 // is parsed by the media API, never inserted into the document as HTML.
@@ -442,10 +444,10 @@ class uburoomTextWindows {
       this.failures = 0;
       this.retryAt = 0;
       this.onState();
-      globalThis.uburoomTrace?.('subtitle-window', { elapsedMs: Date.now() - began });
+      trace('subtitle-window', { elapsedMs: Date.now() - began });
     } catch (error) {
       if (this.disposed || controller.signal.aborted || this.signal?.aborted) return;
-      globalThis.uburoomTrace?.('subtitle-window-failed', {
+      trace('subtitle-window-failed', {
         elapsedMs: Date.now() - began,
         attempt: this.failures + 1,
       });
@@ -801,7 +803,7 @@ class uburoomSubtitles {
           fonts.push(bytes);
         }
         this.status({ message: 'Preparing subtitles…', error: false, loading: true });
-        const renderer = await window.uburoomSubtitleRenderers.create(
+        const renderer = await uburoomSubtitleRenderers.create(
           this.video,
           value.format,
           { data, subUrl, index, fonts, fileName: value.fileName },
@@ -963,5 +965,4 @@ class uburoomSubtitles {
     this.reset();
   }
 }
-if (typeof window !== 'undefined') window.uburoomSubtitles = uburoomSubtitles;
-if (typeof module !== 'undefined') module.exports = { uburoomSubtitleWindows, uburoomSubtitles, pgsWindowBytes };
+export { uburoomSubtitleWindows, uburoomSubtitles, pgsWindowBytes };

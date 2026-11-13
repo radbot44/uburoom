@@ -9,12 +9,12 @@ const {
   sampleSyncSpread,
   createSubscriptionBroker,
 } = require('../shared/sync');
-const { PROTOCOL_VERSION, RESYNC_MS, CALLS, clientMessageError } = require('../shared/wire-protocol');
+const { PROTOCOL_VERSION, RESYNC_MS, CALLS, clientMessageError } = require('../shared/wire-protocol.mjs');
 /** @typedef {import('ws').WebSocket & {watchKick?: (roomId: string) => void, watchRtts?: Array<{at:number,ms:number}>}} WatchSocket */
 /** @typedef {{roomId: string, viewerId: string, sentRoom: number, stamp: string | undefined, viewerVersion: number}} Subscription */
 
 /**
- * The room connection: typed messages (shared/wire-protocol.js) over one authenticated
+ * The room connection: typed messages (shared/wire-protocol.mjs) over one authenticated
  * WebSocket per tab. Each kind of message has one handler, which calls the matching
  * operation (server/watch-operations.js). State is pushed in three lanes (`room`,
  * `viewer`, `lobby`), each only when its version changed, plus a slow resync of every

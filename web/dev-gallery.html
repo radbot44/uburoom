@@ -9,7 +9,6 @@
     <title>uburoom control gallery (development)</title>
     <link rel="preload" href="/assets/fonts/UburoomSans-Regular.woff2" as="font" type="font/woff2" crossorigin />
     <!-- The shipped scripts and stylesheets, in the watch page's order. -->
-    <script src="/icons.js"></script>
     <script src="/theme.js"></script>
     <link rel="stylesheet" href="/watch.css" />
     <link rel="stylesheet" href="/watch-player.css" />
@@ -20,11 +19,7 @@
     <!-- Gallery layout only: grid and positions, never a control's look. -->
     <link rel="stylesheet" href="/__dev/gallery.css" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
-    <script src="/watch-popover.js"></script>
-    <script src="/watch-dialogs.js"></script>
-    <script src="/watch-controls.js"></script>
-    <script src="/watch-toasts.js"></script>
-    <script src="/__dev/gallery.js" defer></script>
+    <script type="module" src="/__dev/gallery.js"></script>
   </head>
   <body>
     <svg id="icon-sprite" hidden aria-hidden="true" width="0" height="0"></svg>

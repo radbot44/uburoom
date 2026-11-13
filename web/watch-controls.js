@@ -1,206 +1,205 @@
 /* Opt-in watch controls. Panel modules retain state, permissions and actions. */
-(function (root) {
-  'use strict';
-  const groups = new WeakMap();
-  function content(control, { label, icon, iconOnly = false }) {
-    const doc = control.ownerDocument;
-    control.replaceChildren();
-    if (icon) control.append(root.uburoomIcons.icon(doc, icon));
-    const text = doc.createElement('span');
-    text.className = 'watch-control-label';
-    text.textContent = label;
-    if (!iconOnly) control.append(text);
-    control.classList.add('watch-control');
-    control.classList.toggle('watch-control-icon', iconOnly);
-    control.classList.toggle('watch-control-responsive', !!icon && !iconOnly);
-    control.setAttribute('aria-label', label);
-    control.title = label;
-    return control;
+import * as uburoomIcons from './icons.js';
+
+const groups = new WeakMap();
+function content(control, { label, icon, iconOnly = false }) {
+  const doc = control.ownerDocument;
+  control.replaceChildren();
+  if (icon) control.append(uburoomIcons.icon(doc, icon));
+  const text = doc.createElement('span');
+  text.className = 'watch-control-label';
+  text.textContent = label;
+  if (!iconOnly) control.append(text);
+  control.classList.add('watch-control');
+  control.classList.toggle('watch-control-icon', iconOnly);
+  control.classList.toggle('watch-control-responsive', !!icon && !iconOnly);
+  control.setAttribute('aria-label', label);
+  control.title = label;
+  return control;
+}
+function button(doc, { label, icon, iconOnly = false, action, disabled = false }) {
+  const control = doc.createElement('button');
+  control.type = 'button';
+  control.className = iconOnly ? 'icon-button' : 'quiet';
+  control.disabled = disabled;
+  content(control, { label, icon, iconOnly });
+  if (action) control.addEventListener('click', action);
+  return control;
+}
+// A label with a small switch (or an Allowed/Denied thumb) on a button-grey surface. `accent: 'secondary'`
+// colours the switch with the auto-queue accent; `reason` replaces the tooltip while disabled.
+function switchPill(
+  doc,
+  {
+    label,
+    checked = false,
+    editable = true,
+    disabled = false,
+    reason = '',
+    onChange,
+    action,
+    variant = 'switch',
+    accent = 'primary',
+  },
+) {
+  const element = doc.createElement('div');
+  element.className = 'watch-switch-pill';
+  const permission = variant === 'permission';
+  element.classList.toggle('watch-permission-pill', permission);
+  const controlLabel = doc.createElement('label'),
+    badge = doc.createElement('span');
+  controlLabel.className = badge.className = 'watch-switch-pill-body';
+  const text = doc.createElement('span');
+  text.className = 'watch-switch-pill-label';
+  label.split('/').forEach((part, index) => {
+    if (index) text.append(doc.createTextNode('/'), doc.createElement('wbr'));
+    text.append(doc.createTextNode(part));
+  });
+  const state = doc.createElement('span');
+  state.className = 'watch-switch-pill-state';
+  const input = doc.createElement('input');
+  input.type = 'checkbox';
+  input.className = permission
+    ? 'watch-permission-input'
+    : 'watch-switch watch-switch-small' + (accent === 'secondary' ? ' watch-switch-secondary' : '');
+  if (!permission) input.setAttribute('role', 'switch');
+  const indicator = permission ? doc.createElement('span') : undefined;
+  if (indicator) {
+    indicator.className = 'watch-permission-indicator';
+    indicator.setAttribute('aria-hidden', 'true');
   }
-  function button(doc, { label, icon, iconOnly = false, action, disabled = false }) {
-    const control = doc.createElement('button');
-    control.type = 'button';
-    control.className = iconOnly ? 'icon-button' : 'quiet';
-    control.disabled = disabled;
-    content(control, { label, icon, iconOnly });
-    if (action) control.addEventListener('click', action);
-    return control;
-  }
-  // A label with a small switch (or an Allowed/Denied thumb) on a button-grey surface. `accent: 'secondary'`
-  // colours the switch with the auto-queue accent; `reason` replaces the tooltip while disabled.
-  function switchPill(
-    doc,
-    {
-      label,
-      checked = false,
-      editable = true,
-      disabled = false,
-      reason = '',
-      onChange,
-      action,
-      variant = 'switch',
-      accent = 'primary',
-    },
-  ) {
-    const element = doc.createElement('div');
-    element.className = 'watch-switch-pill';
-    const permission = variant === 'permission';
-    element.classList.toggle('watch-permission-pill', permission);
-    const controlLabel = doc.createElement('label'),
-      badge = doc.createElement('span');
-    controlLabel.className = badge.className = 'watch-switch-pill-body';
-    const text = doc.createElement('span');
-    text.className = 'watch-switch-pill-label';
-    label.split('/').forEach((part, index) => {
-      if (index) text.append(doc.createTextNode('/'), doc.createElement('wbr'));
-      text.append(doc.createTextNode(part));
-    });
-    const state = doc.createElement('span');
-    state.className = 'watch-switch-pill-state';
-    const input = doc.createElement('input');
-    input.type = 'checkbox';
-    input.className = permission
-      ? 'watch-permission-input'
-      : 'watch-switch watch-switch-small' + (accent === 'secondary' ? ' watch-switch-secondary' : '');
-    if (!permission) input.setAttribute('role', 'switch');
-    const indicator = permission ? doc.createElement('span') : undefined;
+  let currentEditable = editable;
+  const actionButton = action
+    ? button(doc, { label: action.label, icon: action.icon || 'settings', iconOnly: true, action: action.onClick })
+    : undefined;
+  actionButton?.classList.add('watch-switch-pill-action');
+  let currentReason = reason,
+    currentDisabled = disabled;
+  function update({
+    checked = input.checked,
+    editable = currentEditable,
+    disabled = currentDisabled,
+    reason = currentReason,
+  } = {}) {
+    currentEditable = editable;
+    currentReason = reason;
+    currentDisabled = disabled;
+    input.checked = checked;
+    // Read-only switches still show their state: a switch that cannot be changed, at full strength.
+    input.disabled = disabled || !editable;
+    element.classList.toggle('is-on', checked);
+    element.classList.toggle('is-readonly', !editable);
+    element.classList.toggle('is-disabled', disabled);
+    element.classList.toggle('watch-switch-pill-split', !!actionButton && editable);
+    const stateText = permission ? (checked ? ': Allowed' : ': Denied') : checked ? ': On' : ': Off';
+    element.title = disabled && reason ? reason : label + stateText;
     if (indicator) {
-      indicator.className = 'watch-permission-indicator';
-      indicator.setAttribute('aria-hidden', 'true');
+      const slug = checked ? 'thumb-up' : 'thumb-down';
+      indicator.replaceChildren(uburoomIcons.icon(doc, slug));
     }
-    let currentEditable = editable;
-    const actionButton = action
-      ? button(doc, { label: action.label, icon: action.icon || 'settings', iconOnly: true, action: action.onClick })
-      : undefined;
-    actionButton?.classList.add('watch-switch-pill-action');
-    let currentReason = reason,
-      currentDisabled = disabled;
-    function update({
-      checked = input.checked,
-      editable = currentEditable,
-      disabled = currentDisabled,
-      reason = currentReason,
-    } = {}) {
-      currentEditable = editable;
-      currentReason = reason;
-      currentDisabled = disabled;
-      input.checked = checked;
-      // Read-only switches still show their state: a switch that cannot be changed, at full strength.
-      input.disabled = disabled || !editable;
-      element.classList.toggle('is-on', checked);
-      element.classList.toggle('is-readonly', !editable);
-      element.classList.toggle('is-disabled', disabled);
-      element.classList.toggle('watch-switch-pill-split', !!actionButton && editable);
-      const stateText = permission ? (checked ? ': Allowed' : ': Denied') : checked ? ': On' : ': Off';
-      element.title = disabled && reason ? reason : label + stateText;
-      if (indicator) {
-        const slug = checked ? 'thumb-up' : 'thumb-down';
-        indicator.replaceChildren(root.uburoomIcons.icon(doc, slug));
-      }
-      const body = editable ? controlLabel : badge;
-      if (element.firstChild !== body) {
-        if (editable) controlLabel.replaceChildren(text, input);
-        else badge.replaceChildren(text, permission ? state : input);
-        if (indicator) body.append(indicator);
-        element.replaceChildren(body);
-        if (editable && actionButton) element.append(actionButton);
-      }
-      state.textContent = stateText;
-      if (actionButton) actionButton.disabled = disabled;
+    const body = editable ? controlLabel : badge;
+    if (element.firstChild !== body) {
+      if (editable) controlLabel.replaceChildren(text, input);
+      else badge.replaceChildren(text, permission ? state : input);
+      if (indicator) body.append(indicator);
+      element.replaceChildren(body);
+      if (editable && actionButton) element.append(actionButton);
     }
-    update({ checked, editable, disabled, reason });
-    input.addEventListener('change', event => {
-      update({ checked: input.checked });
-      onChange?.(event);
-    });
-    return { element, input, update };
+    state.textContent = stateText;
+    if (actionButton) actionButton.disabled = disabled;
   }
-  function permissionButton(doc, { label, checked = false, disabled = false, reason = '', action }) {
-    const control = button(doc, { label, icon: checked ? 'thumb-up' : 'thumb-down', iconOnly: true, disabled, action });
-    control.classList.add('watch-permission-button');
-    function update({ checked, disabled, reason = '' }) {
-      content(control, { label, icon: checked ? 'thumb-up' : 'thumb-down', iconOnly: true });
-      control.disabled = disabled;
-      control.setAttribute('aria-pressed', String(checked));
-      control.title = label + (checked ? ': Allowed' : ': Denied') + (reason ? '. ' + reason : '');
-    }
-    update({ checked, disabled, reason });
-    return { element: control, update };
+  update({ checked, editable, disabled, reason });
+  input.addEventListener('change', event => {
+    update({ checked: input.checked });
+    onChange?.(event);
+  });
+  return { element, input, update };
+}
+function permissionButton(doc, { label, checked = false, disabled = false, reason = '', action }) {
+  const control = button(doc, { label, icon: checked ? 'thumb-up' : 'thumb-down', iconOnly: true, disabled, action });
+  control.classList.add('watch-permission-button');
+  function update({ checked, disabled, reason = '' }) {
+    content(control, { label, icon: checked ? 'thumb-up' : 'thumb-down', iconOnly: true });
+    control.disabled = disabled;
+    control.setAttribute('aria-pressed', String(checked));
+    control.title = label + (checked ? ': Allowed' : ': Denied') + (reason ? '. ' + reason : '');
   }
-  function segmented(group) {
-    if (groups.has(group)) {
-      groups.get(group)();
+  update({ checked, disabled, reason });
+  return { element: control, update };
+}
+function segmented(group) {
+  if (groups.has(group)) {
+    groups.get(group)();
+    return;
+  }
+  group.classList.add('watch-segmented');
+  const buttons = () => [...group.querySelectorAll('button')].filter(control => !control.disabled && !control.hidden);
+  function refresh() {
+    const choices = buttons();
+    const entry = choices.includes(group.ownerDocument.activeElement)
+      ? group.ownerDocument.activeElement
+      : choices.find(control => control.getAttribute('aria-pressed') === 'true') || choices[0];
+    for (const control of group.querySelectorAll('button')) control.tabIndex = control === entry ? 0 : -1;
+  }
+  group.addEventListener('focusin', refresh);
+  group.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    const choices = buttons(),
+      index = choices.indexOf(event.target);
+    if (index < 0 || !choices.length) return;
+    event.preventDefault();
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? choices.length - 1
+          : (index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + choices.length) % choices.length;
+    choices[next].focus(); // Native Enter/Space activates; arrows never select.
+  });
+  new MutationObserver(refresh).observe(group, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['disabled', 'hidden', 'aria-pressed'],
+  });
+  groups.set(group, refresh);
+  refresh();
+}
+function bindSelect(select, group) {
+  function refresh() {
+    for (const control of group.querySelectorAll('button')) {
+      control.setAttribute('aria-pressed', String(control.dataset.value === select.value));
+      control.disabled = select.disabled;
+    }
+    segmented(group);
+  }
+  group.addEventListener('click', event => {
+    const control = event.target.closest('button');
+    if (
+      !control ||
+      control.disabled ||
+      control.dataset.value === 'custom' ||
+      select.disabled ||
+      select.value === control.dataset.value
+    )
       return;
-    }
-    group.classList.add('watch-segmented');
-    const buttons = () => [...group.querySelectorAll('button')].filter(control => !control.disabled && !control.hidden);
-    function refresh() {
-      const choices = buttons();
-      const entry = choices.includes(group.ownerDocument.activeElement)
-        ? group.ownerDocument.activeElement
-        : choices.find(control => control.getAttribute('aria-pressed') === 'true') || choices[0];
-      for (const control of group.querySelectorAll('button')) control.tabIndex = control === entry ? 0 : -1;
-    }
-    group.addEventListener('focusin', refresh);
-    group.addEventListener('keydown', event => {
-      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
-      const choices = buttons(),
-        index = choices.indexOf(event.target);
-      if (index < 0 || !choices.length) return;
-      event.preventDefault();
-      const next =
-        event.key === 'Home'
-          ? 0
-          : event.key === 'End'
-            ? choices.length - 1
-            : (index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + choices.length) % choices.length;
-      choices[next].focus(); // Native Enter/Space activates; arrows never select.
-    });
-    new MutationObserver(refresh).observe(group, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['disabled', 'hidden', 'aria-pressed'],
-    });
-    groups.set(group, refresh);
+    select.value = control.dataset.value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
     refresh();
-  }
-  function bindSelect(select, group) {
-    function refresh() {
-      for (const control of group.querySelectorAll('button')) {
-        control.setAttribute('aria-pressed', String(control.dataset.value === select.value));
-        control.disabled = select.disabled;
-      }
-      segmented(group);
-    }
-    group.addEventListener('click', event => {
-      const control = event.target.closest('button');
-      if (
-        !control ||
-        control.disabled ||
-        control.dataset.value === 'custom' ||
-        select.disabled ||
-        select.value === control.dataset.value
-      )
-        return;
-      select.value = control.dataset.value;
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  const prop = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+  Object.defineProperty(select, 'value', {
+    get() {
+      return prop.get.call(this);
+    },
+    set(value) {
+      prop.set.call(this, value);
       refresh();
-    });
-    const prop = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
-    Object.defineProperty(select, 'value', {
-      get() {
-        return prop.get.call(this);
-      },
-      set(value) {
-        prop.set.call(this, value);
-        refresh();
-      },
-      configurable: true,
-    });
-    new MutationObserver(refresh).observe(select, { attributes: true, attributeFilter: ['disabled'] });
-    select.addEventListener('change', refresh);
-    refresh();
-  }
-  root.uburoomControls = { button, content, switchPill, permissionButton, segmented, bindSelect };
-})(globalThis);
+    },
+    configurable: true,
+  });
+  new MutationObserver(refresh).observe(select, { attributes: true, attributeFilter: ['disabled'] });
+  select.addEventListener('change', refresh);
+  refresh();
+}
+export { button, content, switchPill, permissionButton, segmented, bindSelect };

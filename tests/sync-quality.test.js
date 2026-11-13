@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test'),
   assert = require('node:assert/strict');
-const quality = require('../web/sync-quality');
+const quality = require('../shared/sync/quality.mjs');
 
 const clean = {
   measuredSeconds: 60,
@@ -93,17 +93,14 @@ test('actual rebuffering lowers the score while healthy prebuffered playback doe
   assert.equal(decide({ onFallback: true, readyAhead: 20, lastReturn: 0, now: 59999 }), 'probe');
   assert.equal(decide({ onFallback: true, readyAhead: 20, lastReturn: 0, now: 60000 }), 'return');
   assert.notEqual(decide({ onFallback: true, readyAhead: 20, failedReturns: 2 }), 'return');
-  const fs = require('node:fs'),
-    vm = require('node:vm'),
-    path = require('node:path');
+  const { create: createFallback } = require('../web/watch-fallback.js');
   let at = 0,
     prepares = 0,
     ready = 0,
     swaps = 0,
     closed = 0;
-  const context = { uburoomSyncQuality: quality, performance: { now: () => at } };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../web/watch-fallback.js'), 'utf8'), context);
-  const controller = context.uburoomFallback.create({
+  const controller = createFallback({
+    now: () => at,
     supported: () => true,
     notify() {},
     record() {},

@@ -36,7 +36,7 @@ async function main() {
     const roomByName = roomName => [...app.watch.rooms.values()].find(room => room.name === roomName);
     const roomIdByName = roomName => [...app.watch.rooms.entries()].find(([, room]) => room.name === roomName)?.[0];
     const queueOf = id => app.watch.roomState.queue.summary(app.watch.rooms.get(id).roomId);
-    const enginePosition = id => require('../shared/engine').snapshot(app.watch.rooms.get(id).state);
+    const enginePosition = id => require('../shared/engine.mjs').snapshot(app.watch.rooms.get(id).state);
     try {
       browser = await playbackBrowser(name);
       host = await openPage(browser, config.publicUrl + '/?demo=host');

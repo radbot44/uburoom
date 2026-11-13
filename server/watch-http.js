@@ -10,7 +10,7 @@ const Playback = require('../web/playback-policy');
 const Subtitles = require('./subtitles');
 const SubtitleResources = require('./subtitle-resources');
 const { watchOperations } = require('./watch-operations');
-const { CALLS } = require('../shared/wire-protocol');
+const { CALLS } = require('../shared/wire-protocol.mjs');
 const { PlexDelivery, clientAddress } = require('./plex-delivery');
 const { displayName } = require('./accounts');
 const Ubumfa = require('../web/ubumfa');
@@ -681,7 +681,7 @@ function watchHttp({
     await accounts.save();
     json(res, 200, { room, guest: true });
   }
-  // The reads a page may make by GET before it has a room connection (shared/wire-protocol.js).
+  // The reads a page may make by GET before it has a room connection (shared/wire-protocol.mjs).
   const READS = Object.fromEntries([
     ...Object.entries(CALLS)
       .filter(([, call]) => call.http)
@@ -1183,7 +1183,7 @@ function watchHttp({
       return true;
     }
   }
-  const EngineName = value => require('../shared/engine').senderName(value);
+  const EngineName = value => require('../shared/engine.mjs').senderName(value);
   function sweep() {
     entryPolicy?.sweep();
     handoff.sweep();

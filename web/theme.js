@@ -55,13 +55,32 @@
   function clicked() {
     apply({ theme: root.dataset.theme === 'dark' ? 'light' : 'dark' }, true);
   }
+  // Same element as icons.js icon(); this script runs before the page's modules load.
+  function spriteIcon(name) {
+    const ns = 'http://www.w3.org/2000/svg',
+      svg = document.createElementNS(ns, 'svg'),
+      use = document.createElementNS(ns, 'use');
+    for (const [key, value] of Object.entries({
+      viewBox: '0 0 24 24',
+      fill: 'none',
+      stroke: 'currentColor',
+      'stroke-width': '2',
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+      'aria-hidden': 'true',
+      'data-tabler-icon': name,
+    }))
+      svg.setAttribute(key, value);
+    use.setAttribute('href', '#icon-' + name);
+    svg.append(use);
+    return svg;
+  }
   function render() {
     const light = root.dataset.theme === 'light';
     const button = document.getElementById('theme-toggle');
     if (button) {
       button.setAttribute('aria-checked', String(light));
-      const icon = window.uburoomIcons?.icon(document, light ? 'sun' : 'moon');
-      if (icon) button.querySelector('.appearance-thumb').replaceChildren(icon);
+      button.querySelector('.appearance-thumb').replaceChildren(spriteIcon(light ? 'sun' : 'moon'));
       button.title = button.ariaLabel =
         'Theme: ' + (light ? 'Light' : 'Dark') + '. Switch to ' + (light ? 'dark' : 'light') + '.';
     }

@@ -1,7 +1,6 @@
-'use strict';
 // One active overlay. Subtitle/font bytes are already fetched through viewer
 // grants; libraries never receive Plex URLs or choose external font services.
-window.uburoomSubtitleRenderers = {
+export const subtitleRenderers = {
   supported() {
     return (
       typeof WebAssembly === 'object' &&

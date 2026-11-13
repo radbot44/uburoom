@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const cp = require('node:child_process');
 const { classifyHdr, outputSpec } = require('../../server/av1');
-const { qualityDefinition } = require('../../shared/room-protocol');
+const { qualityDefinition } = require('../../shared/room-protocol.mjs');
 
 /**
  * Inspects a source video file using FFprobe and returns comprehensive metadata.

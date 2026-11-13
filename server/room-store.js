@@ -4,8 +4,7 @@
 const { randomUUID } = require('node:crypto');
 const Policy = require('./room-policy');
 const { validateAuto } = require('./room-queue');
-/** @type {import('../shared/room-protocol').MediaIdentityExport} */
-const { mediaIdentity } = require('../shared/room-protocol');
+const { mediaIdentity } = require('../shared/room-protocol.mjs');
 const ubumfa = require('../web/ubumfa');
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 

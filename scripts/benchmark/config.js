@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const cp = require('node:child_process');
 const YAML = require('yaml');
-const { QUALITIES, qualityDefinition } = require('../../shared/room-protocol');
+const { QUALITIES, qualityDefinition } = require('../../shared/room-protocol.mjs');
 const Playback = require('../../web/playback-policy');
 
 const ROOT = path.resolve(__dirname, '../..');

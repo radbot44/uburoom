@@ -11,7 +11,7 @@
 const { FallbackStream } = require('../fallback-stream');
 const { SharedTask, currentSignal } = require('../operation');
 const { randomUUID } = require('node:crypto');
-const Engine = require('../../shared/engine');
+const Engine = require('../../shared/engine.mjs');
 const { PlaybackError } = require('../av1');
 const { PlaybackTracking } = require('../playback-tracking');
 const SubtitleResources = require('../subtitle-resources');

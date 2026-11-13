@@ -1,6 +1,6 @@
 # Room connection protocol
 
-A client holds one WebSocket to `/watch-socket` per tab or app window. Everything about rooms travels on it as JSON messages with a `type`. The message shapes and their validators live in [`shared/wire-protocol.js`](../shared/wire-protocol.js); the server, the browser and the test harnesses load that file, and other clients (such as `plezy-uburoom`) mirror it.
+A client holds one WebSocket to `/watch-socket` per tab or app window. Everything about rooms travels on it as JSON messages with a `type`. The message shapes and their validators live in [`shared/wire-protocol.mjs`](../shared/wire-protocol.mjs); the server, the browser and the test harnesses load that file, and other clients (such as `plezy-uburoom`) mirror it.
 
 Protocol version: **2**. Version 1 was the earlier path-shaped protocol and is no longer spoken.
 
@@ -50,7 +50,7 @@ A request carries an `id` the client chooses (a non-negative integer, unique amo
 
 `preferences` (all optional): `quality`, `delivery` (`auto` or `local`), `subtitles` (`browser`), `codecs`, `volume`, `muted`, `plexReporting`, `plexWatchState`, `subtitlePreference`, `subtitleMode`, `audioPreference`.
 
-A `command` is a room command from the shared command table ([`shared/room-protocol.js`](../shared/room-protocol.js)), fenced by the room `epoch` the sender last saw and an `expiresAt` in server time.
+A `command` is a room command from the shared command table ([`shared/room-protocol.mjs`](../shared/room-protocol.mjs)), fenced by the room `epoch` the sender last saw and an `expiresAt` in server time.
 
 `call` covers what is neither a room command nor room state. `op` is one of the names in `CALLS`: `me`, `profile.rename`, `admin.mode`, `library.browse`, `library.item`, `library.availability`, `library.filters`, `playback.history`, `rooms.list`, `rooms.saved`, `rooms.create`, `events.list`, `events.schedule`, and for one room (`roomId` required) `room.reopen`, `room.close`, `room.people`, `room.settings`, `room.settings.edit`, `room.events`, `room.events.command`, `room.share`, `room.share.command`, `room.queue`, `room.queue.command`, `room.history`, `room.history.command`, `room.check`, `room.delivery`.
 

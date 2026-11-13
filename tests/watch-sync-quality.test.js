@@ -23,7 +23,7 @@ function measurement({
     lastKnownScore,
     lastKnownLevel:
       lastKnownLevel ||
-      (Number.isFinite(lastKnownScore) ? require('../web/sync-quality').level(lastKnownScore) : undefined),
+      (Number.isFinite(lastKnownScore) ? require('../shared/sync/quality.mjs').level(lastKnownScore) : undefined),
     confidence,
     measurementFreshnessMs,
     updatedAt,

@@ -1,7 +1,6 @@
 // @ts-check
 'use strict';
-/** @type {import('../shared/room-protocol').MediaIdentityExport} */
-const { mediaIdentity } = require('../shared/room-protocol');
+const { mediaIdentity } = require('../shared/room-protocol.mjs');
 
 const { randomUUID, randomInt } = require('node:crypto');
 const Policy = require('./room-policy');

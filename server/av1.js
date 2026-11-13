@@ -9,7 +9,7 @@ const { spawn } = require('node:child_process');
 const { randomBytes, createHash } = require('node:crypto');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
-const { QUALITIES, qualityDefinition, qualityId } = require('../shared/room-protocol');
+const { QUALITIES, qualityDefinition, qualityId } = require('../shared/room-protocol.mjs');
 const Playback = require('../web/playback-policy');
 const CHUNK = Playback.BUFFER.chunkSeconds;
 // Audio starts this early so Opus has settled before the chunk's first sample, and the
