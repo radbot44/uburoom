@@ -45,7 +45,7 @@ class WatchRooms {
     }
     this.timer = setInterval(() => {
       for (const room of watch.rooms.values())
-        if (!room.saving && !room.mediaTransition && !room.frozen) void this.save(room).catch(() => {});
+        if (!room.saving && !room.transition && !room.frozen) void this.save(room).catch(() => {});
       void this.track(this.maintain()).catch(() => {});
     }, 5000);
     this.timer.unref();
@@ -550,8 +550,7 @@ class WatchRooms {
       if (change?.action === 'reset') return this.resetSingle(id, actor, revision, current);
     }
     const room = this.watch.rooms.get(id);
-    if (change?.action === 'auto.reset' && (room?.mediaTransition || room?.queueEditing))
-      throw failure('Wait for the current queue operation', 409);
+    if (change?.action === 'auto.reset' && room?.transition) throw failure('Wait for the current queue operation', 409);
     if (change?.action === 'bookmark.clear' && room) throw failure('Close the room before clearing its saved video');
     await this.metadata(id, actor);
     if (!(await current())) throw failure('Room connection changed', 403);
@@ -755,10 +754,9 @@ class WatchRooms {
       throw failure('Room creator rights required to reset', 403);
     if (revision !== record.revision) throw failure('Room changed; refresh before resetting');
     if (!(await current())) throw failure('Room access changed', 403);
-    if (room && (room.mediaTransition || room.queueEditing))
-      throw failure('Wait for the current queue or media operation before resetting');
+    if (room && room.transition) throw failure('Wait for the current queue or media operation before resetting');
     this.watch.publications.roomClosed(id);
-    if (room) room.mediaTransition = true;
+    if (room) room.transition = { kind: 'media' };
     try {
       if (room) {
         this.freeze(room);
@@ -815,7 +813,7 @@ class WatchRooms {
       }
       return this.summary(id, actor);
     } finally {
-      if (room) room.mediaTransition = false;
+      if (room?.transition?.kind === 'media') room.transition = undefined;
     }
   }
   capture(room, { closing = false, at = this.watch.clock.now() } = {}) {
@@ -853,7 +851,8 @@ class WatchRooms {
     };
   }
   save(room, { closing = false, final = false } = {}) {
-    if (room.transitionCommit) return this.track(room.transitionCommit.then(() => this.save(room, { closing, final })));
+    if (room.transition?.commit)
+      return this.track(room.transition?.commit.then(() => this.save(room, { closing, final })));
     const captured = final ? this.capture(room, { closing, at: room.removalAt ?? this.watch.clock.now() }) : undefined;
     const previous = room.saving ? room.saving.catch(() => {}) : Promise.resolve();
     const saving = previous

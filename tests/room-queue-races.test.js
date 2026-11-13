@@ -136,7 +136,7 @@ async function fixture(t, { autoLoad = false } = {}) {
     ...(autoLoad ? { args: { mediaId: '103', quality: 'direct' } } : {}),
   });
   const deadline = Date.now() + 1500;
-  while (!room.transitionCommit) {
+  while (!room.transition?.commit) {
     assert.ok(Date.now() < deadline, 'Transition did not reach writer');
     await turn();
   }

@@ -116,7 +116,7 @@ class DiscordPublications {
           ? 'Closed'
           : !live ||
               room.frozen ||
-              room.mediaTransition ||
+              room.transition ||
               !room.media ||
               room.media.unavailable ||
               room.state.waitingForReady

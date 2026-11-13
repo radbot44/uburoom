@@ -120,8 +120,7 @@
  * @property {number} [playbackIntent] - Generation of the latest explicit play/pause intent.
  * @property {boolean} [closed] - Set by the room core once the room is closing.
  * @property {boolean} [frozen] - Empty, waiting for its host's tab within the reconnect grace.
- * @property {boolean} [mediaTransition] - Set while queued media is being prepared and adopted.
- * @property {boolean} [queueEditing] - Set while a queue edit is being committed.
+ * @property {{kind: 'media'|'queue', commit?: Promise<any>}} [transition] - The one media change or queue edit in flight; commit is set while its durable queue write runs.
  * @property {boolean} [waitingForHost] - Playback is held until a host returns.
  * @property {string} [endedVersion] - Media generation whose natural end has been handled.
  * @property {any} [autoplayCountdown] - Active cancellable autoplay countdown.

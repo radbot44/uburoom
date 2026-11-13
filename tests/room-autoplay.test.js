@@ -220,7 +220,7 @@ test('verified natural ending broadcasts one countdown, atomically archives comp
   assert.equal(snapshot.ending.next.entryId, f.upcoming[0].id);
   await f.observe(100, 'ended');
   assert.equal(f.room.autoplayCountdown, countdown, 'duplicate endings retain one countdown');
-  await waitFor(() => f.queue.current(f.id)?.id === f.upcoming[0].id && !f.room.mediaTransition);
+  await waitFor(() => f.queue.current(f.id)?.id === f.upcoming[0].id && !f.room.transition);
   assert.notEqual(f.room.mediaVersion, version);
   assert.equal(f.room.media.id, '101');
   assert.equal(f.queue.list(f.id).total, 1);
@@ -363,7 +363,7 @@ test('next media preparation failure preserves the occurrence and reports one tr
     throw Object.assign(new Error('Plex fixture is unavailable'), { status: 503 });
   };
   await f.end();
-  await waitFor(() => !f.room.autoplayCountdown && !f.room.mediaTransition);
+  await waitFor(() => !f.room.autoplayCountdown && !f.room.transition);
   assert.match(f.room.autoplayError, /Plex fixture is unavailable/);
   assert.equal(f.queue.current(f.id), null);
   assert.equal(f.queue.peekNext(f.id).id, f.upcoming[0].id);
@@ -391,14 +391,14 @@ test('revoked host permissions during media preparation invalidate autoplay befo
   };
   const before = f.queue.current(f.id);
   await f.end();
-  await waitFor(() => held.started && f.room.mediaTransition);
+  await waitFor(() => held.started && f.room.transition);
   const record = f.store.get(f.id);
   f.watch.roomState.apply(
     f.room,
     await f.store.edit(f.id, f.creator.userId, record.revision, { action: 'host.remove', userId: f.guest.userId }),
   );
   held.release();
-  await waitFor(() => !f.room.mediaTransition && !f.room.autoplayCountdown);
+  await waitFor(() => !f.room.transition && !f.room.autoplayCountdown);
   assert.equal(f.queue.current(f.id), null);
   assert.equal(f.queue.peekNext(f.id).id, f.upcoming[0].id);
   assert.equal(f.room.media, undefined);
@@ -412,7 +412,7 @@ test('a failed durable commit cannot adopt prepared media in the live room', asy
   f.registry.flush = async () => {
     throw new Error('Fixture disk failure');
   };
-  await waitFor(() => !f.room.autoplayCountdown && !f.room.mediaTransition);
+  await waitFor(() => !f.room.autoplayCountdown && !f.room.transition);
   assert.equal(f.room.media, undefined);
   assert.ok(f.store.failure);
   assert.match(f.room.autoplayError, /storage/i);
@@ -437,10 +437,10 @@ test('manual Next during an autoplay prepare cancels that attempt and a retry co
   };
   f.queue.current(f.id);
   await f.end();
-  await waitFor(() => held.started && f.room.mediaTransition);
+  await waitFor(() => held.started && f.room.transition);
   assert.equal((await f.command('media.next')).status, 'unavailable');
   held.release();
-  await waitFor(() => !f.room.mediaTransition && !f.room.autoplayCountdown);
+  await waitFor(() => !f.room.transition && !f.room.autoplayCountdown);
   assert.equal(f.queue.current(f.id), null);
   assert.equal(f.queue.history(f.id).total, 1);
   assert.equal(attempts, 1);
@@ -470,7 +470,7 @@ test('pause, Cancel and closing while the next item is preparing release it with
       };
       f.queue.current(f.id);
       await f.end();
-      await waitFor(() => held.started && f.room.mediaTransition);
+      await waitFor(() => held.started && f.room.transition);
       let closing;
       try {
         if (action === 'close') {
@@ -485,7 +485,7 @@ test('pause, Cancel and closing while the next item is preparing release it with
         held.release();
       }
       await closing;
-      await waitFor(() => !f.room.mediaTransition);
+      await waitFor(() => !f.room.transition);
       assert.equal(f.queue.current(f.id), null);
       assert.equal(f.queue.history(f.id).total, 1);
       assert.equal(f.room.media, undefined);
@@ -531,7 +531,7 @@ test('authorized endpoint seeks finish without readiness or watch credit, while 
           f.watch.ready(f.room, f.creator, f.creator.watchViewerId, version, true, readiness),
           /Invalid readiness/,
         );
-        await waitFor(() => f.queue.current(f.id)?.id === f.upcoming[0].id && !f.room.mediaTransition);
+        await waitFor(() => f.queue.current(f.id)?.id === f.upcoming[0].id && !f.room.transition);
         assert.equal(f.queue.history(f.id).items[0].id, current);
         assert.equal(f.queue.history(f.id).items[0].outcome, 'completed');
       } else {
@@ -604,7 +604,7 @@ test('endpoint completion holds conflicting controls and shutdown until its dura
   };
   t.after(() => held.release());
   const completion = f.command('media.seek.end');
-  await waitFor(() => held.started && f.room.transitionCommit);
+  await waitFor(() => held.started && f.room.transition?.commit);
   assert.equal((await f.command('media.play')).status, 'unavailable');
   let closed = false;
   const closing = f.watch.close().then(() => {
