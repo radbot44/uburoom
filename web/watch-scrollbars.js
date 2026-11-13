@@ -96,10 +96,12 @@ export function mount() {
       locked = next;
       pageScrollbar.options({ overflow: { y: locked ? 'hidden' : 'scroll' } });
     }
-    if (document.readyState !== 'loading') syncInnerScrollbars();
+    if (innerStarted) syncInnerScrollbars();
   }).observe(body, { attributes: true, attributeFilter: ['class'] });
 
+  let innerStarted = false;
   function startInnerScrollbars() {
+    innerStarted = true;
     const drawer = document.getElementById('drawer');
     if (drawer)
       new MutationObserver(syncInnerScrollbars).observe(drawer, { attributes: true, attributeFilter: ['hidden'] });
@@ -122,8 +124,8 @@ export function mount() {
     syncInnerScrollbars();
   }
 
-  // watch.js creates #drawer after this initializer script runs.
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', startInnerScrollbars, { once: true });
-  } else startInnerScrollbars();
+  // The watch modules create #drawer and other scroll areas after this runs; the page's module scripts all
+  // run before DOMContentLoaded.
+  if (document.readyState === 'complete') startInnerScrollbars();
+  else document.addEventListener('DOMContentLoaded', startInnerScrollbars, { once: true });
 }

@@ -1,0 +1,91 @@
+/* Element defaults shared by every page. */
+@layer base {
+  :root {
+    color-scheme: dark;
+    font: 14px/1.4 var(--font-body);
+    color: var(--text);
+    background: var(--background);
+  }
+  :root[data-theme='light'] {
+    color-scheme: light;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+  }
+  main {
+    max-width: clamp(1750px, calc(1400px + 18.2292vw), 2100px);
+    margin: var(--space-22) auto;
+    padding: 0 var(--space-24);
+  }
+  button,
+  input,
+  select,
+  a {
+    font: inherit;
+  }
+  button,
+  a,
+  input {
+    touch-action: manipulation;
+  }
+  button {
+    cursor: pointer;
+    border: 0;
+    color: inherit;
+  }
+  button:disabled,
+  input:disabled,
+  select:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  h1,
+  h2,
+  .watch-panel-heading {
+    font-family: var(--font-heading);
+    font-weight: 400;
+    letter-spacing: normal;
+  }
+  h1 {
+    font-size: var(--font-size-20);
+    margin: 0;
+  }
+  h2 {
+    font-size: var(--font-size-16);
+    margin: 0;
+  }
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    position: absolute;
+    inset: 0;
+  }
+  input[type='range'] {
+    accent-color: var(--accent-text);
+    cursor: pointer;
+    min-width: 0;
+  }
+  select,
+  input[type='search'] {
+    border: 1px solid var(--border);
+    background: var(--elevated);
+    color: var(--text);
+    border-radius: var(--radius-10);
+    padding: var(--space-9);
+  }
+  @media (max-width: 1000px) {
+    main {
+      padding: 0 var(--space-12);
+    }
+  }
+  @media (max-width: 700px) {
+    main {
+      margin: var(--space-12) auto;
+      padding: 0 var(--space-8);
+    }
+  }
+}

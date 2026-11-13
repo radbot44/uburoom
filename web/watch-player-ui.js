@@ -66,10 +66,12 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
   submenu.append(options);
   const badge = document.createElement('span');
   badge.id = 'quality-badge';
+  badge.classList.add('quality-badge');
   badge.setAttribute('aria-hidden', 'true');
   cog.append(badge);
   const spinner = document.createElement('span');
   spinner.id = 'captions-spinner';
+  spinner.classList.add('captions-spinner');
   spinner.setAttribute('aria-hidden', 'true');
   spinner.append(uburoomIcons.icon(document, 'loader-4'));
   const choices = [
@@ -128,6 +130,7 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
   more.onclick = openDialog;
   const back = button(submenu, 'Back');
   back.id = 'settings-back';
+  back.classList.add('settings-back');
   back.setAttribute('role', 'menuitem');
   back.prepend(uburoomIcons.icon(document, 'left'));
   back.onclick = backToSettings;
@@ -563,7 +566,7 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
   const pipEntry = document.createElement('button');
   pipEntry.type = 'button';
   pipEntry.id = 'player-extras-pip';
-  pipEntry.className = 'quiet';
+  pipEntry.className = 'player-extras-pip quiet';
   extras.append(extrasTitle, notifyLabel, pipEntry);
   dialog.querySelector('.player-settings-column')?.prepend(extras);
   function mirrorExtras() {

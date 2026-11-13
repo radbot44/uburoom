@@ -1,0 +1,248 @@
+/* Watch nights: event scheduler and the lobby Upcoming list. Owned by web/watch-events.js and web/watch-lobby-events.js. */
+@layer components {
+  #event-form {
+    display: block;
+    text-align: left;
+  }
+  .event-form[hidden] {
+    display: none;
+  }
+  #event-error {
+    color: var(--error);
+    overflow-wrap: anywhere;
+    margin: var(--space-10) 0 0;
+  }
+  .event-error:empty {
+    display: none;
+  }
+  .event-discord-row[hidden],
+  .event-room-row[hidden] {
+    display: none;
+  }
+  .event-field {
+    margin-top: var(--space-14);
+  }
+  .event-field-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-8);
+    margin-bottom: var(--space-6);
+  }
+  .event-field-header label {
+    font-size: var(--font-size-14);
+    font-weight: 500;
+    color: var(--text);
+    margin: 0;
+  }
+  .event-field label:not(.event-field-header label) {
+    display: block;
+    font-size: var(--font-size-14);
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: var(--space-6);
+  }
+  .event-form :is(input:not([type='checkbox']), select, textarea) {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    padding: var(--space-9) var(--space-12);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+    background: var(--elevated);
+    color: var(--text);
+    font: inherit;
+  }
+  .event-form textarea {
+    resize: vertical;
+  }
+  .event-zone-btn {
+    background: none;
+    border: 0;
+    padding: var(--space-2) var(--space-4);
+    border-radius: var(--radius-6);
+    font-size: var(--font-size-12);
+    color: var(--muted);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-4);
+    cursor: pointer;
+  }
+  .event-zone-btn:hover {
+    color: var(--text);
+  }
+  .event-zone-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+  .event-zone-change {
+    color: var(--accent-text);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    margin-left: var(--space-2);
+  }
+  .event-zone-wrapper {
+    margin: var(--space-6) 0 var(--space-10);
+  }
+  .event-chips {
+    display: flex;
+    gap: var(--space-6);
+    overflow-x: auto;
+    padding-bottom: var(--space-4);
+    margin-bottom: var(--space-8);
+  }
+  .event-chip {
+    background: var(--elevated);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: var(--radius-8);
+    font-size: var(--font-size-12);
+    font-weight: 500;
+    padding: var(--space-6) var(--space-10);
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      color 0.12s,
+      border-color 0.12s,
+      background-color 0.12s;
+    min-height: 32px;
+  }
+  .event-chip:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .event-chip[aria-pressed='true'] {
+    background: color-mix(in srgb, var(--primary) 15%, var(--elevated));
+    border-color: var(--primary);
+    color: var(--accent-text);
+    font-weight: 600;
+  }
+  .event-datetime-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-8);
+  }
+  @media (max-width: 400px) {
+    .event-datetime-row {
+      grid-template-columns: 1fr;
+    }
+  }
+  .event-end-badge {
+    font-size: var(--font-size-12);
+    font-weight: 500;
+    color: var(--accent-text);
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent);
+    padding: var(--space-2) var(--space-7);
+    border-radius: var(--radius-6);
+  }
+  .event-duration-pills {
+    display: flex;
+    gap: var(--space-6);
+    margin-top: var(--space-6);
+  }
+  .event-duration-pill {
+    flex: 1;
+    text-align: center;
+    background: var(--elevated);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: var(--radius-8);
+    font-size: var(--font-size-12);
+    font-weight: 500;
+    padding: var(--space-7) var(--space-8);
+    cursor: pointer;
+    transition:
+      color 0.12s,
+      border-color 0.12s,
+      background-color 0.12s;
+    min-height: 34px;
+  }
+  .event-duration-pill:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .event-duration-pill[aria-pressed='true'] {
+    background: color-mix(in srgb, var(--primary) 15%, var(--elevated));
+    border-color: var(--primary);
+    color: var(--accent-text);
+    font-weight: 600;
+  }
+  .event-custom-row {
+    margin-top: var(--space-8);
+    padding: var(--space-10);
+    background: var(--elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-8);
+  }
+  .event-custom-row label {
+    font-size: var(--font-size-12);
+    color: var(--muted);
+    margin: 0;
+  }
+  .event-custom-row select {
+    width: auto;
+    min-width: 140px;
+    padding: var(--space-6) var(--space-10);
+    font-size: var(--font-size-12);
+  }
+  .event-form-actions button {
+    min-height: 40px;
+    padding: var(--space-10) var(--space-18);
+  }
+  .lobby-events {
+    flex-basis: 100%;
+    width: 100%;
+    text-align: left;
+    margin-top: var(--space-6);
+  }
+  .lobby-events[hidden] {
+    display: none;
+  }
+  .lobby-events h3 {
+    margin: 0 0 var(--space-4);
+    font-size: var(--font-size-14);
+    font-weight: 600;
+    color: var(--chrome-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .lobby-event-list {
+    max-height: none;
+    overflow: visible;
+  }
+  .lobby-event strong svg {
+    color: var(--primary);
+  }
+  .lobby-event .lobby-event-icon {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0;
+    display: inline-grid;
+    place-items: center;
+  }
+  .lobby-event .lobby-event-icon svg {
+    margin: 0;
+  }
+  .lobby-events-more {
+    min-height: 32px;
+    padding: var(--space-4) var(--space-10);
+    font-size: var(--font-size-12);
+    margin-top: var(--space-4);
+  }
+  @media (max-width: 620px) {
+    /* Three lobby buttons fit one row only when Schedule collapses to its icon. */
+    .lobby-schedule .lobby-schedule-label {
+      display: none;
+    }
+    #lobby-room-bar #lobby-schedule svg {
+      margin-right: 0;
+    }
+  }
+}

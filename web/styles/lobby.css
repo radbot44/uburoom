@@ -1,0 +1,203 @@
+/* Lobby, room chooser, new-room form and invites. Owned by web/watch/lobby.js. */
+@layer components {
+  .lobby-auth h2 {
+    font-size: var(--font-size-16);
+  }
+  .lobby-auth p {
+    font-size: var(--font-size-14);
+    color: var(--muted);
+  }
+  .room-dialog h3 {
+    font-size: var(--font-size-14);
+    margin-top: var(--space-24);
+  }
+  .room-lobby {
+    max-width: 680px;
+    margin: var(--space-22) auto 0;
+  }
+  #room-dialog-error,
+  #room-save-error {
+    color: var(--error);
+  }
+  .room-lobby {
+    margin: var(--space-18) auto 0;
+  }
+  .lobby-room-bar {
+    display: flex;
+    justify-content: center;
+    gap: var(--space-12);
+  }
+  .lobby-room-list {
+    flex-basis: 100%;
+    width: 100%;
+    text-align: left;
+    max-height: 270px;
+    overflow: auto;
+  }
+  .lobby-rooms .saved-room {
+    border-color: var(--chrome-border);
+    padding: var(--space-12) 0;
+  }
+  .lobby-rooms .saved-room button {
+    flex: none;
+  }
+  .lobby-reopen,
+  .lobby-schedule,
+  .lobby-create {
+    min-height: 44px;
+  }
+  .lobby-error {
+    flex-basis: 100%;
+    font-size: var(--font-size-12);
+  }
+  .lobby-error:empty {
+    display: none;
+  }
+  .room-dialog {
+    width: min(620px, calc(100vw - 32px));
+    box-sizing: border-box;
+  }
+  .room-dialog header h2 {
+    margin-right: auto;
+  }
+  .room-dialog label {
+    display: block;
+    margin: var(--space-14) 0 var(--space-6);
+  }
+  .room-dialog select {
+    width: 100%;
+  }
+  .room-dialog input:not([type='checkbox']),
+  .room-settings-dialog input:not([type='checkbox']) {
+    box-sizing: border-box;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+    background: var(--elevated);
+    color: var(--text);
+    padding: var(--space-12);
+    font: inherit;
+  }
+  .room-dialog input:not([type='checkbox']) {
+    width: 100%;
+  }
+  .room-chooser-refresh {
+    margin-left: auto;
+    color: var(--muted);
+  }
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(-360deg);
+    }
+  }
+  .room-chooser-refresh.spinning svg {
+    animation: spin 0.75s linear infinite;
+  }
+  #room-chooser-nav [aria-pressed='true'],
+  #room-settings-nav [aria-current='true'] {
+    background: var(--elevated);
+    color: var(--accent-text);
+  }
+  @media (max-width: 620px) {
+    .room-dialog {
+      padding: var(--space-18);
+      width: calc(100vw - 20px);
+    }
+    .room-chooser-nav {
+      gap: var(--space-6);
+    }
+    .room-chooser-nav button {
+      padding: var(--space-10);
+      font-size: var(--font-size-12);
+    }
+    body.outside-room .room-lobby {
+      margin: 0;
+    }
+    body.outside-room .lobby-room-bar {
+      gap: var(--space-6);
+    }
+    body.outside-room .lobby-room-list {
+      max-height: max(54px, calc(56.25vw - 154px));
+    }
+    .lobby-rooms .saved-room {
+      flex-direction: row;
+      align-items: center;
+      padding: var(--space-6) 0;
+      font-size: var(--font-size-12);
+    }
+    .lobby-rooms button {
+      min-height: 44px;
+      padding: var(--space-8);
+    }
+    .lobby-reopen,
+    .lobby-schedule,
+    .lobby-create {
+      font-size: var(--font-size-12);
+      padding: var(--space-8) var(--space-10);
+    }
+  }
+  .room-create-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+  }
+  .room-create-actions[hidden] {
+    display: none;
+  }
+  .room-create-settings {
+    display: grid;
+    place-items: center;
+  }
+  .welcome h2 {
+    display: none;
+  }
+  @media (max-width: 700px) {
+    body.idle-player .room-lobby {
+      margin: var(--space-10) auto 0;
+    }
+  }
+  .guest-join,
+  .invite-code-form {
+    display: grid;
+    gap: var(--space-10);
+    margin-top: var(--space-20);
+    text-align: left;
+  }
+  .guest-join[hidden],
+  .invite-code-form[hidden] {
+    display: none;
+  }
+  .guest-name,
+  .invite-code {
+    box-sizing: border-box;
+    flex: 1;
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: var(--space-10) var(--space-12);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+    background: var(--elevated);
+    color: var(--text);
+  }
+  .guest-join-submit {
+    min-height: 44px;
+  }
+  #guest-sign-in-label {
+    margin-top: var(--space-20);
+  }
+  .invite-code-submit {
+    min-height: 44px;
+  }
+  .room-invite-code {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: var(--font-size-16);
+    padding: var(--space-8) var(--space-10);
+    border-radius: var(--radius-8);
+    background: var(--elevated);
+    user-select: all;
+  }
+}

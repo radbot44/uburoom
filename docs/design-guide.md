@@ -44,12 +44,12 @@ Use existing theme tokens and shared control classes; do not recreate their sizi
 | Adjacent icon actions | 4px gap (`var(--watch-icon-gap)`) |
 | Focus | Visible 2px outline, 2px offset |
 | Switch | 36×22px component (`input.watch-switch`); 44px minimum row/target (`.watch-switch-label`) |
-| Switch pill | `uburoomControls.switchPill()`: 40px tall, 10px radius, `var(--elevated)` surface with no border or tint, 12px horizontal padding; 14px/500 label left, small 28×16px switch right (`.watch-switch-small`), 10px gap |
+| Switch pill | `switchPill()` (`web/watch-controls.js`): 40px tall, 10px radius, `var(--elevated)` surface with no border or tint, 12px horizontal padding; 14px/500 label left, small 28×16px switch right (`.watch-switch-small`), 10px gap |
 | Segmented selector | 40px inner button height; 46px group height with 3px padding (`.watch-segmented`) |
 
 ### Scales and token families
 
-Tokens are declared once, in the `:root` block at the top of `web/watch.css`. Outside that block, stylesheets use tokens rather than literal font sizes, radii, `z-index` values, colours, or pixel gaps, padding and margins.
+Tokens are declared once, in the `:root` blocks of `web/styles/tokens.css`. Outside them, stylesheets use tokens rather than literal font sizes, radii, `z-index` values, colours, or pixel gaps, padding and margins.
 
 | Family | Tokens |
 | --- | --- |

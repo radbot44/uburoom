@@ -1,0 +1,361 @@
+/* The stage: video, subtitle layers, empty stage, frame hold and Picture-in-Picture. Owned by web/watch/player.js. */
+@layer components {
+  .empty-stage:has(.entry-form:not([hidden])) .empty-symbol {
+    display: none;
+  }
+  .stage {
+    position: relative;
+    aspect-ratio: 16/9;
+    background: var(--black);
+    border-radius: var(--radius-10);
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    isolation: isolate;
+    container-type: inline-size;
+  }
+  .stage:fullscreen {
+    border-radius: 0;
+    background: var(--black);
+    aspect-ratio: auto;
+    width: 100%;
+    height: 100%;
+  }
+  .empty-stage {
+    position: relative;
+    text-align: center;
+    color: var(--muted);
+    padding: var(--space-24);
+  }
+  .empty-stage h1 {
+    color: var(--text);
+    font-size: var(--font-size-20);
+  }
+  .empty-hint {
+    margin: var(--space-8) 0 var(--space-16);
+    color: var(--muted);
+    font-size: var(--font-size-14);
+  }
+  .empty-hint:empty {
+    display: none;
+  }
+  /* Chrome's hardware video overlay can keep a stale position for a paused fullscreen frame.
+   A filter keeps that frame in the normal compositor; playback is unaffected. */
+  .stage.paused:fullscreen video {
+    filter: brightness(1.001);
+  }
+  .subtitle-text-layer {
+    position: absolute;
+    pointer-events: none;
+    z-index: var(--z-local-1);
+    filter: brightness(var(--subtitle-brightness, 1));
+  }
+  .subtitle-text-lines {
+    position: absolute;
+    left: 4%;
+    right: 4%;
+    bottom: var(--subtitle-lift, 24px);
+    text-align: center;
+    font: 600 var(--subtitle-size, var(--font-size-24))/1.25 var(--font-body);
+    color: var(--subtitle-color, var(--white));
+  }
+  .subtitle-text-lines.top {
+    top: var(--subtitle-lift, 24px);
+    bottom: auto;
+  }
+  .stage[data-subtitle-bg='background'] .subtitle-cue > span {
+    background: var(--black-a75);
+    padding: 0 0.25em;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+  .stage[data-subtitle-bg='shadow'] .subtitle-cue > span {
+    -webkit-text-stroke: 0.13em var(--black);
+    paint-order: stroke fill;
+    text-shadow: 0 0.04em 0.08em var(--black-a60);
+  }
+  .subtitle-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: var(--z-local-1);
+    transform-origin: center;
+    filter: brightness(var(--subtitle-brightness, 1));
+  }
+  .subtitle-canvas {
+    position: absolute;
+    pointer-events: none;
+  }
+  .media-heading {
+    min-width: 0;
+    pointer-events: none;
+  }
+  .media-heading h1 {
+    font-size: var(--font-size-20);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .media-heading p {
+    font-size: var(--font-size-14);
+    color: var(--muted);
+    margin: var(--space-4) 0 0;
+  }
+  .media-heading p:empty {
+    display: none;
+  }
+  .media-heading {
+    flex: 1;
+  }
+  .status:empty,
+  .error:empty {
+    display: none;
+  }
+  .error {
+    color: var(--error);
+  }
+  @media (max-width: 700px) {
+    .stage {
+      border-radius: 0;
+    }
+    .media-heading h1 {
+      font-size: var(--font-size-16);
+    }
+    .media-heading p {
+      font-size: var(--font-size-12);
+    }
+  }
+  .theater .stage {
+    flex: none;
+    min-height: 0;
+    width: 100%;
+    height: min(56.25vw, max(160px, calc(100dvh - var(--watch-header-height, 95px) - 34px)));
+    aspect-ratio: 16/9;
+    max-height: none;
+    border-radius: 0;
+  }
+  .immersive .stage {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    aspect-ratio: auto;
+    border-radius: 0;
+    background: var(--black);
+  }
+  .immersive .stage.drawer-open .media-heading {
+    max-width: calc(50vw - 30px);
+  }
+  @container (max-width:500px) {
+    body:not(.immersive) .empty-stage {
+      position: absolute;
+      top: 60px;
+      left: 12px;
+      right: 12px;
+      padding: 0;
+      max-height: calc(100% - 160px);
+      overflow: auto;
+    }
+    body:not(.immersive) .empty-symbol,
+    body:not(.immersive) .empty-stage h1 {
+      display: none;
+    }
+    body:not(.immersive) .empty-hint {
+      margin: 0;
+      font-size: var(--font-size-12);
+    }
+  }
+  @media (orientation: portrait) and (max-width: 700px) {
+    .immersive .stage.drawer-open .media-heading {
+      max-width: 100%;
+    }
+  }
+  .activity-pip .stage {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100dvh;
+    aspect-ratio: auto;
+    border-radius: 0;
+    background: var(--black);
+  }
+  @media (max-width: 700px) {
+    .media-heading {
+      min-width: 85px;
+    }
+    .media-heading h1 {
+      max-width: 100%;
+    }
+  }
+  .outside-room .empty-stage {
+    width: min(680px, calc(100% - 32px));
+    box-sizing: border-box;
+    max-height: calc(100% - 70px);
+    overflow: auto;
+    padding: var(--space-14);
+  }
+  .outside-room .empty-stage h1 {
+    margin: 0 0 var(--space-12);
+    font-size: var(--font-size-20);
+  }
+  .outside-room .empty-hint:empty {
+    display: none;
+  }
+  .empty-stage button {
+    pointer-events: auto;
+  }
+  .empty-symbol {
+    display: block;
+    margin: 0 auto var(--space-16);
+  }
+  .empty-oomark {
+    display: block;
+    margin: 0 auto;
+    width: 68px;
+    height: auto;
+    aspect-ratio: 298.99 / 249.1061;
+  }
+  @media (max-width: 620px) {
+    body.outside-room:not(.immersive) .empty-stage {
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      width: calc(100% - 24px);
+      max-height: calc(100% - 48px);
+      overflow: auto;
+      padding: 0;
+    }
+    body.outside-room .empty-stage h1 {
+      font-size: var(--font-size-14);
+      line-height: 18px;
+      margin: 0 0 var(--space-4);
+    }
+  }
+  .empty-browse {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-8);
+  }
+  .empty-browse[hidden] {
+    display: none;
+  }
+  .empty-browse svg {
+    width: 24px;
+    height: 24px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  /* Both lobbies share the player frame and centered empty-room presentation. */
+  body.idle-player .empty-stage {
+    width: min(680px, calc(100% - 32px));
+    box-sizing: border-box;
+    max-height: calc(100% - 110px);
+    overflow: auto;
+    padding: var(--space-14);
+  }
+  body.idle-player .empty-stage h1 {
+    margin: 0 0 var(--space-8);
+    font-size: var(--font-size-20);
+  }
+  body.idle-player .empty-symbol {
+    display: block;
+    margin-bottom: var(--space-16);
+  }
+  body.idle-player .video {
+    visibility: hidden;
+  }
+  @media (max-width: 700px) {
+    body.idle-player:not(.immersive) .empty-stage {
+      position: relative;
+      inset: auto;
+      width: calc(100% - 24px);
+      max-height: calc(100% - 64px);
+      padding: var(--space-8);
+    }
+    body.idle-player .empty-stage h1 {
+      font-size: var(--font-size-16);
+    }
+    body.idle-player .empty-symbol {
+      display: none;
+    }
+    body.idle-player .empty-hint {
+      font-size: var(--font-size-12);
+      margin: var(--space-4) 0 var(--space-10);
+    }
+  }
+  .stage.mouse-idle:not(.paused):not(.blocked):not(.settings-open):not(.drawer-open):not(.remote-open):not(
+      :has(:focus-visible)
+    ),
+  .stage.mouse-idle:not(.paused):not(.blocked):not(.settings-open):not(.drawer-open):not(.remote-open):not(
+      :has(:focus-visible)
+    )
+    * {
+    cursor: none;
+  }
+  .frame-hold {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+  }
+  .stage {
+    touch-action: manipulation;
+  }
+  body.mobile-player .stage {
+    border-radius: 0;
+  }
+  body.mobile-player .media-heading h1 {
+    font-size: var(--font-size-14);
+  }
+  body.mobile-player .empty-stage {
+    max-height: calc(100% - 136px);
+  }
+  .pip-placeholder {
+    position: relative;
+    aspect-ratio: 16/9;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+    display: grid;
+    place-items: center;
+    text-align: center;
+    padding: var(--space-24);
+  }
+  .pip-placeholder-content {
+    display: grid;
+    gap: var(--space-12);
+    place-items: center;
+  }
+  .pip-placeholder-content p {
+    margin: 0;
+    font-size: var(--font-size-16);
+    font-weight: 500;
+    color: var(--muted);
+  }
+  body.pip-window {
+    margin: 0;
+    padding: 0;
+    background: var(--black);
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+  }
+  body.pip-window .stage {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    aspect-ratio: auto;
+    border-radius: 0;
+    background: var(--black);
+  }
+  .library-detail-art > .landscape {
+    aspect-ratio: 16/9;
+  }
+}

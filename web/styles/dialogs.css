@@ -1,0 +1,85 @@
+/* Dialog archetypes and their header, body and footer. Owned by web/watch-dialogs.js. */
+@layer components {
+  .event-form-actions {
+    margin-top: var(--space-20);
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-8);
+  }
+  .activity-pip .handoff-dialog::backdrop {
+    background: transparent;
+  }
+  .watch-dialog {
+    box-sizing: border-box;
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-22);
+    padding: var(--space-24);
+    width: min(560px, calc(100vw - 32px));
+    max-width: calc(100vw - 32px);
+    max-height: calc(100dvh - 32px);
+    overflow: auto;
+    overscroll-behavior: contain;
+    box-shadow: 0 12px 50px var(--black-a60);
+  }
+  .watch-dialog.dialog-small {
+    width: min(420px, calc(100vw - 32px));
+  }
+  .watch-dialog > header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    margin: 0 0 var(--space-16);
+  }
+  .watch-dialog > header h2 {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--font-size-20);
+    margin: 0;
+  }
+  .watch-dialog::backdrop {
+    background: var(--black-a60);
+  }
+  .watch-dialog p {
+    color: var(--muted);
+  }
+  .watch-dialog form,
+  .dialog-footer {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-10);
+    justify-content: flex-end;
+    margin-top: var(--space-20);
+  }
+  .dialog-footer.with-divider {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-16);
+    margin-top: var(--space-16);
+  }
+  .queue-dialog .dialog-actions {
+    justify-content: flex-end;
+    margin-top: var(--space-20);
+  }
+  .codec-test-dialog {
+    width: min(1060px, 96vw);
+    max-width: 96vw;
+    height: 90dvh;
+    padding: var(--space-12);
+    overflow: hidden;
+  }
+  .codec-test-dialog[open] {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-10);
+  }
+  .codec-test-dialog iframe {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    border: 0;
+    border-radius: var(--radius-12);
+    background: var(--background);
+  }
+}

@@ -1,0 +1,134 @@
+/* Room panel: current room bar, header actions and personal sync. Owned by web/watch/room.js. */
+@layer components {
+  .room-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    margin-bottom: var(--space-16);
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .viewers {
+    white-space: nowrap;
+  }
+  .personal-sync {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+    gap: var(--space-8) var(--space-16);
+    align-items: center;
+    margin-bottom: var(--space-18);
+  }
+  .personal-sync label {
+    font-size: var(--font-size-14);
+    font-weight: 600;
+  }
+  .personal-sync select {
+    min-width: 0;
+    max-width: 100%;
+  }
+  @media (max-width: 500px) {
+    .personal-sync {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  .room-lobby .room-bar {
+    justify-content: center;
+    margin: 0;
+  }
+  .theater:not(.immersive) .options-panel .personal-sync {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .drawer .room-bar {
+    margin-top: var(--space-18);
+  }
+  .room-actions,
+  .dialog-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+    margin: var(--space-10) 0;
+  }
+  .room-actions > input,
+  .room-actions > select,
+  .dialog-actions > input,
+  .dialog-actions > select {
+    flex: 1;
+    min-width: 140px;
+  }
+  :is(.saved-room, .room-invited-item) .room-actions {
+    flex: none;
+  }
+  @media (max-width: 500px) {
+    :is(.saved-room, .room-invited-item) .room-actions {
+      margin: 0;
+    }
+    .room-actions > select,
+    .dialog-actions > select {
+      max-width: 100%;
+    }
+  }
+  .options-content > .current-room-bar {
+    width: 100%;
+    margin: 0 0 var(--space-16);
+  }
+  .empty-stage .room-bar {
+    flex-wrap: wrap;
+  }
+  .lobby-event .room-actions {
+    align-items: center;
+    gap: var(--space-6);
+  }
+  :is(#lobby-reopen, #lobby-schedule, #lobby-create) > svg,
+  .room-actions button:not(.icon-button) > svg,
+  #room-bar button:not(.icon-button) > svg,
+  #close-room > svg,
+  #room-settings-delete > svg {
+    width: 19px;
+    height: 19px;
+    vertical-align: middle;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    margin-right: var(--space-6);
+  }
+  .current-room-bar {
+    align-items: center;
+  }
+  .options-content > .current-room-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-8);
+    margin: var(--space-16) 0 0;
+    width: 100%;
+  }
+  .room-settings-panels .room-actions {
+    flex-wrap: wrap;
+    margin: var(--space-6) 0;
+  }
+  .room-settings-panels .room-actions input:not(.watch-switch) {
+    flex: 1;
+    width: 100px;
+  }
+  .options-panel .room-header-actions {
+    margin-inline-start: auto;
+  }
+  .room-header-actions {
+    flex: none;
+    flex-wrap: nowrap;
+  }
+  .tracks-dialog .personal-sync {
+    display: block;
+    margin: var(--space-16) 0 0;
+  }
+  .tracks-dialog .personal-sync label {
+    margin-bottom: var(--space-6);
+  }
+  body.mobile-player .viewing-section > .current-room-bar {
+    margin: var(--space-12) var(--space-12) 0;
+    width: calc(100% - 24px);
+  }
+}

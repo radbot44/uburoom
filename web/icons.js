@@ -829,7 +829,9 @@ function spriteMarkup() {
     symbols.push('<symbol id="icon-' + id + '" viewBox="' + viewBox + '">' + inner + '</symbol>');
   }
   cachedSprite =
-    '<svg id="icon-sprite" hidden aria-hidden="true" width="0" height="0"><defs>' + symbols.join('') + '</defs></svg>';
+    '<svg id="icon-sprite" class="icon-sprite" hidden aria-hidden="true" width="0" height="0"><defs>' +
+    symbols.join('') +
+    '</defs></svg>';
   return cachedSprite;
 }
 export { icon, svgMarkup, spriteMarkup, resolveName, volumeName, aliases, glyphs };

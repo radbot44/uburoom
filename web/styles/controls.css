@@ -1,0 +1,789 @@
+/* Shared controls: buttons, switches, switch pills, segmented selectors, permission controls and checkboxes. Owned by web/watch-controls.js. */
+@layer components {
+  .appearance-toggle {
+    display: grid;
+    place-items: center;
+    min-width: 44px;
+    height: 44px;
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-8);
+    background: none;
+    color: var(--text);
+  }
+  .appearance-track {
+    position: relative;
+    display: block;
+    width: 42px;
+    height: 24px;
+    border-radius: var(--radius-pill);
+    background: var(--elevated);
+  }
+  .appearance-thumb {
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border-radius: var(--radius-round);
+    background: var(--text);
+    color: var(--background);
+    transition: translate 120ms ease;
+  }
+  .appearance-thumb svg {
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    pointer-events: none;
+  }
+  .appearance-toggle[aria-checked='true'] .appearance-thumb {
+    translate: 18px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .appearance-thumb {
+      transition: none;
+    }
+  }
+  .icon-sprite {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible {
+    outline: 3px solid var(--text);
+    outline-offset: 3px;
+  }
+  .hint {
+    color: var(--muted);
+    font-size: var(--font-size-12);
+  }
+  .account-actions a.quiet {
+    color: var(--text);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .icon-button {
+    background: var(--elevated);
+    border-radius: var(--radius-10);
+    padding: var(--space-8);
+    min-width: 40px;
+    min-height: 40px;
+    width: 40px;
+    height: 40px;
+    display: inline-grid;
+    place-items: center;
+    box-sizing: border-box;
+    color: var(--muted);
+  }
+  .icon-button:hover,
+  .quiet:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .primary {
+    background: var(--primary);
+    color: var(--on-primary);
+    text-decoration: none;
+    text-align: center;
+    border-radius: var(--radius-12);
+    padding: var(--space-12) var(--space-17);
+    font-weight: 600;
+  }
+  .primary:hover {
+    background: var(--primary-hover);
+  }
+  .quiet {
+    background: var(--elevated);
+    border-radius: var(--radius-12);
+    padding: var(--space-10) var(--space-14);
+  }
+  .card {
+    background: var(--card);
+    border-radius: var(--radius-22);
+    padding: var(--space-20);
+  }
+  .card p {
+    color: var(--muted);
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+    flex: 1;
+  }
+  .chips button {
+    background: var(--elevated);
+    border-radius: var(--radius-12);
+    padding: var(--space-10) var(--space-16);
+  }
+  .chips button[aria-pressed='true'] {
+    background: var(--primary);
+  }
+  .room-dialog .chips {
+    max-height: 220px;
+    overflow-y: auto;
+  }
+  .solid-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-7);
+    background: var(--primary);
+    color: var(--on-primary);
+    border-radius: var(--radius-10);
+    padding: var(--space-9) var(--space-12);
+    min-height: 36px;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .solid-button:hover {
+    background: var(--primary-hover);
+  }
+  .solid-button.private {
+    background: var(--elevated);
+    color: var(--text);
+  }
+  .solid-button.private:hover {
+    background: var(--hover);
+  }
+  .solid-button:disabled {
+    opacity: 1;
+    cursor: default;
+  }
+  .solid-button svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    display: block;
+  }
+  .chips {
+    flex: 1 1 240px;
+    min-width: 0;
+  }
+  .chips button {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+  .chips button {
+    display: flex;
+    align-items: center;
+    gap: var(--space-7);
+  }
+  .chips svg {
+    width: 17px;
+    height: 17px;
+    flex-shrink: 0;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .chips button:disabled {
+    opacity: 0.4;
+    background: var(--elevated);
+  }
+  .chips button {
+    color: var(--text);
+  }
+  .chips button[aria-pressed='true'] {
+    color: var(--on-primary);
+  }
+  .admin-toggle {
+    display: grid;
+    place-items: center;
+    background: var(--elevated);
+    color: var(--muted);
+    width: 32px;
+    height: 28px;
+    border-radius: var(--radius-8);
+    flex-shrink: 0;
+  }
+  .admin-toggle[aria-checked='true'] {
+    background: var(--primary);
+    color: var(--on-primary);
+  }
+  .admin-toggle svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .watch-dialog > header .icon-button {
+    flex: none;
+  }
+  .personal-sync .hint {
+    grid-column: 1/-1;
+    margin: 0;
+  }
+  .room-lobby .chips {
+    flex-basis: 100%;
+    justify-content: center;
+  }
+  .room-lobby .chips:empty {
+    display: none;
+  }
+  .tracks-dialog .error {
+    color: var(--error);
+  }
+  .oomark-icon {
+    display: inline-block;
+    width: 22px;
+    height: 20px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+  }
+  @media (max-width: 700px) {
+    .solid-button {
+      font-size: var(--font-size-12);
+      padding: var(--space-8);
+      gap: var(--space-5);
+    }
+  }
+  .danger-button {
+    background: var(--danger);
+    color: var(--white);
+    min-height: 44px;
+    border-radius: var(--radius-12);
+    padding: var(--space-10) var(--space-14);
+    font-weight: 600;
+  }
+  .danger-button:hover {
+    background: var(--danger-hover);
+  }
+  .form-checkbox {
+    display: flex;
+    align-items: center;
+    gap: var(--space-10);
+    margin: var(--space-14) 0;
+  }
+  .form-checkbox input {
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    accent-color: var(--primary);
+  }
+  :is(.saved-room, .room-invited-item) .hint {
+    margin: var(--space-5) 0;
+  }
+  .lobby-rooms .saved-room .hint {
+    color: var(--chrome-muted);
+  }
+  .lobby-room-bar .icon-button svg,
+  .room-actions .icon-button svg,
+  .lobby-event-icon svg {
+    margin: 0;
+  }
+  .saved-rooms .room-actions .icon-button {
+    background: var(--elevated);
+    border: none;
+    box-shadow: none;
+    color: var(--muted);
+    min-width: 36px;
+    min-height: 36px;
+    padding: var(--space-6);
+  }
+  .saved-rooms .room-actions .icon-button:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .button-group {
+    display: flex;
+    gap: var(--space-4);
+    background: var(--elevated);
+    padding: var(--space-4);
+    border-radius: var(--radius-10);
+    margin: var(--space-6) 0 var(--space-12);
+  }
+  .button-group .group-button {
+    flex: 1;
+    min-height: 42px;
+    border-radius: var(--radius-8);
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    font: inherit;
+    font-size: var(--font-size-14);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-6);
+    cursor: pointer;
+    padding: var(--space-8) var(--space-12);
+    transition:
+      background 0.15s,
+      color 0.15s;
+  }
+  .button-group .group-button svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .button-group .group-button:hover {
+    color: var(--text);
+  }
+  .button-group .group-button[aria-pressed='true'] {
+    background: var(--card);
+    color: var(--accent-text);
+    font-weight: 600;
+    box-shadow: 0 1px 3px var(--black-a25);
+  }
+  .room-settings-dialog > header .icon-button {
+    flex: none;
+  }
+  #room-settings-dialog > header .icon-button svg {
+    width: 24px;
+    height: 24px;
+  }
+  .queue-settings .watch-switch-label {
+    align-items: center;
+    gap: var(--watch-control-gap);
+  }
+  @media (max-width: 620px) {
+    .lobby-rooms .hint {
+      font-size: var(--font-size-12);
+    }
+  }
+  .lobby-rooms a.quiet {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    box-sizing: border-box;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .watch-control-group {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--watch-control-gap);
+  }
+  :is(
+    .watch-control,
+    .options-panel .watch-control,
+    .room-dialog .watch-control,
+    .room-settings-dialog .watch-control
+  ) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    gap: var(--watch-control-gap);
+    box-sizing: border-box;
+    height: var(--watch-control-height);
+    min-height: var(--watch-control-height);
+    padding: 0 var(--space-12);
+    border: 0;
+    border-radius: var(--watch-control-radius);
+    background: var(--elevated);
+    color: var(--text);
+    font: inherit;
+  }
+  :is(
+    .watch-control.watch-control-icon,
+    .options-panel .watch-control-icon,
+    .room-dialog .watch-control-icon,
+    .room-settings-dialog .watch-control-icon
+  ) {
+    width: var(--watch-control-height);
+    min-width: var(--watch-control-height);
+    padding: 0;
+  }
+  :is(
+    .watch-control > svg,
+    #options-panel .watch-control > svg,
+    #room-dialog .watch-control > svg,
+    #room-settings-dialog .watch-control > svg
+  ),
+  .watch-segmented .group-button > svg {
+    width: var(--watch-icon-size);
+    height: var(--watch-icon-size);
+    margin: 0;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  :is(
+      .watch-control,
+      #options-panel .watch-control,
+      #room-dialog .watch-control,
+      #room-settings-dialog .watch-control
+    ):hover:not(:disabled),
+  .watch-segmented button:hover:not(:disabled) {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .watch-panel-heading .room-symbol .oomark-icon {
+    width: 22px;
+    height: 20px;
+  }
+  :is(.watch-header-control, .options-panel .watch-header-control) {
+    background: var(--elevated);
+    color: var(--muted);
+    margin: 0;
+  }
+  .button-group.watch-segmented,
+  .watch-segmented {
+    display: flex;
+    align-items: stretch;
+    gap: var(--watch-control-gap);
+    height: calc(var(--watch-control-height) + 6px);
+    min-height: calc(var(--watch-control-height) + 6px);
+    padding: var(--space-3);
+    border: 0;
+    border-radius: var(--watch-group-radius);
+    background: var(--elevated);
+    box-sizing: border-box;
+  }
+  .watch-segmented .group-button {
+    flex: 1 1 0;
+    min-width: var(--watch-control-height);
+    min-height: var(--watch-control-height);
+    height: 100%;
+    padding: 0 var(--space-8);
+    gap: var(--watch-control-gap);
+    border: 0;
+    border-radius: var(--watch-control-radius);
+    background: transparent;
+    color: var(--muted);
+    font-size: var(--font-size-12);
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+  }
+  .watch-segmented .group-button[aria-pressed='true'] {
+    background: var(--card);
+    color: var(--accent-text);
+    font-weight: 600;
+    box-shadow: none;
+  }
+  .watch-segmented-view .group-button {
+    justify-content: center;
+    min-width: var(--watch-control-height);
+    min-height: var(--watch-control-height);
+  }
+  .watch-segmented-view .group-button[aria-pressed='true'] {
+    min-width: var(--watch-control-height);
+    min-height: var(--watch-control-height);
+  }
+  .watch-segmented.watch-segmented-view button[aria-pressed='true'] {
+    background: var(--primary);
+    color: var(--on-primary);
+  }
+  .watch-switch-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--watch-control-gap);
+    min-height: 44px;
+    cursor: pointer;
+    position: relative;
+    user-select: none;
+  }
+  input.watch-switch {
+    appearance: none;
+    position: relative;
+    margin: 0;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--border);
+    cursor: pointer;
+    vertical-align: middle;
+  }
+  input.watch-switch::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: var(--radius-round);
+    background: var(--text);
+  }
+  input.watch-switch:checked {
+    background: var(--primary);
+  }
+  input.watch-switch:checked::after {
+    translate: 14px;
+    background: var(--on-primary);
+  }
+  input.watch-switch.watch-switch-secondary:checked {
+    background: var(--secondary);
+  }
+  input.watch-switch:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+  /* The small switch inside a switch pill. */
+  input.watch-switch.watch-switch-small {
+    --watch-switch-width: var(--watch-switch-small-width);
+    --watch-switch-height: var(--watch-switch-small-height);
+  }
+  input.watch-switch.watch-switch-small::after {
+    top: 2px;
+    left: 2px;
+    width: var(--watch-switch-small-knob);
+    height: var(--watch-switch-small-knob);
+  }
+  input.watch-switch.watch-switch-small:checked::after {
+    translate: calc(var(--watch-switch-small-width) - var(--watch-switch-small-height));
+  }
+  .watch-control:focus-visible,
+  .watch-focus:focus-visible,
+  .watch-segmented button:focus-visible,
+  .watch-switch:focus-visible,
+  .watch-panel-heading button:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  @container (max-width:350px) {
+    .watch-control-responsive .watch-control-label {
+      display: none;
+    }
+    .watch-control-responsive {
+      width: var(--watch-control-height);
+      padding: 0;
+    }
+  }
+  .room-settings-dialog label.watch-switch-label {
+    display: flex;
+    align-items: center;
+    gap: var(--watch-control-gap);
+    min-height: 44px;
+    margin: 0;
+  }
+  /* Switch pill: a label and a small switch on the button-grey control surface, sized and shaped like the
+   neighbouring 40px controls. State shows in the switch only; the surface never tints. */
+  .watch-switch-pill {
+    display: inline-flex;
+    align-items: stretch;
+    flex: none;
+    max-width: 100%;
+    min-width: 0;
+    min-height: var(--watch-control-height);
+    box-sizing: border-box;
+    border: 0;
+    border-radius: var(--watch-control-radius);
+    background: var(--elevated);
+    color: var(--text);
+    font-size: var(--font-size-14);
+    font-weight: 500;
+    line-height: 1.2;
+  }
+  .watch-switch-pill-body {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-10);
+    min-width: 0;
+    flex: 1;
+    padding: 0 var(--space-12);
+    border-radius: inherit;
+    cursor: pointer;
+    user-select: none;
+  }
+  .watch-switch-pill-label {
+    min-width: 0;
+    white-space: nowrap;
+  }
+  .watch-switch-pill:is(.is-readonly, .is-disabled) .watch-switch-pill-body,
+  .watch-switch-pill:is(.is-readonly, .is-disabled) input.watch-switch {
+    cursor: default;
+  }
+  .watch-switch-pill.is-readonly input.watch-switch:disabled {
+    opacity: 1;
+  }
+  .watch-switch-pill.is-disabled {
+    opacity: 0.4;
+  }
+  .watch-switch-pill input.watch-switch:focus-visible {
+    outline: none;
+  }
+  .watch-switch-pill:has(:focus-visible) {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  .watch-switch-pill:not(.is-readonly):not(.is-disabled):hover {
+    background: var(--hover);
+  }
+  .watch-switch-pill-state {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  :is(
+    .watch-switch-pill .watch-switch-pill-action,
+    .options-panel .watch-switch-pill-action,
+    .room-settings-dialog .watch-switch-pill-action
+  ) {
+    align-self: stretch;
+    width: var(--watch-control-height);
+    min-width: var(--watch-control-height);
+    height: auto;
+    min-height: var(--watch-control-height);
+    margin: 0;
+    padding: 0;
+    border-radius: 0 var(--watch-control-radius) var(--watch-control-radius) 0;
+    border-inline-start: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+  }
+  .watch-switch-pill-split .watch-switch-pill-body {
+    border-radius: var(--watch-control-radius) 0 0 var(--watch-control-radius);
+  }
+  .watch-switch-pill-split:not(.is-disabled) .watch-switch-pill-body:hover,
+  .watch-switch-pill-split:not(.is-disabled) .watch-switch-pill-action:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .watch-switch-pill-split:not(.is-readonly):not(.is-disabled):hover {
+    background: var(--elevated);
+  }
+  /* Standard icon surfaces apply across headers; nonclickable controls are indicators. */
+  :is(
+    button:disabled,
+    button[aria-disabled='true'],
+    .watch-control:disabled,
+    #options-panel .watch-control:disabled,
+    #room-dialog .watch-control:disabled,
+    #room-settings-dialog .watch-control:disabled
+  ) {
+    background: transparent;
+    cursor: default;
+  }
+  :is(.primary, .solid-button)[aria-disabled='true'] {
+    color: var(--text);
+  }
+  :is(#queue-panel, #library-panel) .watch-control.watch-control-solid-disabled:disabled {
+    background: var(--elevated);
+    color: var(--muted);
+    opacity: 1;
+  }
+  .server-settings-dialog > p.hint {
+    margin: var(--space-8) 0 var(--space-16);
+  }
+  .server-settings-content p.hint {
+    font-size: var(--font-size-12);
+  }
+  .server-settings-field .button-group {
+    display: flex;
+    flex-wrap: wrap;
+  }
+  .room-invite-row .watch-switch-label {
+    font-size: var(--font-size-14);
+  }
+  .video-check-items .hint {
+    margin: var(--space-2) 0 0;
+  }
+  .tracks-dialog .diagnostic-report .hint {
+    margin: 0;
+  }
+  #tracks-dialog .personal-sync .hint {
+    margin-top: var(--space-8);
+  }
+  .tracks-dialog .button-group {
+    margin-top: var(--space-6);
+  }
+  /* Switch rows in Player settings keep the shared switch look over the dialog's text-input styling. */
+  .tracks-dialog label.watch-switch-label {
+    display: flex;
+    align-items: center;
+    gap: var(--watch-control-gap);
+    min-height: 44px;
+    margin: var(--space-8) 0 0;
+  }
+  .tracks-dialog input.watch-switch {
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--border);
+  }
+  .tracks-dialog input.watch-switch:checked {
+    background: var(--primary);
+  }
+  #library-panel :is(.watch-control, .watch-segmented .group-button) > svg,
+  #library-panel #media-symbol svg {
+    width: var(--watch-icon-size);
+    height: var(--watch-icon-size);
+  }
+  .library-scope-actions .watch-control svg {
+    width: var(--watch-icon-size);
+    height: var(--watch-icon-size);
+  }
+  .library-views .group-button {
+    white-space: nowrap;
+    padding-inline: var(--space-8);
+  }
+  .library-footer .hint {
+    margin: 0;
+    flex: 1;
+  }
+  @container plex-library (max-width:760px) {
+    .library-choice .watch-control-label {
+      display: none;
+    }
+    .library-views .group-button span {
+      display: none;
+    }
+    .library-views .group-button {
+      padding: 0 var(--space-8);
+      min-width: 40px;
+    }
+  }
+  @container plex-library (max-width:440px) {
+    .library-top-button .watch-control-label {
+      display: none;
+    }
+    .library-filters > .hint {
+      flex-basis: 100%;
+    }
+    .library-filters > .hint:empty {
+      display: none;
+    }
+  }
+  .queue-content :is(.queue-heading, .watch-control) > svg,
+  .queue-content .queue-symbol > svg {
+    width: var(--watch-icon-size);
+    height: var(--watch-icon-size);
+  }
+  .queue-center .watch-control-label {
+    white-space: nowrap;
+  }
+  @container queue (max-width:480px) {
+    .queue-center .watch-control-label {
+      display: none;
+    }
+  }
+  .queue-auto-mode-group .group-button[aria-pressed='true']:not([data-value='off']) {
+    color: var(--secondary);
+  }
+  .queue-auto-mode-group .group-button:focus-visible {
+    outline-color: var(--secondary);
+  }
+}

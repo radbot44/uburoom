@@ -38,6 +38,7 @@ function mount({ request, trigger }) {
   content.id = 'server-settings-content';
   const message = node('p', dialog, null, 'hint');
   message.id = 'server-settings-status';
+  message.classList.add('server-settings-status');
   message.setAttribute('role', 'status');
   const error = node('p', dialog, null, 'server-settings-error');
   error.id = 'server-settings-error';
@@ -48,6 +49,7 @@ function mount({ request, trigger }) {
   review.hidden = true;
   const resolutions = node('div', dialog);
   resolutions.id = 'server-settings-conflicts';
+  resolutions.classList.add('server-settings-conflicts');
   const footer = node('footer', dialog, null, 'dialog-footer with-divider');
   const cancel = node('button', footer, 'Cancel', 'quiet');
   cancel.type = 'button';
@@ -56,6 +58,7 @@ function mount({ request, trigger }) {
   const save = node('button', footer, null, 'primary');
   save.type = 'button';
   save.id = 'server-settings-save';
+  save.classList.add('server-settings-save');
   node('span', save, 'Save');
   const spinner = uburoomIcons.icon(document, 'refresh');
   spinner.classList.add('server-settings-spinner');

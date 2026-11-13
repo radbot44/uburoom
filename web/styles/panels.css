@@ -1,0 +1,83 @@
+/* Section panel chrome: headings, toolbars and collapse toggles of the Room, Queue and Media panels. Owned by web/watch/layout.js. */
+@layer components {
+  .account,
+  .account-actions,
+  .library-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-12);
+  }
+  .section-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    background: none;
+    padding: 0;
+    color: inherit;
+    font-weight: inherit;
+    text-align: left;
+    min-height: 36px;
+  }
+  .section-toggle svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .library-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-12);
+    padding: 0 0 var(--space-12);
+    height: 48px;
+    min-height: 48px;
+    box-sizing: border-box;
+  }
+  .watch-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--watch-group-gap);
+  }
+  .watch-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--watch-group-gap);
+  }
+  #library-panel svg,
+  #library-content svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex-shrink: 0;
+    pointer-events: none;
+  }
+  @container plex-library (max-width:440px) {
+    .library-top-button {
+      width: 40px;
+      min-width: 40px;
+      padding: 0;
+    }
+  }
+  .queue-content svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex: none;
+  }
+}

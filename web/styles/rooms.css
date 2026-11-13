@@ -1,0 +1,821 @@
+/* Room settings, the viewers roster and viewer telemetry cards. Owned by web/watch-rooms-ui.js. */
+@layer components {
+  .room-settings-dialog h2 {
+    margin-right: auto;
+  }
+  .room-settings-dialog label {
+    display: block;
+    margin: var(--space-12) 0 var(--space-6);
+  }
+  .room-save-error:empty {
+    display: none;
+  }
+  :is(.saved-room, .room-invited-item) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-10);
+    padding: var(--space-10) 0;
+    border-top: 1px solid var(--border);
+  }
+  :is(.saved-room, .room-invited-item) > div:first-child {
+    min-width: 0;
+  }
+  :is(.saved-room, .room-invited-item) strong {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-6);
+    overflow-wrap: anywhere;
+  }
+  :is(.saved-room, .room-invited-item) p {
+    overflow-wrap: anywhere;
+  }
+  :is(.saved-room, .room-invited-item) svg {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  :is(.saved-room, .room-invited-item) button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-6);
+  }
+  .room-permission-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: var(--space-14) 0;
+  }
+  .room-permission-table caption {
+    text-align: left;
+    color: var(--muted);
+    margin-bottom: var(--space-8);
+  }
+  .room-permission-table th,
+  .room-permission-table td {
+    padding: var(--space-9) var(--space-5);
+    border-bottom: 1px solid var(--border);
+  }
+  .room-permission-table th {
+    text-align: left;
+    font-size: var(--font-size-14);
+    font-weight: 500;
+  }
+  .room-permission-table td {
+    text-align: center;
+  }
+  .room-permission-table input {
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    padding: 0;
+    accent-color: var(--primary);
+  }
+  @media (max-width: 500px) {
+    :is(.saved-room, .room-invited-item) {
+      align-items: stretch;
+      flex-direction: column;
+    }
+    .room-permission-table th {
+      font-size: var(--font-size-12);
+    }
+  }
+  .room-role:empty {
+    display: none;
+  }
+  .room-settings-dialog {
+    width: min(920px, calc(100vw - 32px));
+    height: min(780px, calc(100dvh - 64px));
+    box-sizing: border-box;
+    overflow: hidden;
+    padding: var(--space-24);
+    flex-direction: column;
+  }
+  .room-settings-dialog[open] {
+    display: flex;
+  }
+  .room-settings-dialog > header {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--space-8);
+    margin: 0 0 var(--space-12);
+    flex: none;
+  }
+  .room-settings-title {
+    font-size: var(--font-size-20);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #room-settings-dialog svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .room-settings-status {
+    min-height: 0;
+    font-size: var(--font-size-12);
+    margin: 0 var(--space-8) 0 auto;
+    color: var(--muted);
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .room-settings-status.error {
+    color: var(--error);
+  }
+  .room-settings-status:empty {
+    display: none;
+  }
+  .room-settings-section {
+    margin: 0 0 var(--space-10);
+    min-height: 44px;
+  }
+  .room-settings-content {
+    display: grid;
+    grid-template-columns: 175px minmax(0, 1fr);
+    gap: var(--space-24);
+    min-height: 0;
+    flex: 1;
+  }
+  .room-settings-navigation {
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+  }
+  .room-settings-nav {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    align-self: start;
+  }
+  #room-settings-nav button {
+    text-align: left;
+    background: transparent;
+    padding: var(--space-12);
+    border-radius: var(--radius-10);
+  }
+  .room-settings-panels > section[data-room-section='permissions'] {
+    max-width: 600px;
+  }
+  .room-settings-panels {
+    overflow: auto;
+    min-width: 0;
+    padding: 0 var(--space-8) var(--space-16) 0;
+  }
+  .room-settings-panels h3 {
+    margin-top: 0;
+  }
+  .room-settings-panels select {
+    max-width: 100%;
+    min-width: 0;
+  }
+  .room-settings-panels summary {
+    cursor: pointer;
+    padding: var(--space-12) 0;
+  }
+  .room-person {
+    display: flex;
+    gap: var(--space-10);
+    align-items: center;
+    padding: var(--space-12) 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .room-person > span {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .room-person button {
+    min-height: 44px;
+    font-size: var(--font-size-12);
+  }
+  .room-permission-preset-group {
+    width: 100%;
+  }
+  .room-permission-preset-group [hidden] {
+    display: none;
+  }
+  .room-permission-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0;
+  }
+  .room-permission-table td {
+    position: relative;
+  }
+  .room-permission-table .permission-group {
+    font-weight: 700;
+    padding-top: var(--space-14);
+    color: var(--accent-text);
+  }
+  @media (max-width: 620px) {
+    .room-settings-dialog {
+      padding: var(--space-14);
+      width: calc(100vw - 32px);
+      height: min(780px, calc(100dvh - 32px));
+    }
+    .room-settings-dialog > header {
+      display: flex;
+      margin-bottom: var(--space-8);
+    }
+    .room-settings-refresh {
+      margin: 0;
+    }
+    .room-settings-content {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .room-settings-navigation {
+      flex: none;
+    }
+    .room-settings-panels {
+      flex: 1;
+      min-height: 0;
+      box-sizing: border-box;
+      padding-top: 0;
+    }
+    .room-settings-panels > section > h3 {
+      display: none;
+    }
+    /* All section tabs stay visible: they wrap to a second row instead of scrolling out of view. */
+    .room-settings-nav {
+      position: relative;
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+      overflow-x: visible;
+      gap: var(--space-6);
+      margin-bottom: var(--space-12);
+      padding-bottom: var(--space-4);
+      scrollbar-width: none;
+    }
+    #room-settings-nav button {
+      flex: none;
+      padding: var(--space-8) var(--space-12);
+      white-space: nowrap;
+      font-size: var(--font-size-14);
+      min-height: 38px;
+    }
+  }
+  .room-settings-footer {
+    flex: none;
+    padding-top: var(--space-14);
+  }
+  .room-settings-footer:has(button[hidden]) {
+    display: none;
+  }
+  /* Account names and two-line host discovery reuse the room controls. */
+  .room-person-search {
+    width: 100%;
+  }
+  .room-person-results {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    max-height: 260px;
+    overflow-y: auto;
+    margin-top: var(--space-6);
+  }
+  .room-person-results button {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    text-align: left;
+    gap: var(--space-4);
+    padding: var(--space-10) var(--space-12);
+    flex-shrink: 0;
+  }
+  .room-person-results button[aria-selected='true'] {
+    outline: 2px solid var(--primary);
+    outline-offset: -2px;
+  }
+  .room-person-results small {
+    overflow-wrap: anywhere;
+  }
+  .room-permission-custom.all-hosts [data-permission-role='viewer'] {
+    display: none;
+  }
+  .room-header-actions .room-people-open {
+    padding-inline: var(--space-8);
+    font-size: var(--font-size-12);
+  }
+  .room-participant-column {
+    min-width: 0;
+  }
+  .room-roster-frame {
+    position: relative;
+    min-width: 0;
+    --room-row-height: var(--watch-row-height);
+  }
+  .room-roster {
+    --role-column: 40px;
+    height: calc(8 * var(--room-row-height, 40px));
+    overflow: auto;
+    overscroll-behavior: contain;
+    min-width: 0;
+    padding-bottom: 0;
+  }
+  .room-roster-frame.expanded .room-roster {
+    height: calc(16 * var(--room-row-height, 40px));
+  }
+  .room-roster-frame:has(> .room-roster-expand:not([hidden])) > .room-roster {
+    padding-bottom: var(--watch-control-height);
+  }
+  .room-roster .room-person {
+    display: grid;
+    grid-template-columns: var(--role-column) minmax(0, 1fr);
+    align-items: center;
+    gap: var(--watch-icon-gap);
+    height: var(--room-row-height, 44px);
+    min-height: var(--room-row-height, 44px);
+    padding: var(--space-2);
+    border: 0;
+    white-space: nowrap;
+  }
+  .room-roster .room-person.has-kick {
+    grid-template-columns: var(--role-column) minmax(0, 1fr) 40px;
+  }
+  .room-participants .room-person {
+    grid-template-columns: var(--role-column) minmax(0, 1fr) 24px;
+  }
+  .room-participants.can-kick .room-person {
+    grid-template-columns: var(--role-column) minmax(0, 1fr) 24px 40px;
+  }
+  .room-participants .room-roster-sync-quality {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    color: var(--muted);
+  }
+  .room-participants .room-roster-sync-quality:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  .room-participants .room-roster-sync-quality svg {
+    display: block;
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .room-participants .room-roster-sync-quality[data-quality='excellent'] {
+    color: var(--success);
+  }
+  .room-participants .room-roster-sync-quality[data-quality='good'] {
+    color: var(--good);
+  }
+  .room-participants .room-roster-sync-quality[data-quality='fair'] {
+    color: var(--warning);
+  }
+  .room-participants .room-roster-sync-quality[data-quality='poor'] {
+    color: var(--danger);
+  }
+  .room-participants .room-roster-sync-quality[data-issue='warning'] {
+    color: var(--warning);
+  }
+  .room-participants .room-roster-sync-quality[data-issue='error'] {
+    color: var(--danger);
+  }
+  .telemetry-issue {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-8);
+    margin-bottom: var(--space-10);
+    padding: var(--space-8) var(--space-10);
+    border-radius: var(--radius-8);
+    background: color-mix(in srgb, var(--warning) 16%, transparent);
+    color: var(--warning);
+    font-weight: 600;
+  }
+  .telemetry-issue[data-issue='error'] {
+    background: color-mix(in srgb, var(--danger) 16%, transparent);
+    color: var(--danger);
+  }
+  .telemetry-issue svg {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .telemetry-health {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-4) var(--space-14);
+    margin: 0 0 var(--space-10);
+  }
+  .telemetry-health dt {
+    color: var(--muted);
+  }
+  .telemetry-health dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  .room-participants .room-roster-sync-quality[data-confidence]:not([data-confidence='confident']) {
+    color: var(--muted);
+  }
+  .viewer-telemetry-card {
+    position: fixed;
+    z-index: var(--z-telemetry-card);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-14);
+    padding: var(--space-14);
+    box-shadow: 0 12px 40px var(--black-a67);
+    color: var(--text);
+    font-size: var(--font-size-14);
+    width: 280px;
+    max-width: calc(100vw - 20px);
+    box-sizing: border-box;
+  }
+  .telemetry-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-8);
+    margin-bottom: var(--space-10);
+  }
+  .telemetry-card-user {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    min-width: 0;
+  }
+  .telemetry-user-icon {
+    width: 20px;
+    height: 20px;
+    flex: none;
+    stroke: currentColor;
+    fill: none;
+  }
+  .telemetry-user-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-size-14);
+  }
+  .telemetry-role-tag {
+    font-size: var(--font-size-12);
+    font-weight: 600;
+    padding: var(--space-2) var(--space-6);
+    border-radius: var(--radius-5);
+    background: var(--elevated);
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .telemetry-role-tag.leader {
+    color: var(--accent-text);
+    background: color-mix(in srgb, var(--primary) 15%, transparent);
+  }
+  .telemetry-card-close {
+    width: 28px;
+    height: 28px;
+    padding: var(--space-4);
+  }
+  .telemetry-card-close svg {
+    width: 16px;
+    height: 16px;
+  }
+  .telemetry-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-8);
+    margin-bottom: var(--space-10);
+    padding-bottom: var(--space-10);
+    border-bottom: 1px solid var(--border);
+  }
+  .telemetry-status-pill {
+    font-size: var(--font-size-12);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: var(--space-3) var(--space-8);
+    border-radius: var(--radius-6);
+    background: var(--elevated);
+    color: var(--muted);
+  }
+  .telemetry-status-pill[data-status='playing'] {
+    background: color-mix(in srgb, var(--success) 20%, transparent);
+    color: var(--success);
+  }
+  .telemetry-status-pill[data-status='buffering'] {
+    background: color-mix(in srgb, var(--warning) 20%, transparent);
+    color: var(--warning);
+  }
+  .telemetry-status-pill[data-status='paused'] {
+    background: var(--elevated);
+    color: var(--muted);
+  }
+  .telemetry-status-pill[data-status='seeking'] {
+    background: color-mix(in srgb, var(--primary) 20%, transparent);
+    color: var(--accent-text);
+  }
+  .telemetry-status-pill[data-status='error'] {
+    background: color-mix(in srgb, var(--danger) 20%, transparent);
+    color: var(--danger);
+  }
+  .telemetry-score-badge {
+    font-size: var(--font-size-12);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .telemetry-score-badge[data-quality='excellent'] {
+    color: var(--success);
+  }
+  .telemetry-score-badge[data-quality='good'] {
+    color: var(--good);
+  }
+  .telemetry-score-badge[data-quality='fair'] {
+    color: var(--warning);
+  }
+  .telemetry-score-badge[data-quality='poor'] {
+    color: var(--danger);
+  }
+  .telemetry-details-box {
+    display: grid;
+    gap: var(--space-4);
+    margin-bottom: var(--space-6);
+  }
+  .telemetry-reason-text {
+    margin: 0;
+    font-size: var(--font-size-12);
+    color: var(--text);
+    line-height: 1.35;
+  }
+  .telemetry-freshness-text {
+    margin: 0;
+    font-size: var(--font-size-12);
+    color: var(--muted);
+  }
+  .telemetry-session-list {
+    margin-top: var(--space-10);
+    padding-top: var(--space-10);
+    border-top: 1px solid var(--border);
+    display: grid;
+    gap: var(--space-6);
+  }
+  .telemetry-session-title {
+    margin: 0 0 var(--space-4);
+    font-size: var(--font-size-12);
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .telemetry-session-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-8);
+    font-size: var(--font-size-12);
+  }
+  .telemetry-session-device {
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .telemetry-session-score {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .telemetry-session-score[data-quality='excellent'] {
+    color: var(--success);
+  }
+  .telemetry-session-score[data-quality='good'] {
+    color: var(--good);
+  }
+  .telemetry-session-score[data-quality='fair'] {
+    color: var(--warning);
+  }
+  .telemetry-session-score[data-quality='poor'] {
+    color: var(--danger);
+  }
+  .room-roster .room-roster-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .room-roster-role {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    color: var(--text);
+  }
+  .room-roster-role > svg {
+    width: 24px;
+    height: 24px;
+    fill: none;
+    stroke: currentColor;
+    flex: none;
+  }
+  .room-roster-role[aria-label='Host'] {
+    color: var(--text);
+  }
+  .room-roster-role[aria-label='Room Leader'] {
+    color: var(--accent-text);
+  }
+  :is(.options-panel, .room-settings-dialog) .room-roster-expand {
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--elevated);
+    z-index: var(--z-local-1);
+  }
+  .room-roster-frame.expanded .room-roster-expand svg {
+    rotate: 180deg;
+  }
+  .watch-permission-pill.is-on .watch-permission-indicator {
+    color: var(--accent-text);
+  }
+  .watch-permission-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .watch-permission-indicator {
+    display: inline-flex;
+    flex: 0 0 24px;
+    width: 24px;
+    height: 24px;
+    color: var(--muted);
+  }
+  .watch-permission-indicator svg {
+    width: 24px;
+    height: 24px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .watch-permission-pill:is(.is-readonly, .is-disabled) {
+    background: transparent;
+  }
+  .room-permission-table th,
+  .room-permission-table td {
+    padding: var(--space-2) var(--space-5);
+  }
+  .room-permission-table {
+    table-layout: fixed;
+  }
+  .room-permission-table th[scope='row'] {
+    width: 64%;
+    position: relative;
+  }
+  .room-permission-table th[scope='col']:first-child {
+    width: 64%;
+  }
+  .room-permission-table th[scope='col'][data-permission-role] {
+    width: 18%;
+    text-align: center;
+  }
+  .permission-name {
+    display: inline-block;
+    border-radius: var(--radius-4);
+  }
+  .permission-name:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  .permission-caption {
+    display: block;
+    font-weight: 400;
+    font-size: var(--font-size-12);
+    line-height: 1.35;
+    color: var(--muted);
+    margin-top: var(--space-2);
+    white-space: normal;
+  }
+  .room-settings-dialog .permission-button {
+    margin: 0;
+  }
+  @media (max-width: 620px) {
+    .room-permission-table th[scope='row'],
+    .room-permission-table th[scope='col']:first-child {
+      width: 56%;
+    }
+    .room-permission-table th[scope='col'][data-permission-role] {
+      width: 22%;
+    }
+    .room-permission-table th,
+    .room-permission-table td {
+      padding-inline: var(--space-2);
+    }
+    .room-permission-table th[scope='col'] {
+      font-size: var(--font-size-12);
+    }
+  }
+  /* Host-only viewer sync spread, at the end of the roster heading. */
+  .room-sync-spread {
+    margin-inline-start: auto;
+    color: var(--muted);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .room-roster-heading {
+    box-sizing: border-box;
+    height: var(--room-row-height);
+    min-height: var(--room-row-height);
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--space-4);
+    padding: var(--space-10) var(--space-2) var(--space-2);
+    border: 0;
+    font-size: var(--font-size-12);
+    font-weight: 600;
+  }
+  :is(
+    .watch-permission-button,
+    .options-panel .watch-permission-button,
+    .room-settings-dialog .watch-permission-button
+  )[aria-pressed='true'] {
+    color: var(--accent-text);
+  }
+  :is(.options-panel, .room-settings-dialog) .watch-permission-button:disabled {
+    background: transparent;
+    opacity: 1;
+  }
+  .room-participants {
+    height: auto;
+    max-height: calc(7 * var(--room-row-height));
+    box-sizing: border-box;
+  }
+  .room-panel-roster-frame.expanded .room-participants {
+    height: auto;
+    max-height: calc(15 * var(--room-row-height));
+  }
+  .room-participants .room-person {
+    box-sizing: border-box;
+    border: 0;
+  }
+  /* One shared role/host slot; kick cells exist only for actionable targets. */
+  :is(.options-panel, .room-settings-dialog) .room-host-action {
+    color: inherit;
+  }
+  .room-host-action .room-host-hover {
+    display: none;
+  }
+  .room-host-promote:not(:disabled):hover > svg:first-child {
+    display: none;
+  }
+  .room-host-promote:not(:disabled):hover > .room-host-hover {
+    display: block;
+  }
+  /* Room invites: guest names, the join form, the invite code box and the People invite row. */
+  .room-roster-name.guest-name {
+    font-style: italic;
+  }
+  .guest-name-row {
+    display: flex;
+    gap: var(--space-8);
+    align-items: center;
+  }
+  .room-invite-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-12);
+    margin: var(--space-10) 0;
+  }
+  .room-invited-section h4 {
+    margin: var(--space-18) 0 var(--space-4);
+  }
+}

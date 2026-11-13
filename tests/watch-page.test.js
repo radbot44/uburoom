@@ -88,7 +88,7 @@ test('watchPage renders authenticated and unauthenticated bootstrap data safely 
   assert.equal(attr(directRoomHtml, 'reopen', 'hidden'), undefined);
   assert.equal(tag(directRoomHtml, 'queue-empty-title', 'class'), '<h3 class="queue-empty-title">');
   assert.equal(attr(directRoomHtml, 'queue-empty-browse', 'disabled'), undefined);
-  assert.match(directRoomHtml, /<div id="library-content"><div class="library-landing">/);
+  assert.match(directRoomHtml, /\sid="library-content"[^>]*><div class="library-landing">/);
 
   const directRoomWithMediaHtml = watchPage(template, {
     config: { unifiedAccounts: true },

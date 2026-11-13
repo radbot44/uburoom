@@ -12,6 +12,7 @@ export function mount(host, deps) {
     if (!frameHold) {
       frameHold = document.createElement('canvas');
       frameHold.id = 'frame-hold';
+      frameHold.classList.add('frame-hold');
       frameHold.hidden = true;
       deps.video.after(frameHold);
     }

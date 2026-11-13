@@ -1,0 +1,112 @@
+/* Anchored popovers. Owned by web/watch-popover.js. */
+@layer components {
+  .watch-popover {
+    position: fixed;
+    z-index: var(--z-popover);
+    pointer-events: none;
+    box-sizing: border-box;
+    height: 32px;
+    padding: 0 var(--space-12);
+    border-radius: var(--radius-pill);
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    box-shadow: 0 6px 20px var(--black-a45);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-7);
+    font-size: var(--font-size-12);
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .watch-popover.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    transition:
+      transform 0.16s cubic-bezier(0.34, 1.4, 0.64, 1),
+      opacity 0.14s ease;
+  }
+  .watch-popover::after {
+    content: '';
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    background: var(--card);
+    border-color: var(--border);
+    box-sizing: border-box;
+  }
+  .watch-popover[data-placement='top']::after {
+    bottom: -4px;
+    left: var(--arrow-x, 50%);
+    transform: translateX(-50%) rotate(45deg);
+    border-right: 1px solid;
+    border-bottom: 1px solid;
+    border-top: 0;
+    border-left: 0;
+  }
+  .watch-popover[data-placement='bottom']::after {
+    top: -4px;
+    left: var(--arrow-x, 50%);
+    transform: translateX(-50%) rotate(45deg);
+    border-left: 1px solid;
+    border-top: 1px solid;
+    border-right: 0;
+    border-bottom: 0;
+  }
+  .watch-popover .popover-icon {
+    width: 14px;
+    height: 14px;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: currentColor;
+  }
+  .watch-popover .popover-icon svg {
+    width: 14px;
+    height: 14px;
+    stroke: currentColor;
+    stroke-width: 2;
+    fill: none;
+  }
+  .watch-popover.state-success {
+    border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+  }
+  .watch-popover.state-success::after {
+    border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+  }
+  .watch-popover.state-success .popover-icon {
+    color: var(--success);
+  }
+  .watch-popover.state-loading {
+    color: var(--muted);
+  }
+  .watch-popover.state-loading .popover-icon {
+    color: var(--primary);
+    animation: popover-spin 1.5s linear infinite;
+  }
+  @keyframes popover-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .watch-popover.state-error {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: var(--white);
+    box-shadow: 0 6px 20px var(--danger-a45);
+  }
+  .watch-popover.state-error::after {
+    background: var(--danger);
+    border-color: var(--danger);
+  }
+  .watch-popover.state-error .popover-icon {
+    color: var(--white);
+  }
+}

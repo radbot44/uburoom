@@ -1,0 +1,145 @@
+/* Shared toasts. Owned by web/watch-toasts.js. */
+@layer components {
+  .watch-toast-region {
+    --toast-inset: 16px;
+    width: max-content;
+    position: fixed;
+    z-index: var(--z-toast);
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-10);
+    max-width: calc(100% - 32px);
+  }
+  .watch-toast-region:empty {
+    display: none;
+  }
+  .watch-toast {
+    pointer-events: auto;
+    text-align: left;
+    max-width: 100%;
+    height: 40px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: var(--space-10);
+    background: color-mix(in srgb, var(--card) 90%, transparent);
+    border: 0;
+    outline: 0;
+    border-radius: var(--radius-12);
+    padding: var(--space-4) var(--space-12);
+    color: var(--text);
+    line-height: 1;
+    box-shadow: 0 4px 16px var(--black-a50);
+    backdrop-filter: blur(8px);
+  }
+  .watch-toast.error {
+    background: var(--danger);
+    --primary: var(--text);
+    --muted: var(--text);
+  }
+  .watch-toast-symbol {
+    display: flex;
+    flex: none;
+    color: var(--primary);
+  }
+  .watch-toast-symbol svg {
+    width: 24px;
+    height: 24px;
+    stroke: currentColor;
+    stroke-width: 2;
+    fill: none;
+  }
+  .watch-toast[data-loading='true'] .watch-toast-symbol svg {
+    animation: toast-spin 2s linear infinite;
+  }
+  @keyframes toast-spin {
+    to {
+      transform: rotate(-360deg);
+    }
+  }
+  .watch-toast-message {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .watch-toast-title {
+    font-size: var(--font-size-14);
+    line-height: 16px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .watch-toast-hint {
+    color: var(--muted);
+    font-size: var(--font-size-12);
+    line-height: 14px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .watch-toast.with-action {
+    height: auto;
+    min-height: 40px;
+    padding: var(--space-8) var(--space-12);
+    align-items: flex-start;
+  }
+  .watch-toast.with-action .watch-toast-symbol {
+    margin-top: var(--space-2);
+  }
+  .watch-toast-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-6);
+    margin-top: var(--space-6);
+  }
+  .watch-toast-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 24px;
+    padding: 0 var(--space-8);
+    border-radius: var(--radius-6);
+    background: var(--primary);
+    color: var(--on-primary);
+    font-size: var(--font-size-12);
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .watch-toast-action:hover {
+    background: var(--primary-hover);
+  }
+  .watch-toast-dismiss {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 24px;
+    padding: 0 var(--space-8);
+    border-radius: var(--radius-6);
+    background: var(--elevated);
+    color: var(--text);
+    font-size: var(--font-size-12);
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .watch-toast-dismiss:hover {
+    background: var(--hover);
+  }
+  .watch-toast-action:focus-visible,
+  .watch-toast-dismiss:focus-visible {
+    outline: 2px solid var(--text);
+    outline-offset: 2px;
+  }
+  @media (max-width: 700px) {
+    .watch-toast-region {
+      --toast-inset: 10px;
+    }
+  }
+}

@@ -114,6 +114,7 @@ function mount(
   sortWrap.append(uburoomIcons.icon(doc, 'chevron'));
   const direction = button(toolControls, 'Ascending', 'sort', 'library-key library-direction');
   direction.id = 'library-direction';
+  direction.classList.add('library-direction');
   controls.content(direction, { label: 'Ascending', icon: 'sort', iconOnly: true });
   direction.classList.add('watch-control-solid-disabled');
   const filterHolder = node('div', toolControls, undefined, 'filter-holder');
@@ -124,6 +125,7 @@ function mount(
     'library-key watch-control watch-control-responsive watch-control-solid-disabled',
   );
   filterButton.id = 'library-filters-toggle';
+  filterButton.classList.add('library-filters-toggle');
   filterButton.append(node('span', null, 'Filters', 'filter-label watch-control-label'));
   filterButton.setAttribute('aria-expanded', 'false');
   filterButton.setAttribute('aria-controls', 'library-filters');

@@ -40,7 +40,7 @@ export function mount(host, deps) {
   const serverSettingsButton = document.createElement('button');
   serverSettingsButton.id = 'account-server-settings';
   serverSettingsButton.type = 'button';
-  serverSettingsButton.className = 'quiet';
+  serverSettingsButton.className = 'account-server-settings quiet';
   serverSettingsButton.textContent = 'Server settings';
   serverSettingsButton.hidden = true;
   serverSettingsButton.setAttribute('aria-haspopup', 'dialog');
@@ -56,7 +56,7 @@ export function mount(host, deps) {
   const logoutButton = document.createElement('button');
   logoutButton.id = 'account-logout';
   logoutButton.type = 'button';
-  logoutButton.className = 'quiet browser-button';
+  logoutButton.className = 'account-logout quiet browser-button';
   logoutButton.hidden = true;
   logoutButton.append(uburoomIcons.icon(document, 'logout'), document.createTextNode('Log out'));
   $('account-footer').append(logoutButton);

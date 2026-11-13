@@ -115,6 +115,7 @@ export function mount(host, deps) {
   });
   const drawer = document.createElement('aside');
   drawer.id = 'drawer';
+  drawer.classList.add('drawer');
   drawer.hidden = true;
   drawer.setAttribute('aria-label', 'Menu');
   document.body.append(drawer);

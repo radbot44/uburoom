@@ -1,0 +1,234 @@
+/* Overrides that must win over every component and layout rule: hidden states, the Activity PiP surface, reduced motion and the few colours and sizes that were !important before. Never use !important for these; add them here. */
+@layer exceptions {
+  [hidden],
+  .icon-sprite {
+    display: none;
+  }
+  .handoff-code {
+    font-size: 32px;
+    color: var(--text);
+  }
+  .activity-pip .handoff-dialog {
+    display: none;
+  }
+  .activity-pip .account-dialog,
+  .activity-pip .account-remove-dialog {
+    display: none;
+  }
+  .activity-pip .tracks-dialog {
+    display: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .watch-popover {
+      transition: none;
+      transform: none;
+    }
+    .watch-popover.state-loading .popover-icon {
+      animation: none;
+    }
+  }
+  .mobile-player .section-tab-inactive {
+    display: none;
+  }
+  .activity-pip .section-tabs {
+    display: none;
+  }
+  .activity-pip .stage > :not(video):not(.subtitle-layer):not(.subtitle-text-layer),
+  .activity-pip .drawer,
+  .activity-pip .account,
+  .activity-pip .welcome,
+  .activity-pip .current-room-bar,
+  .activity-pip .room-column,
+  .activity-pip .options-panel,
+  .activity-pip .queue-panel,
+  .activity-pip .library-panel,
+  .activity-pip .status,
+  .activity-pip .error,
+  .activity-pip .acceleration-help {
+    display: none;
+  }
+  .activity-pip .readiness-choice {
+    display: none;
+  }
+  /* Ending Interstitial */
+  .stage.ending-active .player-chrome.title-bar,
+  .stage.ending-active .player-chrome.transport,
+  .stage.ending-active .join-playback {
+    display: none;
+  }
+  .ending-stage[hidden] {
+    display: none;
+  }
+  .ending-header[hidden] {
+    display: none;
+  }
+  .ending-center-play svg.ending-ring[hidden] {
+    display: none;
+  }
+  .ending-summary:empty,
+  .ending-summary[hidden] {
+    display: none;
+  }
+  .ending-actions button[hidden] {
+    display: none;
+  }
+  .ending-secondary-primary {
+    background: var(--secondary);
+    color: var(--white);
+    border: 0;
+  }
+  .ending-status:empty,
+  .ending-status[hidden] {
+    display: none;
+  }
+  @media (max-width: 600px), (max-height: 500px) {
+    .ending-header {
+      display: none;
+    }
+    .ending-summary {
+      display: none;
+    }
+  }
+  body.mobile-player .ending-header,
+  body.mobile-player .ending-summary {
+    display: none;
+  }
+  body:not(.mobile-player) .options-panel.section-collapsed .options-content,
+  body:not(.mobile-player) .queue-panel.section-collapsed :is(.queue-body, .queue-toolbar),
+  body:not(.mobile-player)
+    .library-panel.section-collapsed
+    :is(.library-content, .library-header-right, .library-header-left > :not(h2)) {
+    display: none;
+  }
+  /* Room tasks: discovery, current room and persistent management. */
+  .outside-room .outside-room .join-playback,
+  .outside-room .timeline-row,
+  .outside-room .playback-buttons,
+  .outside-room .volume-control,
+  .outside-room .captions-toggle,
+  .outside-room .tracks-open {
+    display: none;
+  }
+  .outside-room .title-bar {
+    display: none;
+  }
+  .outside-room .empty-stage h1 {
+    display: block;
+  }
+  .empty-symbol .empty-oomark circle {
+    stroke: var(--text);
+    fill: none;
+  }
+  .empty-symbol .empty-oomark line {
+    stroke: var(--secondary);
+    stroke-linecap: butt;
+    fill: none;
+  }
+  #room-settings-dialog [hidden] {
+    display: none;
+  }
+  .room-settings-title {
+    margin: 0 auto 0 0;
+  }
+  .queue-settings .watch-switch-label {
+    display: flex;
+  }
+  .idle-player .timeline-row,
+  .idle-player .playback-buttons,
+  .idle-player .volume-control,
+  .idle-player .captions-toggle,
+  .idle-player .tracks-open,
+  .no-pip .pip,
+  .activity :is(.pip, .theater, .fullscreen) {
+    display: none;
+  }
+  .room-dialog-footer[hidden] {
+    display: none;
+  }
+  body.idle-player .empty-stage h1 {
+    display: block;
+  }
+  input.watch-switch {
+    width: var(--watch-switch-width);
+    max-width: var(--watch-switch-width);
+    height: var(--watch-switch-height);
+    flex: none;
+  }
+  :is(.primary, .solid-button):disabled {
+    background: var(--primary);
+  }
+  .server-settings-error {
+    color: var(--error);
+  }
+  .center-play:disabled {
+    display: none;
+  }
+  body.mobile-player :is(.theater, .seek-back, .seek-forward) {
+    display: none;
+  }
+  .pip-placeholder[hidden] {
+    display: none;
+  }
+  body.pip-window :is(.theater, .drawer-open) {
+    display: none;
+  }
+  @media (max-width: 600px) {
+    .player-tools > :is(.notifications-toggle, .pip, .theater) {
+      display: none;
+    }
+    /* In the lobby the gear stays and Player settings holds only the Player group (Notifications). */
+    body.outside-room .tracks-open {
+      display: inline-grid;
+    }
+  }
+  .player-extras[hidden],
+  .player-extras [hidden] {
+    display: none;
+  }
+  .library-filter-chip svg {
+    width: 14px;
+    height: 14px;
+  }
+  .library-summary {
+    color: var(--muted);
+  }
+  .library-error {
+    color: var(--error);
+  }
+  .library-home-card > svg {
+    width: 30px;
+    height: 30px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .library-art:after,
+    .library-copy,
+    .library-play,
+    .library-browse {
+      transition: none;
+    }
+  }
+  .queue-no-current .queue-now-playing {
+    min-height: 150px;
+    display: flex;
+  }
+  /* Empty queues use a neutral screen, independent of the remembered timeline layout. */
+  .queue-timeline[hidden],
+  .queue-empty-screen[hidden],
+  .queue-toolbar[hidden],
+  .queue-quick-controls[hidden] {
+    display: none;
+  }
+  .queue-layout {
+    scrollbar-width: none;
+  }
+  .queue-next {
+    color: var(--primary);
+  }
+  .queue-entry-auto {
+    border-color: color-mix(in srgb, var(--secondary) 55%, var(--border));
+  }
+  .queue-entry-auto .queue-rank-auto,
+  .queue-entry-auto .queue-entry-caption {
+    color: var(--secondary);
+  }
+}

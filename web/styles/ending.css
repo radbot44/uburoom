@@ -1,0 +1,223 @@
+/* Ending interstitial. Owned by web/watch/ending.js. */
+@layer components {
+  .ending-stage {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: var(--z-ending);
+    isolation: isolate;
+    overflow: hidden;
+    background: var(--chrome-background);
+    --text: var(--chrome-text);
+    --muted: var(--chrome-muted);
+    color: var(--text);
+    box-sizing: border-box;
+    padding: var(--space-24);
+  }
+  .ending-backdrop {
+    display: block;
+    position: absolute;
+    inset: -20px;
+    background-position: center;
+    background-size: cover;
+    filter: blur(22px) brightness(0.24);
+    opacity: 0.85;
+    z-index: var(--z-behind);
+    pointer-events: none;
+  }
+  .ending-header {
+    position: absolute;
+    top: 20px;
+    left: 24px;
+    right: 24px;
+    z-index: var(--z-local-2);
+    font-size: var(--font-size-14);
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
+    pointer-events: none;
+  }
+  .ending-play-wrap {
+    position: relative;
+    z-index: var(--z-local-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: var(--space-20);
+  }
+  .ending-center-play {
+    position: relative;
+    width: 72px;
+    height: 72px;
+    padding: 0;
+    box-sizing: border-box;
+    border-radius: var(--radius-round);
+    background: var(--chrome-background-a79);
+    border: 1px solid var(--white-a14);
+    color: var(--text);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 1;
+    pointer-events: auto;
+    box-shadow: 0 8px 32px var(--black-a50);
+    transition:
+      background 0.15s,
+      color 0.15s,
+      border-color 0.15s;
+  }
+  .ending-center-play:hover {
+    background: color-mix(in srgb, var(--elevated) 85%, transparent);
+  }
+  .ending-center-play svg.ending-play-icon {
+    width: 40px;
+    height: 40px;
+    display: block;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    pointer-events: none;
+  }
+  .ending-center-play:disabled {
+    opacity: 0.4;
+    cursor: default;
+    pointer-events: none;
+  }
+  .ending-center-play svg.ending-ring {
+    position: absolute;
+    inset: -1px;
+    width: calc(100% + 2px);
+    height: calc(100% + 2px);
+    display: block;
+    transform: rotate(-90deg);
+    pointer-events: none;
+    overflow: visible;
+  }
+  .ending-ring-track {
+    fill: none;
+    stroke: var(--white-a16);
+    stroke-width: 3.5;
+  }
+  .ending-ring-progress {
+    fill: none;
+    stroke: var(--primary);
+    stroke-width: 3.5;
+    stroke-linecap: round;
+    stroke-dasharray: 215.199;
+    stroke-dashoffset: 0;
+    transition: stroke-dashoffset 0.1s linear;
+  }
+  .ending-center-play.is-secondary .ending-ring-progress {
+    stroke: var(--secondary);
+  }
+  .ending-body {
+    position: relative;
+    z-index: var(--z-local-2);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    max-width: 580px;
+    gap: var(--space-8);
+  }
+  .ending-kicker {
+    font-size: var(--font-size-14);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent-text);
+    margin-bottom: var(--space-2);
+  }
+  .ending-kicker.is-secondary {
+    color: var(--secondary);
+  }
+  .ending-title {
+    font-size: var(--font-size-20);
+    font-weight: 700;
+    line-height: 1.25;
+    color: var(--text);
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .ending-subtitle {
+    font-size: var(--font-size-14);
+    color: var(--muted);
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+  .ending-summary {
+    font-size: var(--font-size-14);
+    line-height: 1.45;
+    color: color-mix(in srgb, var(--text) 85%, transparent);
+    margin: var(--space-6) 0 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .ending-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--space-10);
+    margin-top: var(--space-14);
+  }
+  .ending-actions button {
+    min-height: 40px;
+    padding: var(--space-8) var(--space-18);
+    font-size: var(--font-size-14);
+    border-radius: var(--radius-10);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-8);
+  }
+  .ending-actions button svg {
+    width: 18px;
+    height: 18px;
+  }
+  .ending-secondary-primary {
+    font-weight: 600;
+  }
+  .ending-secondary-primary:hover {
+    filter: brightness(1.1);
+  }
+  .ending-status {
+    position: relative;
+    z-index: var(--z-local-2);
+    margin: var(--space-8) 0 0;
+    font-size: var(--font-size-14);
+    color: var(--muted);
+  }
+  @media (max-width: 600px), (max-height: 500px) {
+    .ending-center-play {
+      width: 48px;
+      height: 48px;
+    }
+    .ending-center-play svg.ending-play-icon {
+      width: 28px;
+      height: 28px;
+    }
+    .ending-title {
+      font-size: var(--font-size-16);
+    }
+    .ending-stage {
+      padding: var(--space-16);
+    }
+  }
+}

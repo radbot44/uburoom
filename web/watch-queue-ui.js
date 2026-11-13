@@ -106,6 +106,7 @@ function mount(
   const autoOpen = button(header, 'Queue settings', 'settings', () => openSettings(), false, 'icon-button');
   uburoomControls.content(autoOpen, { label: 'Queue settings', icon: 'settings', iconOnly: true });
   autoOpen.id = 'queue-auto-open';
+  autoOpen.classList.add('queue-auto-open');
   const body = node('div', host);
   body.id = 'queue-body';
   // Second header row: the continuation switches, then Center Now Playing.
@@ -119,10 +120,12 @@ function mount(
   const autoLabel = autoPill.element,
     autoToggle = autoPill.input;
   autoToggle.id = 'queue-auto-toggle';
+  autoToggle.classList.add('queue-auto-toggle');
   continuation.append(autoplayLabel, autoLabel);
   const centerButton = button(toolbar, 'Center Now Playing', 'center', () => centerCurrent(true));
   uburoomControls.content(centerButton, { label: 'Center Now Playing', icon: 'center' });
   centerButton.id = 'queue-center';
+  centerButton.classList.add('queue-center');
   const timeline = node('div', body, undefined, 'queue-timeline');
   const navigation = node('div', timeline, undefined, 'queue-navigation');
   const previousButton = button(navigation, 'Scroll toward history', 'up', () => scrollEntries(-1));
@@ -358,6 +361,7 @@ function mount(
   }
   const autoModeGroup = node('div', autoDialog, undefined, 'button-group watch-segmented');
   autoModeGroup.id = 'queue-auto-mode-group';
+  autoModeGroup.classList.add('queue-auto-mode-group');
   autoModeGroup.setAttribute('role', 'group');
   autoModeGroup.setAttribute('aria-label', 'Mode');
   const modeButtons = new Map();
@@ -402,6 +406,7 @@ function mount(
     void browseSources();
   });
   sourceChange.id = 'queue-source-change';
+  sourceChange.classList.add('queue-source-change');
   const sourcePicker = node('section', autoDialog, undefined, 'queue-source-picker');
   sourcePicker.id = 'queue-source-picker';
   sourcePicker.hidden = true;
@@ -529,7 +534,7 @@ function mount(
   const autoSpecials = node('input', autoSpecialLabel);
   autoSpecials.type = 'checkbox';
   autoSpecials.id = 'queue-auto-specials';
-  autoSpecials.className = 'watch-switch';
+  autoSpecials.className = 'queue-auto-specials watch-switch';
   autoSpecials.setAttribute('role', 'switch');
   autoSpecialLabel.append(doc.createTextNode('Include Specials (Season 0)'));
   autoSpecials.addEventListener('change', () => {

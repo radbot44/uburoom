@@ -1,0 +1,161 @@
+/* Sign-in, entry and browser hand-off. Owned by web/watch/session.js. */
+@layer components {
+  .browser-button {
+    display: flex;
+    align-items: center;
+    gap: var(--space-7);
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .browser-button svg {
+    width: 20px;
+    height: 20px;
+    display: block;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .browser-symbol {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    flex: none;
+  }
+  .handoff-code {
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+  .handoff-page {
+    max-width: 500px;
+  }
+  .handoff-login {
+    display: inline-block;
+    color: var(--text);
+    text-decoration: none;
+    margin-top: var(--space-20);
+  }
+  .auth-card {
+    max-width: 440px;
+    margin: var(--space-50) auto;
+    padding: var(--space-28);
+  }
+  .auth-card p {
+    margin: var(--space-12) 0 0;
+  }
+  .login-options {
+    display: grid;
+    gap: var(--space-12);
+    margin-top: var(--space-24);
+  }
+  .provider-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-12);
+    min-height: 46px;
+    border-radius: var(--radius-12);
+    padding: var(--space-12) var(--space-16);
+    text-decoration: none;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .provider-button img {
+    flex: none;
+  }
+  .discord-button {
+    background: var(--discord);
+    color: var(--white);
+  }
+  .discord-button:hover {
+    background: var(--discord-hover);
+  }
+  .auth-card .auth-retry {
+    margin-top: var(--space-20);
+  }
+  .lobby-auth .auth-card {
+    margin: var(--space-18) auto 0;
+    padding: 0;
+    background: none;
+    border: 0;
+    box-shadow: none;
+  }
+  .entry-form {
+    display: grid;
+    gap: var(--space-10);
+    margin-top: var(--space-20);
+    text-align: left;
+  }
+  .entry-form[hidden] {
+    display: none;
+  }
+  .entry-password {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: var(--space-10) var(--space-12);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+    background: var(--elevated);
+    color: var(--text);
+  }
+  .entry-submit {
+    min-height: 44px;
+  }
+  .welcome:has(.entry-form:not([hidden])) .login-options {
+    margin-top: 0;
+  }
+  .discord-symbol {
+    display: grid;
+    place-items: center;
+    background: var(--discord);
+    border-radius: var(--radius-8);
+    width: 32px;
+    height: 28px;
+    flex: none;
+  }
+  .discord-symbol img {
+    display: block;
+  }
+  @media (max-width: 500px) {
+    .auth-card {
+      padding: var(--space-24);
+    }
+    .discord-symbol,
+    .plex-symbol {
+      width: 28px;
+      height: 28px;
+    }
+  }
+  .plex-symbol {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 28px;
+    flex: none;
+  }
+  .plex-symbol img {
+    display: block;
+    border-radius: var(--radius-6);
+  }
+  @media (max-width: 700px) {
+    .lobby-auth .auth-card {
+      margin-top: var(--space-8);
+    }
+    .lobby-auth .auth-card p {
+      margin-top: 0;
+    }
+    .lobby-auth .login-options {
+      margin-top: var(--space-12);
+    }
+  }
+  .welcome:has(.guest-join:not([hidden])) .login-options {
+    margin-top: var(--space-12);
+  }
+}

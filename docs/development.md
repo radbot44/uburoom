@@ -14,6 +14,12 @@ node scripts/watch-demo.js --accounts
 
 The certificate script refuses to overwrite an existing keypair. Demo accounts/media are disposable and do not load production credentials. Normal startup uses private YAML; see [self-hosting](self-hosting.md). Keep generated artifacts, state and secrets out of Git.
 
+## Browser client
+
+The watch page is one ES module graph from `web/watch.js` (`web/package.json` marks `web/` as modules; the server and tests `require` the ones they share). The entry builds the page bootstrap, the scheduler (`web/watch/scheduler.js`, one 250 ms tick for all periodic work), the time base (`web/watch/time.js`: room clock, monotonic and wall time and timers; nothing else reads `Date.now()` or `performance.now()`) and mounts each module in `web/watch/` with `mount(host, deps)`. A module returns the functions other modules call through `deps`; state that more than one module needs lives in `web/watch/store.js`, by area. `shared/` modules are imported directly from `/shared/…`. `theme.js` and `watch-layout.js` stay classic scripts because they run before first paint. `tests/helpers/watch-module.js` mounts one module in Node with stand-in elements, so tests exercise the real code.
+
+Styles live in `web/styles/`, one stylesheet per component, each named after and owned by the module that mounts the component, inside cascade layers declared in `tokens.css`: `vendor` (OverlayScrollbars and its theme), `tokens`, `base`, `components`, `layout`, `exceptions`. Style by class; IDs are script hooks (a few rules that win by ID specificity still use them). Overrides that must beat every component go in `exceptions.css`, not `!important`. Pages other than the watch page load `styles/all.css`.
+
 ## Tests
 
 Follow the [lean testing rules](../AGENTS.md#testing). Extend existing meaningful scenarios; do not recreate retired tests referenced in old logs.
