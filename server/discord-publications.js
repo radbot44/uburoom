@@ -273,29 +273,31 @@ class DiscordPublications {
         ? error.message
         : `Discord could not update the ${subject}. Check the bot and permissions, then try again.`;
   }
-  async check(room, actor, permitted) {
+  async check(room, actor, ticket) {
     if (actor.watchCurrent && !(await actor.watchCurrent())) throw fail('Room access changed.', 403);
     const id = room.roomId;
     let media;
     do {
       if (this.watch.rooms.get(id) !== room || room.closed) throw fail('This room is closed.', 409);
-      if (this.stopped || this.watch.shuttingDown || !permitted()) throw fail('Publishing timed out. Try again.', 409);
+      if (this.stopped || this.watch.shuttingDown || !this.hub.current(ticket))
+        throw fail('Publishing timed out. Try again.', 409);
       media = room.media;
       const allowed = await this.watch.canView(room, actor);
       if (media === room.media && !allowed) throw fail('Room access changed.', 403);
     } while (media !== room.media);
     const record = this.getRecord(id);
     if (this.watch.rooms.get(id) !== room || room.closed || !record) throw fail('This room is closed.', 409);
-    if (this.stopped || this.watch.shuttingDown || !permitted()) throw fail('Publishing timed out. Try again.', 409);
+    if (this.stopped || this.watch.shuttingDown || !this.hub.current(ticket))
+      throw fail('Publishing timed out. Try again.', 409);
     if (!this.hub.authorize(actor, record, 'room.host').ok)
       throw fail('Only room hosts can publish or remove the post.', 403);
     return record;
   }
-  async command(room, action, actor, permitted) {
+  async command(room, action, actor, ticket) {
     if (!room || room.closed) throw fail('This room is closed.', 409);
     const id = room.roomId;
     return this.lane(id, async () => {
-      await this.check(room, actor, permitted);
+      await this.check(room, actor, ticket);
       let publication = this.records.get(id);
       if (action === 'room.unpublish') {
         if (!publication) return { status: 'applied', message: 'Room post removed.' };
@@ -306,7 +308,7 @@ class DiscordPublications {
       }
       if (!this.config.shareChannelId) throw fail('Discord room publishing is not configured.');
       const channel = await this.channel();
-      await this.check(room, actor, permitted);
+      await this.check(room, actor, ticket);
       if (
         publication?.channelId !== undefined &&
         (publication.channelId !== channel.id || publication.guildId !== this.config.guildId)
@@ -322,7 +324,7 @@ class DiscordPublications {
           );
       }
       await this.refreshPoster(id, actor);
-      let preview = this.preview(await this.check(room, actor, permitted));
+      let preview = this.preview(await this.check(room, actor, ticket));
       // Build each attempt from current details after authorization, including
       // changes made while fetching artwork or waiting for Discord.
       const latestPayload = () => {
@@ -332,7 +334,7 @@ class DiscordPublications {
       if (publication?.messageId) {
         try {
           await discordRequest(() => channel.messages.edit(publication.messageId, latestPayload()), {
-            current: () => this.check(room, actor, permitted),
+            current: () => this.check(room, actor, ticket),
             signal: this.lifetime.signal,
           });
         } catch (error) {
@@ -353,7 +355,7 @@ class DiscordPublications {
         await this.save(id, publication);
         // Recheck after durable intent, immediately before the external mutation.
         try {
-          await this.check(room, actor, permitted);
+          await this.check(room, actor, ticket);
         } catch (error) {
           await this.save(id, undefined);
           throw error;
@@ -362,7 +364,7 @@ class DiscordPublications {
           const message = await discordRequest(
             () => channel.send({ ...latestPayload(), nonce: publication.nonce, enforceNonce: true }),
             {
-              current: () => this.check(room, actor, permitted),
+              current: () => this.check(room, actor, ticket),
               signal: this.lifetime.signal,
             },
           );
@@ -388,11 +390,11 @@ class DiscordPublications {
       throw fail(this.safeError(error), error.status || 503);
     });
   }
-  async removeSaved(id, actor, permitted) {
+  async removeSaved(id, actor, ticket) {
     return this.lane(id, async () => {
       if (actor.watchCurrent && !(await actor.watchCurrent())) throw fail('Room access changed.', 403);
       const record = this.getRecord(id);
-      if (this.stopped || !record || !permitted()) throw fail('Room changed or command expired.', 409);
+      if (this.stopped || !record || !this.hub.current(ticket)) throw fail('Room changed or command expired.', 409);
       if (!this.hub.authorize(actor, record, 'room.host').ok) throw fail('Only room hosts can remove the post.', 403);
       const publication = this.records.get(id);
       if (publication) {
@@ -400,7 +402,9 @@ class DiscordPublications {
         await this.update(id, false, async () => {
           if (actor.watchCurrent && !(await actor.watchCurrent())) return false;
           const current = this.getRecord(id);
-          return !this.stopped && !!current && permitted() && this.hub.authorize(actor, current, 'room.host').ok;
+          return (
+            !this.stopped && !!current && this.hub.current(ticket) && this.hub.authorize(actor, current, 'room.host').ok
+          );
         });
       }
       return { status: 'applied', message: 'Room post removed.' };

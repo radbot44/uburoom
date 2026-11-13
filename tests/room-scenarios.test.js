@@ -17,7 +17,18 @@ for (const scenario of scenarios)
     const file = path.join(directory, scenario.name + '.json');
     assert.ok(fs.existsSync(file), `No recording for ${scenario.name}; run npm run traces:record -- ${scenario.name}`);
     const expected = JSON.parse(fs.readFileSync(file, 'utf8')).steps;
-    const actual = (await runScenario(scenario)).steps;
+    const run = await runScenario(scenario),
+      actual = run.steps;
+    if (scenario.plexSessions) {
+      // A stale completion must stop what it prepared: once the server closes, nothing is open.
+      const { started, stopped, open } = run.plexSessions;
+      assert.ok(started > 0, `${scenario.name} prepared no Plex stream`);
+      assert.equal(
+        open.size,
+        0,
+        `${scenario.name} left ${open.size} of ${started} Plex streams open (${stopped} stopped)`,
+      );
+    }
     const hint = `If intended, re-record with npm run traces:record -- ${scenario.name} and review the diff.`;
     for (let i = 0; i < Math.max(actual.length, expected.length); i++)
       assert.deepEqual(

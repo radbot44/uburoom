@@ -205,20 +205,21 @@ class RoomEvents {
       return value;
     });
   }
-  async check(id, actor, permitted, scheduling = true) {
+  async check(id, actor, ticket, scheduling = true) {
     if (actor.watchCurrent && !(await actor.watchCurrent())) throw fail('Room access changed.', 403);
-    if (this.stopped || this.watch.shuttingDown || !permitted()) throw fail('Event change timed out. Try again.', 409);
+    if (this.stopped || this.watch.shuttingDown || !this.hub.current(ticket))
+      throw fail('Event change timed out. Try again.', 409);
     const record = this.store.get(id);
     if (!this.hub.authorize(actor, record, 'room.host').ok)
       throw fail('Only room hosts can schedule or change events.', 403);
     if (scheduling && !this.canSchedule(actor)) throw fail('Scheduling events is limited on this server.', 403);
     return record;
   }
-  async command(id, command, actor, permitted) {
+  async command(id, command, actor, ticket) {
     return this.lane(id, async () => {
       const { action, args } = command,
         now = Date.now(),
-        current = () => this.check(id, actor, permitted, action !== 'room.event.cancel');
+        current = () => this.check(id, actor, ticket, action !== 'room.event.cancel');
       let record = await current();
       if (action === 'room.event.create') {
         const planned = eventDetails(args),

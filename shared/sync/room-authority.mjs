@@ -356,6 +356,7 @@ export const ROOM_STATE_KEYS = Object.freeze([
   'closed',
   'recovery',
   'disconnectedWasPlaying',
+  'checkpointAt',
 ]);
 /** The viewer fields the core reads and writes; the rest of a live viewer is its host's. */
 export const VIEWER_STATE_KEYS = Object.freeze([
@@ -850,8 +851,14 @@ function command(room, { command: input }, ctx) {
 }
 
 const EVENTS = {
-  /** A deadline came due. */
-  timer: (room, _event, ctx) => void review(room, ctx),
+  /** A deadline came due. A periodic checkpoint is an effect: its host saves the room. */
+  timer(room, _event, ctx) {
+    if (ctx.checkpointMs && room.checkpointAt <= ctx.now) {
+      while (room.checkpointAt <= ctx.now) room.checkpointAt += ctx.checkpointMs;
+      ctx.emit('checkpoint');
+    }
+    review(room, ctx);
+  },
   /** Something outside the core changed the room (a command, new media); recheck its lifecycle. */
   review: (room, _event, ctx) => void review(room, ctx),
   join,
@@ -928,7 +935,8 @@ const EVENTS = {
  * @param {{type: string} & Record<string, any>} event
  * @param {{now: number, monoNow: number, createId?: () => string,
  *   authorize: (actor: any, room: any, action: string) => {ok: boolean, reason?: string},
- *   extensions?: any, keys?: {room: readonly string[], viewer: readonly string[]}, hold?: boolean}} context
+ *   extensions?: any, keys?: {room: readonly string[], viewer: readonly string[]}, hold?: boolean,
+ *   checkpointMs?: number}} context
  * @returns {{state: any, effects: Array<{type: string} & Record<string, any>>, error?: Error, value?: any, persist?: string}}
  */
 export function reduce(state, event, context) {
@@ -944,6 +952,7 @@ export function reduce(state, event, context) {
     authorize: context.authorize,
     extensions,
     hold: !!context.hold,
+    checkpointMs: context.checkpointMs || 0,
     emit: (type, fields = {}) => {
       effects.push({ type, ...fields });
     },
@@ -978,6 +987,7 @@ export function nextDeadline(room, now, monoNow) {
   for (const viewer of room.viewers.values()) consider(viewer.at + PRESENCE_TIMEOUT_MS + 1);
   for (const saved of room.disconnectedViewers.values()) consider(saved.expires);
   if (!room.hadViewers) consider(room.lastActivity + IDLE_ROOM_TIMEOUT_MS + 1);
+  if (room.checkpointAt !== undefined) consider(room.checkpointAt);
   return due === Infinity ? undefined : due;
 }
 
@@ -986,11 +996,14 @@ export function nextDeadline(room, now, monoNow) {
 // ---------------------------------------------------------------------------
 
 const EVENT_ACTIONS = Object.freeze({ join: 'room.view', ready: 'room.view' });
+// The mailbox entry for a host step (see `step` below); never a reducer event.
+const STEP = Symbol('step');
 
 /**
  * One room registry. Each room's events are reduced one at a time, in order. When a
  * reduced event asks to persist and `onPersist` is given, the new state is committed
- * only after it resolves; effects run only after commit. Timers are effects too: after
+ * only after it resolves; effects run only after commit. With `checkpointMs`, each room
+ * also asks for a `checkpoint` effect on that period, which its host saves. Timers are effects too: after
  * every commit the room's next deadline is armed, rounded up to `timerResolutionMs`.
  *
  * Every actor event (`join`, `ready`, `command`) is checked with `authorize`, the one
@@ -1004,6 +1017,7 @@ const EVENT_ACTIONS = Object.freeze({ join: 'room.view', ready: 'room.view' });
  *   onEffect?: (room: any, effect: {type: string} & Record<string, any>, removed: Map<string, any>) => void,
  *   onError?: (error: unknown) => void,
  *   hold?: (room: any) => boolean,
+ *   checkpointMs?: number,
  *   timerResolutionMs?: number, timerOrigin?: number,
  *   setTimer?: (action: () => void, ms: number) => any, clearTimer?: (timer: any) => void,
  * }} options
@@ -1088,6 +1102,12 @@ export function createRoomCoordinator(options) {
   }
   // Reduces one event; returns its result, or a promise of it while persisting.
   function process(room, event) {
+    if (event.type === STEP) {
+      const value = event.step(room);
+      if (typeof value?.then === 'function') throw new TypeError('A room step must not wait');
+      arm(room);
+      return { value, effects: [] };
+    }
     const action = event.type === 'command' ? event.command?.action : EVENT_ACTIONS[event.type];
     if (action && event.actor) {
       const decision = options.authorize(event.actor, room, action);
@@ -1110,6 +1130,7 @@ export function createRoomCoordinator(options) {
       extensions,
       keys,
       hold: !!options.hold?.(room),
+      checkpointMs: options.checkpointMs,
     });
     if (!result.persist || !options.onPersist) return finish(room, result);
     const persisting = options.onPersist(cloneRoomState(result.state, keys), {
@@ -1177,6 +1198,9 @@ export function createRoomCoordinator(options) {
     /** Registers a live room (built by its host in the core's shape) and arms its timer. */
     add(room) {
       if (rooms.has(room.roomId)) throw new Error('Room already exists');
+      // Checkpoints fall on one grid from the timer origin, whenever the room was added.
+      if (options.checkpointMs)
+        room.checkpointAt ??= origin + (Math.floor((now() - origin) / options.checkpointMs) + 1) * options.checkpointMs;
       rooms.set(room.roomId, room);
       arm(room);
       return room;
@@ -1196,6 +1220,23 @@ export function createRoomCoordinator(options) {
       const room = resolveRoom(idOrRoom);
       if (!room || rooms.get(room.roomId) !== room) return refused('Room unavailable');
       const entry = submit(room, event);
+      return entry.done ? entry.result : entry.promise;
+    },
+    /**
+     * Runs a host step on the live room inside its mailbox, in order with its events.
+     * A host's own commands are steps: admission (check and reserve) is one, and the
+     * completion of the work it started outside, applied only if the room has not moved
+     * on, is another. A step never waits: slow work (a provider, storage) runs outside
+     * between steps. Events the step sends run right after it. Returns `{value}` (or
+     * `{error}` when the step threw or the room is gone) at once when the mailbox is
+     * free, otherwise a promise of it.
+     * @param {any} idOrRoom
+     * @param {(room: any) => any} step
+     */
+    step(idOrRoom, step) {
+      const room = resolveRoom(idOrRoom);
+      if (!room || rooms.get(room.roomId) !== room) return refused('Room unavailable');
+      const entry = submit(room, { type: STEP, step });
       return entry.done ? entry.result : entry.promise;
     },
     /** Queues an event in the room's mailbox; resolves with its result. */
