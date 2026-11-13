@@ -65,6 +65,7 @@ class Watch extends WatchParts {
       hold: room => !!room.transition?.commit,
       extensions: this.roomExtensions(),
       onEffect: (room, effect, removed) => this.roomEffect(room, effect, removed),
+      onPublish: (room, change) => this.onPublish?.(room, change),
       onError: error =>
         this.hub?.config?.logger?.warn(
           'Room',
@@ -72,6 +73,13 @@ class Watch extends WatchParts {
         ),
     });
     this.rooms = this.coordinator.rooms;
+    /** @type {((room: any, change: {roomId?: string, includeLobby: boolean}) => void) | undefined} Attached by server/watch-socket.js. */
+    this.onPublish = undefined;
+    // A finished command is published through its room's mailbox, after everything it did there.
+    hub.onCommand = roomId => {
+      const hadMedia = Boolean(roomId && this.rooms.get(roomId)?.media);
+      return action => this.published(roomId, action, hadMedia);
+    };
     /** @type {WeakMap<Room, number>} */
     this.stateSequences = new WeakMap();
     this.reporting = new PlexReporting({

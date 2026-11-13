@@ -60,6 +60,8 @@ class Hub {
     this.watchIdle = undefined;
     /** @type {((roomId: string) => Set<string>) | undefined} Accounts holding the room's current guest passes. */
     this.guestMembers = undefined;
+    /** @type {((roomId: string | undefined) => (action: string | undefined) => void) | undefined} Called as a command starts; the result is called when it is done. */
+    this.onCommand = undefined;
     /** @type {((roomId: string, actor: Actor, ticket: Ticket) => Promise<any>) | undefined} */
     this.publicationExecute = undefined;
     /** @type {((roomId: string, actor: Actor, ticket: Ticket) => Promise<any>) | undefined} */
@@ -188,7 +190,19 @@ class Hub {
     if (ticket.kind === 'saved' && this.rooms.has(ticket.roomId)) return false;
     return canWatch(this.access, ticket.actor.userId, ticket.actor);
   }
+  /**
+   * Runs one command. When it is done, whatever it answered, the subscribers of its
+   * room (or the lobby) are told through `onCommand`, which the room registry attaches.
+   */
   async dispatch(actor, input) {
+    const done = this.onCommand?.(input?.roomId);
+    try {
+      return await this.runCommand(actor, input);
+    } finally {
+      done?.(input?.action);
+    }
+  }
+  async runCommand(actor, input) {
     if (Object.hasOwn(input, 'sessionId')) return { status: 'unsupported', message: 'Use the current room protocol.' };
     actor = this.accountActor?.(actor) || actor;
     if (this.refreshAdmin) await this.refreshAdmin(actor);

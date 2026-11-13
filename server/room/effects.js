@@ -12,12 +12,27 @@ const { FallbackStream } = require('../fallback-stream');
 const { runOperation, waitFor } = require('../operation');
 const { isProviderOutage } = require('../resilience');
 const { clearPlaybackEnd } = require('../playback-end');
+const Engine = require('../../shared/engine');
 
 /**
  * What the room asks of the server: room effects, media work and Plex sessions, preloads and provider health.
  * Methods of Watch (server/watch.js), which composes these modules onto its prototype.
  */
 module.exports = {
+  /**
+   * Publishes a finished command. A room-local command that left the room's video as it
+   * was reaches only that room's subscribers; anything else reaches the lobby too. A live
+   * room publishes through its mailbox, after everything the command did there.
+   * @param {string | undefined} roomId
+   * @param {string | undefined} action
+   * @param {boolean} hadMedia
+   */
+  published(roomId, action, hadMedia) {
+    const room = roomId ? this.rooms.get(roomId) : undefined;
+    const roomOnly = Boolean(roomId && Engine.command(action)?.roomLocal && hadMedia === Boolean(room?.media));
+    const change = roomOnly ? { roomId, includeLobby: false } : { includeLobby: true };
+    if (!room || !this.coordinator.publish(room, change)) this.onPublish?.(room, change);
+  },
   providerFailed(error) {
     if (!isProviderOutage(error)) return false;
     this.providerDownSince ??= this.clock.now();
