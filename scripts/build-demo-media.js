@@ -1,5 +1,6 @@
 /* Recreate synthetic, credential-free diagnostic fixtures; FFmpeg is not bundled. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -12,7 +13,7 @@ function main() {
     args.find(arg => arg.startsWith('--' + name + '='))?.slice(name.length + 3) || fallback;
   const ffmpeg = option('ffmpeg', 'ffmpeg'),
     ffprobe = option('ffprobe', 'ffprobe');
-  const output = path.resolve(option('out', path.join(root, 'artifacts/demo-media')));
+  const output = path.resolve(option('out', path.join(EVIDENCE, 'demo-media')));
   if (fs.existsSync(output)) throw new Error('Use a new output directory; existing fixtures are never overwritten.');
   function run(binary, parameters) {
     const result = spawnSync(binary, parameters, { windowsHide: true, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });

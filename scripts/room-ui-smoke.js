@@ -7,6 +7,7 @@
  *   execute()        - send a seek the viewer's disabled timeline cannot, to prove the server refuses it
  */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { playbackBrowser, pause } = require('./lib/playback-browser');
@@ -47,8 +48,8 @@ async function main() {
         return browser.evaluate(host, expression);
       };
       const until = (expression, label) => browser.until(host, expression, label);
-      require('node:fs').mkdirSync(path.resolve('artifacts'), { recursive: true });
-      const shot = label => browser.screenshot(host, path.resolve('artifacts/room-ui-' + name + '-' + label + '.png'));
+      require('node:fs').mkdirSync(EVIDENCE, { recursive: true });
+      const shot = label => browser.screenshot(host, path.resolve(EVIDENCE, 'room-ui-' + name + '-' + label + '.png'));
       await browser.viewport(host, 1360, 1000);
       await browser.activate(host);
       await until(
@@ -672,7 +673,7 @@ async function main() {
         await browser
           .screenshot(
             page,
-            path.resolve('artifacts/room-ui-' + name + '-' + (label === 'host' ? '' : 'guest-') + 'failure.png'),
+            path.resolve(EVIDENCE, 'room-ui-' + name + '-' + (label === 'host' ? '' : 'guest-') + 'failure.png'),
           )
           .catch(() => {});
       }

@@ -1,5 +1,6 @@
 /* Matched, counterbalanced initial-load trials. Local fixtures only; no .env. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs'),
   path = require('node:path'),
   assert = require('node:assert/strict');
@@ -169,7 +170,7 @@ async function main() {
     rtts = option('rtts', '20,320').split(',').map(Number),
     seed = Number(option('seed', '20261016')),
     fps = option('fps', '24'),
-    output = path.resolve(option('output', 'artifacts/startup-' + Date.now())),
+    output = path.resolve(option('output', path.join(EVIDENCE, 'startup-') + Date.now())),
     initialStart = option('initial-start', 'scheduled'),
     comparison = option('comparison', 'unit'),
     drift = Number(option('drift', '0'));

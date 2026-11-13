@@ -1,5 +1,6 @@
 /* Firefox library UX against synthetic Plex data; no private media or accounts. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs'),
   path = require('node:path'),
   os = require('node:os'),
@@ -489,7 +490,7 @@ async function main() {
       );
       const movieShot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
       fs.writeFileSync(
-        path.join(root, 'artifacts', 'plex-library-movie-details-' + name + '-qa.png'),
+        path.join(EVIDENCE, 'plex-library-movie-details-' + name + '-qa.png'),
         Buffer.from(movieShot.data, 'base64'),
       );
       await evaluate(context, 'history.back()');
@@ -509,7 +510,7 @@ async function main() {
         );
       const listShot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
       fs.writeFileSync(
-        path.join(root, 'artifacts', 'plex-library-list-' + name + '-qa.png'),
+        path.join(EVIDENCE, 'plex-library-list-' + name + '-qa.png'),
         Buffer.from(listShot.data, 'base64'),
       );
     }
@@ -677,7 +678,7 @@ async function main() {
         );
       const shot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
       fs.writeFileSync(
-        path.join(root, 'artifacts', 'plex-library-episode-details-' + name + '-qa.png'),
+        path.join(EVIDENCE, 'plex-library-episode-details-' + name + '-qa.png'),
         Buffer.from(shot.data, 'base64'),
       );
     }
@@ -694,10 +695,7 @@ async function main() {
       'Phone episode breadcrumbs fit',
     );
     const crumbsShot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
-    fs.writeFileSync(
-      path.join(root, 'artifacts', 'plex-library-crumbs-phone-qa.png'),
-      Buffer.from(crumbsShot.data, 'base64'),
-    );
+    fs.writeFileSync(path.join(EVIDENCE, 'plex-library-crumbs-phone-qa.png'), Buffer.from(crumbsShot.data, 'base64'));
     await evaluate(context, 'setTheater(false)');
     await command('browsingContext.setViewport', { context, viewport: { width: 1360, height: 1200 } });
     await evaluate(
@@ -853,7 +851,7 @@ async function main() {
       false,
     );
     const homeShot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
-    fs.writeFileSync(path.join(root, 'artifacts', 'plex-library-home-qa.png'), Buffer.from(homeShot.data, 'base64'));
+    fs.writeFileSync(path.join(EVIDENCE, 'plex-library-home-qa.png'), Buffer.from(homeShot.data, 'base64'));
     assert.ok(
       await evaluate(
         context,
@@ -868,7 +866,7 @@ async function main() {
       true,
       'New navigation discards Forward branch',
     );
-    fs.mkdirSync(path.join(root, 'artifacts'), { recursive: true });
+    fs.mkdirSync(EVIDENCE, { recursive: true });
     for (const [name, width, height, theater] of [
       ['normal', 3840, 2160, false],
       ['theater', 3840, 2160, true],
@@ -886,10 +884,7 @@ async function main() {
       );
       assert.deepEqual(report.overflow, [], JSON.stringify(report));
       const shot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
-      fs.writeFileSync(
-        path.join(root, 'artifacts', 'plex-library-' + name + '-qa.png'),
-        Buffer.from(shot.data, 'base64'),
-      );
+      fs.writeFileSync(path.join(EVIDENCE, 'plex-library-' + name + '-qa.png'), Buffer.from(shot.data, 'base64'));
       if (width === 390) {
         await evaluate(context, 'document.getElementById("library-home").click()');
         assert.ok(
@@ -900,10 +895,7 @@ async function main() {
           'Phone Home cards fit',
         );
         const homePhone = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
-        fs.writeFileSync(
-          path.join(root, 'artifacts', 'plex-library-home-phone-qa.png'),
-          Buffer.from(homePhone.data, 'base64'),
-        );
+        fs.writeFileSync(path.join(EVIDENCE, 'plex-library-home-phone-qa.png'), Buffer.from(homePhone.data, 'base64'));
         await evaluate(context, 'document.querySelector(".library-home-card[data-tab=library]:first-child").click()');
         await until(context, '!document.querySelector(".library").hidden', 'Phone library restored');
       }
@@ -920,7 +912,7 @@ async function main() {
         );
         const scrolled = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
         fs.writeFileSync(
-          path.join(root, 'artifacts', 'plex-library-' + name + '-scrolled-qa.png'),
+          path.join(EVIDENCE, 'plex-library-' + name + '-scrolled-qa.png'),
           Buffer.from(scrolled.data, 'base64'),
         );
       }
@@ -962,10 +954,7 @@ async function main() {
       true,
     );
     const activityShot = await command('browsingContext.captureScreenshot', { context: activity, origin: 'viewport' });
-    fs.writeFileSync(
-      path.join(root, 'artifacts', 'plex-library-activity-qa.png'),
-      Buffer.from(activityShot.data, 'base64'),
-    );
+    fs.writeFileSync(path.join(EVIDENCE, 'plex-library-activity-qa.png'), Buffer.from(activityShot.data, 'base64'));
     await evaluate(activity, 'updateActivityLayout({layout_mode:1})');
     assert.equal(await evaluate(activity, 'getComputedStyle(drawer).display'), 'none', 'PIP stays video-only');
     await evaluate(activity, 'updateActivityLayout({layout_mode:0});document.getElementById("close-room").click()');

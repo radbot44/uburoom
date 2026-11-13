@@ -44,14 +44,18 @@ Follow the [lean testing rules](../AGENTS.md#testing). Extend existing meaningfu
 
 `tests/room-scenarios.test.js` replays scripted multi-viewer room scenarios (`tests/helpers/room-scenarios/`) against a real fixture server over real sockets on a controlled clock, and compares each viewer's semantic room facts with `tests/fixtures/room-traces/`. Only `protocol.js` there knows the wire format.
 
+## Evidence folder
+
+Scripts that write screenshots, generated media or reports put them outside the repository, in `../uburoom-evidence/artifacts/` (set `UBUROOM_EVIDENCE` to use another folder; see `scripts/lib/evidence.js`). The transcode benchmark lives beside it in `../uburoom-evidence/transcode-benchmark/` with its own README and tests; it reads this checkout's code and configuration.
+
 ## Rendered checks
 
 Run on request; not part of `npm test` or a pass/fail gate. Fixture accounts and media only.
 
 | Need | Command |
 | --- | --- |
-| Screenshot set: fixed surfaces × dark/light × 390/820/1360 px, Chrome and Firefox, into `artifacts/ui-capture/<date>-<revision>/` | `npm run ui:capture` (`-- --browsers=chrome --surfaces=lobby,gallery --out=<folder>`) |
-| Pixel comparison of two capture folders; per-image changed pixels and bounding box, HTML report in `artifacts/ui-compare/`, exit 1 on any difference | `npm run ui:compare -- <folderA> <folderB>` (`--tolerance=8` per channel) |
+| Screenshot set: fixed surfaces × dark/light × 390/820/1360 px, Chrome and Firefox, into `ui-capture/<date>-<revision>/` in the evidence folder | `npm run ui:capture` (`-- --browsers=chrome --surfaces=lobby,gallery --out=<folder>`) |
+| Pixel comparison of two capture folders; per-image changed pixels and bounding box, HTML report in `ui-compare/` in the evidence folder, exit 1 on any difference | `npm run ui:compare -- <folderA> <folderB>` (`--tolerance=8` per channel) |
 | Shared-control gallery from the shipped helpers and stylesheets | `/__dev/gallery` on a demo server (`node scripts/watch-demo.js --accounts`); 404 otherwise |
 
 Captures switch theme through the appearance toggle and freeze motion, overlay scrollbars, the invite URL and room times in the capture context only; `manifest.json` lists what is hidden.
@@ -61,8 +65,8 @@ Use both Chrome and Firefox for relevant browser checks. TLS, browser binaries a
 ## Targeted media tools
 
 ```powershell
-node scripts/build-playback-fixtures.js --out=artifacts/playback-media-tracks --tracks=on
-node scripts/playback-tracks.js --media=artifacts/playback-media-tracks --out=artifacts/playback-track-run --browsers=firefox,chrome
+node scripts/build-playback-fixtures.js --out=../uburoom-evidence/artifacts/playback-media-tracks --tracks=on
+node scripts/playback-tracks.js --media=../uburoom-evidence/artifacts/playback-media-tracks --out=../uburoom-evidence/artifacts/playback-track-run --browsers=firefox,chrome
 ```
 
 Use `scripts/playback-recovery.js`, `scripts/sync-baseline.js`, `scripts/sync-startup.js` and `scripts/av1-probe.js` only for their corresponding investigation. `node scripts/codec-diagnostics.js` launches the isolated codec tester; it is not part of the normal server UI. `npm run build:player` rebuilds vendored player/subtitle bundles.

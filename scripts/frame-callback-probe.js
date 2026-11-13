@@ -1,5 +1,6 @@
 /* Minimal local playback, with no watch controller or per-frame diagnostics. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs'),
   path = require('node:path'),
   http = require('node:http');
@@ -60,7 +61,7 @@ async function measure(seconds) {
 async function main() {
   const option = (key, fallback) =>
     process.argv.find(s => s.startsWith('--' + key + '='))?.slice(key.length + 3) ?? fallback;
-  const output = path.resolve(option('output', 'artifacts/frame-probe-' + Date.now())),
+  const output = path.resolve(option('output', path.join(EVIDENCE, 'frame-probe-') + Date.now())),
     seconds = Number(option('seconds', '8')),
     browsers = option('browsers', 'firefox,chrome').split(','),
     rates = option('fps', '24,60000/1001').split(',');

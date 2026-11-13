@@ -1,5 +1,6 @@
 /* Toast wiring in isolated Chrome/Firefox profiles with disposable accounts. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs'),
   path = require('node:path'),
   assert = require('node:assert/strict');
@@ -8,7 +9,7 @@ const { accountFixture } = require('./account-fixture');
 const { playbackBrowser, pause } = require('./lib/playback-browser');
 
 async function main() {
-  const output = path.resolve('artifacts/toast-ui-' + Date.now());
+  const output = path.resolve(EVIDENCE, 'toast-ui-' + Date.now());
   fs.mkdirSync(output, { recursive: true });
   for (const name of ['chrome', 'firefox']) {
     const fixture = accountFixture();

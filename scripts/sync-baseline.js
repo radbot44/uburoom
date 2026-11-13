@@ -1,5 +1,6 @@
 /* Real decoded browsers, disposable local accounts/media; never loads .env. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs'),
   path = require('node:path'),
   assert = require('node:assert/strict');
@@ -16,7 +17,7 @@ async function main() {
     fps = option('fps', '24'),
     seconds = Number(option('seconds', '15')),
     rtts = option('rtts', '20,100,200,320').split(',').map(Number),
-    output = path.resolve(option('output', path.join(root, 'artifacts', 'sync-' + Date.now())));
+    output = path.resolve(option('output', path.join(EVIDENCE, 'sync-' + Date.now())));
   assert.ok(['arrival', 'shared'].includes(mode) && /^(?:\d+|\d+\/\d+)$/.test(fps));
   assert.ok(seconds >= 5 && seconds <= 25 && rtts.every(n => n >= 0 && n <= 1000));
   if (fs.existsSync(output)) throw new Error('Use a new output directory.');

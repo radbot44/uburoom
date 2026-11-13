@@ -1,5 +1,6 @@
 /* Queue shared-control contract in disposable Chrome/Firefox rooms. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -40,7 +41,7 @@ async function main() {
       const run = expression => browser.evaluate(page, expression);
       const until = (expression, label) => browser.until(page, expression, label);
       const shot = label =>
-        browser.screenshot(page, path.resolve('artifacts/queue-controls-' + name + '-after-' + label + '.png'));
+        browser.screenshot(page, path.resolve(EVIDENCE, 'queue-controls-' + name + '-after-' + label + '.png'));
       await browser.viewport(page, 1600, 1050);
       await until('me?.durableRooms && transport?.ready', 'Login');
       assert.equal(

@@ -1,5 +1,6 @@
 /* Long local watch-player soak. Procedural media and simulated Plex only. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -71,8 +72,8 @@ async function main() {
   )
     throw new Error('Invalid soak schedule.');
   const root = path.resolve(__dirname, '..'),
-    directory = path.resolve(option('media', 'artifacts/playback-media-recovery-240')),
-    output = path.resolve(option('out', 'artifacts/playback-soak-' + Date.now()));
+    directory = path.resolve(option('media', path.join(EVIDENCE, 'playback-media-recovery-240'))),
+    output = path.resolve(option('out', path.join(EVIDENCE, 'playback-soak-') + Date.now()));
   if (fs.existsSync(output)) throw new Error('Use a new output directory.');
   const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'manifest.json'), 'utf8'));
   const duration = manifest.sources.find(source => source.id === '104')?.duration;

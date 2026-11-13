@@ -1,8 +1,9 @@
-/* Compare two ui-capture folders pixel by pixel. Writes diff images and an HTML report into artifacts/.
+/* Compare two ui-capture folders pixel by pixel. Writes diff images and an HTML report into the evidence folder (scripts/lib/evidence.js).
  * Usage: node scripts/ui-compare.js <folderA> <folderB> [--tolerance=8] [--out=<folder>]
  * Exits 1 when any image differs beyond the per-channel tolerance or exists in only one folder.
  */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
 const { decodePng, encodePng } = require('./lib/png');
@@ -85,7 +86,7 @@ function main() {
   if (!Number.isInteger(tolerance) || tolerance < 0 || tolerance > 255) throw new Error('Tolerance must be 0-255');
   const out = path.resolve(
     root,
-    option('out', path.join('artifacts', 'ui-compare', path.basename(a) + '--' + path.basename(b))),
+    option('out', path.join(EVIDENCE, 'ui-compare', path.basename(a) + '--' + path.basename(b))),
   );
   if (fs.existsSync(out) && fs.readdirSync(out).length) throw new Error('Report folder is not empty: ' + out);
   fs.mkdirSync(out, { recursive: true });

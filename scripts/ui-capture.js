@@ -1,8 +1,9 @@
-/* Capture a fixed set of rendered surfaces x two themes x three widths into artifacts/ui-capture/.
+/* Capture a fixed set of rendered surfaces x two themes x three widths into the evidence folder (scripts/lib/evidence.js), ui-capture/.
  * Fixture accounts and media only; no real Plex/Discord and no private configuration.
  * Usage: node scripts/ui-capture.js [--browsers=chrome,firefox] [--out=<folder>] [--surfaces=lobby,gallery]
  */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -337,7 +338,7 @@ async function captureBrowser(name, out, only) {
 async function main() {
   const browsers = option('browsers', 'chrome,firefox').split(',');
   const only = option('surfaces', '').split(',').filter(Boolean);
-  const out = path.resolve(root, option('out', path.join('artifacts', 'ui-capture', stamp() + '-' + revision())));
+  const out = path.resolve(root, option('out', path.join(EVIDENCE, 'ui-capture', stamp() + '-' + revision())));
   if (fs.existsSync(out) && fs.readdirSync(out).length) throw new Error('Capture folder is not empty: ' + out);
   const manifest = {
     revision: revision(),

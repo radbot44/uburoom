@@ -1,5 +1,6 @@
 /* Disposable decoded browsers and local fixture only; never loads .env. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs'),
   path = require('node:path'),
   assert = require('node:assert/strict');
@@ -8,7 +9,7 @@ const { playbackBrowser, pause } = require('./lib/playback-browser');
 async function main() {
   const root = path.resolve(__dirname, '..'),
     name = process.argv.find(arg => arg.startsWith('--browser='))?.slice(10) || 'firefox';
-  const output = path.join(root, 'artifacts', 'sync-controls-' + name);
+  const output = path.join(EVIDENCE, 'sync-controls-' + name);
   fs.mkdirSync(output, { recursive: true });
   const config = {
     cert: fs.readFileSync(path.join(root, 'certs/server-cert.pem')),

@@ -1,4 +1,5 @@
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createApp } = require('../server/app');
@@ -83,7 +84,7 @@ function analyzeTargetFormulas() {
 // 2. Real Browser Execution Test (Headless Chrome & Firefox)
 async function runBrowserBufferTests(browserName) {
   const root = path.resolve(__dirname, '..');
-  const directory = path.resolve(root, 'artifacts/playback-media-recovery-240');
+  const directory = path.resolve(EVIDENCE, 'playback-media-recovery-240');
   const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'manifest.json'), 'utf8'));
 
   const control = { events: [], requests: [], expiredSessions: new Set(), blocked: false };
@@ -224,7 +225,7 @@ async function runBrowserBufferTests(browserName) {
 // 3. Plex Transcode Session Expiration Lifecycle Test
 async function runPlexSessionLifecycleTests() {
   const root = path.resolve(__dirname, '..');
-  const directory = path.resolve(root, 'artifacts/playback-media-recovery-120');
+  const directory = path.resolve(EVIDENCE, 'playback-media-recovery-120');
   const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'manifest.json'), 'utf8'));
 
   const control = { events: [], requests: [], expiredSessions: new Set(), blocked: false };
@@ -336,7 +337,7 @@ async function main() {
   console.log(JSON.stringify(plexResults, null, 2));
 
   // Save report artifact
-  const outDir = path.resolve(__dirname, '../artifacts/hls-buffer-evaluation');
+  const outDir = path.join(EVIDENCE, 'hls-buffer-evaluation');
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(
     path.join(outDir, 'evaluation-results.json'),
@@ -352,7 +353,7 @@ async function main() {
       2,
     ) + '\n',
   );
-  console.log('\n=== Complete. Results saved to artifacts/hls-buffer-evaluation/evaluation-results.json ===');
+  console.log('\n=== Complete. Results saved to ' + outDir + '/evaluation-results.json ===');
 }
 
 main().catch(err => {

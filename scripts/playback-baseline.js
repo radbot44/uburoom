@@ -1,5 +1,6 @@
 /* Actual watch player + synthetic Plex responses. Never loads .env or live credentials. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Readable } = require('node:stream');
@@ -399,7 +400,7 @@ async function main() {
     );
   const option = (name, fallback) =>
     args.find(arg => arg.startsWith('--' + name + '='))?.slice(name.length + 3) || fallback;
-  const output = path.resolve(option('out', path.join(root, 'artifacts', 'playback-baseline-' + Date.now())));
+  const output = path.resolve(option('out', path.join(EVIDENCE, 'playback-baseline-' + Date.now())));
   if (fs.existsSync(output)) throw new Error('Use a new report directory; earlier evidence is never overwritten.');
   fs.mkdirSync(output, { recursive: true });
   const ffmpeg = option('ffmpeg', 'ffmpeg'),

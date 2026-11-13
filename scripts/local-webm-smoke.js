@@ -1,5 +1,6 @@
 /* Actual software WebM conversion and watch clients; only synthetic providers/media. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs'),
   path = require('node:path'),
   assert = require('node:assert/strict');
@@ -15,9 +16,11 @@ async function main() {
     failFirst = process.argv.includes('--fail-first');
   if (failFirst && codec !== 'vp8') throw new Error('Use --codec=vp8 for the injected VP9 failure check');
   if (!['vp8', 'vp9'].includes(codec)) throw new Error('Choose vp8 or vp9');
-  const output = path.resolve(option('out', 'artifacts/local-webm-' + name + '-' + codec + '-' + Date.now()));
+  const output = path.resolve(
+    option('out', path.join(EVIDENCE, 'local-webm-') + name + '-' + codec + '-' + Date.now()),
+  );
   fs.mkdirSync(output, { recursive: false });
-  const directory = path.resolve(option('media', 'artifacts/playback-media-initial')),
+  const directory = path.resolve(option('media', path.join(EVIDENCE, 'playback-media-initial'))),
     manifest = JSON.parse(fs.readFileSync(path.join(directory, 'manifest.json'), 'utf8'));
   const config = {
     cert: fs.readFileSync('certs/server-cert.pem'),

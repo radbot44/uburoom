@@ -1,5 +1,6 @@
 /* Procedural playback corpus. No accounts, network inputs, fonts or downloaded media. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -279,7 +280,7 @@ if (require.main === module) {
       throw new Error('Use --out=new-directory [--duration=18..300 --tracks=on --ffmpeg=path --ffprobe=path]');
     const option = (name, fallback) =>
       args.find(arg => arg.startsWith('--' + name + '='))?.slice(name.length + 3) || fallback;
-    const output = path.resolve(option('out', 'artifacts/playback-media-' + Date.now()));
+    const output = path.resolve(option('out', path.join(EVIDENCE, 'playback-media-') + Date.now()));
     if (!['on', 'off'].includes(option('tracks', 'off'))) throw new Error('Use --tracks=on|off');
     const manifest = buildPlaybackFixtures({
       output,

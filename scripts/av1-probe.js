@@ -1,6 +1,7 @@
 /* Run ON the server: node scripts/av1-probe.js --ffmpeg=C:/ffmpeg/bin/ffmpeg.exe
    Synthetic only. No .env, Plex credentials, installations, or service changes. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
 const { AV1, probeEncoder, run } = require('../server/av1');
@@ -37,7 +38,7 @@ async function main() {
   } finally {
     await manager.close();
   }
-  const out = path.resolve(__dirname, '../artifacts/' + codec + '-' + selected + '-probe.webm');
+  const out = path.join(EVIDENCE, codec + '-' + selected + '-probe.webm');
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, bytes);
   console.log('PASS: ' + codec.toUpperCase() + ' / ' + selected + ' + Opus encoded synthetic WebM on this machine.');

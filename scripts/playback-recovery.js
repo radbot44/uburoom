@@ -1,5 +1,6 @@
 /* Bounded long playback and Plex session-expiry fixture; no live credentials. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -14,8 +15,8 @@ async function main() {
   if (args.some(arg => !/^--(media|out|browser|soak)=.+/.test(arg)))
     throw new Error('Use --media=corpus --out=new-directory [--browser=firefox|chrome|edge --soak=5..180]');
   const root = path.resolve(__dirname, '..'),
-    directory = path.resolve(option('media', 'artifacts/playback-media-recovery-120'));
-  const output = path.resolve(option('out', 'artifacts/playback-recovery-' + Date.now()));
+    directory = path.resolve(option('media', path.join(EVIDENCE, 'playback-media-recovery-120')));
+  const output = path.resolve(option('out', path.join(EVIDENCE, 'playback-recovery-') + Date.now()));
   const name = option('browser', 'firefox');
   const soak = Number(option('soak', '45'));
   if (!Number.isInteger(soak) || soak < 5 || soak > 180) throw new Error('Choose a five to 180 second soak.');

@@ -1,5 +1,6 @@
 /* Actual watch-player track changes against generated media; no .env/live users. */
 'use strict';
+const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -17,8 +18,8 @@ async function main() {
     throw new Error(
       'Use --media=track-corpus --out=new-directory [--browsers=firefox,chrome,edge --ffmpeg=path --ffprobe=path]',
     );
-  const directory = path.resolve(option('media', 'artifacts/playback-media-tracks')),
-    output = path.resolve(option('out', 'artifacts/playback-tracks-' + Date.now()));
+  const directory = path.resolve(option('media', path.join(EVIDENCE, 'playback-media-tracks'))),
+    output = path.resolve(option('out', path.join(EVIDENCE, 'playback-tracks-') + Date.now()));
   if (fs.existsSync(output)) throw new Error('Use a new output directory.');
   const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'manifest.json'), 'utf8'));
   if (manifest.kind !== 'uburoom-synthetic-playback' || !manifest.trackRenditions)
