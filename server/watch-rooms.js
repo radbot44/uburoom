@@ -753,15 +753,19 @@ class WatchRooms {
       throw failure('Room creator rights required to reset', 403);
     if (revision !== record.revision) throw failure('Room changed; refresh before resetting');
     if (!(await current())) throw failure('Room access changed', 403);
-    if (room && room.transition) throw failure('Wait for the current queue or media operation before resetting');
+    // Reserve the live room in its mailbox; the reset is written outside and applied back inside.
+    const reserve = () => {
+      if (room.transition) throw failure('Wait for the current queue or media operation before resetting');
+      room.transition = { kind: 'media' };
+      this.freeze(room);
+      this.watch.invalidateControls(room);
+      return true;
+    };
+    if (room && !(await this.watch.inRoom(room, reserve, false)))
+      throw failure('Room changed; refresh before resetting');
     this.watch.publications.roomClosed(id);
-    if (room) room.transition = { kind: 'media' };
     try {
-      if (room) {
-        this.freeze(room);
-        this.watch.invalidateControls(room);
-        await room.saving?.catch(() => {});
-      }
+      if (room) await room.saving?.catch(() => {});
       const hosts = [
         ...new Set([
           ...(this.watch.hub.config.roomAdministrators?.discord || []).map(
@@ -788,32 +792,34 @@ class WatchRooms {
       });
       await this.registry.flush();
       this.recoveries.delete(id);
-      if (room) {
-        this.finishRecovery(room);
-        const old = room.media;
-        this.watch.dropMedia(room, 'room-reset');
-        room.media = null;
-        void this.watch.plex.stop(old);
-        room.position = 0;
-        room.mediaVersion = require('node:crypto').randomUUID();
-        room.initialGate = false;
-        room.state.seekable = false;
-        room.readinessVersion = undefined;
-        room.readinessStartAt = undefined;
-        room.readinessTimedOut = undefined;
-        room.endedVersion = undefined;
-        room.endingOffer = undefined;
-        room.endingMeta = undefined;
-        room.autoplayError = undefined;
-        room.autoQueueError = undefined;
-        room.saveError = undefined;
-        this.apply(room, this.store.get(id));
-        this.watch.coordinator.run(room, { type: 'roles', invalidate: false });
-      }
+      if (room) await this.watch.inRoom(room, () => this.resetLive(room, id), undefined);
       return this.summary(id, actor);
     } finally {
       if (room?.transition?.kind === 'media') room.transition = undefined;
     }
+  }
+  /** Applies a written reset to the live room, inside its mailbox. */
+  resetLive(room, id) {
+    this.finishRecovery(room);
+    const old = room.media;
+    this.watch.dropMedia(room, 'room-reset');
+    room.media = null;
+    void this.watch.plex.stop(old);
+    room.position = 0;
+    room.mediaVersion = require('node:crypto').randomUUID();
+    room.initialGate = false;
+    room.state.seekable = false;
+    room.readinessVersion = undefined;
+    room.readinessStartAt = undefined;
+    room.readinessTimedOut = undefined;
+    room.endedVersion = undefined;
+    room.endingOffer = undefined;
+    room.endingMeta = undefined;
+    room.autoplayError = undefined;
+    room.autoQueueError = undefined;
+    room.saveError = undefined;
+    this.apply(room, this.store.get(id));
+    this.watch.coordinator.run(room, { type: 'roles', invalidate: false });
   }
   capture(room, { closing = false, at = this.watch.clock.now() } = {}) {
     const media = room.media;
