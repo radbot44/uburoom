@@ -4823,6 +4823,14 @@ input.watch-switch.watch-switch-small:checked::after {
 .room-content-columns {
   --room-row-height: var(--watch-row-height);
 }
+/* Host-only viewer sync spread, at the end of the roster heading. */
+.room-sync-spread {
+  margin-inline-start: auto;
+  color: var(--muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .room-roster-heading {
   box-sizing: border-box;
   height: var(--room-row-height);

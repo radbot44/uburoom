@@ -723,7 +723,24 @@
         rosterFrame.classList.remove('expanded');
       }
       renderPeople($('room-participants'), state?.participants || [], state || {});
+      renderSyncSpread(state?.syncSpread);
       updateRosterSize();
+    }
+    // Hosts see how far apart the players are. The figure is what players report about
+    // themselves, so the copy says what it leaves out.
+    function renderSyncSpread(spread) {
+      const label = $('room-sync-spread');
+      const known = !!spread && Number.isFinite(spread.p50Ms) && Number.isFinite(spread.p95Ms);
+      label.hidden = !known;
+      if (!known) return;
+      label.textContent = 'Spread ' + spread.p50Ms + ' ms · p95 ' + spread.p95Ms + ' ms';
+      const description =
+        'Viewer sync spread this video: half the time within ' +
+        spread.p50Ms +
+        ' ms, 95% within ' +
+        spread.p95Ms +
+        ' ms. Reported by the players themselves; screen and speaker delay are not included.';
+      label.title = description;
     }
     let openedFromSaved = false,
       draftRecord;

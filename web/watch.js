@@ -657,6 +657,8 @@ function refreshSyncQuality() {
       qualityMeasurementSource: result.metrics?.latestSource,
       qualitySampleCount: result.metrics?.sampleCount,
       measuredPlaybackSeconds: result.metrics?.measuredSeconds,
+      outOfSync50Seconds: result.metrics?.outOfSync50Seconds,
+      outOfSync100Seconds: result.metrics?.outOfSync100Seconds,
       outOfSync250Seconds: result.metrics?.outOfSync250Seconds,
       outOfSync500Seconds: result.metrics?.outOfSync500Seconds,
       automaticCorrectionCount: result.metrics?.automaticCorrectionCount,
@@ -4141,6 +4143,21 @@ function unavailableToasts(items = []) {
   }
   unavailableNotices = ids;
 }
+// A host's report carries the room's viewer spread, at most once a minute while it changes.
+let lastSpreadDiagnostic = { at: 0, samples: undefined };
+function recordSyncSpread(spread) {
+  if (!spread || spread.samples === lastSpreadDiagnostic.samples || Date.now() - lastSpreadDiagnostic.at < 60000)
+    return;
+  diagnostics.record('sync-spread', {
+    spreadP50Ms: spread.p50Ms,
+    spreadP95Ms: spread.p95Ms,
+    spreadWithin50Percent: spread.within50Percent,
+    spreadWithin100Percent: spread.within100Percent,
+    spreadSamples: spread.samples,
+    spreadPlayers: spread.players,
+  });
+  lastSpreadDiagnostic = { at: Date.now(), samples: spread.samples };
+}
 function applyState(next, local = false) {
   if (!local) {
     if (next.id !== selected) return;
@@ -4155,6 +4172,7 @@ function applyState(next, local = false) {
   reconnecting = false;
   sync.transition(next);
   diagnostics.state(next);
+  recordSyncSpread(next.syncSpread);
   const mediaChanged = mediaVersion !== next.mediaVersion || !next.mediaUrl;
   // A new quality of the same converted stream keeps the player and buffer.
   const burned = value => (value?.tracks?.subtitleDelivery === 'burn' ? value.tracks.subtitleId : undefined);

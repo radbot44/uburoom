@@ -428,6 +428,8 @@ module.exports = {
       saveError: room.saveError,
       waitingForHost: !!room.waitingForHost,
       participants,
+      // The room's viewer spread, for the people who run it. Self-reported; see sync quality.
+      syncSpread: owner && room.syncSpread?.summary ? { ...room.syncSpread.summary } : undefined,
       allHosts: !!room.permissions?.allHosts,
       hostPermissions: { ...room.permissions.host },
       participantPermissions: { ...room.permissions.viewer },

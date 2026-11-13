@@ -355,3 +355,50 @@ test('five-minute-old paused measurements are omitted from reports without waiti
   assert.equal(quality.reportableMeasurementFreshnessMs(-1), undefined);
   assert.equal(quality.reportableMeasurementFreshnessMs(NaN), undefined);
 });
+
+test('viewer spread compares confident players of the current video and starts again with the next one', () => {
+  const report = (offsetMs, updatedAt, extra = {}) => ({
+    streamVersion: 's1',
+    syncQuality: {
+      status: 'playing',
+      confidence: 'confident',
+      mediaVersion: 'm1',
+      streamVersion: 's1',
+      updatedAt,
+      health: { offsetMs },
+      ...extra,
+    },
+  });
+  const room = { mediaVersion: 'm1', viewers: new Map() };
+  let tracker;
+  for (let i = 0; i < 20; i++) {
+    const now = i * 5000;
+    room.viewers.set('a', report(10, now));
+    room.viewers.set('b', report(i < 19 ? -20 + i : 80, now));
+    // Not counted: reduced confidence, a stale report, an old stream.
+    room.viewers.set('c', report(900, now, { confidence: 'reduced' }));
+    room.viewers.set('d', report(900, now - 9000));
+    room.viewers.set('e', { ...report(900, now), streamVersion: 's2' });
+    const result = quality.sampleSyncSpread(tracker, room, now);
+    tracker = result.tracker;
+    assert.equal(result.sampled, true);
+    assert.equal(quality.sampleSyncSpread(tracker, room, now + 1000).sampled, false, 'one sample per interval');
+    assert.equal(tracker.summary === undefined, i < quality.SPREAD_MIN_SAMPLES - 1);
+  }
+  // Spreads 30, 29 … 12 and one of 70.
+  assert.deepEqual(tracker.summary, {
+    p50Ms: 22,
+    p95Ms: 32,
+    within50Percent: 95,
+    within100Percent: 100,
+    samples: 20,
+    sampleIntervalMs: 5000,
+    players: 2,
+  });
+  room.viewers.delete('b');
+  assert.equal(quality.sampleSyncSpread(tracker, room, 200000).sampled, false, 'one player has no spread');
+  room.mediaVersion = 'm2';
+  const next = quality.sampleSyncSpread(tracker, room, 205000);
+  assert.equal(next.finished.p95Ms, 32, 'the finished video keeps its figure');
+  assert.equal(next.tracker.summary, undefined);
+});

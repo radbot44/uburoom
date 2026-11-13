@@ -340,6 +340,8 @@ export function createQualityApi() {
     function metricsAt(at) {
       const cutoff = at - WINDOW_MS;
       let measuredMs = 0,
+        out50Ms = 0,
+        out100Ms = 0,
         out250Ms = 0,
         out500Ms = 0,
         rateAdjustedMs = 0,
@@ -359,6 +361,8 @@ export function createQualityApi() {
         measuredMs += duration;
         if (slot.source === 'position') positionMs += duration;
         else presentationMs += duration;
+        if (slot.errorMs > 50) out50Ms += duration;
+        if (slot.errorMs > 100) out100Ms += duration;
         if (slot.errorMs > 250) out250Ms += duration;
         if (slot.errorMs > 500) out500Ms += duration;
         const rateDelta = Math.abs(slot.playbackRate - 1);
@@ -387,6 +391,9 @@ export function createQualityApi() {
         measuredSeconds: measuredMs / 1000,
         presentationMeasuredSeconds: presentationMs / 1000,
         positionMeasuredSeconds: positionMs / 1000,
+        // 50 and 100 ms are for reading against the targets; the score uses 250 and 500 only.
+        outOfSync50Seconds: out50Ms / 1000,
+        outOfSync100Seconds: out100Ms / 1000,
         outOfSync250Seconds: out250Ms / 1000,
         outOfSync500Seconds: out500Ms / 1000,
         automaticCorrectionCount: autoCount,
@@ -717,6 +724,91 @@ export function createQualityApi() {
     return participants;
   }
 
+  // Viewer spread: how far apart the room's players are, from each player's own
+  // reported offset against the shared timeline. Self-reported, so it cannot see
+  // screen or speaker delay. One sample per interval while two or more players
+  // report confident playback; the summary covers the current video, newest
+  // SPREAD_MAX_SAMPLES samples.
+  const SPREAD_SAMPLE_INTERVAL_MS = 5000,
+    SPREAD_REPORT_MAX_AGE_MS = 8000,
+    SPREAD_MAX_SAMPLES = 1440,
+    SPREAD_MIN_SAMPLES = 12;
+
+  function quantileOf(sorted, q) {
+    if (!sorted.length) return undefined;
+    const at = (sorted.length - 1) * q,
+      low = Math.floor(at),
+      high = Math.ceil(at);
+    return sorted[low] + (sorted[high] - sorted[low]) * (at - low);
+  }
+
+  /** @param {number[]} samples */
+  function summarizeSyncSpread(samples) {
+    if (samples.length < SPREAD_MIN_SAMPLES) return undefined;
+    const sorted = [...samples].sort((a, b) => a - b),
+      share = limit => Math.round((100 * sorted.filter(value => value <= limit).length) / sorted.length);
+    return {
+      p50Ms: Math.round(quantileOf(sorted, 0.5)),
+      p95Ms: Math.round(quantileOf(sorted, 0.95)),
+      within50Percent: share(50),
+      within100Percent: share(100),
+      samples: sorted.length,
+      sampleIntervalMs: SPREAD_SAMPLE_INTERVAL_MS,
+    };
+  }
+
+  /**
+   * Offsets of the room's players that count toward the spread right now.
+   * @param {any} room
+   * @returns {number[]}
+   */
+  function spreadOffsets(room, now) {
+    const offsets = [];
+    for (const viewer of room.viewers.values()) {
+      const quality = viewer.syncQuality,
+        offset = quality?.health?.offsetMs;
+      const socketOpen = viewer.watchSocket ? viewer.watchSocket.readyState === 1 : viewer.connected !== false;
+      if (
+        socketOpen &&
+        quality?.status === 'playing' &&
+        quality.confidence === 'confident' &&
+        quality.mediaVersion === room.mediaVersion &&
+        quality.streamVersion === viewer.streamVersion &&
+        finite(quality.updatedAt) &&
+        now - quality.updatedAt <= SPREAD_REPORT_MAX_AGE_MS &&
+        finite(offset)
+      )
+        offsets.push(offset);
+    }
+    return offsets;
+  }
+
+  /**
+   * Take a spread sample for the room if one is due. Pure apart from the tracker it returns.
+   * @param {{mediaVersion?: string, samples: number[], taken: number, lastAt?: number, summary?: any} | undefined} tracker
+   * @param {any} room with `viewers` (each with `syncQuality`) and `mediaVersion`
+   * @returns {{tracker: {mediaVersion?: string, samples: number[], taken: number, lastAt?: number, summary?: any},
+   *   sampled: boolean, finished?: any}} `finished` is the previous video's summary when the video changed
+   */
+  function sampleSyncSpread(tracker, room, now = Date.now()) {
+    let finished;
+    if (!tracker || tracker.mediaVersion !== room.mediaVersion) {
+      finished = tracker?.summary;
+      tracker = { mediaVersion: room.mediaVersion, samples: [], taken: 0, lastAt: undefined, summary: undefined };
+    }
+    if (finite(tracker.lastAt) && now - tracker.lastAt < SPREAD_SAMPLE_INTERVAL_MS)
+      return { tracker, sampled: false, finished };
+    const offsets = spreadOffsets(room, now);
+    if (offsets.length < 2) return { tracker, sampled: false, finished };
+    tracker.samples.push(Math.max(...offsets) - Math.min(...offsets));
+    if (tracker.samples.length > SPREAD_MAX_SAMPLES) tracker.samples.shift();
+    tracker.taken++;
+    tracker.lastAt = now;
+    tracker.summary = summarizeSyncSpread(tracker.samples);
+    if (tracker.summary) tracker.summary.players = offsets.length;
+    return { tracker, sampled: true, finished };
+  }
+
   return {
     WINDOW_MS,
     REFRESH_INTERVAL_MS,
@@ -741,6 +833,10 @@ export function createQualityApi() {
     validateSyncQualityMessage,
     reduceViewerSyncQuality,
     aggregateParticipantSyncQuality,
+    SPREAD_SAMPLE_INTERVAL_MS,
+    SPREAD_MIN_SAMPLES,
+    summarizeSyncSpread,
+    sampleSyncSpread,
   };
 }
 
@@ -768,4 +864,8 @@ export const {
   validateSyncQualityMessage,
   reduceViewerSyncQuality,
   aggregateParticipantSyncQuality,
+  SPREAD_SAMPLE_INTERVAL_MS,
+  SPREAD_MIN_SAMPLES,
+  summarizeSyncSpread,
+  sampleSyncSpread,
 } = createQualityApi();

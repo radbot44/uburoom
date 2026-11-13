@@ -362,6 +362,10 @@ test(
     await host.call(path + '?viewer=' + hostViewer);
     assert.equal(hostPresence.syncQuality.score, 1, 'the current viewer retains its ephemeral score');
     assert.equal(Object.hasOwn(room, 'syncQuality'), false, 'the score is separate from durable room state');
+    // The viewer spread is for the people who run the room.
+    room.syncSpread = { mediaVersion, samples: [], taken: 12, summary: { p50Ms: 5, p95Ms: 9 } };
+    assert.deepEqual((await host.call(path + '?viewer=' + hostViewer)).value.syncSpread, { p50Ms: 5, p95Ms: 9 });
+    assert.equal(Object.hasOwn((await guest.call(path + '?viewer=' + guestViewer)).value, 'syncSpread'), false);
     // Telemetry already in flight when a viewer leaves must not cost the socket.
     host.ws.send(
       JSON.stringify({

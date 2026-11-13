@@ -61,6 +61,10 @@ export {
   validateSyncQualityMessage,
   reduceViewerSyncQuality,
   aggregateParticipantSyncQuality,
+  SPREAD_SAMPLE_INTERVAL_MS,
+  SPREAD_MIN_SAMPLES,
+  summarizeSyncSpread,
+  sampleSyncSpread,
 } from './quality.mjs';
 
 export {

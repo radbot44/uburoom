@@ -3,7 +3,12 @@
 const { WebSocketServer } = require('ws');
 const { clientAddress } = require('./plex-delivery');
 const { runOperation, waitFor, commitOperation } = require('./operation');
-const { validateSyncQualityMessage, reduceViewerSyncQuality, createSubscriptionBroker } = require('../shared/sync');
+const {
+  validateSyncQualityMessage,
+  reduceViewerSyncQuality,
+  sampleSyncSpread,
+  createSubscriptionBroker,
+} = require('../shared/sync');
 const { PROTOCOL_VERSION, RESYNC_MS, CALLS, clientMessageError } = require('../shared/wire-protocol');
 /** @typedef {import('ws').WebSocket & {watchKick?: (roomId: string) => void, watchRtts?: Array<{at:number,ms:number}>}} WatchSocket */
 /** @typedef {{roomId: string, viewerId: string, sentRoom: number, stamp: string | undefined, viewerVersion: number}} Subscription */
@@ -325,6 +330,19 @@ function watchSockets({
     client.lastSyncQualityAt = now;
     client.lastSyncQualityStatus = message.status;
     client.lastSyncQualityConfidence = message.confidence;
+    // The viewer spread rides on the same publications as health cards: it is sampled
+    // here and shown at the next one, never published on its own.
+    const spread = sampleSyncSpread(room.syncSpread, room, now);
+    room.syncSpread = spread.tracker;
+    const logSpread = (summary, label) =>
+      config.logger?.info(
+        'Sync',
+        `room=${room.roomId} ${label} viewer spread p50=${summary.p50Ms}ms p95=${summary.p95Ms}ms ` +
+          `within50=${summary.within50Percent}% within100=${summary.within100Percent}% samples=${summary.samples}`,
+      );
+    if (spread.finished) logSpread(spread.finished, 'video');
+    else if (spread.sampled && spread.tracker.summary && spread.tracker.taken % 120 === 0)
+      logSpread(spread.tracker.summary, 'running');
     // Open health cards stay current without republishing the room on every report.
     const healthDue = !!next.health && now - (room.healthPublishedAt || 0) >= 10000;
     if (displayChanged || healthDue) {

@@ -68,6 +68,8 @@ The server sends state without being asked, and only when it changed.
 
 A tab's view is its two lanes together: `mergeView(room.state, viewer.state)`. The `viewer` lane names the `mediaVersion` its stream belongs to; show the lanes together only when both name the same one (`lanesAgree`), so a new video is never paired with the previous video's stream. A lane message replaces that lane whole. Drop one whose `version` is lower than the lane's current version.
 
+For people who may change the room's settings, the room state also carries `syncSpread` once a video has a minute of samples: `p50Ms`, `p95Ms`, `within50Percent`, `within100Percent`, `samples`, `sampleIntervalMs` and `players` (how many players the latest sample compared). It is the spread between the players' own reported offsets ([sync core](sync-core.md#sharedsyncqualitymjs)), so it leaves out screen and speaker delay. It is never pushed on its own: a new figure goes out with the room's next publication (sync reports republish the room at most every 10 s), so an idle room stays silent.
+
 Position is never pushed as time passes: a client derives it from the timeline (`startAt`, `pauseAt`, `state.position`, `serverNow`) and its clock exchanges.
 
 Every `resyncMs` the server sends each lane again, changed or not, as a safety net. A client can ask for the same with `resync`.
