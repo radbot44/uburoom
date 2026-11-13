@@ -2285,9 +2285,10 @@ class Watch {
       this.rooms.get(id) === room &&
       room.mediaVersion === version &&
       room.epoch === epoch &&
-      (room.playbackIntent || 0) === intent &&
+      // A play or pause cancels an automatic advance, but not a video someone chose.
       (!countdown ||
-        (room.autoplayCountdown === countdown &&
+        ((room.playbackIntent || 0) === intent &&
+          room.autoplayCountdown === countdown &&
           room.viewers.has(countdown.viewerId) &&
           !room.manualPaused &&
           this.roomState.store.get(id).autoplay &&

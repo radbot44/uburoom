@@ -524,138 +524,12 @@
       "step": "Plex answers; alice and carol hear back",
       "result": {
         "load": {
-          "ok": false,
-          "outcome": "unavailable",
-          "message": "Room changed or command expired."
+          "ok": true,
+          "outcome": "applied"
         },
         "carolJoin": {
           "ok": true
         }
-      },
-      "views": {
-        "alice": {
-          "timeline": {
-            "paused": false,
-            "position": 7.25,
-            "duration": 60,
-            "startAt": 8400,
-            "pauseAt": null
-          }
-        },
-        "bob": {
-          "timeline": {
-            "paused": false,
-            "position": 7.25,
-            "duration": 60,
-            "startAt": 8400,
-            "pauseAt": null
-          }
-        },
-        "carol": {
-          "timeline": {
-            "paused": false,
-            "position": 7.25,
-            "duration": 60,
-            "startAt": 8400,
-            "pauseAt": null
-          }
-        }
-      }
-    },
-    {
-      "at": 15000,
-      "step": "two seconds pass",
-      "views": {
-        "alice": {
-          "timeline": {
-            "paused": false,
-            "position": 9.25,
-            "duration": 60,
-            "startAt": 8400,
-            "pauseAt": null
-          }
-        },
-        "bob": {
-          "timeline": {
-            "paused": false,
-            "position": 9.25,
-            "duration": 60,
-            "startAt": 8400,
-            "pauseAt": null
-          }
-        },
-        "carol": {
-          "timeline": {
-            "paused": false,
-            "position": 9.25,
-            "duration": 60,
-            "startAt": 8400,
-            "pauseAt": null
-          }
-        }
-      }
-    },
-    {
-      "at": 16000,
-      "step": "alice queues the video",
-      "result": {
-        "ok": true,
-        "outcome": "applied"
-      },
-      "views": {
-        "alice": {
-          "timeline": {
-            "paused": false,
-            "position": 10.25,
-            "duration": 60,
-            "startAt": 8400,
-            "pauseAt": null
-          },
-          "queue": {
-            "current": "uburoom synchronization test",
-            "next": "Fixture movie",
-            "pending": 1,
-            "history": 0
-          }
-        },
-        "bob": {
-          "timeline": {
-            "paused": false,
-            "position": 10.25,
-            "duration": 60,
-            "startAt": 8400,
-            "pauseAt": null
-          },
-          "queue": {
-            "current": "uburoom synchronization test",
-            "next": "Fixture movie",
-            "pending": 1,
-            "history": 0
-          }
-        },
-        "carol": {
-          "timeline": {
-            "paused": false,
-            "position": 10.25,
-            "duration": 60,
-            "startAt": 8400,
-            "pauseAt": null
-          },
-          "queue": {
-            "current": "uburoom synchronization test",
-            "next": "Fixture movie",
-            "pending": 1,
-            "history": 0
-          }
-        }
-      }
-    },
-    {
-      "at": 17000,
-      "step": "alice loads the Plex item again",
-      "result": {
-        "ok": true,
-        "outcome": "applied"
       },
       "views": {
         "alice": {
@@ -687,8 +561,8 @@
           },
           "queue": {
             "current": "Fixture movie",
-            "next": "Fixture movie",
-            "pending": 1,
+            "next": null,
+            "pending": 0,
             "history": 1
           }
         },
@@ -721,8 +595,8 @@
           },
           "queue": {
             "current": "Fixture movie",
-            "next": "Fixture movie",
-            "pending": 1,
+            "next": null,
+            "pending": 0,
             "history": 1
           }
         },
@@ -755,9 +629,185 @@
           },
           "queue": {
             "current": "Fixture movie",
+            "next": null,
+            "pending": 0,
+            "history": 1
+          }
+        }
+      }
+    },
+    {
+      "at": 15000,
+      "step": "two seconds pass",
+      "views": {
+        "alice": {
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#2",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": [
+                "alice",
+                "bob",
+                "carol"
+              ]
+            }
+          }
+        },
+        "bob": {
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#2",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": [
+                "alice",
+                "bob",
+                "carol"
+              ]
+            }
+          }
+        },
+        "carol": {
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#2",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": [
+                "alice",
+                "bob",
+                "carol"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "at": 16000,
+      "step": "alice queues the video",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "queue": {
+            "current": "Fixture movie",
             "next": "Fixture movie",
             "pending": 1,
             "history": 1
+          }
+        },
+        "bob": {
+          "queue": {
+            "current": "Fixture movie",
+            "next": "Fixture movie",
+            "pending": 1,
+            "history": 1
+          }
+        },
+        "carol": {
+          "queue": {
+            "current": "Fixture movie",
+            "next": "Fixture movie",
+            "pending": 1,
+            "history": 1
+          }
+        }
+      }
+    },
+    {
+      "at": 17000,
+      "step": "alice loads the Plex item again",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "media": {
+            "id": "1",
+            "title": "Fixture movie",
+            "version": "media#3"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#7",
+            "granted": true
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#3",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "Fixture movie",
+            "next": "Fixture movie",
+            "pending": 1,
+            "history": 2
+          }
+        },
+        "bob": {
+          "media": {
+            "id": "1",
+            "title": "Fixture movie",
+            "version": "media#3"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#8",
+            "granted": true
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#3",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "Fixture movie",
+            "next": "Fixture movie",
+            "pending": 1,
+            "history": 2
+          }
+        },
+        "carol": {
+          "media": {
+            "id": "1",
+            "title": "Fixture movie",
+            "version": "media#3"
+          },
+          "stream": {
+            "format": "file",
+            "version": "stream#9",
+            "granted": true
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#3",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "Fixture movie",
+            "next": "Fixture movie",
+            "pending": 1,
+            "history": 2
           }
         }
       }
