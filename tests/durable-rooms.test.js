@@ -879,35 +879,32 @@ async function command(client, id, viewer, action, args) {
   return applied;
 }
 
-test(
-  'reopen returns an authorized joined snapshot in one operation and validates viewer input before opening',
-  tls,
-  async t => {
-    const f = await fixture(t),
-      creator = await f.login('host'),
-      guest = await f.login('guest');
-    const id = (await creator.call('/api/watch/rooms', { name: 'Atomic reopen', keepEmpty: true })).body.id;
-    const first = (await creator.call('/api/watch/rooms/' + id + '?viewer=' + randomUUID())).body;
-    await creator.call('/api/watch/rooms/' + id + '/close', { epoch: first.epoch });
-    assert.equal((await creator.call('/api/watch/rooms/' + id + '/reopen', { viewerId: 'invalid' })).status, 400);
-    assert.equal(f.app.watch.rooms.has(id), false, 'Invalid viewer cannot open the room');
-    assert.equal((await guest.call('/api/watch/rooms/' + id + '/reopen', { viewerId: randomUUID() })).status, 403);
-    const viewer = randomUUID(),
-      opened = await creator.call('/api/watch/rooms/' + id + '/reopen', {
-        viewerId: viewer,
-        quality: 'direct',
-        subtitles: 'browser',
-      });
-    assert.equal(opened.status, 200);
-    assert.equal(opened.body.id, id);
-    assert.equal(opened.body.state.id, id);
-    assert.equal(opened.body.state.roomName, 'Atomic reopen');
-    assert.ok(
-      f.app.watch.rooms.get(id).viewers.has(viewer),
-      'Same operation joins the viewer and creates its authorized state',
-    );
-  },
-);
+test('reopen is authorized, and the join that follows it admits only a valid viewer', tls, async t => {
+  const f = await fixture(t),
+    creator = await f.login('host'),
+    guest = await f.login('guest');
+  const id = (await creator.call('/api/watch/rooms', { name: 'Atomic reopen', keepEmpty: true })).body.id;
+  const first = (await creator.call('/api/watch/rooms/' + id + '?viewer=' + randomUUID())).body;
+  await creator.call('/api/watch/rooms/' + id + '/close', { epoch: first.epoch });
+  assert.equal((await guest.call('/api/watch/rooms/' + id + '/reopen', { viewerId: randomUUID() })).status, 403);
+  assert.equal(f.app.watch.rooms.has(id), false, 'Someone who may not reopen the room cannot open it');
+  assert.equal((await creator.call('/api/watch/rooms/' + id + '/reopen', { viewerId: 'invalid' })).status, 400);
+  assert.equal(f.app.watch.rooms.get(id).viewers.size, 0, 'An invalid viewer is never admitted');
+  const viewer = randomUUID(),
+    opened = await creator.call('/api/watch/rooms/' + id + '/reopen', {
+      viewerId: viewer,
+      quality: 'direct',
+      subtitles: 'browser',
+    });
+  assert.equal(opened.status, 200);
+  assert.equal(opened.body.id, id);
+  assert.equal(opened.body.state.id, id);
+  assert.equal(opened.body.state.roomName, 'Atomic reopen');
+  assert.ok(
+    f.app.watch.rooms.get(id).viewers.has(viewer),
+    'The join that follows admits the viewer and returns its authorized state',
+  );
+});
 
 test(
   'authenticated durable rooms close/reopen and survive a server restart with stable roles, paused progress and fresh epochs',

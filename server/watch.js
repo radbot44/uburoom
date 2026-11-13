@@ -65,7 +65,14 @@ class Watch extends WatchParts {
       hold: room => !!room.transition?.commit,
       extensions: this.roomExtensions(),
       onEffect: (room, effect, removed) => this.roomEffect(room, effect, removed),
-      onPublish: (room, change) => this.onPublish?.(room, change),
+      onPublish: (room, change) => this.announce(room, change),
+      // A room event reaches the lobby too when it changed what the lobby lists.
+      onChange: room => {
+        const stamp = this.lobbyStamp(room),
+          lobby = stamp !== this.lobbyStamps.get(room);
+        this.lobbyStamps.set(room, stamp);
+        this.changed(room, { lobby });
+      },
       onError: error =>
         this.hub?.config?.logger?.warn(
           'Room',
@@ -80,8 +87,11 @@ class Watch extends WatchParts {
       const hadMedia = Boolean(roomId && this.rooms.get(roomId)?.media);
       return action => this.published(roomId, action, hadMedia);
     };
-    /** @type {WeakMap<Room, number>} */
-    this.stateSequences = new WeakMap();
+    /** @type {WeakMap<Room, number>} Each room's shared-lane version (roomVersion). */
+    this.roomVersions = new WeakMap();
+    this.publicationCount = 0;
+    /** @type {WeakMap<Room, string>} What the lobby last listed for each room (lobbyStamp). */
+    this.lobbyStamps = new WeakMap();
     this.reporting = new PlexReporting({
       config: hub?.config,
       hub,
@@ -207,16 +217,21 @@ class Watch extends WatchParts {
     return viewer;
   }
   /** A tab's connection closed. A planned close leaves now; any other leaves when its presence lapses. */
-  disconnected(socket, planned) {
-    for (const room of [...this.rooms.values()])
-      for (const [viewerId, viewer] of [...room.viewers])
-        if (viewer.watchSocket === socket) this.coordinator.run(room, { type: 'disconnect', viewerId, planned });
+  disconnected(socket, planned, roomId, viewerId) {
+    const room = this.rooms.get(roomId);
+    if (room?.viewers.get(viewerId)?.watchSocket === socket)
+      this.coordinator.run(room, { type: 'disconnect', viewerId, planned });
   }
-  /** Presence and grant renewal for the tabs on one connection (its clock exchanges and pongs). */
-  present(socket) {
-    for (const room of [...this.rooms.values()])
-      for (const viewer of [...room.viewers.values()])
-        if (viewer.watchSocket === socket) this.touch(room, viewer, socket.watchRtts);
+  /**
+   * Presence for one tab from its own connection (its clock exchanges and pongs).
+   * Returns false once the connection no longer holds that tab.
+   */
+  present(socket, roomId, viewerId) {
+    const room = this.rooms.get(roomId),
+      viewer = room?.viewers.get(viewerId);
+    if (viewer?.watchSocket !== socket) return false;
+    this.touch(room, viewer, socket.watchRtts);
+    return true;
   }
 
   /** Closes a room: an event in its mailbox, whose effect is removeRoom. */
@@ -274,6 +289,7 @@ class Watch extends WatchParts {
     this.dropPreload(room);
     this.dropPreload(room, room.adoptable);
     this.hub?.config?.logger?.info('Room', `Room closed (${id})`);
+    this.changed(undefined, { lobby: true });
     return saved.finally(() => this.drainMedia(room));
   }
   close() {

@@ -454,7 +454,7 @@
       sourceRows.replaceChildren();
       sourceNotice.textContent = 'Loading…';
       try {
-        const data = await request('/api/watch/library?' + new URLSearchParams(query));
+        const data = await request('library.browse', { args: query });
         if (ticket !== sourceTicket || roomId !== getSettingsState()?.id || sourcePicker.hidden) return;
         sourceNotice.textContent = data.items.length ? '' : 'No sources available.';
         for (const item of data.items) {
@@ -502,11 +502,8 @@
         let title;
         if (!scope.id) title = state.queueSummary?.current?.grandparentTitle;
         else if (scope.type === 'library')
-          title = (await request('/api/watch/library')).items.find(item => item.id === scope.id)?.title;
-        else
-          title = (
-            await request('/api/watch/library/item?' + new URLSearchParams({ item: scope.id, type: scope.type }))
-          ).item.title;
+          title = (await request('library.browse')).items.find(item => item.id === scope.id)?.title;
+        else title = (await request('library.item', { args: { item: scope.id, type: scope.type } })).item.title;
         if (ticket !== autoTicket || getSettingsState()?.id !== state.id || draftScope !== scope) return;
         autoSource.textContent = title || 'Choose a source';
         if (title) sourceNames.set(key, title);
@@ -1187,7 +1184,7 @@
           const roomId = getState()?.id,
             revision = lastFetchedRevision;
           try {
-            const page = await request('/api/watch/rooms/' + roomId + '/queue?limit=100&offset=' + items.length);
+            const page = await request('room.queue', { roomId, args: { limit: 100, offset: items.length } });
             if (
               getState()?.id !== roomId ||
               lastFetchedRevision !== revision ||
@@ -1293,7 +1290,7 @@
               revision = lastFetchedRevision;
             older.disabled = true;
             try {
-              const page = await request('/api/watch/rooms/' + roomId + '/history?limit=100&offset=' + items.length);
+              const page = await request('room.history', { roomId, args: { limit: 100, offset: items.length } });
               if (
                 getState()?.id !== roomId ||
                 lastFetchedRevision !== revision ||
@@ -1401,8 +1398,8 @@
           if (!force && lastFetchedRoomId === roomId && lastFetchedRevision >= rev) break;
           try {
             const [qRes, hRes] = await Promise.all([
-              request('/api/watch/rooms/' + roomId + '/queue?limit=100'),
-              request('/api/watch/rooms/' + roomId + '/history?limit=100'),
+              request('room.queue', { roomId, args: { limit: 100 } }),
+              request('room.history', { roomId, args: { limit: 100 } }),
             ]);
             if (getState()?.id !== roomId) {
               refetchNeeded = true;
@@ -1452,10 +1449,9 @@
       if (!state?.id || !state.durable) throw new Error('Durable room required');
       const roomId = state.id;
       const rev = queueRevision(state);
-      const res = await request('/api/watch/rooms/' + roomId + '/queue', {
-        action: 'add',
-        item,
-        expectedRevision: rev,
+      const res = await request('room.queue.command', {
+        roomId,
+        args: { action: 'add', item, expectedRevision: rev },
       });
       if (trigger && root.uburoomPopover) {
         root.uburoomPopover.show(trigger, { text: 'Added ' + (item.title || 'item') + ' to queue.', state: 'success' });
@@ -1469,8 +1465,8 @@
       if (!state?.id || !state.durable) throw new Error('Durable room required');
       const expectedRevision = queueRevision(state);
       const result = await request(
-        '/api/watch/rooms/' + state.id + '/queue',
-        { action, ...args, expectedRevision },
+        'room.queue.command',
+        { roomId: state.id, args: { action, ...args, expectedRevision } },
         ['bulk', 'auto', 'auto.skip', 'auto.pin', 'auto.playNow', 'playEntry', 'skipTo', 'remove'].includes(action)
           ? { timeoutMs: 35000 }
           : {},
@@ -1482,11 +1478,9 @@
     async function moveItem(entryId, targetRank) {
       const state = getState();
       if (!state?.id) return;
-      await request('/api/watch/rooms/' + state.id + '/queue', {
-        action: 'move',
-        entryId,
-        targetRank,
-        expectedRevision: queueRevision(state),
+      await request('room.queue.command', {
+        roomId: state.id,
+        args: { action: 'move', entryId, targetRank, expectedRevision: queueRevision(state) },
       });
       await changed();
       await fetchData(true);
@@ -1496,10 +1490,9 @@
       const state = getState();
       if (!state?.id) return;
       const rev = queueRevision(state);
-      await request('/api/watch/rooms/' + state.id + '/queue', {
-        action: 'remove',
-        entryId,
-        expectedRevision: rev,
+      await request('room.queue.command', {
+        roomId: state.id,
+        args: { action: 'remove', entryId, expectedRevision: rev },
       });
       await fetchData(true);
     }
@@ -1516,10 +1509,7 @@
       const state = getState();
       if (!state?.id) return;
       const rev = queueRevision(state);
-      await request('/api/watch/rooms/' + state.id + '/queue', {
-        action: 'clear',
-        expectedRevision: rev,
-      });
+      await request('room.queue.command', { roomId: state.id, args: { action: 'clear', expectedRevision: rev } });
       await fetchData(true);
     }
 
@@ -1534,12 +1524,15 @@
       const state = getState();
       if (!state?.id) return;
       await request(
-        '/api/watch/rooms/' + state.id + '/history',
+        'room.history.command',
         {
-          action: restore ? 'goBack' : 'replay',
-          entryId,
-          resume,
-          expectedRevision: queueRevision(state),
+          roomId: state.id,
+          args: {
+            action: restore ? 'goBack' : 'replay',
+            entryId,
+            resume,
+            expectedRevision: queueRevision(state),
+          },
         },
         { timeoutMs: 35000 },
       );
@@ -1550,9 +1543,7 @@
     async function clearHistory() {
       const state = getState();
       if (!state?.id) return;
-      await request('/api/watch/rooms/' + state.id + '/history', {
-        action: 'clear',
-      });
+      await request('room.history.command', { roomId: state.id, args: { action: 'clear' } });
       await fetchData(true);
       await changed();
     }

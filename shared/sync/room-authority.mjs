@@ -996,6 +996,26 @@ export function nextDeadline(room, now, monoNow) {
 // ---------------------------------------------------------------------------
 
 const EVENT_ACTIONS = Object.freeze({ join: 'room.view', ready: 'room.view' });
+// What a timer's lifecycle review can move that a subscriber would see: the timeline,
+// the readiness gate, who is in the room and who hosts it.
+const visibleStamp = room =>
+  [
+    room.revision,
+    room.epoch,
+    room.closed,
+    room.frozen,
+    room.hostViewerId,
+    room.waitingForHost,
+    room.initialGate,
+    room.readinessTimedOut,
+    room.manualPaused,
+    room.startAt,
+    room.pauseAt,
+    room.state?.paused,
+    room.recovery ? 1 : 0,
+    room.viewers.size,
+    room.disconnectedViewers.size,
+  ].join('|');
 // The mailbox entry for a host step (see `step` below); never a reducer event.
 const STEP = Symbol('step');
 // The mailbox entry for a publication (see `publish` below).
@@ -1018,6 +1038,7 @@ const PUBLISH = Symbol('publish');
  *   onPersist?: (state: any, meta: {event: string, reason: string, revision: number}) => Promise<void>,
  *   onEffect?: (room: any, effect: {type: string} & Record<string, any>, removed: Map<string, any>) => void,
  *   onPublish?: (room: any, change: any) => void,
+ *   onChange?: (room: any, event: string) => void,
  *   onError?: (error: unknown) => void,
  *   hold?: (room: any) => boolean,
  *   checkpointMs?: number,
@@ -1092,7 +1113,22 @@ export function createRoomCoordinator(options) {
     if (!mailbox) mailboxes.set(room, (mailbox = { busy: false, queue: [] }));
     return mailbox;
   }
-  function finish(room, result) {
+  // Tells the host that an event changed what the room's subscribers see. Presence
+  // (`touch`) never does; a timer does only when its review moved something.
+  function changed(room, type) {
+    try {
+      options.onChange?.(room, type);
+    } catch (error) {
+      report(error);
+    }
+  }
+  function finish(room, result, type) {
+    const quiet =
+      !options.onChange ||
+      type === 'touch' ||
+      (type === 'timer' &&
+        result.effects.every(effect => effect.type === 'checkpoint') &&
+        visibleStamp(room) === visibleStamp(result.state));
     const removed = commitRoomState(room, result.state, keys);
     for (const effect of result.effects)
       try {
@@ -1101,6 +1137,7 @@ export function createRoomCoordinator(options) {
         report(error);
       }
     arm(room);
+    if (!quiet) changed(room, type);
     return result;
   }
   // Reduces one event; returns its result, or a promise of it while persisting.
@@ -1113,6 +1150,7 @@ export function createRoomCoordinator(options) {
       const value = event.step(room);
       if (typeof value?.then === 'function') throw new TypeError('A room step must not wait');
       arm(room);
+      changed(room, 'step');
       return { value, effects: [] };
     }
     const action = event.type === 'command' ? event.command?.action : EVENT_ACTIONS[event.type];
@@ -1139,14 +1177,14 @@ export function createRoomCoordinator(options) {
       hold: !!options.hold?.(room),
       checkpointMs: options.checkpointMs,
     });
-    if (!result.persist || !options.onPersist) return finish(room, result);
+    if (!result.persist || !options.onPersist) return finish(room, result, event.type);
     const persisting = options.onPersist(cloneRoomState(result.state, keys), {
       event: event.type,
       reason: result.persist,
       revision: result.state.revision,
     });
     return Promise.resolve(persisting).then(
-      () => (rooms.get(room.roomId) === room ? finish(room, result) : refused('Room unavailable')),
+      () => (rooms.get(room.roomId) === room ? finish(room, result, event.type) : refused('Room unavailable')),
       error => ({ error, effects: [] }),
     );
   }

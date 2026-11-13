@@ -181,23 +181,21 @@ test('player uses the mapped server target and tolerates clock loss without drif
   await ctx.synchronize();
   assert.equal(ctx.video.currentTime, 10.3, 'fresh clock permits meaningful catch-up');
 });
-test('late room polls and failures cannot overwrite a newer authorized state', async () => {
+test('late rejoins and failures cannot overwrite a newer authorized state', async () => {
   const source = fs.readFileSync(require('node:path').join(__dirname, '../web/watch.js'), 'utf8'),
     pending = [],
     applied = [];
   const ctx = {
     selected: 'room',
     stateRequestSequence: 0,
-    stateTransportSequence: 0,
     Date,
     performance,
     viewerId: 'viewer',
     preferredQuality: 'direct',
     URLSearchParams,
-    viewerPreferences: () => ({ viewer: 'viewer', quality: 'direct' }),
     playbackClock: { begin: () => ({ sent: performance.now() }), add() {}, read: () => ({}) },
     diagnostics: { record() {} },
-    api: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+    roomLink: { join: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) },
     observationClock: { update: () => 0 },
     observationClockRevision: 0,
     playbackError: '',
@@ -209,18 +207,18 @@ test('late room polls and failures cannot overwrite a newer authorized state', a
     },
   };
   vm.runInNewContext(
-    source.slice(source.indexOf('async function refreshState('), source.indexOf('async function selectRoom(')),
+    source.slice(source.indexOf('async function rejoinRoom('), source.indexOf('async function selectRoom(')),
     ctx,
   );
-  const first = ctx.refreshState(),
-    second = ctx.refreshState();
+  const first = ctx.rejoinRoom(),
+    second = ctx.rejoinRoom();
   pending[1].resolve({ marker: 'new', serverNow: Date.now() });
   await second;
   pending[0].resolve({ marker: 'old', serverNow: Date.now() });
   await first;
   assert.deepEqual(applied, ['new']);
-  const third = ctx.refreshState(),
-    fourth = ctx.refreshState();
+  const third = ctx.rejoinRoom(),
+    fourth = ctx.rejoinRoom();
   pending[3].resolve({ marker: 'newest', serverNow: Date.now() });
   await fourth;
   pending[2].reject(new Error('old failure'));
@@ -244,9 +242,11 @@ test('command deadlines use fresh mapped time and never queue controls without a
     diagnosticSample() {},
     diagnostics: { record() {} },
     fail() {},
-    api: async (path, data) => {
-      sent.push({ path, data });
-      return { status: 'applied' };
+    roomLink: {
+      command: async (id, data) => {
+        sent.push({ id, data });
+        return { status: 'applied' };
+      },
     },
     refreshState: async () => {},
     renderLibrary() {},
@@ -273,7 +273,7 @@ test('command deadlines use fresh mapped time and never queue controls without a
   ctx.volumePending = false;
   ctx.savePlayerPreferences = () => {};
   const releases = [];
-  ctx.api = () => new Promise(resolve => releases.push(resolve));
+  ctx.roomLink.command = () => new Promise(resolve => releases.push(resolve));
   const volume = ctx.execute({ action: 'media.volume.set', args: { percent: 17 } });
   assert.equal(ctx.pending, false, 'personal volume does not lock unrelated controls');
   const shared = ctx.execute({ action: 'media.pause' });
@@ -308,7 +308,7 @@ test('ordinary unlocked resume does not play a probe before its shared deadline'
     diagnosticSample() {},
     diagnostics: { record() {} },
     fail() {},
-    api: async () => ({ status: 'applied' }),
+    roomLink: { command: async () => ({ status: 'applied' }) },
     refreshState: async () => {},
     renderLibrary() {},
     renderVisibility() {},

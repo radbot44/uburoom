@@ -1,6 +1,7 @@
 'use strict';
 const https = require('node:https');
 const { WebSocket } = require('ws');
+const { requestByPath, hello } = require('./wire-paths');
 
 // Integration fixtures retain authenticated sockets, just like a browser tab.
 // HTTP bootstrap/media requests remain in each fixture's ordinary HTTP helper.
@@ -43,31 +44,32 @@ function controlClient(t, config, cert) {
         }, 5000);
         ws.on('open', () =>
           ws.send(
-            JSON.stringify({
-              type: 'auth',
-              token: headers.authorization?.replace(/^Bearer /, ''),
-              csrf: headers['x-csrf-token'],
-            }),
+            JSON.stringify(
+              hello({ token: headers.authorization?.replace(/^Bearer /, ''), csrf: headers['x-csrf-token'] }),
+            ),
           ),
         );
         ws.on('message', raw => {
           const message = JSON.parse(raw);
-          if (message.type === 'auth-ok') {
+          if (message.type === 'welcome') {
             clearTimeout(timer);
             client.heartbeat = setInterval(() => {
               if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'clock', id: 0 }));
             }, 1000);
             resolve(true);
           }
-          if (message.type === 'unavailable') client.denial = message;
-          if (message.type === 'response') client.pending.get(message.id)?.(message);
+          if (message.type === 'error' && message.id === undefined)
+            client.denial = { status: message.status, value: { error: message.message } };
+          if (message.type === 'ack' || (message.type === 'error' && message.id !== undefined))
+            client.pending.get(message.id)?.(message);
         });
         ws.on('error', () => {});
         ws.on('close', () => {
           clearInterval(client.heartbeat);
           clearTimeout(timer);
           resolve(false);
-          for (const done of client.pending.values()) done({ status: 401, value: { error: 'Connection closed' } });
+          for (const done of client.pending.values())
+            done({ type: 'error', status: 401, message: 'Connection closed' });
         });
       });
     }
@@ -77,19 +79,21 @@ function controlClient(t, config, cert) {
         body: client.denial?.value || { error: 'Authentication failed' },
         headers: {},
       };
-    return new Promise((resolve, reject) => {
-      const id = ++client.sequence;
-      const timer = setTimeout(() => {
-        client.pending.delete(id);
-        reject(new Error('Control fixture timed out: ' + path));
-      }, 15000);
-      client.pending.set(id, message => {
-        clearTimeout(timer);
-        client.pending.delete(id);
-        resolve({ status: message.status, body: message.value, headers: {} });
+    const send = message =>
+      new Promise((resolve, reject) => {
+        const id = ++client.sequence;
+        const timer = setTimeout(() => {
+          client.pending.delete(id);
+          reject(new Error('Control fixture timed out: ' + path));
+        }, 15000);
+        client.pending.set(id, answer => {
+          clearTimeout(timer);
+          client.pending.delete(id);
+          resolve(answer);
+        });
+        client.ws.send(JSON.stringify({ ...message, id }));
       });
-      client.ws.send(JSON.stringify({ type: 'request', id, path, ...(data === undefined ? {} : { data }) }));
-    });
+    return { ...(await requestByPath(send, path, data)), headers: {} };
   }
   return { handles, request };
 }

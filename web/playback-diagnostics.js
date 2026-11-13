@@ -394,12 +394,9 @@
     const { sequence, at, ms, event, ...fields } = row;
     return { sequence, at: Math.round(at), ms: Math.round(ms), event, ...clean(fields) };
   }
+  // Labels a plain HTTP request; room messages are labelled where they are sent.
   function requestKind(path) {
     const route = String(path).split('?')[0];
-    if (/^\/api\/watch\/rooms\/[^/]+$/.test(route)) return 'room-poll';
-    if (route === '/api/watch/rooms') return 'rooms';
-    const action = /^\/api\/watch\/rooms\/[^/]+\/(observe|ready|command)$/.exec(route)?.[1];
-    if (action) return action;
     return /^\/api\/(watch\/(me|.*login)|account\/.*login)$/.test(route) ? 'identity' : 'other';
   }
   function create({ now = Date.now, monotonic = () => performance.now(), soak = false } = {}) {
@@ -506,7 +503,7 @@
         return true;
       },
       active: () => now() < until,
-      rejects: (path, id) => id === room && now() < until && String(path).split('?')[0] === '/api/watch/rooms/' + room,
+      rejects: (target, id) => id === room && now() < until && target === room,
     };
   }
   const api = { create, clean, cleanRow, requestKind, controlProbe };

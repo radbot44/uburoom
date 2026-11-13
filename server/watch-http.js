@@ -10,6 +10,7 @@ const Playback = require('../web/playback-policy');
 const Subtitles = require('./subtitles');
 const SubtitleResources = require('./subtitle-resources');
 const { watchOperations } = require('./watch-operations');
+const { CALLS } = require('../shared/wire-protocol');
 const { PlexDelivery, clientAddress } = require('./plex-delivery');
 const { displayName } = require('./accounts');
 const Ubumfa = require('../web/ubumfa');
@@ -143,13 +144,23 @@ function watchHttp({
     );
   }
   // A grant lasts 15 s. Its tab's own presence (clock exchanges, pongs) renews it;
-  // a client's own request renews it too, and the server's republish only reads it.
-  function renewGrants(socket) {
+  // a client's own request renews it too, and the server's publications only read it.
+  // Grants are found by their tab, so renewal never looks at anyone else's.
+  /** @type {Map<string, Set<any>>} */
+  const viewerGrants = new Map();
+  function renewGrants(socket, viewerId) {
+    const own = viewerGrants.get(viewerId);
+    if (!own) return;
     const expires = Date.now() + 15000;
-    for (const grant of grants.values()) {
-      const viewer = grant.room.viewers.get(grant.viewerId);
+    for (const grant of own) {
+      if (grants.get(grant.id) !== grant) {
+        own.delete(grant);
+        continue;
+      }
+      const viewer = grant.room.viewers.get(viewerId);
       if (viewer?.watchSocket === socket && viewer.userId === grant.actor.userId) grant.expires = expires;
     }
+    if (!own.size) viewerGrants.delete(viewerId);
   }
   function mediaGrant(room, auth, req, viewerId, fallback = false, renew = true) {
     const viewer = room.viewers.get(viewerId);
@@ -209,6 +220,8 @@ function watchHttp({
         (await login({ headers: req.controlSocket?.watchHeaders || grant.headers }))?.userId === auth.actor.userId,
     };
     grants.set(id, grant);
+    if (!viewerGrants.has(viewerId)) viewerGrants.set(viewerId, new Set());
+    viewerGrants.get(viewerId).add(grant);
     return id;
   }
   function resource(media, url) {
@@ -668,6 +681,13 @@ function watchHttp({
     await accounts.save();
     json(res, 200, { room, guest: true });
   }
+  // The reads a page may make by GET before it has a room connection (shared/wire-protocol.js).
+  const READS = Object.fromEntries([
+    ...Object.entries(CALLS)
+      .filter(([, call]) => call.http)
+      .map(([op, call]) => [call.http, op]),
+    ['/api/watch/library/art', 'library.art'],
+  ]);
   const operations = watchOperations({
     config,
     watch,
@@ -1027,19 +1047,11 @@ function watchHttp({
         });
         return true;
       }
-      if (
-        req.method === 'GET' &&
-        [
-          '/api/watch/me',
-          '/api/watch/playback',
-          '/api/watch/library',
-          '/api/watch/library/item',
-          '/api/watch/library/availability',
-          '/api/watch/library/filters',
-          '/api/watch/library/art',
-        ].includes(url.pathname)
-      ) {
-        const reply = await operations.execute({ headers: req.headers, remoteAddress: clientAddress(req) }, url.href);
+      const readable = req.method === 'GET' && READS[url.pathname];
+      if (readable) {
+        const reply = await operations.call({ headers: req.headers, remoteAddress: clientAddress(req) }, readable, {
+          args: Object.fromEntries(url.searchParams),
+        });
         if (reply.resource) {
           const art = reply.resource;
           res.writeHead(reply.status, {
@@ -1228,13 +1240,13 @@ function watchHttp({
     if (/^\/join\/([^/]+)$/.test(reqUrl.pathname)) initial.inviteCode = true;
     try {
       const ctx = { headers: req.headers, remoteAddress: clientAddress(req) };
-      initial.me = await operations.execute(ctx, '/api/watch/me');
+      initial.me = await operations.call(ctx, 'me');
       if (initial.me.status === 200) {
         const [rooms, events, library] = await Promise.all([
-          operations.execute(ctx, '/api/watch/rooms'),
-          operations.execute(ctx, '/api/watch/events'),
+          operations.call(ctx, 'rooms.list'),
+          operations.call(ctx, 'events.list'),
           !initial.me.value.guestRoomId
-            ? operations.execute({ ...ctx, signal: AbortSignal.timeout(1500) }, '/api/watch/library')
+            ? operations.call({ ...ctx, signal: AbortSignal.timeout(1500) }, 'library.browse')
             : undefined,
         ]);
         initial.rooms = rooms;
@@ -1305,7 +1317,7 @@ function watchHttp({
     renewGrants,
     route,
     bootstrap,
-    execute: operations.execute,
+    operations,
     sweep,
     logout,
     invalidate,

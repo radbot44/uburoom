@@ -316,7 +316,7 @@ async function main() {
       const traceStart = await evaluate(host, 'diagnostics.snapshot().entries.at(-1).sequence');
       await evaluate(
         host,
-        '(()=>{const original=transport.onMessage;let fail=true;transport.onMessage=message=>{if(fail&&message.type==="state"){fail=false;window.__controlFailed=true;diagnostics.record("request-failed",{request:"room-poll",failure:"network"});unavailable("Fixture control interruption","room-poll");return;}original(message);};return true;})()',
+        '(()=>{const original=transport.onMessage,poll=setInterval(()=>void refreshState(),1000);let fail=true;transport.onMessage=message=>{if(fail&&message.type==="room"){fail=false;window.__controlFailed=true;diagnostics.record("request-failed",{request:"room-poll",failure:"network"});unavailable("Fixture control interruption","room-poll");return;}if(!fail&&message.type==="room")clearInterval(poll);original(message);};void refreshState();return true;})()',
       );
       await until(host, 'window.__controlFailed', 'Control loss reaches the player', 6000);
       await until(
@@ -380,7 +380,7 @@ async function main() {
         guestBefore = await snapshot(guest);
       await evaluate(
         host,
-        '(()=>{const original=transport.onMessage,recoverAt=performance.now()+6000;transport.onMessage=message=>{if(message.type==="state"&&performance.now()<recoverAt){unavailable("Fixture state delivery outage","room-poll");return;}original(message);};return true;})()',
+        '(()=>{const original=transport.onMessage,recoverAt=performance.now()+6000,poll=setInterval(()=>void refreshState(),1000);transport.onMessage=message=>{if(message.type==="room"&&performance.now()<recoverAt){unavailable("Fixture state delivery outage","room-poll");return;}if(message.type==="room")clearInterval(poll);original(message);};void refreshState();return true;})()',
       );
       await until(host, 'state===undefined && mediaSource===undefined', 'Control outage unloads player', 6000);
       await until(

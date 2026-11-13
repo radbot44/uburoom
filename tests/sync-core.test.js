@@ -12,6 +12,7 @@ const { WebSocket } = require('ws');
 
 const Sync = require('../shared/sync');
 const { createApp } = require('../server/app');
+const { requestByPath, hello } = require('./helpers/wire-paths');
 
 const certFile = path.join(__dirname, '../certs/server-cert.pem');
 const keyFile = path.join(__dirname, '../certs/server-key.pem');
@@ -317,10 +318,10 @@ test('room-scoped subscription broker isolates room notifications across rooms a
 
   const roomA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   const roomB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-  const clientA1 = { id: 'a1', tenantId: 't1', subscription: `/api/watch/rooms/${roomA}?viewer=1` };
-  const clientB1 = { id: 'b1', tenantId: 't1', subscription: `/api/watch/rooms/${roomB}?viewer=2` };
-  const clientLobby1 = { id: 'lobby1', tenantId: 't1', subscription: undefined };
-  const clientA2 = { id: 'a2', tenantId: 't2', subscription: `/api/watch/rooms/${roomA}?viewer=3` };
+  const clientA1 = { id: 'a1', tenantId: 't1', roomId: roomA };
+  const clientB1 = { id: 'b1', tenantId: 't1', roomId: roomB };
+  const clientLobby1 = { id: 'lobby1', tenantId: 't1', roomId: undefined };
+  const clientA2 = { id: 'a2', tenantId: 't2', roomId: roomA };
 
   for (const c of [clientA1, clientB1, clientLobby1, clientA2]) broker.add(c);
 
@@ -424,7 +425,7 @@ test(
       ws.on('message', raw => {
         const msg = JSON.parse(raw.toString());
         events.push(msg);
-        if (msg.type === 'response') {
+        if (msg.type === 'ack' || (msg.type === 'error' && msg.id !== undefined)) {
           const pending = waiting.get(msg.id);
           if (pending) {
             waiting.delete(msg.id);
@@ -434,18 +435,22 @@ test(
       });
       await once(ws, 'open');
       const authReply = once(ws, 'message');
-      ws.send(JSON.stringify({ type: 'auth', token: identity.token, csrf: identity.csrf }));
-      assert.equal(JSON.parse((await authReply)[0]).type, 'auth-ok');
+      ws.send(JSON.stringify(hello({ token: identity.token, csrf: identity.csrf })));
+      assert.equal(JSON.parse((await authReply)[0]).type, 'welcome');
       t.after(() => ws.close());
       return {
         ws,
         events,
-        call(route, data) {
-          return new Promise(resolve => {
-            const id = ++seq;
-            waiting.set(id, resolve);
-            ws.send(JSON.stringify({ type: 'request', id, path: route, ...(data === undefined ? {} : { data }) }));
-          });
+        // Requests named by resource path, as this test was written (helpers/wire-paths.js).
+        async call(route, data) {
+          const send = message =>
+            new Promise(resolve => {
+              const id = ++seq;
+              waiting.set(id, resolve);
+              ws.send(JSON.stringify({ ...message, id }));
+            });
+          const { status, body } = await requestByPath(send, route, data);
+          return { status, value: body };
         },
       };
     }
@@ -477,18 +482,12 @@ test(
     stateA = (await host.call(`/api/watch/rooms/${roomA}?viewer=${viewerA}`)).value;
     stateB = (await second.call(`/api/watch/rooms/${roomB}?viewer=${viewerB}`)).value;
 
-    // Align right after a periodic 1-second publish on `second` so we have a clean sub-second window.
+    // Let both rooms' own publications finish, for a clean window.
+    await new Promise(resolve => setTimeout(resolve, 300));
     second.events.length = 0;
-    await new Promise(resolve => {
-      const check = () => {
-        if (second.events.some(e => e.type === 'state')) resolve();
-        else setTimeout(check, 15);
-      };
-      check();
-    });
 
     const serverRoomB = app.watch.rooms.get(roomB);
-    const seqBBefore = app.watch.stateSequence(serverRoomB);
+    const seqBBefore = app.watch.roomVersion(serverRoomB);
     const eventsBBefore = second.events.length;
     host.events.length = 0;
 
@@ -508,17 +507,17 @@ test(
     });
     assert.equal(seekRes.value.status, 'applied');
 
-    // Wait for Room A's pushed `state` notification to arrive.
+    // Wait for Room A's pushed `room` lane to arrive.
     await new Promise(resolve => {
       const check = () => {
-        if (host.events.some(e => e.type === 'state' && e.path?.includes(roomA))) resolve();
+        if (host.events.some(e => e.type === 'room' && e.roomId === roomA)) resolve();
         else setTimeout(check, 10);
       };
       check();
     });
 
     assert.equal(
-      app.watch.stateSequence(serverRoomB),
+      app.watch.roomVersion(serverRoomB),
       seqBBefore,
       'Room A local actions do not trigger snapshot publications in Room B',
     );
@@ -528,7 +527,7 @@ test(
       'Room B subscriber receives zero frames from Room A local playback mutations',
     );
     assert.equal(
-      second.events.some(e => e.type === 'state' && e.path?.includes(roomA)),
+      second.events.some(e => e.roomId === roomA),
       false,
     );
   },

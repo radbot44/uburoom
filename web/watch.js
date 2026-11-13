@@ -40,7 +40,9 @@ let token,
   pending = false,
   creating = false,
   transport;
-let stateTransportSequence = 0;
+// The selected room's two lanes as last received: {roomId, viewerId, room, viewer}, each
+// lane {version, state} (shared/wire-protocol.js).
+let roomLanes;
 let reconnecting = false;
 let disconnectGraceTimer,
   disconnectExtended = false;
@@ -221,14 +223,14 @@ function savePlayerPreferences(change) {
     localStorage.setItem(playerPreferenceKey, JSON.stringify(playerPreferences));
   } catch {}
 }
+// What this tab says about itself when it joins a room.
 function viewerPreferences() {
   return {
-    viewer: viewerId,
     quality: preferredQuality,
-    volume: String(playerPreferences.volume),
-    muted: String(playerPreferences.muted),
-    plexReporting: String(playerPreferences.plexReporting),
-    plexWatchState: String(playerPreferences.plexWatchState),
+    volume: Number(playerPreferences.volume),
+    muted: !!playerPreferences.muted,
+    plexReporting: !!playerPreferences.plexReporting,
+    plexWatchState: !!playerPreferences.plexWatchState,
     // The saved subtitle choice goes with the join, so the first stream already has it.
     ...(playerPreferences.subtitles
       ? {
@@ -478,7 +480,7 @@ function sendSyncQuality(status, score, confidence, reason, measurementFreshness
     ...(reason ? { reason } : {}),
     health: viewerHealth(),
   };
-  const sent = transport?.syncQuality(value) || false;
+  const sent = transport?.quality(value) || false;
   if (sent) {
     publishedSyncQualityStatus = status;
     publishedSyncQualityConfidence = value.confidence;
@@ -770,7 +772,7 @@ async function finishSoak(reason) {
         const id = selected;
         pending = true;
         try {
-          await api('/api/watch/rooms/' + id + '/leave', { viewerId });
+          await roomLink.leave(id);
           if (selected === id) {
             selected = undefined;
             browseRoom = undefined;
@@ -1066,7 +1068,7 @@ async function loadVideoCheck(refresh = false) {
   if (!state?.canManage || !state.mediaId || !room) return renderVideoCheck();
   let report;
   try {
-    report = await api('/api/watch/rooms/' + room + '/check' + (refresh ? '?refresh=1' : ''));
+    report = await call('room.check', { roomId: room, args: { refresh } });
   } catch {
     return;
   }
@@ -1224,13 +1226,9 @@ $('notifications-toggle').onclick = () => {
   renderNotifications();
 };
 renderNotifications();
-const roomEvents = uburoomEvents.mount({ request: api });
-const roomEntry = () => {
-  const { viewer, ...preferences } = viewerPreferences();
-  return { viewerId: viewer, ...preferences };
-};
+const roomEvents = uburoomEvents.mount({ request: call });
 const lobbyEvents = uburoomLobbyEvents.mount({
-  request: api,
+  request: call,
   schedule: options => roomEvents.open(options),
   join: async id => {
     await selectRoom(id);
@@ -1243,8 +1241,8 @@ const lobbyEvents = uburoomLobbyEvents.mount({
     renderWaiting();
   },
   reopen: async id => {
-    const opened = await api('/api/watch/rooms/' + id + '/reopen', roomEntry(), { timeoutMs: 35000 });
-    await selectRoom(opened.id, opened.state);
+    const opened = await call('room.reopen', { roomId: id }, { timeoutMs: 35000 });
+    await selectRoom(opened.id);
     if (!state) throw new Error('Room unavailable');
     returnToVideo();
   },
@@ -1260,7 +1258,7 @@ function renderScheduleButton() {
   button.title = usable ? 'Schedule event' : 'Only hosts can schedule events';
 }
 const roomShare = uburoomShare.mount({
-  request: api,
+  request: call,
   share: shareInvite,
   openLink: async url => {
     if (activity && sdk) {
@@ -1270,17 +1268,17 @@ const roomShare = uburoomShare.mount({
   },
 });
 const roomUI = uburoomRoomUI.mount({
-  request: api,
+  request: call,
+  command: (id, envelope) => roomLink.command(id, envelope),
   getState: () => state,
   getMe: () => me,
   execute,
   share: (invite, name, id) => roomShare.open(id || selected),
-  join: async (id, next) => {
-    await selectRoom(id, next);
+  join: async id => {
+    await selectRoom(id);
     if (!state) throw new Error('Room unavailable');
     returnToVideo();
   },
-  entry: roomEntry,
   changed: async () => {
     await refreshRooms();
     if (selected) await refreshState();
@@ -1304,7 +1302,7 @@ async function fetchArtwork(path, signal) {
   return response.blob();
 }
 const queueUI = uburoomQueueUI.mount($('queue-content'), {
-  request: api,
+  request: call,
   getState: () => state,
   getMe: () => me,
   fail,
@@ -1641,7 +1639,7 @@ playerUI = uburoomPlayerUI.mount({
   },
 });
 const library = uburoomLibrary.mount($('library-content'), {
-  request: (path, signal) => api(path, undefined, { signal }),
+  request: (op, args, signal) => call(op, { args }, { signal }),
   artwork: fetchArtwork,
   initialLibrary: pageBootstrap?.library?.status === 200 ? pageBootstrap.library.value : undefined,
   load: (item, options) => (selected ? loadLibraryItem(item, options) : chooseRoom(item, 'active', options)),
@@ -1691,56 +1689,21 @@ function fail(message, action) {
     });
   } else if (immersive && !document.body.classList.contains('activity-pip')) toggleDrawer(true);
 }
-async function api(path, data, options = {}) {
-  const started = performance.now();
-  let response,
-    decoded = false,
-    rejection;
-  const headers = token ? { Authorization: 'Bearer ' + token } : {};
-  if (data !== undefined) {
-    headers['Content-Type'] = 'application/json';
-    if (me?.csrf) headers['X-CSRF-Token'] = me.csrf;
-  }
+// Records a failed request for the diagnostics export, then rethrows it.
+async function tracked(kind, work) {
+  const started = performance.now(),
+    outcome = {};
   try {
-    if (controlProbe?.rejects(path, selected)) throw new TypeError('Controlled room-poll interruption');
-    if (
-      transport?.ready &&
-      /^\/api\/watch\/(rooms|events|me|profile|admin-mode|playback|library)(?:[/?]|$)/.test(path) &&
-      !path.startsWith('/api/watch/library/art')
-    ) {
-      try {
-        return await transport.request(path, data, options);
-      } catch (error) {
-        rejection = error.rejection;
-        if (error.status) response = { status: error.status, ok: false };
-        throw error;
-      }
-    }
-    response = await fetch(path, {
-      method: data === undefined ? 'GET' : 'POST',
-      headers,
-      keepalive: !!options.keepalive,
-      body: data === undefined ? undefined : JSON.stringify(data),
-      signal: options.signal
-        ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs || 12000)])
-        : AbortSignal.timeout(options.timeoutMs || 12000),
-      keepalive: !!options.keepalive,
-    });
-    const value = await response.json();
-    decoded = true;
-    if (!response.ok) {
-      rejection = value.rejection;
-      throw Object.assign(new Error(value.error || 'Request failed'), { status: response.status, response: value });
-    }
-    return value;
+    return await work(outcome);
   } catch (error) {
+    const { response, decoded } = outcome;
     diagnostics.record('request-failed', {
-      request: uburoomDiagnostics.requestKind(path),
+      request: kind,
       elapsedMs: performance.now() - started,
-      status: response?.status,
-      rejection: uburoomDiagnostics.requestKind(path) === 'observe' ? rejection : undefined,
+      status: response?.status ?? error.status,
+      rejection: kind === 'observe' ? (outcome.rejection ?? error.rejection) : undefined,
       failure:
-        response && !response.ok
+        (response && !response.ok) || (!response && error.status)
           ? 'http'
           : response && !decoded
             ? 'decode'
@@ -1754,6 +1717,85 @@ async function api(path, data, options = {}) {
     });
     throw error;
   }
+}
+// Plain HTTP: sign-in, admission, invites, account pages and uploads. Room work goes
+// over the room connection (call and room below).
+function api(path, data, options = {}) {
+  return tracked(uburoomDiagnostics.requestKind(path), async outcome => {
+    const headers = token ? { Authorization: 'Bearer ' + token } : {};
+    if (data !== undefined) {
+      headers['Content-Type'] = 'application/json';
+      if (me?.csrf) headers['X-CSRF-Token'] = me.csrf;
+    }
+    const response = (outcome.response = await fetch(path, {
+      method: data === undefined ? 'GET' : 'POST',
+      headers,
+      keepalive: !!options.keepalive,
+      body: data === undefined ? undefined : JSON.stringify(data),
+      signal: options.signal
+        ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs || 12000)])
+        : AbortSignal.timeout(options.timeoutMs || 12000),
+    }));
+    const value = await response.json();
+    outcome.decoded = true;
+    if (!response.ok) {
+      outcome.rejection = value.rejection;
+      throw Object.assign(new Error(value.error || 'Request failed'), { status: response.status, response: value });
+    }
+    return value;
+  });
+}
+/**
+ * One named request to the server (`CALLS` in shared/wire-protocol.js) over the room
+ * connection. Before the connection is ready, the few reads the server also answers
+ * by GET go that way.
+ * @param {string} op
+ * @param {{roomId?: string, args?: Record<string, any>}} [input]
+ * @param {{timeoutMs?: number, signal?: AbortSignal}} [options]
+ */
+function call(op, input = {}, options = {}) {
+  if (!transport?.ready && uburoomWire.CALLS[op]?.http) {
+    const query = new URLSearchParams(
+      Object.entries(input.args || {}).filter(([, value]) => value !== undefined && value !== null),
+    ).toString();
+    return api(uburoomWire.CALLS[op].http + (query ? '?' + query : ''), undefined, options);
+  }
+  return tracked(op === 'me' ? 'identity' : op === 'rooms.list' ? 'rooms' : 'other', () => {
+    if (!transport?.ready) throw new TypeError('Room connection unavailable; retry after reconnecting');
+    return transport.call(op, input, options);
+  });
+}
+// This tab's own room messages. Each resolves with the server's answer or rejects with its refusal.
+const roomLink = {
+  /** Joins (or renews this tab's place in) a room and takes both lanes of its view. */
+  join(id, options) {
+    return tracked('room-poll', async () => {
+      if (controlProbe?.rejects(id, selected)) throw new TypeError('Controlled room-poll interruption');
+      if (!transport?.ready) throw new TypeError('Room connection unavailable; retry after reconnecting');
+      const joined = await transport.join(id, viewerId, viewerPreferences(), options);
+      roomLanes = { roomId: id, viewerId: joined.viewerId, room: joined.room, viewer: joined.viewer };
+      return { ...uburoomWire.mergeView(joined.room.state, joined.viewer.state), timing: joined.timing };
+    });
+  },
+  leave: (id, options) => tracked('other', () => connected().leave(id, viewerId, options)),
+  command: (id, envelope, options) => tracked('command', () => connected().command(id, envelope, options)),
+  ready: (id, report) => tracked('ready', () => connected().reportReady(id, viewerId, report)),
+  observe: (id, observation) => tracked('observe', () => connected().observe(id, viewerId, observation)),
+};
+function connected() {
+  if (!transport?.ready) throw new TypeError('Room connection unavailable; retry after reconnecting');
+  return transport;
+}
+/**
+ * Takes one pushed lane for the selected room. Returns the tab's view once both lanes
+ * describe the same video; an older lane, or one for another room, is dropped.
+ */
+function receiveLane(message) {
+  if (!roomLanes || message.roomId !== roomLanes.roomId || message.viewerId !== roomLanes.viewerId) return;
+  if (message.version < roomLanes[message.type].version) return;
+  roomLanes[message.type] = { version: message.version, state: message.state };
+  if (!uburoomWire.lanesAgree(roomLanes.room.state, roomLanes.viewer.state)) return;
+  return uburoomWire.mergeView(roomLanes.room.state, roomLanes.viewer.state);
 }
 function acceptIdentity(auth) {
   token = auth.token;
@@ -2150,8 +2192,8 @@ $('approve-browser').addEventListener('click', async () => {
 $('admin-mode').addEventListener('click', async () => {
   $('admin-mode').disabled = true;
   try {
-    await api('/api/watch/admin-mode', { enabled: !me.adminMode });
-    me = await api('/api/watch/me');
+    await call('admin.mode', { args: { enabled: !me.adminMode } });
+    me = await call('me');
     renderAccount();
     await refreshRooms();
     await refreshState();
@@ -2424,10 +2466,9 @@ async function proxyDirectFile() {
     id = selected;
   const recovery = (async () => {
     try {
-      await api('/api/watch/rooms/' + id + '/delivery', {
-        viewerId,
-        mediaVersion: next.mediaVersion,
-        streamVersion: next.streamVersion,
+      await call('room.delivery', {
+        roomId: id,
+        args: { viewerId, mediaVersion: next.mediaVersion, streamVersion: next.streamVersion },
       });
       if (selected === id && state?.mediaVersion === next.mediaVersion) await refreshState();
     } catch {
@@ -3270,7 +3311,6 @@ function connectionLost(details = {}) {
   if (reconnecting) return;
   reconnecting = true;
   stateRequestSequence++;
-  stateTransportSequence = 0;
   playbackClock.reset();
   resetSyncQuality();
   queueUI.rememberPosition();
@@ -3428,8 +3468,8 @@ async function execute(command) {
           'queue.auto.pin',
         ].includes(command.action) ||
           (!state?.mediaUrl && ['media.play', 'media.toggle', 'queue.add'].includes(command.action))));
-    const result = await api(
-      '/api/watch/rooms/' + id + '/command',
+    const result = await roomLink.command(
+      id,
       { viewerId, epoch, expiresAt: timing.serverTime + 2500, command },
       preparing ? { timeoutMs: 35000 } : {},
     );
@@ -4029,7 +4069,7 @@ async function reportObservation() {
   };
   observationPending = true;
   try {
-    const result = await api('/api/watch/rooms/' + id + '/observe', data);
+    const result = await roomLink.observe(id, data);
     if (result.credit && result.credit.reason !== 'credited')
       diagnostics.record('observation-uncredited', { ...result.credit, creditReason: result.credit.reason });
   } catch {
@@ -4079,7 +4119,7 @@ async function reportReadiness() {
   if (readinessSent === key || (!state.readiness && !state.waitingForReady && !ready)) return;
   readyPending = true;
   try {
-    await api('/api/watch/rooms/' + id + '/ready', { viewerId, mediaVersion: version, ready, readinessVersion });
+    await roomLink.ready(id, { mediaVersion: version, ready, readinessVersion });
     readinessSent = key;
   } catch {
   } finally {
@@ -4103,8 +4143,7 @@ function unavailableToasts(items = []) {
 }
 function applyState(next, local = false) {
   if (!local) {
-    if (next.id !== selected || next.transportSequence <= stateTransportSequence) return;
-    stateTransportSequence = next.transportSequence;
+    if (next.id !== selected) return;
     next = fallbackPlayback.receive(next, reconnecting);
   }
   clearTimeout(disconnectGraceTimer);
@@ -4421,7 +4460,19 @@ function applyState(next, local = false) {
   observing = !!next.mediaUrl;
   void sync.synchronize();
 }
+// Asks the server for this tab's room state again. The lanes arrive as pushes
+// before the answer, so the page shows the server's state once this resolves.
 async function refreshState() {
+  if (!selected) return;
+  const id = selected;
+  try {
+    await tracked('room-poll', () => connected().resync());
+  } catch {
+    if (id === selected) connectionLost();
+  }
+}
+// Takes this tab's place in its room again on a new connection: the same viewer, joined afresh.
+async function rejoinRoom() {
   if (!selected) return;
   const id = selected,
     before = Date.now(),
@@ -4429,9 +4480,8 @@ async function refreshState() {
     exchange = playbackClock.begin(),
     sequence = ++stateRequestSequence;
   try {
-    const next = await api('/api/watch/rooms/' + id + '?' + new URLSearchParams(viewerPreferences()));
-    if (id !== selected || sequence !== stateRequestSequence || next.transportSequence <= stateTransportSequence)
-      return;
+    const next = await roomLink.join(id);
+    if (id !== selected || sequence !== stateRequestSequence) return;
     playbackClock.add(exchange, next.timing);
     diagnostics.record('clock-sample', {
       ...playbackClock.read(),
@@ -4493,7 +4543,7 @@ function renderWaiting() {
     (Date.parse(event.start) <= Date.now() ? 'Starting now' : 'Starts ' + uburoomLobbyEvents.startsLabel(event)) +
     ' · Waiting for host';
 }
-async function selectRoom(id, initial) {
+async function selectRoom(id) {
   if (waitingRoom && waitingRoom.id !== id) waitingRoom = undefined;
   waitTarget = undefined;
   clearTimeout(disconnectGraceTimer);
@@ -4509,7 +4559,7 @@ async function selectRoom(id, initial) {
     const hlsReady = ensureHls().catch(() => {});
     let next;
     try {
-      next = initial || (await api('/api/watch/rooms/' + id + '?' + new URLSearchParams(viewerPreferences())));
+      next = await roomLink.join(id);
     } catch (error) {
       if (error?.status === 403) viewerId = crypto.randomUUID();
       throw error;
@@ -4518,9 +4568,8 @@ async function selectRoom(id, initial) {
     if (next.id !== id) throw new Error('Room changed while opening. Try again.');
     syncRoomUrl(id, next.slug);
     qualityPending = false;
-    stateTransportSequence = 0;
     stateRequestSequence++;
-    if (!initial) playbackClock.add(exchange, next.timing);
+    playbackClock.add(exchange, next.timing);
     const now = performance.now(),
       revision = observationClock.update(
         next.observationEpoch,
@@ -4542,7 +4591,7 @@ async function selectRoom(id, initial) {
     placeRoomBar();
     fail(playbackError);
     void reportReadiness();
-    if (previous) void api('/api/watch/rooms/' + previous + '/leave', { viewerId }).catch(() => {});
+    if (previous) void roomLink.leave(previous).catch(() => {});
     if (immersive) toggleDrawer(!!state?.canBrowse && !state?.mediaId);
   } finally {
     switchingRoom = false;
@@ -4587,7 +4636,7 @@ function renderRooms(host, rooms, join = id => selectRoom(id)) {
 }
 async function refreshRooms() {
   try {
-    const { rooms } = await api('/api/watch/rooms');
+    const { rooms } = await call('rooms.list');
     applyRooms(rooms);
   } catch (error) {
     if (!state) $('lobby-error').textContent = error.message;
@@ -5201,15 +5250,19 @@ async function createRoom(advanced = roomUI.draftOptions()) {
   $('room-create').disabled = true;
   try {
     const customTyped = $('room-name').value.trim();
-    const room = await api('/api/watch/rooms', {
-      ...advanced,
-      visibility: $('room-create-visibility').value,
-      name: customTyped || $('room-name').placeholder,
-      isCustom: Boolean(customTyped),
-      ...(me?.durableRooms && $('room-create-preset').value ? { permissionPreset: $('room-create-preset').value } : {}),
+    const created = await call('rooms.create', {
+      args: {
+        ...advanced,
+        visibility: $('room-create-visibility').value,
+        name: customTyped || $('room-name').placeholder,
+        isCustom: Boolean(customTyped),
+        ...(me?.durableRooms && $('room-create-preset').value
+          ? { permissionPreset: $('room-create-preset').value }
+          : {}),
+      },
     });
-    await selectRoom(room.id);
-    if (selected !== room.id || !state) throw new Error('Room unavailable. Try again.');
+    await selectRoom(created.id);
+    if (selected !== created.id || !state) throw new Error('Room unavailable. Try again.');
     const item = roomChoice,
       opts = roomChoiceOptions;
     roomNameDraft = '';
@@ -5292,7 +5345,7 @@ $('close-room').addEventListener('click', async () => {
   const id = selected;
   pending = true;
   try {
-    await api('/api/watch/rooms/' + id + '/leave', { viewerId });
+    await roomLink.leave(id);
     selected = undefined;
     browseRoom = undefined;
     unavailable('', 'leave');
@@ -5582,7 +5635,7 @@ async function start() {
       if (pageBootstrap.me.status !== 200)
         throw Object.assign(new Error(pageBootstrap.me.value.error), { status: pageBootstrap.me.status });
       me = pageBootstrap.me.value;
-    } else me = await api('/api/watch/me');
+    } else me = await call('me');
   } catch (error) {
     if (activity || error.status !== 401) throw error;
     $('auth-loading').hidden = true;
@@ -5675,7 +5728,7 @@ async function start() {
           visibility: document.visibilityState,
         });
         if (selected) {
-          await refreshState();
+          await rejoinRoom();
         } else if (directRoomEntry && !directRoomFailed) {
           await enterDirectRoom();
         } else {
@@ -5736,8 +5789,8 @@ async function start() {
       }
     },
     onMessage: message => {
-      if (message.type === 'room-kicked' && message.roomId === selected) {
-        selected = undefined;
+      if (message.type === 'error' && message.code === 'removed' && message.roomId === selected) {
+        selected = roomLanes = undefined;
         viewerId = crypto.randomUUID();
         // A removed guest has nowhere else to go; their sign-in ends with the room.
         if (me?.guestRoomId) {
@@ -5748,33 +5801,33 @@ async function start() {
           transport?.close();
           clearInterval(identityTimer);
         } else unavailable('You were removed from the room. You may rejoin.', 'kicked');
-      } else if (message.type === 'identity') {
-        me = message.value;
+      } else if (message.type === 'lobby') {
+        me = message.identity;
         renderAccount();
-      } else if (message.type === 'rooms' && message.status === 200) {
-        if (JSON.stringify(message.value.rooms) !== JSON.stringify(knownRooms)) applyRooms(message.value.rooms);
-      } else if (message.type === 'state' && message.path.split('?')[0] === '/api/watch/rooms/' + selected) {
-        if (message.status === 200) {
-          applyState(message.value);
+        if (JSON.stringify(message.rooms) !== JSON.stringify(knownRooms)) applyRooms(message.rooms);
+      } else if (message.type === 'room' || message.type === 'viewer') {
+        const next = message.roomId === selected ? receiveLane(message) : undefined;
+        if (next) {
+          applyState(next);
           fail(playbackError);
           void reportReadiness();
-        } else if (message.status >= 500) connectionLost();
-        else {
-          diagnostics.record('room-state-unavailable', {
-            status: message.status,
-            connectionId: transport?.connectionId,
-            visibility: document.visibilityState,
-          });
-          // The room let this tab go (it went private, or the tab went silent). Leaving it
-          // selected would make choosing it again do nothing; the lobby offers it to rejoin.
-          if (message.value?.rejoin) selected = undefined;
-          unavailable(message.value?.error || 'Room unavailable', 'room-poll');
         }
-      } else if (message.type === 'unavailable') {
-        if (message.status === 401 || message.status === 403)
-          unavailable(message.value?.error || 'Sign in again', 'identity-poll');
-        else connectionLost();
-      }
+      } else if (message.type === 'error' && message.code === 'room' && message.roomId === selected) {
+        diagnostics.record('room-state-unavailable', {
+          status: message.status,
+          connectionId: transport?.connectionId,
+          visibility: document.visibilityState,
+        });
+        // The room let this tab go (it went private, or the tab went silent). Leaving it
+        // selected would make choosing it again do nothing; the lobby offers it to rejoin.
+        if (message.rejoin) selected = roomLanes = undefined;
+        unavailable(message.message || 'Room unavailable', 'room-poll');
+      } else if (message.type === 'error' && message.code === 'protocol') {
+        // The server was updated under this page; only a reload brings the matching client.
+        unavailable('uburoom was updated. Reload this page to continue.', 'protocol');
+      } else if (message.type === 'error' && message.code === 'auth') {
+        unavailable(message.message || 'Sign in again', 'identity-poll');
+      } else if (message.type === 'error' && message.code === 'unavailable') connectionLost();
     },
   });
   $('create').hidden = (directRoomEntry && !directRoomFailed) || !!config?.singleRoom || !!me?.guestRoomId;

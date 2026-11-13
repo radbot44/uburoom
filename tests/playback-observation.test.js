@@ -42,9 +42,11 @@ function client() {
       getVideoPlaybackQuality: () => ({ totalVideoFrames: 100, droppedVideoFrames: 0 }),
     },
     diagnostics: { record() {} },
-    api: async (_, data) => {
-      sent.push(data);
-      return { credit: { reason: 'baseline', creditedSeconds: 0 } };
+    roomLink: {
+      observe: async (_, data) => {
+        sent.push(data);
+        return { credit: { reason: 'baseline', creditedSeconds: 0 } };
+      },
     },
   };
   vm.runInNewContext(
@@ -76,7 +78,7 @@ test('observations keep monotonic duration through client wall steps and queue i
   assert.equal(f.sent[1].observedAt - f.sent[0].observedAt, 1000);
 
   let resolveFlight;
-  f.ctx.api = (_, data) =>
+  f.ctx.roomLink.observe = (_, data) =>
     new Promise(r => {
       f.sent.push(data);
       resolveFlight = r;

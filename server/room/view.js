@@ -21,6 +21,15 @@ const {
 } = require('../../shared/sync');
 const { REJOIN, formatEntrySubtitle } = require('./common');
 
+// A number for each object, so a stamp can tell one stream record from its replacement.
+const references = new WeakMap();
+let referenceCount = 0;
+const reference = value => {
+  if (!value || typeof value !== 'object') return value;
+  if (!references.has(value)) references.set(value, ++referenceCount);
+  return references.get(value);
+};
+
 /**
  * The room as each tab sees it: the lobby list, the per-tab view and its timeline projection.
  * Methods of Watch (server/watch.js), which composes these modules onto its prototype.
@@ -136,16 +145,72 @@ module.exports = {
       }
     return rooms;
   },
-  // Each state handed to a client carries the next number in its room's
-  // publication order, so the browser can drop an older state that arrives late.
-  // The count belongs to publication, not to the room.
-  nextStateSequence(room) {
-    const next = this.stateSequence(room) + 1;
-    this.stateSequences.set(room, next);
-    return next;
+  /**
+   * The version of a room's shared lane: it rises with every change the room's
+   * subscribers should see, and never repeats, not even across a room's reopening.
+   * The count belongs to publication, not to the room.
+   */
+  roomVersion(room) {
+    return this.roomVersions.get(room) || 0;
   },
-  stateSequence(room) {
-    return this.stateSequences.get(room) || 0;
+  /**
+   * Publishes a change: the room's subscribers are sent its lanes again, and with
+   * `lobby` (or no room) every connection is sent the lobby.
+   * @param {any} [room]
+   * @param {{lobby?: boolean}} [scope]
+   */
+  changed(room, { lobby = false } = {}) {
+    this.announce(room, room && !lobby ? { roomId: room.roomId, includeLobby: false } : { includeLobby: true });
+  },
+  // Every publication passes here: the room's version rises before its subscribers are woken.
+  announce(room, change) {
+    if (room) this.roomVersions.set(room, ++this.publicationCount);
+    this.onPublish?.(room, change);
+  },
+  /** Identifies what the lobby lists for a room: its name, video, visibility, host and who is in it. */
+  lobbyStamp(room) {
+    return [
+      room.name,
+      room.slug,
+      room.visibility,
+      room.hostName,
+      room.media?.title,
+      !!room.frozen,
+      !!room.closed,
+      [...new Set([...room.viewers.values()].map(viewer => viewer.userId + ':' + viewer.name))].join(','),
+    ].join('|');
+  },
+  /**
+   * Identifies the state of one tab's own lane (its stream, tracks and settings). The
+   * lane is sent again when this differs from what the tab was last sent.
+   */
+  viewerStamp(room, viewer) {
+    const media = viewer.media,
+      fallback = this.fallbackFor(room, viewer);
+    return [
+      room.mediaVersion,
+      viewer.streamVersion,
+      viewer.observationEpoch,
+      viewer.quality,
+      viewer.preferredQuality,
+      viewer.volume,
+      viewer.muted,
+      viewer.subtitleOffset,
+      viewer.plexReporting,
+      viewer.plexWatchState,
+      viewer.localDelivery,
+      viewer.directProxyVersion,
+      JSON.stringify(viewer.trackChoice),
+      (viewer.unavailableMedia || []).map(item => item.id).join(','),
+      reference(media),
+      media?.format,
+      media?.playbackError,
+      media?.captionVersion,
+      media?.bootstrapFallback,
+      media?.qualityNotice,
+      reference(media?.selection),
+      reference(fallback),
+    ].join('|');
   },
   // Fetches the ending card's details an empty room needs. Triggered by joins and
   // by media and queue changes (prepareStreams), never by looking at the room.

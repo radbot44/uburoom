@@ -466,8 +466,10 @@
       sentinel.hidden = !screen || ['details', 'home'].includes(screen.kind) || screen.nextOffset == null;
       if (!sentinel.hidden && !screen.loading && !screen.pageError) pageObserver.observe(sentinel);
     }
+    // A library read is made for the room being browsed from, or for the lobby.
+    const scoped = (query = {}) => ({ ...(room === 'lobby' ? {} : { room }), ...query });
     function endpoint(path, query = {}) {
-      return path + '?' + new URLSearchParams({ ...(room === 'lobby' ? {} : { room }), ...query });
+      return path + '?' + new URLSearchParams(scoped(query));
     }
     function playable(item) {
       return ['movie', 'episode', 'demo'].includes(item.type);
@@ -1096,10 +1098,11 @@
         version = generation;
       availabilityReads.add(read);
       try {
-        // Keep batches within the control socket's path limit, including 20-digit IDs.
+        // Keep batches within the room connection's message limit, including 20-digit IDs.
         for (let offset = 0; offset < ids.length; offset += 32) {
           const data = await request(
-            endpoint('/api/watch/library/availability', { items: ids.slice(offset, offset + 32).join(',') }),
+            'library.availability',
+            scoped({ items: ids.slice(offset, offset + 32).join(',') }),
             read.signal,
           );
           if (version !== generation || screen !== current || read.signal.aborted) return;
@@ -1166,7 +1169,7 @@
             total: 1,
             nextOffset: null,
           };
-        else data = await request(endpoint('/api/watch/library', query), controller.signal);
+        else data = await request('library.browse', scoped(query), controller.signal);
         if (version !== requestVersion || roomVersion !== generation || current !== screen) return;
         // Use the complete child result, rather than the listing's season count.
         // A Specials folder counts as another season and keeps normal browsing.
@@ -1184,7 +1187,7 @@
         ) {
           current.onlySeason = data.items[0];
           current.parent = current.onlySeason.id;
-          data = await request(endpoint('/api/watch/library', { ...query, parent: current.parent }), controller.signal);
+          data = await request('library.browse', scoped({ ...query, parent: current.parent }), controller.signal);
         }
         if (version !== requestVersion || roomVersion !== generation || current !== screen) return;
         const seen = new Set(append ? current.items.map(x => x.id) : []),
@@ -1220,12 +1223,7 @@
         const full =
           item.id === 'demo'
             ? demoItem
-            : (
-                await request(
-                  endpoint('/api/watch/library/item', { item: item.id, type: item.type }),
-                  detailController.signal,
-                )
-              ).item;
+            : (await request('library.item', scoped({ item: item.id, type: item.type }), detailController.signal)).item;
         if (version !== generation || screen !== current) return;
         current.detail = full;
         current.detailsLoaded = true;
@@ -1309,7 +1307,7 @@
       }
       const version = generation;
       try {
-        const value = await request(endpoint('/api/watch/library/filters', { section }), imageController.signal);
+        const value = await request('library.filters', scoped({ section }), imageController.signal);
         if (version !== generation || section !== filterSection) return;
         for (const [control, values] of [
           [genre, value.genres],
@@ -1471,7 +1469,7 @@
       const version = generation;
       async function start() {
         try {
-          const data = await request(endpoint('/api/watch/library'), imageController.signal);
+          const data = await request('library.browse', scoped(), imageController.signal);
           if (version !== generation) return;
           sections = data.items;
           testVideo = !!data.testVideo;

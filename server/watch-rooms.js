@@ -228,6 +228,7 @@ class WatchRooms {
       if (room) {
         this.apply(room, this.store.get(id));
         room.revision++;
+        this.watch.changed(room);
         this.watch.coordinator.run(room, { type: 'roles' });
       }
     }
@@ -579,6 +580,7 @@ class WatchRooms {
     if (room && this.watch.rooms.get(id) === room) {
       this.apply(room, record);
       room.revision++;
+      this.watch.changed(room);
       if (change.action === 'autoplay') this.watch.cancelAutoplay(room);
       else if (!['rename', 'keepEmpty', 'maxMembers', 'auto.reset'].includes(change.action)) {
         this.watch.coordinator.run(room, { type: 'roles' });
@@ -638,6 +640,7 @@ class WatchRooms {
     room.state.paused = true;
     room.manualPaused = true;
     room.revision++;
+    this.watch.changed(room);
   }
   async ensureSingle(actor, current = async () => true) {
     if (!this.singleOpening) {
@@ -876,10 +879,14 @@ class WatchRooms {
         if (active) this.store.touch(record.id);
         if (bookmark) this.queue.checkpoint(record.id, bookmark.position);
         this.apply(room, await this.store.checkpoint(record.id, record.checkpointRevision, bookmark));
-        room.saveError = undefined;
+        if (room.saveError) {
+          room.saveError = undefined;
+          this.watch.changed(room);
+        }
       })
       .catch(error => {
         room.saveError = 'Room progress could not be saved. Check server storage.';
+        this.watch.changed(room);
         this.freeze(room);
         throw error;
       });

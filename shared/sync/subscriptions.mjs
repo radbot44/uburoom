@@ -4,57 +4,6 @@
  * leaking state updates to subscribers in unrelated rooms or tenants.
  */
 
-import { SYNC_ACTIONS } from './protocol.mjs';
-
-const ROOM_SUBSCRIPTION_PATTERN = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/([a-z]+))?(?:\?|$)/;
-
-// Generic media commands affect only their room. Host applications with
-// extension commands pass their own predicate to classifyMutationScope.
-const ROOM_LOCAL_ACTIONS = new Set(SYNC_ACTIONS.filter(action => action.startsWith('media.')));
-
-/**
- * Determine whether a generic sync action affects only the target room's subscribers
- * (never altering lobby room list titles, visibility, names, or membership).
- * @param {string|undefined} action
- */
-export function isRoomLocalAction(action) {
-  if (typeof action !== 'string') return false;
-  return ROOM_LOCAL_ACTIONS.has(action);
-}
-
-/**
- * Extract the subscribed `roomId` from a watch subscription path.
- * @param {string|undefined} subscriptionPath
- */
-export function extractSubscribedRoomId(subscriptionPath) {
-  if (typeof subscriptionPath !== 'string' || !subscriptionPath) return undefined;
-  return ROOM_SUBSCRIPTION_PATTERN.exec(subscriptionPath)?.[1];
-}
-
-/**
- * Classify a mutation request path + body into either a room-only scope or a lobby-inclusive scope.
- * @param {string} path
- * @param {any} [data]
- * @param {(action: string|undefined) => boolean} [roomLocal] Whether a command action is room-local.
- * @returns {{roomId?:string, includeLobby:boolean}}
- */
-export function classifyMutationScope(path, data, roomLocal = isRoomLocalAction) {
-  const cleanPath = String(path || '').split('?')[0];
-  const match = ROOM_SUBSCRIPTION_PATTERN.exec(cleanPath);
-  if (!match) return { includeLobby: true };
-  const [, roomId, subresource] = match;
-  if (subresource === 'ready' || subresource === 'delivery') {
-    return { roomId, includeLobby: false };
-  }
-  if (subresource === 'command' && roomLocal(data?.command?.action)) {
-    // Note: in saved rooms when no media is loaded, `media.play`/`media.toggle`
-    // can advance into the next queued title, which updates the lobby title.
-    // Callers with room context can pass `roomHasMedia` or let dispatch classify it.
-    return { roomId, includeLobby: false };
-  }
-  return { roomId, includeLobby: true };
-}
-
 /**
  * Create a coalescing subscription broker that delivers room-local changes only
  * to clients subscribed to that `(tenantId, roomId)`, while lobby/global changes
@@ -69,7 +18,7 @@ export function classifyMutationScope(path, data, roomLocal = isRoomLocalAction)
  */
 export function createSubscriptionBroker({
   publish,
-  getRoomId = client => extractSubscribedRoomId(client?.subscription),
+  getRoomId = client => client?.roomId,
   getTenantId = client => client?.tenantId || 'default',
   onError = () => {},
   schedule = typeof setImmediate === 'function' ? setImmediate : queueMicrotask,

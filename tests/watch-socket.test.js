@@ -8,6 +8,8 @@ const { randomUUID } = require('node:crypto'),
   { once } = require('node:events');
 const { WebSocket } = require('ws');
 const { createApp } = require('../server/app');
+const { requestByPath, hello } = require('./helpers/wire-paths');
+const { PROTOCOL_VERSION, serverMessageError } = require('../shared/wire-protocol');
 const certFile = path.join(__dirname, '../certs/server-cert.pem');
 
 async function fixture(t) {
@@ -64,7 +66,8 @@ async function fixture(t) {
     ws.on('message', raw => {
       const message = JSON.parse(raw);
       events.push(message);
-      if (message.type === 'response') {
+      assert.equal(serverMessageError(message), undefined, 'the server sends only well-formed messages');
+      if (message.type === 'ack' || (message.type === 'error' && message.id !== undefined)) {
         const pending = waiting.get(message.id);
         if (pending) {
           waiting.delete(message.id);
@@ -74,9 +77,10 @@ async function fixture(t) {
     });
     await once(ws, 'open');
     const authenticated = once(ws, 'message');
-    ws.send(JSON.stringify({ type: 'auth', token: identity.token, csrf: identity.csrf }));
+    ws.send(JSON.stringify(hello({ token: identity.token, csrf: identity.csrf })));
     const authMessage = JSON.parse((await authenticated)[0]);
-    assert.equal(authMessage.type, 'auth-ok');
+    assert.equal(authMessage.type, 'welcome');
+    assert.equal(authMessage.protocol, PROTOCOL_VERSION);
     assert.ok(Number.isSafeInteger(authMessage.connectionId) && authMessage.connectionId > 0);
     const ping = setInterval(() => {
       if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'clock', id: 0 }));
@@ -87,12 +91,17 @@ async function fixture(t) {
       connectionId: authMessage.connectionId,
       events,
       stopClock: () => clearInterval(ping),
-      call: (route, data) =>
+      send: message =>
         new Promise(resolve => {
           const id = ++sequence;
           waiting.set(id, resolve);
-          ws.send(JSON.stringify({ type: 'request', id, path: route, ...(data === undefined ? {} : { data }) }));
+          ws.send(JSON.stringify({ ...message, id }));
         }),
+      // Requests named by resource path, as these tests were written (helpers/wire-paths.js).
+      async call(route, data) {
+        const { status, body } = await requestByPath(this.send, route, data);
+        return { status, value: body };
+      },
     };
   }
   return {
@@ -121,16 +130,14 @@ test('authenticated sockets have distinct server connection IDs', tls, async t =
   assert.ok(second.connectionId > first.connectionId);
   await new Promise(resolve => {
     const check = () => {
-      if (first.events.some(e => e.type === 'identity') && first.events.some(e => e.type === 'rooms')) resolve();
+      if (first.events.some(e => e.type === 'lobby')) resolve();
       else setTimeout(check, 50);
     };
     check();
   });
-  assert.equal(first.events.filter(e => e.type === 'identity').length, 1);
-  assert.equal(first.events.filter(e => e.type === 'rooms').length, 1);
+  assert.equal(first.events.filter(e => e.type === 'lobby').length, 1);
   await new Promise(r => setTimeout(r, 1200));
-  assert.equal(first.events.filter(e => e.type === 'identity').length, 1, 'unchanged identity frame is deduplicated');
-  assert.equal(first.events.filter(e => e.type === 'rooms').length, 1, 'unchanged rooms frame is deduplicated');
+  assert.equal(first.events.filter(e => e.type === 'lobby').length, 1, 'an unchanged lobby is not sent again');
 });
 
 test(
@@ -275,7 +282,7 @@ test(
     );
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.ok(
-      guest.events.slice(before).some(message => message.type === 'state' && message.value.visibility === 'public'),
+      guest.events.slice(before).some(message => message.type === 'room' && message.state.visibility === 'public'),
       'other viewer receives a pushed state without requesting it',
     );
     state = (await host.call(target + '?viewer=' + viewer)).value;
@@ -333,7 +340,7 @@ test(
     hostPresence.streamVersion = streamVersion;
     host.ws.send(
       JSON.stringify({
-        type: 'sync-quality',
+        type: 'quality',
         roomId,
         viewerId: hostViewer,
         mediaVersion,
@@ -358,7 +365,7 @@ test(
     // Telemetry already in flight when a viewer leaves must not cost the socket.
     host.ws.send(
       JSON.stringify({
-        type: 'sync-quality',
+        type: 'quality',
         roomId,
         viewerId: randomUUID(),
         mediaVersion,
@@ -375,7 +382,7 @@ test(
     const guestClosed = once(guest.ws, 'close');
     guest.ws.send(
       JSON.stringify({
-        type: 'sync-quality',
+        type: 'quality',
         roomId,
         viewerId: hostViewer,
         mediaVersion,
@@ -389,7 +396,7 @@ test(
     await new Promise(resolve => setTimeout(resolve, 550));
     host.ws.send(
       JSON.stringify({
-        type: 'sync-quality',
+        type: 'quality',
         roomId,
         viewerId: hostViewer,
         mediaVersion,
@@ -415,7 +422,7 @@ test(
     // A five-minute-old paused measurement must not invalidate an otherwise healthy viewer socket.
     host.ws.send(
       JSON.stringify({
-        type: 'sync-quality',
+        type: 'quality',
         roomId,
         viewerId: hostViewer,
         mediaVersion,
@@ -453,15 +460,29 @@ test(
     await new Promise(resolve => foreign.once('close', resolve));
 
     // Invalid auth credentials
-    for (const auth of [
-      { type: 'auth', token: 'a'.repeat(64) },
-      { type: 'auth', csrf: 'b'.repeat(64) },
-    ]) {
+    for (const auth of [hello({ token: 'a'.repeat(64) }), hello({ csrf: 'b'.repeat(64) })]) {
       const ws = new WebSocket(baseWss + '/watch-socket', { ca: f.cert, origin: f.config.publicUrl });
       await once(ws, 'open');
       const closed = once(ws, 'close');
       ws.send(JSON.stringify(auth));
       assert.equal((await closed)[0], 4003);
+    }
+
+    // A client speaking another protocol version is told so before any sign-in.
+    for (const outdated of [
+      { type: 'auth', token: 'a'.repeat(64) },
+      { ...hello({}), protocol: PROTOCOL_VERSION + 1 },
+    ]) {
+      const ws = new WebSocket(baseWss + '/watch-socket', { ca: f.cert, origin: f.config.publicUrl });
+      await once(ws, 'open');
+      const told = once(ws, 'message'),
+        closed = once(ws, 'close');
+      ws.send(JSON.stringify(outdated));
+      const message = JSON.parse((await told)[0]);
+      assert.equal(message.type, 'error');
+      assert.equal(message.code, 'protocol');
+      assert.deepEqual(message.supported, [PROTOCOL_VERSION]);
+      assert.equal((await closed)[0], 4010);
     }
 
     // Unsupported upgrade paths and query variants destroyed promptly
@@ -526,7 +547,7 @@ test('cookie socket authentication requires CSRF and logout invalidates the acti
   });
   await once(bad, 'open');
   const closed = once(bad, 'close');
-  bad.send(JSON.stringify({ type: 'auth', csrf: 'wrong' }));
+  bad.send(JSON.stringify(hello({ csrf: 'wrong' })));
   assert.equal((await closed)[0], 4003);
   const good = await f.connect(identity, f.config.publicUrl, cookie);
   const created = await good.call('/api/watch/rooms', {});
@@ -585,11 +606,11 @@ test('watch socket updates watchHeaders when client re-authenticates with renewe
   const renewed = await f.login('host');
   assert.notEqual(renewed.token, identity.token);
 
-  client.ws.send(JSON.stringify({ type: 'auth', token: renewed.token, csrf: renewed.csrf }));
+  client.ws.send(JSON.stringify(hello({ token: renewed.token, csrf: renewed.csrf })));
   await new Promise(resolve => {
     const handler = raw => {
       const msg = JSON.parse(raw);
-      if (msg.type === 'auth-ok') {
+      if (msg.type === 'welcome') {
         client.ws.off('message', handler);
         resolve();
       }
@@ -600,91 +621,186 @@ test('watch socket updates watchHeaders when client re-authenticates with renewe
   assert.equal(viewer.watchSocket.watchHeaders.authorization, 'Bearer ' + renewed.token);
 });
 
-test('a slow room publication retries without telling a healthy browser it disconnected', async () => {
+test(
+  'an idle room with ten viewers is sent no state between resyncs, and a change reaches only its room',
+  tls,
+  async t => {
+    const f = await fixture(t);
+    const identities = [await f.login('host'), await f.login('guest'), await f.login('guest2')];
+    const tabs = [];
+    for (let i = 0; i < 10; i++) tabs.push({ client: await f.connect(identities[i % 3]), viewerId: randomUUID() });
+    const bystander = await f.connect(identities[1]);
+    t.after(() => {
+      for (const tab of tabs) tab.client.ws.terminate();
+      bystander.ws.terminate();
+    });
+    const host = tabs[0],
+      roomId = (await host.client.call('/api/watch/rooms', {})).value.id,
+      route = '/api/watch/rooms/' + roomId;
+    let state;
+    for (const tab of tabs) {
+      const joined = await tab.client.call(route + '?viewer=' + tab.viewerId + '&quality=direct');
+      assert.equal(joined.status, 200);
+    }
+    // A host's further tabs rotate the room's command epoch; read it once everyone is in.
+    state = (await host.client.call(route + '?viewer=' + host.viewerId)).value;
+    const command = action =>
+      host.client.call(route + '/command', {
+        epoch: state.epoch,
+        expiresAt: Date.now() + 2500,
+        viewerId: host.viewerId,
+        command: action,
+      });
+    assert.equal(
+      (await command({ action: 'media.load', args: { mediaId: 'demo', quality: 'direct' } })).value.status,
+      'applied',
+    );
+    state = (await host.client.call(route + '?viewer=' + host.viewerId)).value;
+    for (const tab of tabs)
+      await tab.client.call(route + '/ready', {
+        viewerId: tab.viewerId,
+        mediaVersion: state.mediaVersion,
+        ready: true,
+        readinessVersion: state.readinessVersion,
+      });
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    assert.equal(f.app.watch.rooms.get(roomId).state.paused, false, 'the room is playing');
+    const pushes = client => client.events.filter(e => ['room', 'viewer', 'lobby'].includes(e.type));
+    for (const tab of tabs) tab.client.events.length = 0;
+    bystander.events.length = 0;
+    // Three seconds of playback: clocks and pongs keep everyone present; nothing changes.
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    for (const tab of tabs) {
+      assert.ok(
+        tab.client.events.some(e => e.type === 'clock'),
+        'each tab kept exchanging clock samples',
+      );
+      assert.deepEqual(pushes(tab.client), [], 'an idle room pushes nothing');
+    }
+    assert.equal(f.app.watch.rooms.get(roomId).viewers.size, 10, 'everyone stayed in the room');
+    // One change: every tab in the room gets the room lane once; nobody is sent the lobby or their own lane.
+    assert.equal((await command({ action: 'media.pause' })).value.status, 'applied');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    for (const tab of tabs)
+      assert.deepEqual(
+        pushes(tab.client).map(e => e.type),
+        ['room'],
+        'a pause is one room message per tab',
+      );
+    assert.deepEqual(pushes(bystander), [], 'a connection outside the room hears nothing of its playback');
+  },
+);
+
+// A server whose room work is scripted, to exercise the connection's own publication rules.
+async function scripted(operations, options = {}) {
   const http = require('node:http'),
     { watchSockets } = require('../server/watch-socket');
   const WatchTransport = require('../web/watch-transport');
   const server = http.createServer(),
-    selected = '/api/watch/rooms/11111111-1111-4111-8111-111111111111?viewer=22222222-2222-4222-8222-222222222222';
-  let calls = 0;
+    roomId = '11111111-1111-4111-8111-111111111111',
+    viewerId = '22222222-2222-4222-8222-222222222222';
+  const room = { roomId, viewers: new Map([[viewerId, { viewerId }]]) },
+    lanes = { version: 1, stamp: 'stream', room: { mediaVersion: 'm' }, viewer: { mediaVersion: 'm' } };
   const messages = [];
-  const routes = {
-    clockEpoch: 'fixture',
-    authorized: async () => ({ actor: { userId: 'fixture' } }),
-    execute: async (context, url) => {
-      if (url === selected && ++calls === 2)
-        await new Promise((_, reject) =>
-          context.signal.addEventListener('abort', () => reject(context.signal.reason), { once: true }),
-        );
-      return url === selected ? { status: 200, value: {}, subscription: selected } : { status: 200, value: {} };
-    },
-  };
   const sockets = watchSockets({
     server,
     config: { publicUrl: 'http://fixture.invalid' },
-    routes,
+    routes: {
+      clockEpoch: 'fixture',
+      authorized: async () => ({ actor: { userId: 'fixture' } }),
+      operations: {
+        join: async () => ({ status: 200, value: lanes }),
+        lanes: async () => ({ status: 200, value: lanes }),
+        lobby: async () => ({ status: 200, value: { identity: {}, rooms: [] } }),
+        call: async () => ({ status: 200, value: {} }),
+        ...operations(lanes),
+      },
+    },
     watch: {
       clock: { now: () => Date.now() },
-      rooms: new Map(),
+      rooms: new Map([[roomId, room]]),
+      roomVersion: () => 1,
+      viewerStamp: () => 'stream',
+      changed() {},
       disconnected() {},
-      present() {},
+      present: () => true,
       roomState: { startRecovery() {}, people: { reserve() {}, enter() {} } },
     },
     hub: { dispatch: async () => {} },
     throttle: () => true,
-    publishTimeoutMs: 50,
+    // The slow resync, sped up: it is what publishes here, since nothing changes.
+    resyncMs: 100,
+    ...options,
   });
-  let transport;
-  try {
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    class Client extends WebSocket {
-      constructor(url) {
-        super(url, { origin: 'http://fixture.invalid' });
-      }
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  class Client extends WebSocket {
+    constructor(url) {
+      super(url, { origin: 'http://fixture.invalid' });
     }
-    transport = new WatchTransport({
-      url: 'ws://127.0.0.1:' + server.address().port + '/watch-socket',
-      identity: () => ({}),
-      WebSocket: Client,
-      onMessage: message => messages.push(message),
-    });
-    await transport.connect();
-    await transport.request(selected);
+  }
+  const transport = new WatchTransport({
+    url: 'ws://127.0.0.1:' + server.address().port + '/watch-socket',
+    identity: () => ({}),
+    WebSocket: Client,
+    onMessage: message => messages.push(message),
+  });
+  await transport.connect();
+  await transport.join(roomId, viewerId, {});
+  return {
+    transport,
+    messages,
+    async close() {
+      transport.close();
+      sockets.close();
+      await new Promise(resolve => server.close(resolve));
+    },
+  };
+}
+
+test('a slow room publication retries without telling a healthy browser it disconnected', async () => {
+  let calls = 0;
+  const f = await scripted(
+    lanes => ({
+      async lanes(context) {
+        if (++calls === 1)
+          await new Promise((_, reject) =>
+            context.signal.addEventListener('abort', () => reject(context.signal.reason), { once: true }),
+          );
+        return { status: 200, value: lanes };
+      },
+    }),
+    { publishTimeoutMs: 50 },
+  );
+  try {
     await new Promise(resolve => setTimeout(resolve, 2300));
-    assert.equal(messages.filter(message => message.type === 'unavailable').length, 0);
+    assert.equal(f.messages.filter(message => message.type === 'error').length, 0);
     assert.ok(
-      messages.some(message => message.type === 'state'),
-      'the next publication delivers room state',
+      f.messages.some(message => message.type === 'room') && f.messages.some(message => message.type === 'viewer'),
+      'the retried publication delivers both lanes, with nothing having changed: a resync',
     );
-    assert.ok(calls >= 3);
-    assert.equal(transport.socket.readyState, 1);
+    assert.ok(calls >= 2);
+    assert.equal(f.transport.socket.readyState, 1);
   } finally {
-    transport?.close();
-    sockets.close();
-    await new Promise(resolve => server.close(resolve));
+    await f.close();
   }
 });
 
 test('cancelled library work releases admission and stalled discovery cannot block room publication', async () => {
-  const http = require('node:http'),
-    { watchSockets } = require('../server/watch-socket');
-  const WatchTransport = require('../web/watch-transport');
-  const server = http.createServer(),
-    selected = '/api/watch/rooms/11111111-1111-4111-8111-111111111111?viewer=22222222-2222-4222-8222-222222222222';
   let cancelled = 0,
-    selectedCalls = 0,
+    published = 0,
     releaseLobby;
   const lobby = new Promise(resolve => (releaseLobby = resolve));
-  const routes = {
-    clockEpoch: 'fixture',
-    authorized: async () => ({ actor: { userId: 'fixture' } }),
-    execute: async (context, url) => {
-      if (url === selected) {
-        selectedCalls++;
-        return { status: 200, value: {}, subscription: selected };
-      }
-      if (url === '/api/watch/rooms') await lobby;
-      if (url.startsWith('/api/watch/library?q='))
+  const f = await scripted(lanes => ({
+    async lanes() {
+      published++;
+      return { status: 200, value: lanes };
+    },
+    async lobby() {
+      await lobby;
+      return { status: 200, value: { identity: {}, rooms: [] } };
+    },
+    async call(context, op) {
+      if (op === 'library.browse')
         await new Promise((resolve, reject) =>
           context.signal.addEventListener(
             'abort',
@@ -697,53 +813,23 @@ test('cancelled library work releases admission and stalled discovery cannot blo
         );
       return { status: 200, value: {} };
     },
-  };
-  const sockets = watchSockets({
-    server,
-    config: { publicUrl: 'http://fixture.invalid' },
-    routes,
-    watch: {
-      clock: { now: () => Date.now() },
-      rooms: new Map(),
-      disconnected() {},
-      present() {},
-      roomState: { startRecovery() {}, people: { reserve() {}, enter() {} } },
-    },
-    hub: { dispatch: async () => {} },
-    throttle: () => true,
-  });
-  let transport;
+  }));
   try {
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    class Client extends WebSocket {
-      constructor(url) {
-        super(url, { origin: 'http://fixture.invalid' });
-      }
-    }
-    transport = new WatchTransport({
-      url: 'ws://127.0.0.1:' + server.address().port + '/watch-socket',
-      identity: () => ({}),
-      WebSocket: Client,
-    });
-    await transport.connect();
-    await transport.request(selected);
     for (let i = 0; i < 10; i++) {
       const abort = new AbortController(),
-        request = transport.request('/api/watch/library?q=' + i, undefined, { signal: abort.signal });
+        request = f.transport.call('library.browse', { args: { q: String(i) } }, { signal: abort.signal });
       const rejected = assert.rejects(request);
       await new Promise(resolve => setTimeout(resolve, 20));
       abort.abort();
       await rejected;
     }
-    assert.deepEqual(await transport.request('/api/watch/me'), {});
+    assert.deepEqual(await f.transport.call('me'), {});
     await new Promise(resolve => setTimeout(resolve, 2100));
     assert.equal(cancelled, 10);
-    assert.ok(selectedCalls >= 3);
-    assert.equal(transport.socket.readyState, 1);
+    assert.ok(published >= 2, 'the room lanes are resynced while the lobby is still stalled');
+    assert.equal(f.transport.socket.readyState, 1);
   } finally {
-    transport?.close();
     releaseLobby();
-    sockets.close();
-    await new Promise(resolve => server.close(resolve));
+    await f.close();
   }
 });

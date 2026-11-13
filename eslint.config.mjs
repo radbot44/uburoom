@@ -38,6 +38,7 @@ const pageGlobals = Object.fromEntries(
     'uburoomUbumfa',
     'uburoomWatchFeedback',
     'uburoomWatchTransport',
+    'uburoomWire',
   ].map(name => [name, 'readonly']),
 );
 
@@ -46,6 +47,7 @@ const watchScriptGlobals = {
   $: 'readonly',
   activity: 'readonly',
   api: 'readonly',
+  call: 'readonly',
   clearPlayer: 'readonly',
   config: 'writable',
   me: 'writable',

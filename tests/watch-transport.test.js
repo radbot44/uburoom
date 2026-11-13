@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const { WebSocketServer } = require('ws');
 const WatchTransport = require('../web/watch-transport');
+const { PROTOCOL_VERSION } = require('../shared/wire-protocol');
 const PlaybackDiagnostics = require('../web/playback-diagnostics');
 
 class MockSocket {
@@ -23,8 +24,8 @@ class MockSocket {
   send(data) {
     const msg = JSON.parse(data);
     this.sent.push(msg);
-    if (this.autoAuth && msg.type === 'auth') {
-      queueMicrotask(() => this.receive({ type: 'auth-ok', connectionId: this.connectionId }));
+    if (this.autoAuth && msg.type === 'hello') {
+      queueMicrotask(() => this.receive({ type: 'welcome', protocol: msg.protocol, connectionId: this.connectionId }));
     }
   }
   close(code = 1000, reason = '') {
@@ -132,7 +133,8 @@ test('clock sample resolves promptly, suppresses inflight duplicates, expires on
 
   await transport.connect();
   const socket = transport.socket;
-  assert.equal(socket.sent[0].type, 'auth');
+  assert.equal(socket.sent[0].type, 'hello');
+  assert.equal(socket.sent[0].protocol, PROTOCOL_VERSION);
   assert.equal(transport.ready, true);
 
   // 1. Initial clock sample resolves promptly and cleans up pending entry
@@ -201,7 +203,7 @@ test('socket liveness timeout resets on healthy traffic and closes socket when d
   // Send periodic state messages from server every 25ms for 75ms total (longer than 60ms heartbeat)
   for (let i = 0; i < 3; i++) {
     await new Promise(resolve => setTimeout(resolve, 25));
-    socket.receive({ type: 'state', path: '/api/watch/rooms/1', value: { epoch: i } });
+    socket.receive({ type: 'lobby', version: i, identity: {}, rooms: [] });
   }
   assert.equal(socket.readyState, 1, 'socket remains open because messages arrived');
 
@@ -214,7 +216,7 @@ test('socket liveness timeout resets on healthy traffic and closes socket when d
   transport.close();
 });
 
-test('real WebSocket server integration verifies auth, clock exchanges, and request routing', async () => {
+test('real WebSocket server integration verifies the handshake, clock exchanges, requests and a protocol mismatch', async () => {
   const server = http.createServer();
   const wss = new WebSocketServer({ server });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -223,8 +225,11 @@ test('real WebSocket server integration verifies auth, clock exchanges, and requ
   wss.on('connection', ws => {
     ws.on('message', raw => {
       const msg = JSON.parse(raw.toString());
-      if (msg.type === 'auth') {
-        ws.send(JSON.stringify({ type: 'auth-ok' }));
+      if (msg.type === 'hello') {
+        if (msg.token === 'outdated') {
+          ws.send(JSON.stringify({ type: 'error', code: 'protocol', status: 426, message: 'Update this app.' }));
+          ws.close(4010, 'Protocol mismatch');
+        } else ws.send(JSON.stringify({ type: 'welcome', protocol: msg.protocol, connectionId: 1 }));
       } else if (msg.type === 'clock') {
         ws.send(
           JSON.stringify({
@@ -234,14 +239,13 @@ test('real WebSocket server integration verifies auth, clock exchanges, and requ
             timing: { serverReceivedAt: 10, serverSentAt: 11, serverProcessingMs: 1, clockEpoch: 'epoch-1' },
           }),
         );
-      } else if (msg.type === 'request') {
+      } else if (msg.type === 'call') {
         ws.send(
-          JSON.stringify({
-            type: 'response',
-            id: msg.id,
-            status: 200,
-            value: { ok: true, echo: msg.path },
-          }),
+          JSON.stringify(
+            msg.op === 'me'
+              ? { type: 'ack', id: msg.id, value: { ok: true, echo: msg.op } }
+              : { type: 'error', id: msg.id, code: 'refused', status: 409, message: 'Not now', rejoin: true },
+          ),
         );
       }
     });
@@ -261,8 +265,8 @@ test('real WebSocket server integration verifies auth, clock exchanges, and requ
   assert.equal(transport.ready, true);
 
   // Request test
-  const res = await transport.request('/api/watch/me');
-  assert.deepEqual(res, { ok: true, echo: '/api/watch/me' });
+  assert.deepEqual(await transport.call('me'), { ok: true, echo: 'me' });
+  await assert.rejects(transport.call('rooms.list'), { message: 'Not now', status: 409, rejoin: true });
 
   // Clock exchange test
   await new Promise(resolve => setTimeout(resolve, 50));
@@ -270,6 +274,19 @@ test('real WebSocket server integration verifies auth, clock exchanges, and requ
   assert.equal(clocks[0].msg.serverNow, 12345);
 
   transport.close();
+
+  // A server that speaks another protocol version says so; the client reports it and stops retrying.
+  const pushed = [];
+  const outdated = new WatchTransport({
+    url: `ws://127.0.0.1:${port}`,
+    identity: () => ({ token: 'outdated' }),
+    onMessage: message => pushed.push(message),
+  });
+  await assert.rejects(outdated.connect(), { code: 'protocol', status: 426, message: 'Update this app.' });
+  assert.equal(pushed[0].code, 'protocol');
+  assert.equal(outdated.stopped, true);
+  assert.equal(outdated.retry, undefined);
+
   wss.close();
   await new Promise(resolve => server.close(resolve));
 });

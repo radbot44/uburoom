@@ -286,8 +286,8 @@
       dialogs.open(dialog);
       try {
         const [lobby, saved] = await Promise.all([
-          request('/api/watch/events'),
-          event ? { rooms: [] } : request('/api/watch/rooms/saved'),
+          request('events.list'),
+          event ? { rooms: [] } : request('rooms.saved'),
         ]);
         if (ticket !== generation || !dialog.open) return;
         // Single-room mode always schedules into the shared room.
@@ -324,13 +324,11 @@
       popover(save, { text: editing ? 'Saving…' : 'Scheduling…', state: 'loading' });
       try {
         const result = editing
-          ? await request('/api/watch/rooms/' + editing.roomId + '/events', {
-              action: 'room.event.edit',
-              eventKey: editing.key,
-              eventVersion: editing.eventVersion,
-              ...args,
+          ? await request('room.events.command', {
+              roomId: editing.roomId,
+              args: { action: 'room.event.edit', eventKey: editing.key, eventVersion: editing.eventVersion, ...args },
             })
-          : await request('/api/watch/events', { room, ...args });
+          : await request('events.schedule', { args: { room, ...args } });
         if (result.status !== 'applied') throw new Error(result.message || 'The event could not be saved.');
         if (ticket !== generation) return;
         const anchor = opener;

@@ -142,9 +142,9 @@
                 release();
               }
               popover(button, { text: 'Canceling…', state: 'loading' });
-              const result = await request('/api/watch/rooms/' + event.roomId + '/events', {
-                action: 'room.event.cancel',
-                eventKey: event.key,
+              const result = await request('room.events.command', {
+                roomId: event.roomId,
+                args: { action: 'room.event.cancel', eventKey: event.key },
               });
               if (result.status !== 'applied') throw new Error(result.message || 'The event could not be canceled.');
               await refresh();
@@ -167,7 +167,7 @@
     async function refresh() {
       const ticket = ++generation;
       try {
-        const next = await request('/api/watch/events');
+        const next = await request('events.list');
         if (ticket !== generation) return;
         value = next;
         render();

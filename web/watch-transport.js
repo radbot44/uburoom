@@ -1,9 +1,12 @@
 // @ts-check
-/* Authenticated room messages, bounded reconnect and no command replay. */
+/* The room connection: typed messages (shared/wire-protocol.js), bounded reconnect and
+ * no command replay. Requests are answered by `ack` or `error`; room, viewer and lobby
+ * state arrive as pushes and go to `onMessage`. */
 /** @typedef {{token?: string, csrf?: string}} WatchSocketIdentity */
 /** @typedef {{timeoutMs?: number, signal?: AbortSignal}} WatchRequestOptions */
 (function (root) {
   'use strict';
+  const Wire = typeof module === 'object' && module.exports ? require('../shared/wire-protocol') : root.uburoomWire;
   const CLOCK_TIMEOUT_MS = 5000,
     HEARTBEAT_TIMEOUT_MS = 30000;
   class WatchTransport {
@@ -54,7 +57,7 @@
             socket.close();
           }
         }, 5000);
-        socket.onopen = () => socket.send(JSON.stringify({ type: 'auth', ...this.identity() }));
+        socket.onopen = () => this.hello(socket);
         socket.onerror = () => {};
         socket.onmessage = event => {
           if (socket !== this.socket) return;
@@ -62,7 +65,7 @@
           if (this.ready) this.scheduleHeartbeat();
           try {
             const message = JSON.parse(event.data);
-            if (message.type === 'auth-ok') {
+            if (message.type === 'welcome') {
               this.connectionId =
                 Number.isSafeInteger(message.connectionId) && message.connectionId > 0
                   ? message.connectionId
@@ -82,20 +85,22 @@
               }
               return;
             }
-            if (message.type === 'response' || message.type === 'clock') {
+            if (message.type === 'ack' || message.type === 'clock' || (message.type === 'error' && message.id >= 0)) {
               const pending = this.pending.get(message.id);
               if (!pending) return;
               this.pending.delete(message.id);
               clearTimeout(pending.timer);
               pending.cleanup?.();
               if (message.type === 'clock') this.onClock(message, pending.exchange);
-              if (message.status >= 400) {
-                const error = new Error(message.value?.error || 'Request failed');
-                error.status = message.status;
-                error.rejection = message.value?.rejection;
-                pending.reject(error);
-              } else pending.resolve(message.value);
+              if (message.type === 'error') pending.reject(refusal(message));
+              else pending.resolve(message.value);
               return;
+            }
+            // A server that speaks another protocol version will not change its mind:
+            // stop reconnecting and let the page say so.
+            if (message.type === 'error' && message.code === 'protocol') {
+              this.stopped = true;
+              this.protocolError = refusal(message);
             }
             this.onMessage(message);
           } catch {
@@ -111,7 +116,7 @@
           clearTimeout(this.authTimer);
           clearTimeout(this.heartbeat);
           clearTimeout(this.heartbeatTimer);
-          const error = new TypeError('Room connection lost; reconnecting');
+          const error = this.protocolError || new TypeError('Room connection lost; reconnecting');
           this.authReject?.(error);
           this.authResolve = this.authReject = undefined;
           for (const pending of this.pending.values()) {
@@ -144,9 +149,12 @@
       });
       return this.connecting;
     }
+    /** States the protocol version this client speaks, with its sign-in. */
+    hello(socket) {
+      socket.send(JSON.stringify({ type: 'hello', protocol: Wire.PROTOCOL_VERSION, ...this.identity() }));
+    }
     reauthenticate() {
-      if (this.ready && this.socket?.readyState === 1)
-        this.socket.send(JSON.stringify({ type: 'auth', ...this.identity() }));
+      if (this.ready && this.socket?.readyState === 1) this.hello(this.socket);
     }
     scheduleHeartbeat() {
       clearTimeout(this.heartbeatTimer);
@@ -190,13 +198,18 @@
       this.pending.set(id, { resolve: () => {}, reject: () => {}, timer, exchange, clock: true });
       this.socket.send(JSON.stringify({ type: 'clock', id }));
     }
-    syncQuality(value) {
+    /** Reports this tab's sync quality; unanswered. */
+    quality(value) {
       if (!this.ready || this.socket?.readyState !== 1) return false;
-      this.socket.send(JSON.stringify({ type: 'sync-quality', ...value }));
+      this.socket.send(JSON.stringify({ type: 'quality', ...value }));
       return true;
     }
-    /** @param {string} path @param {Object|undefined} data @param {WatchRequestOptions} options */
-    request(path, data, { timeoutMs = 12000, signal } = {}) {
+    /**
+     * Sends one request and resolves with its `ack` value, or rejects with its `error`.
+     * @param {{type: string} & Record<string, any>} message
+     * @param {WatchRequestOptions} options
+     */
+    request(message, { timeoutMs = 12000, signal } = {}) {
       if (!this.ready || this.socket?.readyState !== 1 || this.pending.size >= 8)
         return Promise.reject(new TypeError('Room connection unavailable; retry after reconnecting'));
       if (signal?.aborted) return Promise.reject(signal.reason);
@@ -215,10 +228,34 @@
           cleanup = () => signal?.removeEventListener('abort', cancel);
         this.pending.set(id, { resolve, reject, timer, cleanup });
         signal?.addEventListener('abort', cancel, { once: true });
-        this.socket.send(
-          JSON.stringify({ type: 'request', id, path, timeoutMs, ...(data === undefined ? {} : { data }) }),
-        );
+        this.socket.send(JSON.stringify({ ...message, id, timeoutMs }));
       });
+    }
+    /** Joins a room as `viewerId`; resolves with both lanes of the tab's view. */
+    join(roomId, viewerId, preferences, options) {
+      return this.request({ type: 'join', roomId, viewerId, preferences }, options);
+    }
+    leave(roomId, viewerId, options) {
+      return this.request({ type: 'leave', roomId, viewerId }, options);
+    }
+    /** @param {{viewerId?: string, epoch?: string, expiresAt?: number, command: {action: string, args?: Object}}} envelope */
+    command(roomId, envelope, options) {
+      return this.request({ type: 'command', roomId, ...envelope }, options);
+    }
+    // Named apart from the `ready` flag (the connection is signed in).
+    reportReady(roomId, viewerId, report, options) {
+      return this.request({ type: 'ready', roomId, viewerId, ...report }, options);
+    }
+    observe(roomId, viewerId, observation, options) {
+      return this.request({ type: 'observe', roomId, viewerId, observation }, options);
+    }
+    /** One named request (`CALLS` in shared/wire-protocol.js). */
+    call(op, { roomId, args } = {}, options) {
+      return this.request({ type: 'call', op, roomId, args }, options);
+    }
+    /** Asks for every lane again; resolves once the server has sent them. */
+    resync(options) {
+      return this.request({ type: 'resync' }, options);
     }
     interrupt(milliseconds = 6000) {
       this.resumeAt = Date.now() + milliseconds;
@@ -234,6 +271,15 @@
       this.closeInitiator = 'manual-close';
       this.socket?.close(1000);
     }
+  }
+  /** A server refusal as the error a caller catches. */
+  function refusal(message) {
+    return Object.assign(new Error(message.message || 'Request failed'), {
+      status: message.status,
+      code: message.code,
+      rejection: message.rejection,
+      rejoin: !!message.rejoin,
+    });
   }
   root.uburoomWatchTransport = WatchTransport;
   if (typeof module === 'object') module.exports = WatchTransport;

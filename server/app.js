@@ -829,6 +829,7 @@ function createApp(
               route === '/vendor/hls.js' ||
               route === '/room-protocol.js' ||
               route === '/engine.js' ||
+              route === '/wire-protocol.js' ||
               route === '/playback-timing.js' ||
               route === '/sync-quality.js' ||
               route.startsWith('/shared/sync/'));
@@ -1021,7 +1022,10 @@ function createApp(
               return sendStatic(req, res, content, 'text/javascript; charset=utf-8', route);
             }
           }
-          if (['GET', 'HEAD'].includes(req.method) && ['/room-protocol.js', '/engine.js'].includes(route)) {
+          if (
+            ['GET', 'HEAD'].includes(req.method) &&
+            ['/room-protocol.js', '/engine.js', '/wire-protocol.js'].includes(route)
+          ) {
             const content = await readAsset(path.join(__dirname, '../shared', route.slice(1)), 'utf8');
             const bodyOut =
               route === '/room-protocol.js' ? (roomProtocolCached ||= BROWSER_SYNC_PROTOCOL_PREFIX + content) : content;

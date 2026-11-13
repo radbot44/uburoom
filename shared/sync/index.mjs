@@ -132,9 +132,4 @@ export {
   createRoomCoordinator,
 } from './room-authority.mjs';
 
-export {
-  isRoomLocalAction,
-  extractSubscribedRoomId,
-  classifyMutationScope,
-  createSubscriptionBroker,
-} from './subscriptions.mjs';
+export { createSubscriptionBroker } from './subscriptions.mjs';

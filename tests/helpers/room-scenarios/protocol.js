@@ -5,8 +5,9 @@
 // into facts. A protocol change replaces this file; recorded traces stay valid.
 //
 // Current protocol: the browser's own WatchTransport over the authenticated
-// /watch-socket, HTTP-shaped `request` paths, and a full `state` republish to
-// each room subscriber every server second.
+// /watch-socket, typed messages (shared/wire-protocol.js), and room state pushed
+// in two lanes when it changes. After every scenario second each tab asks for an
+// explicit `resync`, so its view is the server's at that instant.
 //
 // Facts mark values the harness must normalise: token() for random ids whose
 // identity matters but whose value does not, time() for scenario-clock instants,
@@ -15,9 +16,9 @@ const { randomUUID } = require('node:crypto');
 const https = require('node:https');
 const { WebSocket } = require('ws');
 const WatchTransport = require('../../../web/watch-transport');
+const { mergeView, lanesAgree } = require('../../../shared/wire-protocol');
 const { realTimer, scenarioNow } = require('./clock');
 
-const ROOM = id => '/api/watch/rooms/' + id;
 const COMMAND_TTL_MS = 2500;
 const REQUEST_REAL_TIMEOUT_MS = 10000;
 const token = (kind, value) => (value === undefined || value === null ? null : { $token: kind, value });
@@ -37,12 +38,12 @@ class Viewer {
     this.label = label;
     this.viewerId = randomUUID();
     this.roomId = undefined;
-    this.subscription = undefined;
+    this.subscribed = false;
+    this.lanes = undefined;
     this.latest = undefined;
     this.kicked = false;
-    this.states = 0;
     this.lastClockAt = -1;
-    this.lastStateAt = -1;
+    this.lastResyncAt = -1;
   }
   async connect() {
     const { cert, config } = this.env.server;
@@ -53,7 +54,8 @@ class Viewer {
     }
     this.kicked = false;
     this.latest = undefined;
-    this.subscription = undefined;
+    this.subscribed = false;
+    this.lastResyncAt = scenarioNow();
     this.transport = new WatchTransport({
       url: config.publicUrl.replace('https:', 'wss:') + '/watch-socket',
       WebSocket: Socket,
@@ -67,35 +69,39 @@ class Viewer {
     });
     await this.transport.connect();
     if (!this.me) {
-      const me = await this.request('/api/watch/me');
+      const me = await this.request('me', transport => transport.call('me'));
       if (!me.ok) throw new Error('Scenario identity unavailable: ' + me.error);
       this.me = { accountId: me.value.account?.id, name: me.value.name };
     }
   }
   receive(message) {
     this.env.activity();
-    if (message.type === 'state' && this.subscription && message.path === this.subscription) {
-      this.states++;
-      this.latest = { status: message.status, value: message.value };
-      if (message.status === 200) this.lastStateAt = message.value.serverNow;
+    if (!this.subscribed || message.roomId !== this.roomId) return;
+    if ((message.type === 'room' || message.type === 'viewer') && message.viewerId === this.viewerId) {
+      this.lanes[message.type] = message.state;
+      // A tab shows its two lanes together once they describe the same video.
+      if (lanesAgree(this.lanes.room, this.lanes.viewer))
+        this.latest = { status: 200, value: mergeView(this.lanes.room, this.lanes.viewer) };
     }
-    if (message.type === 'room-kicked' && message.roomId === this.roomId) {
+    if (message.type === 'error' && message.code === 'room')
+      this.latest = { status: message.status, value: { error: message.message } };
+    if (message.type === 'error' && message.code === 'removed') {
       this.kicked = true;
-      this.subscription = undefined;
+      this.subscribed = false;
     }
   }
   /** Sends one request; scenario time is frozen meanwhile, so it must finish on real I/O alone. */
-  async request(path, data, timeoutMs) {
+  async request(label, send) {
     const detached = this.detaching;
     this.detaching = false;
     if (!detached) this.env.pending++;
     let cancel = () => {};
     try {
       const value = await Promise.race([
-        this.transport.request(path, data, timeoutMs ? { timeoutMs } : {}),
+        send(this.transport),
         new Promise((_resolve, reject) => {
           cancel = realTimer(REQUEST_REAL_TIMEOUT_MS, () =>
-            reject(new Error('Request waited on scenario time: ' + path.split('?')[0])),
+            reject(new Error('Request waited on scenario time: ' + label)),
           );
         }),
       ]);
@@ -130,7 +136,7 @@ class Viewer {
     const transport = this.transport,
       socket = transport?.socket;
     this.transport = undefined;
-    this.subscription = undefined;
+    this.subscribed = false;
     this.latest = undefined;
     if (!socket || socket.readyState === WebSocket.CLOSED) return Promise.resolve();
     const closed = new Promise(resolve => socket.once('close', () => resolve()));
@@ -144,88 +150,84 @@ class Viewer {
     return !!this.transport?.ready;
   }
 
+  call(op, input, timeoutMs) {
+    return this.request(op, transport => transport.call(op, input, timeoutMs ? { timeoutMs } : {}));
+  }
   async createRoom({ name, visibility = 'public', keepEmpty = false }) {
-    const result = await this.request('/api/watch/rooms', { name, visibility, keepEmpty });
+    const result = await this.call('rooms.create', { args: { name, visibility, keepEmpty } });
     if (result.ok) this.roomId = result.value.id;
     return ack(result);
   }
   /** Joins (or rejoins, keeping this tab's viewer id) and subscribes to room state. */
   async join(roomId = this.roomId) {
     this.roomId = roomId;
-    const path = ROOM(roomId) + '?' + new URLSearchParams({ viewer: this.viewerId, quality: 'direct' });
-    const result = await this.request(path, undefined, 35000);
-    if (result.ok) this.subscribed(path, result.value);
+    const result = await this.request('join', transport =>
+      transport.join(roomId, this.viewerId, { quality: 'direct' }, { timeoutMs: 35000 }),
+    );
+    if (result.ok) {
+      this.subscribed = true;
+      this.kicked = false;
+      this.lanes = { room: result.value.room.state, viewer: result.value.viewer.state };
+      this.latest = { status: 200, value: mergeView(this.lanes.room, this.lanes.viewer) };
+    }
     return ack(result);
   }
-  subscribed(path, state) {
-    this.subscription = path;
-    this.kicked = false;
-    this.latest = { status: 200, value: state };
-    this.lastStateAt = state.serverNow;
-  }
   async leave() {
-    const result = await this.request(ROOM(this.roomId) + '/leave', { viewerId: this.viewerId });
-    this.subscription = undefined;
+    const result = await this.request('leave', transport => transport.leave(this.roomId, this.viewerId));
+    this.subscribed = false;
     this.latest = undefined;
     return ack(result);
   }
   /** Sends a room command fenced by the room epoch this tab sees (or, with `stale`, an outdated one). */
   async command(action, args, { stale = false } = {}) {
-    const result = await this.request(
-      ROOM(this.roomId) + '/command',
-      {
-        viewerId: this.viewerId,
-        epoch: stale ? randomUUID() : this.latest?.value?.epoch,
-        expiresAt: scenarioNow() + COMMAND_TTL_MS,
-        command: { action, ...(args ? { args } : {}) },
-      },
-      35000,
+    const envelope = {
+      viewerId: this.viewerId,
+      epoch: stale ? randomUUID() : this.latest?.value?.epoch,
+      expiresAt: scenarioNow() + COMMAND_TTL_MS,
+      command: { action, ...(args ? { args } : {}) },
+    };
+    return ack(
+      await this.request('command', transport => transport.command(this.roomId, envelope, { timeoutMs: 35000 })),
     );
-    return ack(result);
   }
   /** Reports buffered readiness for the media version this tab currently sees. */
   async ready(ready = true) {
-    const state = this.latest?.value;
-    return ack(
-      await this.request(ROOM(this.roomId) + '/ready', {
-        viewerId: this.viewerId,
-        mediaVersion: state?.mediaVersion,
-        ready,
-        readinessVersion: state?.readinessVersion,
-      }),
-    );
+    const state = this.latest?.value,
+      report = { mediaVersion: state?.mediaVersion, ready, readinessVersion: state?.readinessVersion };
+    return ack(await this.request('ready', transport => transport.reportReady(this.roomId, this.viewerId, report)));
   }
   async queueAdd(item) {
     return ack(
-      await this.request(ROOM(this.roomId) + '/queue', { action: 'add', item: { mediaId: 'demo', ...item } }, 35000),
+      await this.call(
+        'room.queue.command',
+        { roomId: this.roomId, args: { action: 'add', item: { mediaId: 'demo', ...item } } },
+        35000,
+      ),
     );
   }
   /** Applies one durable room-settings change at the current settings revision. */
   async settings(change) {
-    const current = await this.request(ROOM(this.roomId) + '/settings');
+    const current = await this.call('room.settings', { roomId: this.roomId });
     if (!current.ok) return ack(current);
-    return ack(await this.request(ROOM(this.roomId) + '/settings', { revision: current.value.revision, change }));
+    return ack(
+      await this.call('room.settings.edit', {
+        roomId: this.roomId,
+        args: { revision: current.value.revision, change },
+      }),
+    );
   }
   async closeRoom() {
-    const result = await this.request(ROOM(this.roomId) + '/close', { epoch: this.latest?.value?.epoch });
+    const result = await this.call('room.close', { roomId: this.roomId, args: { epoch: this.latest?.value?.epoch } });
     if (result.ok) {
-      this.subscription = undefined;
+      this.subscribed = false;
       this.latest = undefined;
     }
     return ack(result);
   }
+  /** Reopens a closed room from the database and joins it. */
   async reopen() {
-    const result = await this.request(
-      ROOM(this.roomId) + '/reopen',
-      { viewerId: this.viewerId, quality: 'direct' },
-      35000,
-    );
-    if (result.ok && result.value.state)
-      this.subscribed(
-        ROOM(this.roomId) + '?' + new URLSearchParams({ viewer: this.viewerId, quality: 'direct' }),
-        result.value.state,
-      );
-    return ack(result);
+    const result = await this.call('room.reopen', { roomId: this.roomId }, 35000);
+    return result.ok ? this.join() : ack(result);
   }
 
   /**
@@ -259,34 +261,40 @@ class Viewer {
     }
   }
 
-  /** Marks the start of a tick, for fresh(). */
-  beginTick() {
-    this.statesAtTick = this.states;
-  }
-  /** After a tick: a browser exchanges a clock sample about once a second. */
+  /** Marks the start of a tick. */
+  beginTick() {}
+  /**
+   * After a tick: a browser exchanges a clock sample about once a second, and the
+   * tab asks for an explicit resync so its view is the server's at this instant.
+   * (The server's own slow resync does the same, less often.)
+   */
   heartbeat() {
-    if (this.connected) this.transport.clock();
+    if (!this.connected) return;
+    const transport = this.transport;
+    transport.clock();
+    transport.resync({ timeoutMs: 35000 }).then(
+      value => {
+        if (this.transport === transport) this.lastResyncAt = value.serverNow;
+        this.env.activity();
+      },
+      () => this.env.activity(),
+    );
   }
   /**
    * True once this tab's view reflects the server at scenario time `now`: a
-   * clock exchange answered at `now` and, while subscribed, a room state
-   * computed at `now` (or a refusal delivered after the tick began). This
-   * relies on the server's once-a-second state republish; a push-on-change
-   * protocol must give this adapter an equivalent "view is current" signal
-   * (for example an explicit resync) without changing what the views contain.
+   * clock exchange and a resync, both answered at `now`. Between ticks the view
+   * moves only by what the server pushes.
    */
   fresh(now) {
     if (!this.connected) return true;
-    if (this.lastClockAt < now) return false;
-    if (!this.subscription) return true;
-    return this.latest?.status === 200 ? this.lastStateAt >= now : this.states > this.statesAtTick;
+    return this.lastClockAt >= now && this.lastResyncAt >= now;
   }
 
   /** Semantic room facts as this tab sees them. */
   view() {
     if (!this.transport) return { connection: 'closed' };
     if (this.kicked) return { connection: 'open', room: 'removed' };
-    if (!this.subscription || !this.latest) return { connection: 'open', room: 'none' };
+    if (!this.subscribed || !this.latest) return { connection: 'open', room: 'none' };
     if (this.latest.status !== 200)
       return { connection: 'open', room: 'refused', refusal: this.latest.status + ' ' + this.latest.value?.error };
     const s = this.latest.value,

@@ -295,7 +295,7 @@ async function main() {
         clients.map(([browser, page], i) =>
           browser.evaluate(
             page,
-            `startupFixture.delay=${i ? trial.rtt : 20};startupFixture.unit=${trial.mode === 'unit'};startupFixture.legacy=${trial.mode === 'legacy'};sync.resetCorrection(true);startupFixture.attempts=0;startupFixture.states=[];playbackClock.reset();refreshState().then(()=>true)`,
+            `startupFixture.delay=${i ? trial.rtt : 20};startupFixture.unit=${trial.mode === 'unit'};startupFixture.legacy=${trial.mode === 'legacy'};sync.resetCorrection(true);startupFixture.attempts=0;startupFixture.states=[];playbackClock.reset();rejoinRoom().then(()=>true)`,
           ),
         ),
       );

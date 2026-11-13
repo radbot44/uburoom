@@ -203,8 +203,8 @@ $('account-name-save').addEventListener('click', async () => {
   button.disabled = true;
   accountError();
   try {
-    await api('/api/watch/profile', { name: submittedName });
-    me = await api('/api/watch/me');
+    await call('profile.rename', { args: { name: submittedName } });
+    me = await call('me');
     renderAccount();
     accountValue = me.account;
     if ($('account-display-name').value === submittedName) {

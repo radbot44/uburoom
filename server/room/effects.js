@@ -31,7 +31,7 @@ module.exports = {
     const room = roomId ? this.rooms.get(roomId) : undefined;
     const roomOnly = Boolean(roomId && Engine.command(action)?.roomLocal && hadMedia === Boolean(room?.media));
     const change = roomOnly ? { roomId, includeLobby: false } : { includeLobby: true };
-    if (!room || !this.coordinator.publish(room, change)) this.onPublish?.(room, change);
+    if (!room || !this.coordinator.publish(room, change)) this.announce(room, change);
   },
   providerFailed(error) {
     if (!isProviderOutage(error)) return false;

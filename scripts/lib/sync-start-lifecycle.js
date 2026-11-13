@@ -75,7 +75,7 @@ async function startLifecycle({ host, guest, h, g, app, room, output }) {
     sequence = await host.evaluate(h, 'diagnosticSample();diagnostics.snapshot().entries.at(-1).sequence');
   await guest.evaluate(
     g,
-    'probing=true;video.pause();playerWaiting=true;api("/api/watch/rooms/"+selected+"/ready",{viewerId,mediaVersion:state.mediaVersion,ready:false}).then(()=>true)',
+    'probing=true;video.pause();playerWaiting=true;roomLink.ready(selected,{mediaVersion:state.mediaVersion,ready:false}).then(()=>true)',
   );
   await pause(3000);
   const after = await host.evaluate(h, 'video.currentTime');

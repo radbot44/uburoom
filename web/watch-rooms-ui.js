@@ -70,7 +70,7 @@
     getState,
     getMe,
     join,
-    entry = () => ({}),
+    command,
     changed,
     showChooser,
     fail,
@@ -486,19 +486,15 @@
       try {
         if (inSettings ? details?.id !== id : getState()?.id !== id) throw new Error('Room changed; try again');
         if (kick) {
-          const command = { action: 'room.kick', args: { userId: person.id } };
+          const kickCommand = { action: 'room.kick', args: { userId: person.id } };
           const result = inSettings
-            ? await request('/api/watch/rooms/' + id + '/command', {
-                epoch: value.epoch,
-                expiresAt: Date.now() + 2900,
-                command,
-              })
-            : await execute(command);
+            ? await command(id, { epoch: value.epoch, expiresAt: Date.now() + 2900, command: kickCommand })
+            : await execute(kickCommand);
           if (result.status !== 'applied') throw new Error(result.message);
         } else {
-          const current = await request('/api/watch/rooms/' + id + '/settings');
+          const current = await request('room.settings', { roomId: id });
           if (getState()?.id !== id) throw new Error('Room changed; try again');
-          await request('/api/watch/rooms/' + id + '/settings', { revision: current.revision, change });
+          await request('room.settings.edit', { roomId: id, args: { revision: current.revision, change } });
         }
         await changed();
         if (inSettings && dialog.open && details?.id === id) {
@@ -753,7 +749,7 @@
       offset = nextOffset;
       $('room-chooser-refresh').classList.add('spinning');
       try {
-        const result = await request('/api/watch/rooms/saved?offset=' + offset);
+        const result = await request('rooms.saved', { args: { offset } });
         if (ticket !== savedGeneration || !$('room-dialog').open || busy) return;
         total = result.total;
         $('saved-rooms').replaceChildren();
@@ -799,8 +795,8 @@
             try {
               const opened = room.active
                 ? room
-                : await request('/api/watch/rooms/' + room.id + '/reopen', entry(), { timeoutMs: 35000 });
-              await join(opened.id, opened.state);
+                : await request('room.reopen', { roomId: room.id }, { timeoutMs: 35000 });
+              await join(opened.id);
               $('room-dialog').close('reopened');
             } catch (error) {
               $('room-dialog-error').textContent = error.message;
@@ -847,7 +843,7 @@
       setSettingsStatus('Loading room settings…');
       if (!dialog.open) show(dialog);
       try {
-        const result = await request('/api/watch/rooms/' + id + '/settings');
+        const result = await request('room.settings', { roomId: id });
         if (ticket !== generation || !dialog.open) return;
         details = result;
         if (draftRoom !== id) {
@@ -931,26 +927,29 @@
         }
         let result;
         if (change.resetProgress)
-          result = await request('/api/watch/rooms/' + id + '/settings', {
-            revision: target.revision,
-            change: { action: 'auto.reset' },
+          result = await request('room.settings.edit', {
+            roomId: id,
+            args: { revision: target.revision, change: { action: 'auto.reset' } },
           });
         else if (change.autoplay !== undefined) {
           if (getState()?.id === id && target.active) {
             await execute({ action: 'media.autoplay.set', args: { enabled: change.autoplay } });
-            result = await request('/api/watch/rooms/' + id + '/settings');
+            result = await request('room.settings', { roomId: id });
           } else
-            result = await request('/api/watch/rooms/' + id + '/settings', {
-              revision: target.revision,
-              change: { action: 'autoplay', enabled: change.autoplay },
+            result = await request('room.settings.edit', {
+              roomId: id,
+              args: { revision: target.revision, change: { action: 'autoplay', enabled: change.autoplay } },
             });
         } else {
           await request(
-            '/api/watch/rooms/' + id + '/queue',
-            { action: 'auto', ...change.autoQueue, expectedRevision: target.queueSummary.queueRevision },
+            'room.queue.command',
+            {
+              roomId: id,
+              args: { action: 'auto', ...change.autoQueue, expectedRevision: target.queueSummary.queueRevision },
+            },
             { timeoutMs: 35000 },
           );
-          result = await request('/api/watch/rooms/' + id + '/settings');
+          result = await request('room.settings', { roomId: id });
         }
         if (details?.id === id && dialog.open) {
           details = result;
@@ -993,7 +992,7 @@
       $('room-person-search-status').textContent = 'Searching…';
       searchTimer = setTimeout(async () => {
         try {
-          const result = await request('/api/watch/rooms/' + target.id + '/people?q=' + encodeURIComponent(query));
+          const result = await request('room.people', { roomId: target.id, args: { q: query } });
           if (
             ticket !== searchGeneration ||
             details?.id !== target.id ||
@@ -1314,7 +1313,7 @@
       renderSettings();
       setSettingsStatus('Saving…');
       try {
-        const result = await request('/api/watch/rooms/' + id + '/settings', { revision, change });
+        const result = await request('room.settings.edit', { roomId: id, args: { revision, change } });
         if (ticket === generation && dialog.open) {
           if (result.deleted) dialog.close();
           else {
@@ -1549,8 +1548,8 @@
           await createDraft(draftOptions());
           draftRecord = undefined;
         } else {
-          const opened = await request('/api/watch/rooms/' + target.id + '/reopen', entry(), { timeoutMs: 35000 });
-          await join(opened.id, opened.state);
+          const opened = await request('room.reopen', { roomId: target.id }, { timeoutMs: 35000 });
+          await join(opened.id);
         }
         openedFromSaved = false;
         dialog.close('opened');
@@ -1596,7 +1595,7 @@
       busy = true;
       renderSettings();
       try {
-        await request('/api/watch/rooms/' + value.id + '/close', { epoch: value.epoch });
+        await request('room.close', { roomId: value.id, args: { epoch: value.epoch } });
         dialog.close();
         await changed();
       } catch (error) {

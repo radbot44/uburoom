@@ -93,7 +93,7 @@
     }
 
     async function load(ticket) {
-      const next = await request('/api/watch/rooms/' + target + '/share');
+      const next = await request('room.share', { roomId: target });
       if (ticket !== generation || !dialog.open) return;
       value = next;
       render();
@@ -138,7 +138,7 @@
       render();
       errorEl.textContent = '';
       try {
-        const response = await request('/api/watch/rooms/' + target + '/share', { action });
+        const response = await request('room.share.command', { roomId: target, args: { action } });
         if (response.status !== 'applied') throw new Error(response.message || 'Discord could not update the post.');
         await load(ticket);
       } catch (error) {

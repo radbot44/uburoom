@@ -27,6 +27,7 @@ module.exports = {
     if (room.autoplayCountdown) {
       room.autoplayCountdown = undefined;
       room.revision++;
+      this.changed(room);
     }
     room.playbackIntent = (room.playbackIntent || 0) + 1;
   },
@@ -85,6 +86,7 @@ module.exports = {
       }
       if (changed) {
         room.revision++;
+        this.changed(room);
         this.review(room);
       }
       if (!nextItem && summary.lastHistory?.type === 'episode' && record.autoQueue?.mode === 'off') {
@@ -123,6 +125,7 @@ module.exports = {
           hasPoster: offer.hasPoster,
         });
         room.revision++;
+        this.changed(room);
       }
     } catch {
       if (room.epoch === epoch && this.roomState.store.get(record.id)?.queueRevision === revision) {
@@ -193,6 +196,7 @@ module.exports = {
     room.autoplayCountdown = countdown;
     room.autoplayError = undefined;
     room.revision++;
+    this.changed(room);
     this.preloadNext(room, countdown, next, person.actor);
     room.autoplayTimer = setTimeout(() => {
       const advance = this.hub
@@ -205,12 +209,14 @@ module.exports = {
             this.cancelAutoplay(room);
             room.autoplayError = result.message || 'The next video could not be loaded.';
             room.revision++;
+            this.changed(room);
           }
         })
         .catch(() => {
           this.cancelAutoplay(room);
           room.autoplayError = 'The next video could not be loaded.';
           room.revision++;
+          this.changed(room);
         });
       this.roomState.track(advance);
     }, this.autoplayDelayMs);
@@ -240,6 +246,7 @@ module.exports = {
     room.changedAt = this.clock.now();
     room.state.paused = true;
     room.revision++;
+    this.changed(room);
     const record = this.roomState.store.get(room.roomId),
       current = this.roomState.queue.current(record.id);
     room.transition = { kind: 'media' };
@@ -269,6 +276,7 @@ module.exports = {
         () => {
           this.roomState.apply(room, this.roomState.store.get(record.id));
           room.revision++;
+          this.changed(room);
           this.prepareStreams(room);
         },
         undefined,
@@ -408,6 +416,7 @@ module.exports = {
     }
     room.autoplayError = undefined;
     room.revision++;
+    this.changed(room);
     room.lastActivity = this.clock.now();
     delete room.transition?.commit;
   },
@@ -662,6 +671,7 @@ module.exports = {
           ? error.message
           : 'The next video could not be loaded. Check Plex and server storage.';
       room.revision++;
+      this.changed(room);
       return { status: 'failed', message: room.autoplayError };
     } finally {
       delete room.transition?.commit;

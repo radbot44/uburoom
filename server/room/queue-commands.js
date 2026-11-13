@@ -418,6 +418,7 @@ module.exports = {
           () => {
             void this.refreshEndingMeta(room);
             room.revision++;
+            this.changed(room);
             room.autoQueueError = undefined;
             // The queue changed: check its availability and everyone's stream again.
             this.prepareStreams(room);
