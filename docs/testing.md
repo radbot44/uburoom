@@ -97,7 +97,7 @@ One line per area: the latest result and what is still open. The dated evidence 
 
 | Issue | Disposition |
 | --- | --- |
-| Queue controls smoke | `scripts/queue-controls-smoke.js` fails at its first step (navigation, then an OverlayScrollbars count assertion); not repaired |
+| Queue controls smoke | Repaired 2026-11-13 on `38a4bdc`: updated to `startFixtureServer()`, `openPage` at `/?demo=host`, current page-global accessors, `transport.request(message, options)` interception, `OverlayScrollbars` body-instance check, `continue` mode step, and 46px segmented group / 40px button heights; passes twice consecutively in Chrome and Firefox |
 | AV1 ending | Prior live ~42 ms final-buffer gap; 2026-10-23 C/D Discord AV1/QSV near-end replay finished cleanly; broader media/multi-viewer/endurance coverage open |
 | Real soak | First run unloaded and recovered; repeat run clean. Original trigger unproven (suspected transient internet dropout) |
 | Timing tests under load | Known to flake when the machine is busy: "generated two-hour MKV windows" can fail under concurrent load and passes alone; obsolete worker/lock timing assertions were replaced by direct-write failure/retry and crash recovery checks in A6 |

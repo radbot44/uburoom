@@ -85,3 +85,17 @@ Renamed storage-worker.test.js to database.test.js. Replaced its worker lock/eve
 No Plex internals changed. No SQL statements remain inline in plex.js or plex-delivery.js in the reviewed tree. At the owner's explicit direction, operation.js retains a temporary no-op commitOperation export for the untouched plex-auth caller. Accounts.flush remains an async service settlement point for existing callers, with no queued storage or commit receipt behind it.
 
 Normal update only: no schema/config migration or credential/key change is required. No push/deploy, production restart, live provider/device verification (C), human acceptance (D), sudden-power-loss test or operator restore was performed. WAL/NORMAL protects process-crash acknowledgements, not guaranteed power-loss durability. Online backups must use SQLite's backup mechanism or an atomic matched database/WAL snapshot; a graceful stopped backup is one file after checkpoint.
+
+## 2026-11-13 — Queue controls smoke repair (B, on 38a4bdc)
+
+Repaired `scripts/queue-controls-smoke.js` against the post-A5/A6/V3 codebase without modifying application code (`server/`, `web/`, `shared/`):
+
+- Replaced `createApp` / `app.access` setup and `/watch?demo=host` navigation with `startFixtureServer()` and `openPage(browser, config.publicUrl + '/?demo=host')` from `scripts/lib/ui-fixture.js`, and closed the server via `app.close()`.
+- Replaced removed `$` page-global calls with `document.getElementById(...)`, waited for `#room-dialog` and `#queue-auto-mode-group` visibility, and adapted the Auto-play pending-write probe to `WatchTransport.request(message, options)` (`message?.type === 'command' && message?.command?.action === 'media.autoplay.set'`).
+- Updated the `OverlayScrollbars` check from exact `.os-scrollbar` count `2` (inner scroll areas now attach their own instances) to verifying `OverlayScrollbarsGlobal.OverlayScrollbars(document.body)` is active and not destroyed with at least two `.os-scrollbar` elements.
+- Updated `#queue-auto-mode-group` assertions to match current shipped controls: `46px` outer segmented container height (`calc(var(--watch-control-height) + 6px)` with 3px padding, added in `5239525`) with `40px` `.group-button` height, and two `ArrowRight` presses (`off` → `continue` → `following`) before `Space` selection.
+
+Checks:
+- `npx prettier --check scripts`: passed.
+- `npx eslint scripts`: passed.
+- `node scripts/queue-controls-smoke.js` (two consecutive runs): both passed in Chrome and Firefox (`chrome: Queue controls and desktop/narrow captures passed`, `firefox: Queue controls and desktop/narrow captures passed`); screenshots written to the external evidence folder. Isolated fixture scope only; no real Plex, Discord, or production server touched.
