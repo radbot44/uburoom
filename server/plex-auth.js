@@ -1,7 +1,7 @@
 'use strict';
 const { randomUUID, sign } = require('node:crypto');
 const { resilientFetch, isProviderOutage } = require('./resilience');
-const { runOperation, commitOperation } = require('./operation');
+const { runOperation } = require('./operation');
 class PlexAccessError extends Error {
   constructor(message, revoked = false) {
     super(message);
@@ -221,7 +221,6 @@ class PlexAuth {
         const scoped = await this.validate(credential, identity.subject);
         if (generation !== this.generation) throw new PlexAccessError('Plex scope changed during validation');
         this.accounts.credential(identity.subject, credential);
-        await commitOperation();
         this.cache.set(identity.subject, { plex: scoped, until: Date.now() + 30000 });
         return scoped;
       } catch (error) {

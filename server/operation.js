@@ -30,9 +30,6 @@ function runOperation(signal, action) {
   else finish();
   return result;
 }
-// Temporary compatibility for plex-auth until its concurrent module split lands.
-// Direct writes are already committed; this is no longer a storage receipt.
-function commitOperation() {}
 // Unlike AbortSignal.timeout, an outstanding cleanup deadline must keep Node
 // alive after the HTTP server and storage connection have been closed.
 function createDeadline(ms) {
@@ -106,4 +103,4 @@ class SharedTask {
     this.controller.abort();
   }
 }
-module.exports = { runOperation, currentSignal, waitFor, SharedTask, createDeadline, commitOperation };
+module.exports = { runOperation, currentSignal, waitFor, SharedTask, createDeadline };
