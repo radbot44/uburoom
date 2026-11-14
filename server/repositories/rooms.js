@@ -150,6 +150,20 @@ class RoomsRepo {
     this.statements.listRoomEventsByDiscordEnd = db.prepare(
       'SELECT DISTINCT roomId FROM watch_room_events WHERE discord IS NOT NULL AND end>?',
     );
+    this.statements.copyRoomInvitesOnMerge = db.prepare(
+      'INSERT OR IGNORE INTO watch_room_invites(roomId,userId,createdAt) SELECT roomId,?,createdAt FROM watch_room_invites WHERE userId=?',
+    );
+    this.statements.deleteRoomInvitesByUserId = db.prepare('DELETE FROM watch_room_invites WHERE userId=?');
+    this.statements.copyRoomHostsOnMerge = db.prepare(
+      'INSERT OR IGNORE INTO watch_room_hosts(roomId,userId) SELECT roomId,? FROM watch_room_hosts WHERE userId=? AND roomId NOT IN (SELECT id FROM watch_rooms WHERE creatorId=?)',
+    );
+    this.statements.deleteRoomHostsByUserId = db.prepare('DELETE FROM watch_room_hosts WHERE userId=?');
+    this.statements.copyRoomInviteBlocksOnMerge = db.prepare(
+      'INSERT OR IGNORE INTO watch_room_invite_blocks(roomId,subject,createdAt) SELECT roomId,?,createdAt FROM watch_room_invite_blocks WHERE subject=?',
+    );
+    this.statements.deleteRoomInviteBlocksBySubject = db.prepare(
+      'DELETE FROM watch_room_invite_blocks WHERE subject=?',
+    );
   }
   exists(...values) {
     return this.statements.exists.get(...values);
@@ -344,6 +358,24 @@ class RoomsRepo {
   }
   listRoomEventsByDiscordEnd(...values) {
     return this.statements.listRoomEventsByDiscordEnd.all(...values);
+  }
+  copyRoomInvitesOnMerge(...values) {
+    return this.statements.copyRoomInvitesOnMerge.run(...values);
+  }
+  deleteRoomInvitesByUserId(...values) {
+    return this.statements.deleteRoomInvitesByUserId.run(...values);
+  }
+  copyRoomHostsOnMerge(...values) {
+    return this.statements.copyRoomHostsOnMerge.run(...values);
+  }
+  deleteRoomHostsByUserId(...values) {
+    return this.statements.deleteRoomHostsByUserId.run(...values);
+  }
+  copyRoomInviteBlocksOnMerge(...values) {
+    return this.statements.copyRoomInviteBlocksOnMerge.run(...values);
+  }
+  deleteRoomInviteBlocksBySubject(...values) {
+    return this.statements.deleteRoomInviteBlocksBySubject.run(...values);
   }
 }
 module.exports = { RoomsRepo };

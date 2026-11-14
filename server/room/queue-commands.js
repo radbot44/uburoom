@@ -79,7 +79,7 @@ module.exports = {
     if (item.type === 'episode' && Number.isInteger(epNum)) {
       const epStr = 'Episode ' + epNum;
       if (parentTitle && !parentTitle.includes('Episode')) {
-        parentTitle = parentTitle + ' Â· ' + epStr;
+        parentTitle = parentTitle + ' · ' + epStr;
       } else if (!parentTitle) {
         parentTitle = epStr;
       }

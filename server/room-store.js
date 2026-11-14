@@ -322,12 +322,18 @@ class RoomStore {
     });
     return this.commit(this.get(id));
   }
+  clearRoomInvite(id, target, at) {
+    for (const entry of repositories(this.db).rooms.listRoomInvitesByRoomId(id)) {
+      if (this.account(/** @type {string} */ (entry.userId)) === target)
+        repositories(this.db).rooms.deleteRoomInvitesByRoomIdUserId(id, entry.userId);
+    }
+    repositories(this.db).rooms.insertRoomInviteBlocks(id, 'user:' + target, at);
+  }
   // Removes someone's invite to a private room and keeps them from using it again.
   revokeInvite(id, userId) {
     const target = this.account(userId);
     this.registry.transaction(() => {
-      repositories(this.db).rooms.deleteRoomInvitesByRoomIdUserId(id, target);
-      repositories(this.db).rooms.insertRoomInviteBlocks(id, 'user:' + target, this.now());
+      this.clearRoomInvite(id, target, this.now());
     });
     return this.commit(this.get(id));
   }
@@ -519,9 +525,7 @@ class RoomStore {
           repositories(this.db).rooms.updateRoomsSetAllowGuestsById(change.enabled ? 1 : 0, id);
           break;
         case 'invite.revoke': {
-          const target = this.account(change.userId);
-          repositories(this.db).rooms.deleteRoomInvitesByRoomIdUserId(id, target);
-          repositories(this.db).rooms.insertRoomInviteBlocks(id, 'user:' + target, at);
+          this.clearRoomInvite(id, this.account(change.userId), at);
           break;
         }
         case 'bookmark.clear':

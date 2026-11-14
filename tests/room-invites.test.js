@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { Accounts, credentialVault } = require('../server/accounts');
 const { RoomStore, inviteCode } = require('../server/room-store');
 const Policy = require('../server/room-policy');
+const { repositories } = require('../server/repositories');
 
 function fixture(t) {
   const registry = new Accounts(undefined, credentialVault());
@@ -94,4 +95,49 @@ test('server tiers rank operator, admins, trusted and members from verified iden
   assert.equal(Policy.serverTier(registry, config, assigned), 'members', 'an unverified assignment grants nothing');
   assert.equal(Policy.tierAtLeast('trusted', 'trusted'), true);
   assert.equal(Policy.tierAtLeast('members', 'trusted'), false);
+});
+
+test('merged accounts transfer room invites/hosts/blocks and revokeInvite cleans pre-existing merged invite rows', async t => {
+  const f = fixture(t);
+  const survivor = f.registry.resolve('discord', '333333333333333333', 'Survivor').id;
+  const retired = f.registry.resolve('plex', '404', 'Retired').id;
+  let room = await f.store.create(f.creator, { name: 'Merge room', visibility: 'private' });
+  let otherRoom = await f.store.create(f.creator, { name: 'Other room', visibility: 'private' });
+
+  room = await f.store.invite(room.id, retired);
+  otherRoom = await f.store.edit(otherRoom.id, f.creator, otherRoom.revision, { action: 'host.add', userId: retired });
+  otherRoom = await f.store.block(otherRoom.id, ['user:' + retired]);
+
+  f.registry.merge(survivor, retired, f.creator);
+
+  const afterMerge = f.store.get(room.id);
+  assert.equal(afterMerge.invited.includes(survivor), true);
+  assert.equal(f.store.get(otherRoom.id).hosts.includes(survivor), true);
+  assert.equal(f.store.blocked(otherRoom.id, ['user:' + survivor]), true);
+
+  // Kick survivor via invite.revoke and confirm removal + block.
+  room = await f.store.edit(room.id, f.creator, afterMerge.revision, { action: 'invite.revoke', userId: survivor });
+  assert.equal(room.invited.includes(survivor), false);
+  assert.equal(Policy.admitted(room, survivor), false);
+  assert.equal(f.store.blocked(room.id, ['user:' + survivor]), true);
+
+  // Pre-existing un-transferred invite row pointing to a retired account is also removed by revokeInvite.
+  repositories(f.registry.db).rooms.insertRoomInvites(otherRoom.id, retired, 1);
+  assert.equal(f.store.get(otherRoom.id).invited.includes(survivor), true);
+  otherRoom = await f.store.revokeInvite(otherRoom.id, survivor);
+  assert.equal(otherRoom.invited.includes(survivor), false);
+  assert.equal(repositories(f.registry.db).rooms.listRoomInvitesByRoomId(otherRoom.id).length, 0);
+});
+
+test('removeUnusedGuests deletes watch_room_invites rows before removing the guest account', async t => {
+  const f = fixture(t);
+  const room = await f.store.create(f.creator, { name: 'Guest invite room', visibility: 'private' });
+  const guest = f.registry.createGuest('Invited Guest');
+  await f.store.invite(room.id, guest);
+  assert.equal(f.store.get(room.id).invited.includes(guest), true);
+
+  const removed = f.registry.removeUnusedGuests(new Set());
+  assert.deepEqual(removed, [guest]);
+  assert.equal(f.registry.canonical(guest), undefined);
+  assert.deepEqual(f.store.get(room.id).invited, []);
 });

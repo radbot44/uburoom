@@ -110,7 +110,9 @@ class PlexSessions {
     });
     media.selection = Tracks.select(media.tracks, choices);
     media.sourceStart = this.plex.url(part.key).href;
-    media.partId = String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key)[1]);
+    const partId = part.id || /^\/library\/parts\/(\d+)\//.exec(part.key || '')?.[1];
+    if (!partId) throw new PlaybackError('Plex media part unavailable.');
+    media.partId = String(partId);
     media.sourceKey = JSON.stringify([
       this.plex.base.origin,
       id,

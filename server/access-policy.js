@@ -44,7 +44,7 @@ class AccessPolicy {
   }
   password(req, identity) {
     if (!this.passwordRequired) return true;
-    if (identity?.activity && identity.entryAuthorized) return true;
+    if ((identity?.activity || identity?.native) && identity.entryAuthorized) return true;
     if (identity && this.viaGuest(identity.userId, identity)) return true;
     const token = /(?:^|;\s*)uburoom_entry=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
     return !!token && (this.passwordGrants.get(createHash('sha256').update(token).digest('hex')) || 0) > Date.now();

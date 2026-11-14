@@ -36,7 +36,7 @@ function formatEntrySubtitle(entry) {
   if (!entry) return '';
   if (entry.subtitle) return entry.subtitle;
   if (entry.type === 'episode') {
-    return [entry.grandparentTitle, entry.parentTitle].filter(Boolean).join(' Â· ');
+    return [entry.grandparentTitle, entry.parentTitle].filter(Boolean).join(' · ');
   }
   return entry.parentTitle || '';
 }

@@ -236,6 +236,7 @@ function watchHttp({
             accountRevision: identity.accountRevision,
             activity: false,
             native: true,
+            entryAuthorized: true,
           },
           7 * 86400000,
         );

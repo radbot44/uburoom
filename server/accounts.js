@@ -136,6 +136,7 @@ class Accounts {
       this.transaction(() => {
         for (const id of unused) {
           repositories(this.db).history.deleteForUser(id);
+          repositories(this.db).rooms.deleteRoomInvitesByUserId(id);
           repositories(this.db).accounts.deleteUsersById(id);
         }
       });
@@ -234,6 +235,13 @@ class Accounts {
           verifiedIdentity.provider,
           String(verifiedIdentity.subject),
         );
+      const rooms = repositories(this.db).rooms;
+      rooms.copyRoomInvitesOnMerge(survivor, retired);
+      rooms.deleteRoomInvitesByUserId(retired);
+      rooms.copyRoomHostsOnMerge(survivor, retired, survivor);
+      rooms.deleteRoomHostsByUserId(retired);
+      rooms.copyRoomInviteBlocksOnMerge('user:' + survivor, 'user:' + retired);
+      rooms.deleteRoomInviteBlocksBySubject('user:' + retired);
       repositories(this.db).accounts.updateUsersSetRetiredIntoRevisionById(survivor, retired);
       repositories(this.db).accounts.updateUsersSetRevisionSignedInAtById(retired, survivor);
       this.audit(actor, action, { survivor, retired, identities: all });

@@ -271,7 +271,7 @@ module.exports = {
         : undefined,
       startAt: timeline.startAt,
       pauseAt: timeline.pauseAt,
-      title: room.media?.title || 'Choose something to watchâ€¦',
+      title: room.media?.title || 'Choose something to watch…',
       subtitle: room.media?.subtitle || '',
       mediaId: room.media?.id,
       chapters: room.media?.chapters || [],
