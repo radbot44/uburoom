@@ -16,18 +16,12 @@ const { resilientFetch } = require('./resilience');
 const { AccessPolicy } = require('./access-policy');
 const { DiagnosticLog } = require('./diagnostic-log');
 const { silentLogger } = require('./logger');
-const { clientAddress } = require('./plex-delivery');
 const { createAccess } = require('./access');
 const { createGuests } = require('./guests');
 const { createHubPorts } = require('./hub-ports');
 const { createSessions } = require('./http/sessions');
 const { createStaticFiles } = require('./http/static');
-const { createDiscordSignIn, authRoutes } = require('./http/auth');
-const { pageRoutes } = require('./http/pages');
-const { mediaRoutes } = require('./http/media');
-const { createRouter } = require('./http/router');
 const { createHttpServer } = require('./http/server');
-const version = require('../package.json').version;
 
 const DEMO_MEDIA = path.join(__dirname, '../assets/demo/sync-test.mp4');
 
@@ -62,161 +56,83 @@ function openAccounts(config) {
   }
 }
 
+const { createDiscordSignIn } = require('./http/auth');
+const { createRoutes } = require('./http/routes');
+
+/** The synchronization test video, when the installation includes it. */
+const demoMedia = () =>
+  fs.existsSync(DEMO_MEDIA)
+    ? {
+        kind: 'demo',
+        title: 'uburoom synchronization test',
+        duration: 60,
+        format: 'file',
+        quality: 'direct',
+        file: DEMO_MEDIA,
+      }
+    : undefined;
+
 /**
  * The composition root: builds every service, hands each the services it depends on, and starts none of them.
  * `config` is the validated configuration; the logger and TLS material arrive as options, never on `config`.
  * Services that need one another before either exists are given a function that finds it when called.
  */
 function createApp(config, options = {}) {
-  const {
-    authorizeUrl = 'https://discord.com/oauth2/authorize',
-    plexFetch = fetch,
-    plexDemo,
-    logger = silentLogger,
-  } = options;
+  const { authorizeUrl = 'https://discord.com/oauth2/authorize', plexFetch = fetch, plexDemo } = options;
+  const logger = options.logger || silentLogger;
   const oauthFetch = resilientFetch(options.oauthFetch || fetch, { timeoutMs: 10000 });
   const tls = options.tls || { cert: config.cert, key: config.key };
   let registry;
   try {
-    let accounts;
-    ({ registry, accounts } = openAccounts(config));
+    // Storage and providers.
+    const opened = openAccounts(config);
+    const { accounts } = opened;
+    registry = opened.registry;
     const plex = new Plex(config, plexFetch, { logger });
     const plexAuth = new PlexAuth(config, registry, plex, plexFetch);
     if (config.demo) plexAuth.demo = plexDemo;
+    // Who may enter. The rooms and routes are built last, so earlier services find them when called.
     let hub, watch, watchRoutes, accountRoutes;
+    const rooms = () => watch;
     const guests = createGuests({
       config,
       logger,
       registry,
       accounts,
       logins: accounts.logins,
-      rooms: () => watch,
+      rooms,
       endedFor: ids => watchRoutes.invalidate(ids),
     });
     const entryPolicy = new AccessPolicy(config, registry, plexAuth, () => access.raw(), { logger, guests });
     const access = createAccess({ registry, config, plexAuth, entryPolicy });
     const sessions = createSessions({ config, logger, registry, accounts, access, oauthFetch });
-    const discord = { client: undefined };
+    // Rooms, and the hub that authorizes work in them.
     const { ports, setOwnerName } = createHubPorts({
-      config,
-      logger,
-      registry,
-      accounts,
-      access,
-      plexAuth,
-      entryPolicy,
-      guests,
-      sessions,
-      discord,
-      hub: () => hub,
-      rooms: () => watch,
+      ...{ config, logger, registry, accounts, access, plexAuth, entryPolicy, guests, sessions },
+      ...{ discord: { client: undefined }, hub: () => hub, rooms },
     });
-    const demoMedia = fs.existsSync(DEMO_MEDIA)
-      ? {
-          kind: 'demo',
-          title: 'uburoom synchronization test',
-          duration: 60,
-          format: 'file',
-          quality: 'direct',
-          file: DEMO_MEDIA,
-        }
-      : undefined;
-    ({ hub, watch } = createRooms({ config, ports, plex, demoMedia, registry, plexAuth }));
+    ({ hub, watch } = createRooms({ config, ports, plex, demoMedia: demoMedia(), registry, plexAuth }));
     // Kept diagnostics: server log lines and viewer uploads share one daily timeline.
     const diagnosticLog = config.diagnostics?.enabled
       ? new DiagnosticLog({ ...config.diagnostics, logger })
       : undefined;
     const untapLogger = diagnosticLog && logger.tap((level, tag, message) => diagnosticLog.server(level, tag, message));
-    const { json, throttle } = sessions;
-    watchRoutes = watchHttp({
-      config,
-      watch,
-      hub,
-      ...sessions,
-      oauthFetch,
-      registry,
-      entryPolicy,
-      diagnosticLog,
-      accounts,
-      plexAuth,
-    });
+    // HTTP and sockets.
+    const web = { config, registry, plexAuth, hub, watch, ...sessions };
+    watchRoutes = watchHttp({ ...web, oauthFetch, entryPolicy, diagnosticLog, accounts });
     const signIn = createDiscordSignIn({ config, plexAuth, sessions, authorizeUrl });
-    accountRoutes = accountHttp({
-      config,
-      registry,
-      plexAuth,
-      hub,
-      watch,
-      watchRoutes,
-      ...sessions,
-      loginStore: accounts,
-      discordStart: signIn.start,
-    });
-    const operatorRoutes = operatorHttp({
-      config,
-      registry,
-      editor: config.configFile ? createConfigEditor(config.configFile) : undefined,
-      ...sessions,
-    });
+    accountRoutes = accountHttp({ ...web, watchRoutes, loginStore: accounts, discordStart: signIn.start });
+    const editor = config.configFile ? createConfigEditor(config.configFile) : undefined;
     const files = createStaticFiles({ config });
-    const pages = pageRoutes({ config, rooms: () => watch, watchRoutes: () => watchRoutes, sessions, files });
-    const route = createRouter(
-      pages.redirects,
-      [
-        { name: 'watch API', handle: ({ req, res, url }) => watchRoutes.route(req, res, url) },
-        { name: 'account API', handle: ({ req, res, url }) => accountRoutes.route(req, res, url) },
-        {
-          // Everything but static files shares one request budget per client.
-          name: 'rate limit',
-          async handle(ctx) {
-            const read = ['GET', 'HEAD'].includes(ctx.req.method);
-            if (read) ctx.asset = await files.lookup(ctx.route);
-            if (read && files.isStatic(ctx)) return false;
-            if (!throttle(clientAddress(ctx.req) || 'local', 180))
-              return json(ctx.res, 429, { error: 'Too many requests; try again shortly' });
-            return false;
-          },
-        },
-        {
-          name: 'operator settings',
-          handle: ({ req, res, url, flushed }) => operatorRoutes.route(req, res, url, flushed),
-        },
-      ],
-      pages.documents,
-      files.routes(),
-      mediaRoutes({ config, hub, watchRoutes: () => watchRoutes }),
-      [
-        {
-          name: 'health',
-          methods: ['GET'],
-          path: '/health',
-          handle: ({ res }) =>
-            json(res, registry.persistence.error ? 503 : 200, { ok: !registry.persistence.error, version }),
-        },
-      ],
-      authRoutes({
-        config,
-        registry,
-        accounts,
-        sessions,
-        access,
-        hub,
-        rooms: () => watch,
-        signIn,
-        accountRoutes: () => accountRoutes,
-        watchRoutes: () => watchRoutes,
-        setOwnerName,
-        files,
-      }),
-    );
-    const server = createHttpServer({ config, logger, tls, json, route });
-    const watchConnections = watchSockets({ server, config, routes: watchRoutes, watch, hub, throttle });
+    const route = createRoutes({
+      ...{ config, registry, accounts, sessions, access, hub, rooms, files, signIn, setOwnerName },
+      ...{ watchRoutes, accountRoutes, operatorRoutes: operatorHttp({ config, registry, editor, ...sessions }) },
+    });
+    const server = createHttpServer({ config, logger, tls, json: sessions.json, route });
+    const sockets = watchSockets({ server, config, routes: watchRoutes, watch, hub, throttle: sessions.throttle });
     const sweep = setInterval(() => {
       watch.maintainPlexSessions();
-      watchRoutes.sweep();
-      accountRoutes.sweep();
-      signIn.sweep();
-      sessions.sweep();
+      for (const service of [watchRoutes, accountRoutes, signIn, sessions]) service.sweep();
       void guests.sweep();
     }, 1000);
     sweep.unref();
@@ -224,7 +140,7 @@ function createApp(config, options = {}) {
     function close() {
       if (closing) return closing;
       clearInterval(sweep);
-      watchConnections.close();
+      sockets.close();
       const mediaClosed = watch.close();
       watchRoutes.close();
       accountRoutes.close();
