@@ -134,21 +134,12 @@ function watchPage(source, initial, scrollbarStyleNonce) {
           '</span></button>'
         );
       });
-      if (lib.testVideo || me.adminMode) {
-        let other = '<article class="library-home-card library-other"><h3>Other</h3>';
-        if (lib.testVideo) {
-          other +=
-            '<button type="button" class="library-key" aria-label="Play synchronization video" title="Play synchronization video" data-action="play" data-play="demo">' +
-            svgMarkup('play') +
-            '<span>Synchronization video</span></button>';
-        }
-        if (me.adminMode) {
-          other +=
-            '<button id="library-codec-test" type="button" class="library-key" aria-label="Open codec tester" title="Open codec tester">' +
-            svgMarkup('settings') +
-            '<span>Codec tester</span></button>';
-        }
-        other += '</article>';
+      if (lib.testVideo) {
+        const other =
+          '<article class="library-home-card library-other"><h3>Other</h3>' +
+          '<button type="button" class="library-key" aria-label="Play synchronization video" title="Play synchronization video" data-action="play" data-play="demo">' +
+          svgMarkup('play') +
+          '<span>Synchronization video</span></button></article>';
         cards.push(other);
       }
       page.content('id', 'library-content', '<div class="library-landing">' + cards.join('') + '</div>');

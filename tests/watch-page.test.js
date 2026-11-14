@@ -124,7 +124,6 @@ test('watchPage renders authenticated and unauthenticated bootstrap data safely 
   assert.ok(directRoomHtml.includes('<span class="library-home-title">Movies</span>'));
   assert.ok(directRoomHtml.includes('<span class="library-home-title">Movie Collections</span>'));
   assert.ok(directRoomHtml.includes('<span>Synchronization video</span>'));
-  assert.ok(directRoomHtml.includes('id="library-codec-test"'));
   const usedIcons = [...directRoomHtml.matchAll(/<use href="#icon-([^"]+)"><\/use>/g)].map(m => m[1]);
   assert.ok(usedIcons.length > 0);
   for (const iconId of usedIcons) {
