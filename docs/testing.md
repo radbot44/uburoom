@@ -1,6 +1,6 @@
 # Verification dashboard — M1
 
-**Release status: open.** Last full-suite baseline: **453 passed, 0 failed, 0 skipped** (2026-11-13, after the transcode benchmark moved out) on Node v22.13+. Results apply to their recorded revisions/scenarios; they do not combine into an assumed current-HEAD pass. [Release gates](../ROADMAP.md#m1--verified-self-hosted-release) · [Verification log](archive/testing-log.md) · [Historical digest through 2026-10-22](archive/testing-2026-10-22.md) · [Historical digest 2026-10-23 to 2026-11-08](archive/testing-2026-11-08.md) · [Commands](development.md#tests).
+**Release status: open.** Last full-suite baseline: **453 passed, 0 failed, 0 skipped** (2026-11-13, after A6 direct-storage simplification) on Node v22.13+. Results apply to their recorded revisions/scenarios; they do not combine into an assumed current-HEAD pass. [Release gates](../ROADMAP.md#m1--verified-self-hosted-release) · [Verification log](archive/testing-log.md) · [Historical digest through 2026-10-22](archive/testing-2026-10-22.md) · [Historical digest 2026-10-23 to 2026-11-08](archive/testing-2026-11-08.md) · [Commands](development.md#tests).
 
 ---
 
@@ -80,6 +80,7 @@ One line per area: the latest result and what is still open. The dated evidence 
 
 | Area | Latest result | Open |
 | --- | --- | --- |
+| M1-P11 direct storage | A/B 2026-11-13 at 25859ef: direct WAL/NORMAL connection, atomic room/login writes, forced-kill acknowledgement recovery, baseline-11 copy startup and doctor 18/18; 453 tests and all 15 traces pass | Real operator backup/restore and power-loss behavior (C); temporary Plex receipt compatibility export remains |
 | M1-P11 / P14 rehearsal and keys | B 2026-11-08: Compose rehearsal, doctor 14/14, missing/mismatched key guards, key recovery | Live operator recovery (C) |
 | M1-P13 rooms and queues | A/B 2026-11-07: teardown, writer contention, auto-queue preview and controls | Real multi-viewer continuity and endurance |
 | M1-P4 Plex reporting | C/D 2026-11-06: live watch party in Tautulli; B 2026-11-07: stable occurrence across stream switches | Live PMS/Tautulli multi-viewer transitions |
@@ -99,7 +100,7 @@ One line per area: the latest result and what is still open. The dated evidence 
 | Queue controls smoke | `scripts/queue-controls-smoke.js` fails at its first step (navigation, then an OverlayScrollbars count assertion); not repaired |
 | AV1 ending | Prior live ~42 ms final-buffer gap; 2026-10-23 C/D Discord AV1/QSV near-end replay finished cleanly; broader media/multi-viewer/endurance coverage open |
 | Real soak | First run unloaded and recovered; repeat run clean. Original trigger unproven (suspected transient internet dropout) |
-| Timing tests under load | Known to flake when the machine is busy: room-store "ticks >= 10", "generated two-hour MKV windows", "disk locks delay persistence"; each passes alone, and no assertion was weakened |
+| Timing tests under load | Known to flake when the machine is busy: "generated two-hour MKV windows" can fail under concurrent load and passes alone; obsolete worker/lock timing assertions were replaced by direct-write failure/retry and crash recovery checks in A6 |
 | Browser limits | Firefox Escape exits fullscreen, narrow drawer resize timeout, sparse high-rate frame callbacks; emulated touch is not real-device evidence |
 
 ---
