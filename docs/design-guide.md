@@ -10,7 +10,7 @@ Use established components, styles and interactions. Follow [AGENTS.md](../AGENT
 - **Motion:** Respect reduced motion. Hover and press change colour or surface, never scale or position.
 - **Focus:** One focus ring everywhere, drawn by the shared focus style; never remove it without a replacement.
 - **Labels:** Text labels may wrap to two lines; compact labels stay on one. Adapt labels to the available width while keeping their accessible names.
-- **Themes:** Dark and light themes both carry full contrast; never rely on colour alone. The watch page opts out of third-party dark-mode extensions so they cannot recolour subtitles, player controls or the palette.
+- **Themes:** Dark and light themes both carry full contrast; never rely on colour alone. High-contrast and forced-colours modes preserve control boundaries, active selection, switch states, and brand legibility without relying on background fill alone. The watch page opts out of third-party dark-mode extensions so they cannot recolour subtitles, player controls or the palette.
 - **Tokens only:** Stylesheets use tokens, never literal font sizes, radii, layers, colours or pixel spacing. A new value is added to the token file first. Spacing, radius and alpha tokens are named by value; consolidating near-duplicates is a separate owner decision.
 - **Type scale:** Text uses the scale steps only; a size between two steps takes the larger. Exceptions: viewer-chosen subtitle size, the player quality badge and the handoff code.
 - **Layout and state in CSS:** Components style by class, keep IDs as scripting hooks, and read state from data attributes the store sets. The phone layout is one breakpoint, defined in `web/watch/breakpoints.js` and exposed as `body[data-layout]`. Positioned menus and popovers receive coordinates as custom properties; script never writes other geometry.
@@ -32,7 +32,7 @@ Use established components, styles and interactions. Follow [AGENTS.md](../AGENT
 Keep action, selection, navigation and status distinct. Reuse established exceptions, such as the compact Admin and privacy controls, rather than forcing every boolean into a switch.
 
 - **Switch pill:** the compact switch for toolbars where a full switch row does not fit, made by the one shared helper (`switchPill()`). State shows in the switch alone; hover changes the surface; disabled dims the whole pill and gives the reason as tooltip; read-only shows the switch at full strength without hover; focus rings the whole pill.
-- **Targets:** every interactive control is at least the shared minimum target size, and sign-in actions use the larger entry size. Approved exception: the move and remove buttons on queue timeline rows are smaller.
+- **Targets:** every interactive control is at least the shared minimum target size, and sign-in actions use the larger entry size. Approved exceptions: the viewer sync badge in the roster; the compact account-bar identity, Admin mode, library filter chip and toast action controls; and inline titles and row action buttons on queue timeline rows. Range sliders keep their slim visual track inside a full-height hit area.
 - **Shared classes:** primary, quiet, icon, destructive and title-bar buttons; the standard control, switch row, form checkbox, dialog footer and panel header. Use these instead of recreating their sizing in feature CSS; the gallery shows each.
 - **Accents:** the primary accent (orange) marks primary actions, active states and Now Playing. The secondary accent (pink) is reserved for auto-queue and continuation offers.
 
@@ -46,7 +46,7 @@ Keep action, selection, navigation and status distinct. Reuse established except
 Shared modal dialogs have a semantic header containing a heading, and follow one of two archetypes.
 
 - **Small prompts and confirmations** (browser sign-in approval, account removal, room change): no close button; a footer with Cancel (quiet) on the left and the action (primary or destructive) on the right.
-- **Workspaces and settings** (player settings, account, rooms, room settings, codec tester): a close button at the top right that takes initial focus. A Cancel button appears only when paired with an active counterpart (Submit, Create, Save, Schedule); browsing views have no footer and close from the header.
+- **Workspaces and settings** (player settings, account, rooms, room settings): a close button at the top right that takes initial focus. A Cancel button appears only when paired with an active counterpart (Submit, Create, Save, Schedule); browsing views have no footer and close from the header.
   - Player settings groups related controls in two columns on wide screens and stacks them in reading order on narrow ones.
   - The account dialog keeps Log out in a divided footer below the scrolling body.
   - The rooms dialog shows its footer (Cancel; Create room and Settings) only in New room mode.
@@ -91,7 +91,7 @@ A watch night is a room with a time on it: every event belongs to one saved room
 - **Personal toggles:** Mute, Captions, Picture-in-Picture and Theater report their state with `aria-pressed` and keep action labels.
 - **Desktop fullscreen idle:** with the mouse at rest during playback, controls and pointer hide; they stay while paused, over player chrome, or with a menu or drawer open.
 - **Phone transport:** the bar keeps Play, Previous, Next, Subtitles, Volume, Player settings and Fullscreen. Notifications and Picture-in-Picture move into a Player group in Player settings, shown only in the phone layout and mirroring the bar controls. Theater is not offered. In the lobby the bar also shows the settings gear, whose dialog then holds only the Notifications switch.
-- **Phone volume:** the speaker button alone, its icon showing the level. Tapping opens a vertical slider with mute at the bottom, closing after a few seconds idle, on outside tap and on Escape. Browsers that ignore page-set volume (iOS Safari) never show a slider; the button mutes directly.
+- **Phone volume:** the speaker button alone, its icon showing the level. Tapping opens a vertical slider with mute at the bottom, closing after a few seconds idle once keyboard focus leaves it, on outside tap and on Escape. Browsers that ignore page-set volume (iOS Safari) never show a slider; the button mutes directly.
 - **iPhone fullscreen:** uses native video fullscreen with system controls; text subtitles become native captions and other formats need Burn-in.
 
 ### Quality and delivery
@@ -102,7 +102,7 @@ A watch night is a room with a time on it: every event belongs to one saved room
 
 ### Subtitles and audio
 
-- **Sliding menu:** desktop player settings use one sliding menu: arrows open choices in place, final choices close it, and Back stays below the scrolling choices. The timeline shows chapter breaks with title and time on hover. Skip intro and Skip credits appear only for people who may manage playback.
+- **Sliding menu:** desktop player settings use one sliding menu: arrows open choices in place, final choices and `Tab` close it, and Back stays below the scrolling choices. The timeline shows chapter breaks with title and time on hover. Skip intro and Skip credits appear only for people who may manage playback.
 - **Naming:** the rendering option is **Burn-in**; help and error text never names a provider.
 - **Appearance:** text subtitles draw in their own layer, default to the outline style labelled Shadow, scale with the player (Small, Medium, Large), stay on the visible picture unless set to "On player", remain when controls hide, and lift only when controls would cover them. ASS and bitmap subtitles keep their authored placement. Settings offer colour presets, a hex input, a swatch, a background style selector (Off, Background, Shadow) and a brightness slider.
 - **Audio mode:** Normal, Dialogue or Night, with hints; entirely in the browser, affecting no one else.
