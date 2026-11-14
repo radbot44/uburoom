@@ -124,14 +124,16 @@
   }
   .player-volume {
     width: 86px;
+    height: var(--watch-control-height);
+    margin: 0;
     flex-shrink: 0;
   }
   .timeline {
     appearance: none;
     background: transparent;
-    height: 24px;
+    height: var(--watch-control-height);
     padding: 0;
-    margin: 0 var(--space-2);
+    margin: calc(var(--space-8) * -1) var(--space-2);
   }
   .timeline::-webkit-slider-runnable-track {
     height: 5px;
@@ -370,10 +372,6 @@
     background: var(--hover);
     border-color: var(--primary);
   }
-  .skip-marker:focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 2px;
-  }
   .skip-marker svg {
     width: 18px;
     height: 18px;
@@ -548,7 +546,7 @@
     .stage .volume-control .volume-panel .player-volume {
       writing-mode: vertical-lr;
       direction: rtl;
-      width: 24px;
+      width: var(--watch-control-height);
       height: 96px;
       margin: 0;
     }

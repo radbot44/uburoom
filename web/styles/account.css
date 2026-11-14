@@ -21,6 +21,9 @@
     white-space: nowrap;
     background: none;
     color: inherit;
+    min-height: var(--space-32);
+    display: inline-flex;
+    align-items: center;
     padding: var(--space-6) 0;
   }
   .identity:hover:not(:disabled) {

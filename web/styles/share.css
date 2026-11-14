@@ -32,12 +32,13 @@
   #room-share-url-input {
     background: none;
     border: 0;
-    outline: none;
     color: var(--text);
     font-family: monospace;
     font-size: var(--font-size-14);
     flex: 1;
     min-width: 0;
+    min-height: var(--watch-control-height);
+    box-sizing: border-box;
     cursor: pointer;
     padding: var(--space-6) 0;
   }
@@ -46,10 +47,10 @@
     border: 0;
     color: var(--muted);
     border-radius: var(--radius-8);
-    width: 32px;
-    height: 32px;
-    min-width: 32px;
-    min-height: 32px;
+    width: var(--watch-control-height);
+    height: var(--watch-control-height);
+    min-width: var(--watch-control-height);
+    min-height: var(--watch-control-height);
     padding: var(--space-4);
     display: grid;
     place-items: center;

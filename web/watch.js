@@ -1,7 +1,6 @@
 import * as uburoomPlayback from './playback-policy.js';
 import * as uburoomTiming from '../shared/sync/timing.mjs';
 import * as uburoomSyncQuality from '../shared/sync/quality.mjs';
-import * as uburoomDialogs from './watch-dialogs.js';
 import * as uburoomEvents from './watch-events.js';
 import * as uburoomIcons from './icons.js';
 import * as uburoomLibrary from './watch-library.js';
@@ -285,31 +284,10 @@ const library = uburoomLibrary.mount($('library-content'), {
   },
   addBulkToQueue: (item, trigger) => queueUI.bulk(item, trigger),
   autoQueue: source => queueUI.openAuto(source),
-  isAdmin: () => !!store.identity.me?.adminMode,
-  openCodecTester: () => {
-    if (!store.identity.me?.adminMode) return;
-    $('codec-test-frame').src = '/__diagnostics/codec';
-    uburoomDialogs.open($('codec-test-dialog'));
-  },
   close: (...args) => deps.returnToVideo(...args),
   getPlayer: () => store.room.state,
 });
 deps.library = library;
-// The nested same-origin tester uses current Activity authorization without
-// copying its bearer token into a URL, iframe or exported diagnostics.
-globalThis.uburoomCodecSample = async (path, options = {}) => {
-  if (!store.identity.me?.adminMode || !/^\/__diagnostics\/media\/[a-z0-9.-]+$/.test(path))
-    throw new Error('Turn on Admin mode to use the codec tester.');
-  return fetch(path, {
-    ...options,
-    headers: store.identity.token ? { Authorization: 'Bearer ' + store.identity.token } : {},
-  });
-};
-globalThis.uburoomCloseCodecTester = () => uburoomDialogs.close($('codec-test-dialog'));
-$('codec-test-close').onclick = globalThis.uburoomCloseCodecTester;
-$('codec-test-dialog').addEventListener('close', () => {
-  $('codec-test-frame').src = 'about:blank';
-});
 // Errors go to the menu's error line. In fullscreen they never take over the screen:
 // they show as a toast with a way to the fix (the menu by default). The Discord
 // Activity has no fullscreen of its own, so it still opens the menu.

@@ -40,7 +40,6 @@ export function mount(host, deps) {
     if (typeof deps.updateAccountButton === 'function') deps.updateAccountButton();
     deps.roomUI.render();
     deps.library.refreshAdmin();
-    if (!store.identity.me.adminMode && $('codec-test-dialog').open) $('codec-test-dialog').close();
   }
   function stopBrowserHandoff(cancel = false) {
     deps.time.clearTimeout(store.identity.browserHandoffTimer);

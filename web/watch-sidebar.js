@@ -19,7 +19,7 @@ export function mount() {
       !document.body.classList.contains('activity-pip') &&
       document.body.dataset.layout !== 'phone';
     if (!enabled) {
-      if (active) column.style.removeProperty('top');
+      if (active) column.style.removeProperty('--sidebar-top');
       active = false;
       lastScrollY = y;
       return;
@@ -35,7 +35,7 @@ export function mount() {
       stickyTop = Math.max(bottomTop, Math.min(edge, stickyTop + lastScrollY - y));
     }
     stickyTop = Math.max(bottomTop, Math.min(edge, stickyTop));
-    column.style.top = `${stickyTop}px`;
+    column.style.setProperty('--sidebar-top', `${stickyTop}px`);
     lastScrollY = y;
   }
 

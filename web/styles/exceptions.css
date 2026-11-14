@@ -154,6 +154,11 @@
     height: var(--watch-switch-height);
     flex: none;
   }
+  input.watch-switch:not(.watch-switch-small) {
+    width: var(--watch-control-height);
+    max-width: var(--watch-control-height);
+    height: var(--watch-control-height);
+  }
   :is(.primary, .solid-button):disabled {
     background: var(--primary);
   }
@@ -230,5 +235,111 @@
   .queue-entry-auto .queue-rank-auto,
   .queue-entry-auto .queue-entry-caption {
     color: var(--secondary);
+  }
+  @media (forced-colors: active) {
+    body {
+      background: Canvas;
+      color: CanvasText;
+    }
+    :is(
+      .icon-button,
+      .quiet,
+      .primary,
+      .solid-button,
+      .admin-toggle,
+      .watch-control,
+      .watch-switch-pill,
+      .library-key,
+      .library-filter-chip,
+      .library-queue-add,
+      .lobby-events-more,
+      .event-chip,
+      .event-duration-pill,
+      .event-zone-btn,
+      .button-group button,
+      #room-settings-nav button,
+      .mobile-nav button,
+      .transport button,
+      .watch-toast,
+      .room-share-dock-btn,
+      .room-permission-button
+    ) {
+      border: var(--space-1) solid ButtonText;
+      box-sizing: border-box;
+    }
+    :is(
+      .card,
+      .watch-dialog,
+      .player-settings-menu,
+      .volume-panel,
+      .library-home-card,
+      .library-tile,
+      .saved-rooms > li,
+      .lobby-event,
+      .queue-entry,
+      .queue-history-entry,
+      .queue-now-playing,
+      .room-share-link-dock
+    ) {
+      border: var(--space-1) solid CanvasText;
+    }
+    :is(
+      [aria-pressed='true'],
+      [aria-current='true'],
+      [aria-current='page'],
+      .admin-toggle[aria-checked='true'],
+      .room-permission-button[aria-pressed='true'],
+      .library-tile.selected
+    ) {
+      forced-color-adjust: none;
+      background: Highlight;
+      color: HighlightText;
+      border-color: Highlight;
+    }
+    :is(input.watch-switch:not(.watch-switch-small)::before, input.watch-switch.watch-switch-small, .appearance-track) {
+      forced-color-adjust: none;
+      background: Canvas;
+      border: var(--space-1) solid ButtonText;
+      box-sizing: border-box;
+    }
+    :is(input.watch-switch::after, .appearance-thumb) {
+      forced-color-adjust: none;
+      background: ButtonText;
+      color: Canvas;
+    }
+    :is(
+      input.watch-switch:not(.watch-switch-small):checked::before,
+      input.watch-switch.watch-switch-small:checked,
+      .appearance-toggle[aria-checked='true'] .appearance-track
+    ) {
+      background: Highlight;
+      border-color: Highlight;
+    }
+    :is(input.watch-switch:checked::after, .appearance-toggle[aria-checked='true'] .appearance-thumb) {
+      background: HighlightText;
+      color: Highlight;
+    }
+    :is(
+      .timeline::-webkit-slider-runnable-track,
+      .timeline::-moz-range-track,
+      .player-volume::-webkit-slider-runnable-track,
+      .player-volume::-moz-range-track
+    ) {
+      forced-color-adjust: none;
+      background: Canvas;
+      border: var(--space-1) solid ButtonText;
+    }
+    :is(
+      button,
+      a,
+      input,
+      select,
+      textarea,
+      summary,
+      [tabindex]:not([tabindex='-1']),
+      .watch-switch-pill:has(:focus-visible)
+    ):focus-visible {
+      outline-color: Highlight;
+    }
   }
 }

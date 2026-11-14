@@ -222,6 +222,8 @@ function mount({
   }
 
   function renderTelemetryCard(person, anchorBtn, roomState) {
+    const wasFocusedInCard = !!telemetryCardElement?.contains(document.activeElement);
+    const isOpening = !telemetryCardElement;
     if (telemetryCardElement) {
       telemetryCardElement.remove();
       telemetryCardElement = null;
@@ -345,6 +347,12 @@ function mount({
     }
     card.style.setProperty('--x', Math.round(left) + 'px');
     card.style.setProperty('--y', Math.round(top) + 'px');
+    card.addEventListener('keydown', event => {
+      if (event.key !== 'Tab') return;
+      event.preventDefault();
+      closeBtn.focus();
+    });
+    if (isOpening || wasFocusedInCard) closeBtn.focus({ preventScroll: true });
   }
 
   document.addEventListener('keydown', event => {

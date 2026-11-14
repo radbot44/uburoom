@@ -302,7 +302,9 @@ function mount({ request }) {
       if (ticket === generation) {
         busy = false;
         render();
-        if (dialog.open) title.focus();
+        const active = dialog.ownerDocument.activeElement;
+        if (dialog.open && (!dialog.contains(active) || active === dialog || active === $('event-dismiss')))
+          title.focus();
       }
     }
   }

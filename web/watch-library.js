@@ -16,19 +16,7 @@ function homeCards(items = []) {
 }
 function mount(
   host,
-  {
-    request,
-    artwork,
-    load,
-    close,
-    getPlayer,
-    addToQueue,
-    addBulkToQueue,
-    autoQueue,
-    isAdmin = () => false,
-    openCodecTester,
-    initialLibrary,
-  },
+  { request, artwork, load, close, getPlayer, addToQueue, addBulkToQueue, autoQueue, initialLibrary },
 ) {
   const doc = host.ownerDocument;
   host.replaceChildren();
@@ -1020,22 +1008,14 @@ function mount(
       b.append(node('span', null, card.title, 'library-home-title'));
       b.onclick = () => void chooseLibrary(card.id, card.tab);
     }
-    if (testVideo || isAdmin()) {
+    if (testVideo) {
       const other = node('article', landing, undefined, 'library-home-card library-other');
       node('h3', other, 'Other');
-      if (testVideo) {
-        const b = button(other, 'Play synchronization video', 'play');
-        b.dataset.action = 'play';
-        b.dataset.play = 'demo';
-        b.append(node('span', null, 'Synchronization video'));
-        b.onclick = () => void play(demoItem);
-      }
-      if (isAdmin() && openCodecTester) {
-        const b = button(other, 'Open codec tester', 'settings');
-        b.id = 'library-codec-test';
-        b.append(node('span', null, 'Codec tester'));
-        b.onclick = openCodecTester;
-      }
+      const b = button(other, 'Play synchronization video', 'play');
+      b.dataset.action = 'play';
+      b.dataset.play = 'demo';
+      b.append(node('span', null, 'Synchronization video'));
+      b.onclick = () => void play(demoItem);
     }
   }
   function renderResults(reuseImages = false) {

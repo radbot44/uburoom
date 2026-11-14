@@ -2,6 +2,18 @@
 const policies = new WeakMap(),
   triggers = new WeakMap(),
   holds = new WeakMap();
+const tabbableSelector =
+  'a[href], button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])';
+function tabbables(dialog) {
+  return [...dialog.querySelectorAll(tabbableSelector)].filter(element => {
+    if (element.closest('[hidden], [inert]') || element.hasAttribute('hidden')) return false;
+    const closedDetails = element.closest('details:not([open])');
+    if (closedDetails && !(element.parentElement === closedDetails && element.tagName === 'SUMMARY')) return false;
+    const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+    if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+    return element.getClientRects().length > 0;
+  });
+}
 function register(dialog, policy = {}) {
   if (policies.has(dialog)) {
     policies.get(dialog).push(policy);
@@ -29,6 +41,27 @@ function register(dialog, policy = {}) {
   });
   dialog.addEventListener('submit', event => {
     if (blocked(dialog)) event.preventDefault();
+  });
+  dialog.addEventListener('keydown', event => {
+    if (event.key !== 'Tab' || !dialog.open || event.defaultPrevented) return;
+    const list = tabbables(dialog);
+    if (!list.length) {
+      event.preventDefault();
+      return;
+    }
+    const active = dialog.ownerDocument.activeElement;
+    const first = list[0],
+      last = list[list.length - 1];
+    if (!dialog.contains(active) || active === dialog) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    } else if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
   });
   dialog.addEventListener('close', () => {
     if (dialog.open) return;

@@ -68,6 +68,7 @@
     accent-color: var(--accent-text);
     cursor: pointer;
     min-width: 0;
+    min-height: var(--watch-control-height);
   }
   select,
   input[type='search'] {
@@ -76,6 +77,8 @@
     color: var(--text);
     border-radius: var(--radius-10);
     padding: var(--space-9);
+    min-height: var(--watch-control-height);
+    box-sizing: border-box;
   }
   @media (max-width: 1000px) {
     main {

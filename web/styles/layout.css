@@ -106,7 +106,7 @@
   @media (min-width: 1101px) {
     body:not(.immersive) .room-column {
       position: sticky;
-      top: 22px;
+      top: var(--sidebar-top, var(--space-22));
       align-self: start;
       max-height: none;
       overflow: visible;

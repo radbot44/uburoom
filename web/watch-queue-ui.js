@@ -320,6 +320,7 @@ function mount(
       }
     };
     popups.open(bulkDialog);
+    bulkFilter.focus();
   }
 
   const autoDialog = node('div', doc.getElementById('room-playback-controls'), undefined, 'queue-settings');
@@ -345,7 +346,7 @@ function mount(
   });
   autoDialog.id = 'queue-auto-dialog';
   autoDialog.setAttribute('aria-labelledby', 'queue-auto-title');
-  node('h4', autoDialog, 'Auto-queue').id = 'queue-auto-title';
+  node('h3', autoDialog, 'Auto-queue').id = 'queue-auto-title';
   const autoModeLabel = node('label', autoDialog, 'Mode');
   const autoMode = node('select', autoModeLabel);
   autoMode.id = 'queue-auto-mode';

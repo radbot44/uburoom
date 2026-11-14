@@ -175,7 +175,15 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     stage.classList.add('settings-open');
     cog.setAttribute('aria-expanded', 'true');
     // Outside a room only the Notifications switch is shown.
-    (document.body.classList.contains('outside-room') ? $('player-extras-notifications') : $('quality')).focus();
+    const focusTarget = document.body.classList.contains('outside-room')
+      ? $('player-extras-notifications')
+      : !$('quality').disabled
+        ? $('quality')
+        : !$('sync-correction').disabled
+          ? $('sync-correction')
+          : $('tracks-close');
+    focusTarget?.focus({ preventScroll: true });
+    dialog.scrollTop = 0;
     showChrome();
   }
   function openSettings() {
@@ -425,6 +433,10 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     if (opened && !menu.contains(event.target) && event.target !== cog) closeSettings();
   });
   menu.addEventListener('keydown', event => {
+    if (event.key === 'Tab') {
+      closeSettings(true);
+      return;
+    }
     const group = activeChoice ? submenu : mainMenu;
     const buttons = [...group.querySelectorAll('button:not(:disabled)')],
       index = buttons.indexOf(document.activeElement);
@@ -625,6 +637,7 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
   const panelMode = () => volumeSettable && phone.matches;
   function idleVolume() {
     clearTimeout(volumeTimer);
+    if (volumePanel.contains(document.activeElement)) return;
     volumeTimer = setTimeout(() => closeVolume(), 3000);
   }
   function openVolume() {
@@ -687,6 +700,11 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
   });
   for (const type of ['pointerdown', 'pointermove', 'input', 'keydown', 'focusin'])
     volumePanel.addEventListener(type, () => volumeOpen && idleVolume());
+  volumePanel.addEventListener('focusout', () => {
+    requestAnimationFrame(() => {
+      if (volumeOpen && !volumePanel.contains(document.activeElement)) idleVolume();
+    });
+  });
   document.addEventListener('pointerdown', event => {
     if (volumeOpen && !volumeControl.contains(event.target)) closeVolume();
   });

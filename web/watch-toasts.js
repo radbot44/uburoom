@@ -31,7 +31,7 @@ function create(host, { stage, icons = uburoomIcons, schedule = setTimeout, canc
       width = viewport?.width || view.innerWidth;
     const rect = stage.getBoundingClientRect();
     const inset = parseFloat(view.getComputedStyle(host).getPropertyValue('--toast-inset'));
-    host.style.maxWidth = Math.max(0, Math.min(rect.width, width) - inset * 2) + 'px';
+    host.style.setProperty?.('--max-width', Math.max(0, Math.min(rect.width, width) - inset * 2) + 'px');
     const stack = host.getBoundingClientRect();
     let bottom = rect.bottom - inset;
     if (controls && view.getComputedStyle(controls).pointerEvents !== 'none') {
@@ -46,8 +46,8 @@ function create(host, { stage, icons = uburoomIcons, schedule = setTimeout, canc
     const x = Math.max(left, Math.min(rect.left + inset, left + width - stack.width));
     // A fullscreen player can establish a containing block for fixed children.
     const origin = doc.fullscreenElement?.getBoundingClientRect();
-    host.style.top = y - (origin?.top || 0) + 'px';
-    host.style.left = x - (origin?.left || 0) + 'px';
+    host.style.setProperty?.('--y', y - (origin?.top || 0) + 'px');
+    host.style.setProperty?.('--x', x - (origin?.left || 0) + 'px');
     if (animate && previous && !reducedMotion.matches && previous.top >= top && previous.bottom <= top + height) {
       movement = host.animate(
         [{ transform: `translate(${previous.left - x}px, ${previous.top - y}px)` }, { transform: 'translate(0, 0)' }],
@@ -96,7 +96,12 @@ function create(host, { stage, icons = uburoomIcons, schedule = setTimeout, canc
     const remove = () => {
       entry.root.remove();
       entries.delete(id);
-      if (!entries.size) positioned = false;
+      if (!entries.size) {
+        positioned = false;
+        host.style.removeProperty?.('--max-width');
+        host.style.removeProperty?.('--y');
+        host.style.removeProperty?.('--x');
+      }
       requestLayout();
     };
     const current = view.getComputedStyle(entry.root);

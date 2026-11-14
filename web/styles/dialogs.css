@@ -10,6 +10,7 @@
     background: transparent;
   }
   .watch-dialog {
+    position: fixed;
     box-sizing: border-box;
     background: var(--card);
     color: var(--text);
@@ -61,25 +62,5 @@
   .queue-dialog .dialog-actions {
     justify-content: flex-end;
     margin-top: var(--space-20);
-  }
-  .codec-test-dialog {
-    width: min(1060px, 96vw);
-    max-width: 96vw;
-    height: 90dvh;
-    padding: var(--space-12);
-    overflow: hidden;
-  }
-  .codec-test-dialog[open] {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-10);
-  }
-  .codec-test-dialog iframe {
-    width: 100%;
-    flex: 1;
-    min-height: 0;
-    border: 0;
-    border-radius: var(--radius-12);
-    background: var(--background);
   }
 }

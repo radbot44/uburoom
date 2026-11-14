@@ -83,8 +83,8 @@
     position: absolute;
     top: 10px;
     right: 10px;
-    width: 38px;
-    height: 38px;
+    width: var(--watch-control-height);
+    height: var(--watch-control-height);
     display: grid;
     place-items: center;
     border-radius: var(--radius-round);
@@ -167,8 +167,7 @@
     font-size: var(--font-size-14);
     margin: 0 0 0 var(--space-6);
     min-width: 0;
-    height: 36px;
-    min-height: 36px;
+    min-height: var(--watch-control-height);
     color: var(--muted);
     flex: 1 1 0;
     overflow: hidden;
@@ -190,6 +189,9 @@
   .library-crumb {
     background: none;
     border: 0;
+    min-height: var(--watch-control-height);
+    display: inline-flex;
+    align-items: center;
     padding: var(--space-2) 0;
     color: var(--muted);
     text-align: left;
@@ -280,11 +282,6 @@
   }
   .search-field input[type='search']:focus {
     border-color: var(--primary);
-    outline: none;
-  }
-  .library-panel :is(.search-field input, .sort-wrap select, .library-filters select):focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 2px;
   }
   .search-field input[type='search']::placeholder {
     color: var(--muted);
@@ -366,7 +363,7 @@
     background: var(--elevated);
     color: var(--text);
     padding: var(--space-8) var(--space-11);
-    min-height: 36px;
+    min-height: var(--watch-control-height);
   }
   .library-key:hover {
     background: var(--hover);
@@ -412,8 +409,8 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-8);
     padding: 0 var(--space-10);
-    height: 30px;
-    min-height: 30px;
+    height: var(--space-32);
+    min-height: var(--space-32);
     font-size: var(--font-size-12);
     margin-top: var(--space-10);
     color: var(--text);

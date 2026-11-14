@@ -183,7 +183,9 @@
   }
   .room-settings-panels summary {
     cursor: pointer;
-    padding: var(--space-12) 0;
+    min-height: var(--watch-control-height);
+    padding: var(--space-10) 0;
+    box-sizing: border-box;
   }
   .room-person {
     display: flex;
@@ -250,7 +252,15 @@
       padding-top: 0;
     }
     .room-settings-panels > section > h3 {
-      display: none;
+      position: absolute;
+      width: var(--space-1);
+      height: var(--space-1);
+      padding: 0;
+      margin: calc(var(--space-1) * -1);
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+      border: 0;
     }
     /* All section tabs stay visible: they wrap to a second row instead of scrolling out of view. */
     .room-settings-nav {
@@ -269,7 +279,7 @@
       padding: var(--space-8) var(--space-12);
       white-space: nowrap;
       font-size: var(--font-size-14);
-      min-height: 38px;
+      min-height: var(--watch-control-height);
     }
   }
   .room-settings-footer {
@@ -367,10 +377,6 @@
     background: transparent;
     cursor: pointer;
     color: var(--muted);
-  }
-  .room-participants .room-roster-sync-quality:focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 2px;
   }
   .room-participants .room-roster-sync-quality svg {
     display: block;
@@ -710,10 +716,6 @@
     display: inline-block;
     border-radius: var(--radius-4);
   }
-  .permission-name:focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 2px;
-  }
   .permission-caption {
     display: block;
     font-weight: 400;
@@ -817,7 +819,7 @@
     gap: var(--space-12);
     margin: var(--space-10) 0;
   }
-  .room-invited-section h4 {
+  .room-invited-section h3 {
     margin: var(--space-18) 0 var(--space-4);
   }
 }

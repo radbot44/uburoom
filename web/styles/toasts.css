@@ -4,13 +4,15 @@
     --toast-inset: 16px;
     width: max-content;
     position: fixed;
+    top: var(--y, 0);
+    left: var(--x, 0);
     z-index: var(--z-toast);
     pointer-events: none;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: var(--space-10);
-    max-width: calc(100% - 32px);
+    max-width: var(--max-width, calc(100% - var(--space-32)));
   }
   .watch-toast-region:empty {
     display: none;
@@ -26,13 +28,15 @@
     gap: var(--space-10);
     background: color-mix(in srgb, var(--card) 90%, transparent);
     border: 0;
-    outline: 0;
     border-radius: var(--radius-12);
     padding: var(--space-4) var(--space-12);
     color: var(--text);
     line-height: 1;
     box-shadow: 0 4px 16px var(--black-a50);
     backdrop-filter: blur(8px);
+  }
+  .watch-toast:focus:not(:focus-visible) {
+    outline: 0;
   }
   .watch-toast.error {
     background: var(--danger);
@@ -131,11 +135,6 @@
   }
   .watch-toast-dismiss:hover {
     background: var(--hover);
-  }
-  .watch-toast-action:focus-visible,
-  .watch-toast-dismiss:focus-visible {
-    outline: 2px solid var(--text);
-    outline-offset: 2px;
   }
   @media (max-width: 700px) {
     .watch-toast-region {

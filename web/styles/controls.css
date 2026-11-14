@@ -56,12 +56,44 @@
     overflow: hidden;
     pointer-events: none;
   }
+  .skip-link {
+    position: fixed;
+    top: var(--space-12);
+    left: var(--space-12);
+    z-index: var(--z-popover);
+    padding: var(--space-10) var(--space-14);
+    min-height: var(--watch-control-height);
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    border-radius: var(--radius-10);
+    background: var(--card);
+    color: var(--text);
+    border: var(--space-1) solid var(--border);
+    font-weight: 600;
+    text-decoration: none;
+    clip-path: inset(50%);
+    width: var(--space-1);
+    height: var(--space-1);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .skip-link:focus-visible {
+    clip-path: none;
+    width: auto;
+    height: auto;
+    overflow: visible;
+  }
   button:focus-visible,
   a:focus-visible,
   input:focus-visible,
-  select:focus-visible {
-    outline: 3px solid var(--text);
-    outline-offset: 3px;
+  select:focus-visible,
+  textarea:focus-visible,
+  summary:focus-visible,
+  [tabindex]:not([tabindex='-1']):focus-visible,
+  .watch-switch-pill:has(:focus-visible) {
+    outline: var(--space-3) solid var(--text);
+    outline-offset: var(--space-3);
   }
   .hint {
     color: var(--muted);
@@ -95,6 +127,8 @@
     color: var(--on-primary);
     text-decoration: none;
     text-align: center;
+    min-height: var(--watch-control-height);
+    box-sizing: border-box;
     border-radius: var(--radius-12);
     padding: var(--space-12) var(--space-17);
     font-weight: 600;
@@ -104,6 +138,11 @@
   }
   .quiet {
     background: var(--elevated);
+    min-height: var(--watch-control-height);
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border-radius: var(--radius-12);
     padding: var(--space-10) var(--space-14);
   }
@@ -142,7 +181,7 @@
     color: var(--on-primary);
     border-radius: var(--radius-10);
     padding: var(--space-9) var(--space-12);
-    min-height: 36px;
+    min-height: var(--watch-control-height);
     white-space: nowrap;
     font-weight: 600;
   }
@@ -208,8 +247,10 @@
     place-items: center;
     background: var(--elevated);
     color: var(--muted);
-    width: 32px;
-    height: 28px;
+    width: var(--space-32);
+    height: var(--space-32);
+    min-width: var(--space-32);
+    min-height: var(--space-32);
     border-radius: var(--radius-8);
     flex-shrink: 0;
   }
@@ -297,8 +338,10 @@
     border: none;
     box-shadow: none;
     color: var(--muted);
-    min-width: 36px;
-    min-height: 36px;
+    width: var(--watch-control-height);
+    height: var(--watch-control-height);
+    min-width: var(--watch-control-height);
+    min-height: var(--watch-control-height);
     padding: var(--space-6);
   }
   .saved-rooms .room-actions .icon-button:hover {
@@ -513,6 +556,21 @@
     cursor: pointer;
     vertical-align: middle;
   }
+  input.watch-switch:not(.watch-switch-small) {
+    background: transparent;
+    margin: calc((var(--watch-control-height) - var(--watch-switch-height)) / -2)
+      calc((var(--watch-control-height) - var(--watch-switch-width)) / -2);
+  }
+  input.watch-switch:not(.watch-switch-small)::before {
+    content: '';
+    position: absolute;
+    top: calc((var(--watch-control-height) - var(--watch-switch-height)) / 2);
+    left: calc((var(--watch-control-height) - var(--watch-switch-width)) / 2);
+    width: var(--watch-switch-width);
+    height: var(--watch-switch-height);
+    border-radius: var(--radius-pill);
+    background: var(--border);
+  }
   input.watch-switch::after {
     content: '';
     position: absolute;
@@ -523,7 +581,17 @@
     border-radius: var(--radius-round);
     background: var(--text);
   }
+  input.watch-switch:not(.watch-switch-small)::after {
+    top: calc((var(--watch-control-height) - var(--watch-switch-height)) / 2 + var(--space-3));
+    left: calc((var(--watch-control-height) - var(--watch-switch-width)) / 2 + var(--space-3));
+  }
   input.watch-switch:checked {
+    background: var(--primary);
+  }
+  input.watch-switch:not(.watch-switch-small):checked {
+    background: transparent;
+  }
+  input.watch-switch:not(.watch-switch-small):checked::before {
     background: var(--primary);
   }
   input.watch-switch:checked::after {
@@ -531,6 +599,12 @@
     background: var(--on-primary);
   }
   input.watch-switch.watch-switch-secondary:checked {
+    background: var(--secondary);
+  }
+  input.watch-switch.watch-switch-secondary:not(.watch-switch-small):checked {
+    background: transparent;
+  }
+  input.watch-switch.watch-switch-secondary:not(.watch-switch-small):checked::before {
     background: var(--secondary);
   }
   input.watch-switch:disabled {
@@ -550,14 +624,6 @@
   }
   input.watch-switch.watch-switch-small:checked::after {
     translate: calc(var(--watch-switch-small-width) - var(--watch-switch-small-height));
-  }
-  .watch-control:focus-visible,
-  .watch-focus:focus-visible,
-  .watch-segmented button:focus-visible,
-  .watch-switch:focus-visible,
-  .watch-panel-heading button:focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 2px;
   }
   @container (max-width:350px) {
     .watch-control-responsive .watch-control-label {
@@ -621,10 +687,6 @@
   }
   .watch-switch-pill input.watch-switch:focus-visible {
     outline: none;
-  }
-  .watch-switch-pill:has(:focus-visible) {
-    outline: 2px solid var(--primary);
-    outline-offset: 2px;
   }
   .watch-switch-pill:not(.is-readonly):not(.is-disabled):hover {
     background: var(--hover);
@@ -722,10 +784,10 @@
     padding: 0;
     border: 0;
     border-radius: var(--radius-pill);
-    background: var(--border);
+    background: transparent;
   }
   .tracks-dialog input.watch-switch:checked {
-    background: var(--primary);
+    background: transparent;
   }
   #library-panel :is(.watch-control, .watch-segmented .group-button) > svg,
   #library-panel #media-symbol svg {
@@ -782,8 +844,5 @@
   }
   .queue-auto-mode-group .group-button[aria-pressed='true']:not([data-value='off']) {
     color: var(--secondary);
-  }
-  .queue-auto-mode-group .group-button:focus-visible {
-    outline-color: var(--secondary);
   }
 }

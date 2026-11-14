@@ -16,6 +16,8 @@
     display: block;
     width: 100%;
     max-width: 100%;
+    min-height: var(--watch-control-height);
+    box-sizing: border-box;
   }
   .tracks-dialog input {
     border: 1px solid var(--border);
@@ -24,6 +26,8 @@
     border-radius: var(--radius-10);
     padding: var(--space-9);
     width: 110px;
+    min-height: var(--watch-control-height);
+    box-sizing: border-box;
   }
   #tracks-dialog p {
     margin: var(--space-10) 0;
@@ -207,6 +211,9 @@
   .tracks-dialog .player-media-columns summary {
     font-size: var(--font-size-14);
     font-weight: 600;
+    min-height: var(--watch-control-height);
+    padding: var(--space-10) 0;
+    box-sizing: border-box;
     cursor: pointer;
   }
   .tracks-dialog :is(.quality-notice, .audio-track-status):empty {
@@ -277,10 +284,6 @@
   .subtitle-color-picker::-moz-color-swatch {
     border: 0;
     border-radius: var(--radius-7);
-  }
-  .subtitle-color-picker:focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 2px;
   }
   .subtitle-slider-row {
     display: flex;

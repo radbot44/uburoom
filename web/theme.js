@@ -13,9 +13,26 @@
   // Canonical SVG sources arrive with this script once. Recolor page and remote
   // logos locally; keep the browser favicon static during appearance changes.
   const branding = window.uburoomBrandAssets,
+    forcedColors = window.matchMedia('(forced-colors: active)'),
     images = new Map();
+  function forcedLightCanvas() {
+    if (!forcedColors.matches) return false;
+    const probe = document.body || root;
+    const style = getComputedStyle(probe);
+    const luma = value => {
+      if (!value || /rgba\([^)]+,\s*0(?:\.0+)?\s*\)/.test(value)) return null;
+      const match = /\d+\s*,\s*\d+\s*,\s*\d+/.exec(value);
+      if (!match) return null;
+      const [r, g, b] = match[0].split(',').map(Number);
+      return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    };
+    const bgLuma = luma(style.backgroundColor);
+    if (bgLuma !== null) return bgLuma > 0.5;
+    const fgLuma = luma(style.color);
+    return fgLuma !== null && fgLuma < 0.5;
+  }
   function brandUrl(path) {
-    const light = root.dataset.theme === 'light';
+    const light = root.dataset.theme === 'light' || forcedLightCanvas();
     const cacheKey = path + '/' + light;
     if (!images.has(cacheKey)) {
       const svg = light ? branding[path].replace(/#F8F7F4/g, '#242329') : branding[path];
@@ -113,9 +130,11 @@
     render();
     document.getElementById('theme-toggle')?.addEventListener('click', clicked);
   });
+  window.addEventListener('load', render, { once: true });
   window.addEventListener('storage', event => {
     if (event.key === key || event.key === null) {
       apply(saved());
     }
   });
+  forcedColors.addEventListener?.('change', render);
 })();

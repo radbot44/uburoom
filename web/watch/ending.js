@@ -64,7 +64,7 @@ export function mount(host, deps) {
     kicker.id = 'ending-kicker';
     kicker.className = 'ending-kicker';
 
-    const title = document.createElement('h2');
+    const title = document.createElement('h1');
     title.id = 'ending-title';
     title.className = 'ending-title';
 

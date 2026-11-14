@@ -112,8 +112,6 @@
     width: 100%;
   }
   .queue-layout:focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 2px;
     border-radius: var(--radius-12);
   }
   .queue-entry,
@@ -680,11 +678,7 @@
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--secondary) 55%, transparent);
   }
   .queue-auto-toggle:checked,
-  .queue-auto-specials:checked {
+  .queue-auto-specials:checked::before {
     background: var(--secondary);
-  }
-  #queue-auto-toggle:focus-visible,
-  #queue-auto-specials:focus-visible {
-    outline-color: var(--secondary);
   }
 }
