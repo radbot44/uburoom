@@ -1006,6 +1006,8 @@ test(
       lanClientUrl: 'https://plex-lan.invalid:32400',
       fallback: false,
     };
+    f.config.trustedProxies = ['127.0.0.1', '::1'];
+    f.config.trustedProxyHeader = 'cf-connecting-ip';
     f.app.watch.delivery.discoveredLanOrigin = 'https://plex-lan.invalid:32400';
     const alice = f.browser(),
       bob = f.browser();
@@ -1068,6 +1070,15 @@ test(
     assert.equal(stops.includes(right.directHls.session), false);
     assert.deepEqual((await state(bob, b, { 'cf-connecting-ip': '172.56.21.89' })).body.directHls, right.directHls);
     assert.equal((await alice.post(`/api/watch/rooms/${roomId}/delivery`, recover)).status, 409);
+    f.config.trustedProxies = [];
+    const untrustedCsp = (await bob.request('/', undefined, { 'cf-connecting-ip': '172.56.21.89' })).headers[
+      'content-security-policy'
+    ];
+    assert.equal(
+      untrustedCsp.includes('https://plex-lan.invalid:32400'),
+      true,
+      'forwarding headers are ignored when trustedProxies is empty',
+    );
     f.provider.revoked.add('102');
     f.app.plexAuth.clear();
     assert.equal((await state(bob, b)).status, 401);
@@ -1195,20 +1206,84 @@ test('direct fallback requires verified non-ownership and never delegates config
   ];
   const d = delivery();
   assert.equal(
-    clientAddress({ socket: { remoteAddress: '127.0.0.1' }, headers: { 'cf-connecting-ip': '172.56.21.89' } }),
+    clientAddress({
+      socket: { remoteAddress: '127.0.0.1' },
+      headers: {
+        'cf-connecting-ip': '172.56.21.89',
+        'x-forwarded-for': '172.56.21.89',
+        'x-real-ip': '172.56.21.89',
+      },
+    }),
+    '127.0.0.1',
+    'default no-trust ignores forwarding headers even from loopback',
+  );
+  assert.equal(
+    clientAddress(
+      {
+        socket: { remoteAddress: '::ffff:127.0.0.1' },
+        headers: { 'x-forwarded-for': '1.2.3.4, 71.120.154.212, 10.0.0.1' },
+      },
+      { trustedProxies: ['127.0.0.1', '10.0.0.0/8'], trustedProxyHeader: 'x-forwarded-for' },
+    ),
+    '71.120.154.212',
+    'right-to-left x-forwarded-for skips trusted proxies and stops at the first untrusted hop',
+  );
+  assert.equal(
+    clientAddress(
+      {
+        socket: { remoteAddress: '127.0.0.1' },
+        headers: { 'x-forwarded-for': '1.2.3.4, invalid-ip, 10.0.0.1' },
+      },
+      { trustedProxies: ['127.0.0.1', '10.0.0.0/8'], trustedProxyHeader: 'x-forwarded-for' },
+    ),
+    '127.0.0.1',
+    'invalid x-forwarded-for hop falls back to the peer address',
+  );
+  assert.equal(
+    clientAddress(
+      {
+        socket: { remoteAddress: '127.0.0.1' },
+        headers: { 'x-forwarded-for': '10.0.0.2, 10.0.0.1' },
+      },
+      { trustedProxies: ['127.0.0.1', '10.0.0.0/8'], trustedProxyHeader: 'x-forwarded-for' },
+    ),
+    '10.0.0.2',
+  );
+  assert.equal(
+    clientAddress(
+      {
+        socket: { remoteAddress: '127.0.0.1' },
+        headers: { 'cf-connecting-ip': '172.56.21.89', 'x-forwarded-for': '192.168.1.50' },
+      },
+      { trustedProxies: ['127.0.0.1'], trustedProxyHeader: 'cf-connecting-ip' },
+    ),
     '172.56.21.89',
   );
   assert.equal(
-    clientAddress({
-      socket: { remoteAddress: '::ffff:127.0.0.1' },
-      headers: { 'x-forwarded-for': '71.120.154.212, 10.0.0.1' },
-    }),
-    '71.120.154.212',
+    clientAddress(
+      { socket: { remoteAddress: '203.0.113.5' }, headers: { 'cf-connecting-ip': '192.168.1.50' } },
+      { trustedProxies: ['127.0.0.1'], trustedProxyHeader: 'cf-connecting-ip' },
+    ),
+    '203.0.113.5',
+    'untrusted peers cannot spoof cf-connecting-ip',
   );
   assert.equal(
-    clientAddress({ socket: { remoteAddress: '203.0.113.5' }, headers: { 'cf-connecting-ip': '192.168.1.50' } }),
+    clientAddress(
+      {
+        socket: { remoteAddress: '::1' },
+        headers: { 'x-real-ip': '::ffff:172.56.21.89', 'cf-connecting-ip': '192.168.1.50' },
+      },
+      { trustedProxies: ['::1'], trustedProxyHeader: 'x-real-ip' },
+    ),
+    '172.56.21.89',
+  );
+  assert.equal(
+    clientAddress(
+      { socket: { remoteAddress: '203.0.113.5' }, headers: { 'x-real-ip': '192.168.1.50' } },
+      { trustedProxies: ['::1'], trustedProxyHeader: 'x-real-ip' },
+    ),
     '203.0.113.5',
-    'public sockets cannot spoof proxy headers',
+    'untrusted peers cannot spoof x-real-ip',
   );
   const lanFile = await d.file(media(), context, async () => true, '192.168.1.50');
   assert.equal(new URL(lanFile).origin, 'https://plex-lan.example:32400');

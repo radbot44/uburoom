@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2o
+# Config schema v2p
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -92,6 +92,13 @@ server:
   public_url: 'https://localhost:5756' # Public HTTPS origin, without a path.
   public_web_app: true # set false for Discord Activity only
   max_connections: 256 # Open room connections (one per browser tab or app) the server accepts at once.
+  # Reverse proxies allowed to supply the viewer's IP address (quoted IPv4/IPv6
+  # addresses or CIDRs, e.g. ['127.0.0.1', '::1'] or ['172.16.0.0/12']).
+  # [] trusts no proxy and uses the direct socket address.
+  trusted_proxies: []
+  # Header read when the connection comes from a trusted proxy:
+  # x-forwarded-for | cf-connecting-ip | x-real-ip
+  trusted_proxy_header: 'x-forwarded-for'
   tls_cert: 'certs/server-cert.pem'
   tls_key: 'certs/server-key.pem'
 tools:

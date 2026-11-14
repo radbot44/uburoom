@@ -47,6 +47,8 @@ The server defaults to `127.0.0.1:5756`. Configure `server.host`/`server.port` f
 
 Reverse proxies must forward WebSocket upgrades on `/watch-socket`. The upstream connection to uburoom is also HTTPS. Supply a certificate/key for the Node listener even if the reverse proxy terminates public TLS.
 
+By default (`server.trusted_proxies: []`), uburoom ignores all forwarding headers and uses the direct socket address for rate limiting and LAN vs. WAN delivery detection. When running behind a reverse proxy, list the proxy's quoted IPv4/IPv6 addresses or CIDRs in `server.trusted_proxies` (for example `['127.0.0.1', '::1']` on the same host, or a container bridge CIDR such as `['172.16.0.0/12']`) and set `server.trusted_proxy_header` to `'x-forwarded-for'` (default, walked right-to-left skipping trusted proxies), `'cf-connecting-ip'`, or `'x-real-ip'`. Both settings are YAML-only and require a restart to take effect; only list proxy addresses you control.
+
 For Linux/macOS, run Node directly. For containerized deployments, see [Docker guide](docker.md) for running with Docker and Docker Compose: bind `server.host: '0.0.0.0'`, use absolute paths, and persist the data directory and encryption key outside replaceable container storage. Mount private YAML with restricted access. Container loopback is not host loopback.
 
 Do not start a second instance using your live credentials or database. Check sign-in and actual playback from an external device, not just `/health`.

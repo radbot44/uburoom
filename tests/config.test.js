@@ -275,6 +275,8 @@ test('example YAML is usable, private inputs are absent and defaults preserve ex
   assert.equal(config.port, 5756);
   assert.equal(config.transcoding.maxJobs, 5);
   assert.equal(config.host, '127.0.0.1');
+  assert.deepEqual(config.trustedProxies, []);
+  assert.equal(config.trustedProxyHeader, 'x-forwarded-for');
   assert.equal(config.plexToken, '');
   assert.deepEqual(config.plexDelivery, { mode: 'proxy', clientUrl: '', lanClientUrl: '', fallback: false });
   assert.equal(config.botToken, '');
@@ -704,4 +706,43 @@ test('doctor validates database schema, envelope authentication, and cert-key pa
   });
   const certMatchFail = certFail.find(c => c.name === 'Certificate & key match');
   assert.equal(certMatchFail?.status, 'fail');
+});
+
+test('server.trusted_proxies and server.trusted_proxy_header validate addresses, CIDRs and header choices', () => {
+  const valid = normalizeConfig({
+    server: {
+      trusted_proxies: ['127.0.0.1', '::1', '10.0.0.0/8', '172.16.0.0/12', 'fc00::/7', '::ffff:127.0.0.1'],
+      trusted_proxy_header: 'cf-connecting-ip',
+    },
+  });
+  assert.deepEqual(valid.trustedProxies, [
+    '127.0.0.1',
+    '::1',
+    '10.0.0.0/8',
+    '172.16.0.0/12',
+    'fc00::/7',
+    '::ffff:127.0.0.1',
+  ]);
+  assert.equal(valid.trustedProxyHeader, 'cf-connecting-ip');
+  assert.equal(normalizeConfig({ server: { trusted_proxy_header: 'x-real-ip' } }).trustedProxyHeader, 'x-real-ip');
+  assert.deepEqual(normalizeConfig({ server: { trusted_proxies: [] } }).trustedProxies, []);
+  for (const server of [
+    { trusted_proxies: '127.0.0.1' },
+    { trusted_proxies: [123] },
+    { trusted_proxies: [''] },
+    { trusted_proxies: ['not-an-ip'] },
+    { trusted_proxies: ['127.0.0.1,10.0.0.1'] },
+    { trusted_proxies: [' 127.0.0.1 '] },
+    { trusted_proxies: ['10.0.0.0/33'] },
+    { trusted_proxies: ['10.0.0.0/-1'] },
+    { trusted_proxies: ['10.0.0.0/'] },
+    { trusted_proxies: ['10.0.0.0/08'] },
+    { trusted_proxies: ['10.0.0.0/8/1'] },
+    { trusted_proxies: ['::1/129'] },
+    { trusted_proxy_header: 'forwarded' },
+    { trusted_proxy_header: 'X-Forwarded-For' },
+    { trusted_proxy_header: 123 },
+  ]) {
+    assert.throws(() => normalizeConfig({ server }));
+  }
 });

@@ -1,5 +1,6 @@
 'use strict';
 const fs = require('node:fs');
+const net = require('node:net');
 const path = require('node:path');
 const os = require('node:os');
 const YAML = require('yaml');
@@ -38,6 +39,8 @@ const KEYS = [
   'server.tls_key',
   'server.public_web_app',
   'server.max_connections',
+  'server.trusted_proxies',
+  'server.trusted_proxy_header',
   'storage.credential_key_file',
   'storage.data_directory',
   'tools.ffmpeg',
@@ -321,6 +324,28 @@ function normalizeConfig(
   if (!Number.isSafeInteger(maxConnections) || maxConnections < 1 || maxConnections > 4096)
     throw new Error('server.max_connections must be an integer from 1 to 4096');
   config.maxConnections = maxConnections;
+  const trustedProxies = list('server.trusted_proxies') || [];
+  for (const entry of trustedProxies) {
+    const slash = entry.indexOf('/');
+    if (slash === -1) {
+      if (net.isIP(entry) === 0)
+        throw new Error('server.trusted_proxies entries must be valid IPv4/IPv6 addresses or CIDRs');
+      continue;
+    }
+    const ip = entry.slice(0, slash);
+    const prefixText = entry.slice(slash + 1);
+    const version = net.isIP(ip);
+    const prefix = /^(?:0|[1-9]\d*)$/.test(prefixText) ? Number(prefixText) : -1;
+    const maxPrefix = version === 4 ? 32 : 128;
+    if (version === 0 || prefix < 0 || prefix > maxPrefix)
+      throw new Error('server.trusted_proxies entries must be valid IPv4/IPv6 addresses or CIDRs');
+  }
+  config.trustedProxies = trustedProxies;
+  config.trustedProxyHeader = choice('server.trusted_proxy_header', 'x-forwarded-for', [
+    'x-forwarded-for',
+    'cf-connecting-ip',
+    'x-real-ip',
+  ]);
   const maxJobs = value.transcoding?.max_jobs ?? 5;
   if (!Number.isSafeInteger(maxJobs) || maxJobs < 1 || maxJobs > 32)
     throw new Error('transcoding.max_jobs must be an integer from 1 to 32');
