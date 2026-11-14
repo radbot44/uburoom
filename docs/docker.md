@@ -29,11 +29,15 @@ uburoom/
 
 ### 1. Persistent Data and Secrets
 
-Docker will create directories for missing volume sources if they do not already exist on the host. To ensure files are mounted properly:
+Docker will create directories for missing volume sources if they do not already exist on the host (often owned by `root` on Linux). Because the container runs as the non-root `node` user (`UID 1000`, `GID 1000`), create and set ownership on the mounted directories on Linux hosts before starting the container:
 
 ```sh
 # Create directories for persistent SQLite databases, TLS certificates, and secrets:
 mkdir -p data certs secrets
+
+# Grant ownership to the container's non-root user (UID/GID 1000) and restrict secrets/:
+chown -R 1000:1000 data secrets
+chmod 700 secrets
 ```
 
 > [!IMPORTANT]
@@ -57,6 +61,8 @@ openssl req -x509 -newkey rsa:2048 -nodes \
   -subj "/CN=localhost"
 ```
 
+On Linux hosts, ensure `certs/` and both PEM files are readable by UID `1000` (for example, `chown 1000:1000 certs/server-cert.pem certs/server-key.pem && chmod 600 certs/server-key.pem`, or grant group read access to GID `1000`).
+
 ---
 
 ## Configuration (`config.yaml`)
@@ -66,6 +72,8 @@ Copy `config.example.yaml` to `config.yaml`:
 ```sh
 cp config.example.yaml config.yaml
 ```
+
+On Linux hosts, ensure `config.yaml` is readable by UID `1000` while keeping it restricted from other host users (for example, `chown 1000:1000 config.yaml && chmod 600 config.yaml`).
 
 Key configuration adjustments for Docker deployments:
 
@@ -248,6 +256,16 @@ watch.example.com {
         }
     }
 }
+```
+
+### Trusting Proxy Headers in `config.yaml`
+
+By default, uburoom ignores forwarding headers (`server.trusted_proxies: []`). When running behind Caddy on a Docker bridge network, configure `server.trusted_proxies` and `server.trusted_proxy_header` in `config.yaml` so rate limits and LAN detection see the real client IP instead of Caddy's container address:
+
+```yaml
+server:
+  trusted_proxies: ['172.16.0.0/12'] # Docker bridge subnet range (or your Compose network CIDR)
+  trusted_proxy_header: 'x-forwarded-for'
 ```
 
 > [!NOTE]
