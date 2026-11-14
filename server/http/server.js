@@ -1,6 +1,6 @@
 'use strict';
 const https = require('node:https');
-const { runOperation, commitOperation } = require('../operation');
+const { runOperation } = require('../operation');
 
 const STATIC_LOG = /\.(?:js|css|svg|wasm|woff2)$/;
 
@@ -51,22 +51,6 @@ function createHttpServer({ config, logger, tls, json, route: dispatch }) {
           else logger.info('HTTP', message);
         });
       }
-      // Changes made during a request are answered only once they are stored, unless the route
-      // has already flushed them itself (operator settings).
-      let flushedByRoute = false;
-      if (req.url?.split('?')[0] !== '/health') {
-        const end = res.end.bind(res);
-        res.end = (...args) => {
-          if (flushedByRoute) return end(...args);
-          const receipt = commitOperation();
-          if (!receipt) return end(...args);
-          receipt.then(
-            () => end(...args),
-            () => res.destroy(),
-          );
-          return res;
-        };
-      }
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Referrer-Policy', 'no-referrer');
@@ -86,13 +70,7 @@ function createHttpServer({ config, logger, tls, json, route: dispatch }) {
           route: url.pathname,
           activity: activityOf(config, req, url),
           json,
-          flushed: (status, value) => {
-            flushedByRoute = true;
-            json(res, status, value);
-          },
-          markFlushed: () => {
-            flushedByRoute = true;
-          },
+          flushed: (status, value) => json(res, status, value),
         };
         if (!(await dispatch(ctx))) json(res, 404, { error: 'Not found' });
       })().catch(error => {

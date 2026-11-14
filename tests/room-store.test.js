@@ -278,48 +278,20 @@ test('input validation and bookmark allowlisting preserve room state on invalid 
   assert.equal(room.bookmark, null);
 });
 
-test('a locked disk delays successful room acknowledgements while the event loop remains available', async t => {
+test('locked storage rejects room mutations without acknowledging partial state, then retries durably', async t => {
   const f = fixture(t, { disk: true });
-  await f.registry.flush();
   const lock = new DatabaseSync(f.file);
-  lock.exec('BEGIN EXCLUSIVE');
-  let completed = false,
-    ticks = 0;
-  const saving = f.store.create(f.creator, { name: 'Durable acknowledgement' }).then(room => {
-    completed = true;
-    return room;
-  });
-  const timer = setInterval(() => ticks++, 5);
+  lock.exec('BEGIN IMMEDIATE');
   try {
-    await new Promise(resolve => setTimeout(resolve, 150));
-    assert.equal(completed, false);
-    assert.ok(ticks >= 10);
-    lock.exec('COMMIT');
-    const room = await saving;
-    await f.restart();
-    assert.equal(f.store.get(room.id).name, 'Durable acknowledgement');
+    await assert.rejects(f.store.create(f.creator, { name: 'Locked room' }), /locked/);
+    assert.equal(f.registry.db.prepare('SELECT COUNT(*) AS n FROM watch_rooms').get().n, 0);
   } finally {
-    clearInterval(timer);
+    lock.exec('ROLLBACK');
     lock.close();
   }
-});
-
-test('writer conflict fails room mutations and seals reads against uncommitted mirror state', async t => {
-  const f = fixture(t, { disk: true });
-  const room = await f.store.create(f.creator);
-  const disk = new DatabaseSync(f.file);
-  disk.prepare('UPDATE watch_rooms SET name=? WHERE id=?').run('External writer', room.id);
-  disk.close();
-  await assert.rejects(
-    f.store.edit(room.id, f.creator, room.revision, { action: 'rename', name: 'Unsaved name' }),
-    status(503),
-  );
-  assert.throws(() => f.store.get(room.id), status(503));
-  assert.throws(() => f.store.list(f.creator), status(503));
-  await assert.rejects(f.store.create(f.creator), status(503));
-  const read = new DatabaseSync(f.file);
-  assert.equal(read.prepare('SELECT name FROM watch_rooms WHERE id=?').get(room.id).name, 'External writer');
-  read.close();
+  const room = await f.store.create(f.creator, { name: 'Durable acknowledgement' });
+  await f.restart();
+  assert.equal(f.store.get(room.id).name, 'Durable acknowledgement');
 });
 
 test('explicit room presets preserve defaults, reject unknown names and protect destructive powers', async t => {

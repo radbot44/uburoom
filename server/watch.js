@@ -9,7 +9,7 @@
 /** @typedef {{countdown: any, mediaId: string, startAt: number, viewers: Map<string, any>, work?: MediaWork, dropped?: boolean, media?: any, fallbackStream?: InstanceType<typeof import('./fallback-stream').FallbackStream>, source?: Promise<any>}} Preload */
 
 const { MediaChecks } = require('./media-check');
-const { waitFor } = require('./operation');
+const { waitFor, createDeadline } = require('./operation');
 const { randomUUID } = require('node:crypto');
 const { canWatch, Hub } = require('./core');
 const { PlaybackTracking } = require('./playback-tracking');
@@ -276,7 +276,8 @@ class Watch extends WatchParts {
   close() {
     if (this.closing) return this.closing;
     this.shuttingDown = true;
-    this.shutdownDeadline = AbortSignal.timeout(this.mediaDrainMs);
+    const deadline = createDeadline(this.mediaDrainMs);
+    this.shutdownDeadline = deadline.signal;
     this.coordinator.close();
     if (this.roomState) {
       this.roomState.stopped = true;
@@ -303,7 +304,7 @@ class Watch extends WatchParts {
       );
       const failure = results.find(result => result.status === 'rejected');
       if (failure) throw failure.reason;
-    })();
+    })().finally(deadline.clear);
     return this.closing;
   }
 }

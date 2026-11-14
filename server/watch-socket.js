@@ -2,7 +2,7 @@
 'use strict';
 const { WebSocketServer } = require('ws');
 const { clientAddress } = require('./plex-delivery');
-const { runOperation, waitFor, commitOperation } = require('./operation');
+const { runOperation, waitFor } = require('./operation');
 const {
   validateSyncQualityMessage,
   reduceViewerSyncQuality,
@@ -91,7 +91,6 @@ function watchSockets({
   const perform = (client, signal, work) =>
     runOperation(signal, async () => {
       const result = await work(context(client, signal));
-      await commitOperation();
       return result;
     });
 

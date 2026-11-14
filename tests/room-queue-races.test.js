@@ -367,12 +367,21 @@ test('a final checkpoint failure still closes provider/reporting and the applica
   app.watch.join(app.watch.rooms.get(id), actor, randomUUID(), { alive: async () => true });
   await Promise.all([...app.watch.roomState.pending]);
   await app.registry.flush();
-  const flush = app.registry.flush.bind(app.registry);
-  app.registry.flush = async () => {
-    app.registry.flush = flush;
-    throw new Error('Injected final checkpoint failure');
-  };
-  await assert.rejects(app.close(), /Room storage unavailable/);
+  const before = app.registry.db.prepare('SELECT * FROM watch_rooms WHERE id=?').get(id);
+  app.registry.db.exec(
+    "CREATE TRIGGER fail_checkpoint BEFORE UPDATE OF bookmark ON watch_rooms BEGIN SELECT RAISE(ABORT,'Injected final checkpoint failure'); END",
+  );
+  await assert.rejects(app.close(), /Injected final checkpoint failure/);
+  const disk = new (require('node:sqlite').DatabaseSync)(path.join(directory, 'accounts.sqlite'));
+  try {
+    assert.deepEqual(
+      disk.prepare('SELECT * FROM watch_rooms WHERE id=?').get(id),
+      before,
+      'failed final snapshot rolls back live-state/touch writes before the bookmark',
+    );
+  } finally {
+    disk.close();
+  }
   assert.equal(app.watch.reporting.closed, true);
   assert.equal(app.watch.roomState.stopped, true);
   assert.throws(() => app.registry.db.prepare('SELECT 1'), /not open|closed/i);

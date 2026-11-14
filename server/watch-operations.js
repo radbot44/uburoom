@@ -1,5 +1,6 @@
 // @ts-check
 'use strict';
+const { repositories } = require('./repositories');
 const { UUID, hash } = require('./core');
 const { randomUUID } = require('node:crypto');
 const RoomPolicy = require('./room-policy');
@@ -19,11 +20,7 @@ function applyRoomProgress(watch, roomId, items = []) {
   const saved = watch.roomState.store.get(roomId);
   let dbRows = new Map();
   try {
-    const rows = watch.roomState.store.db
-      .prepare(
-        "SELECT mediaId, position, duration, outcome FROM watch_queue_entries WHERE roomId = ? AND state IN ('current', 'history') ORDER BY updatedAt ASC",
-      )
-      .all(roomId);
+    const rows = repositories(watch.roomState.store.db).queue.listProgress(roomId);
     for (const r of rows) {
       dbRows.set(r.mediaId, r);
     }

@@ -1,4 +1,5 @@
 'use strict';
+const { repositories } = require('./repositories');
 const { randomUUID } = require('node:crypto');
 const STATES = new Set(['playing', 'paused', 'buffering', 'seeking', 'ended', 'error', 'blocked']);
 const GAP = 5000,
@@ -26,13 +27,8 @@ class PlaybackTracking {
     this.registry = registry;
     this.now = now;
     this.db = registry.db;
-    this.db.exec(
-      'CREATE TABLE IF NOT EXISTS playback_history(id TEXT PRIMARY KEY,userId TEXT NOT NULL,at INTEGER NOT NULL,record TEXT NOT NULL); CREATE INDEX IF NOT EXISTS playback_history_user ON playback_history(userId,at);',
-    );
     // Runtime viewers and consent are never restored after a process restart.
-    for (const row of this.db
-      .prepare("SELECT * FROM playback_history WHERE json_extract(record,'$.endedAt') IS NULL")
-      .all()) {
+    for (const row of repositories(this.db).history.listInterrupted()) {
       const record = JSON.parse(row.record);
       if (!record.endedAt) {
         record.endedAt = record.lastReceivedAt;
@@ -43,17 +39,10 @@ class PlaybackTracking {
     this.prune();
   }
   prune() {
-    this.db.prepare('DELETE FROM playback_history WHERE at<?').run(this.now() - 90 * 86400000);
-    this.db.exec(
-      'DELETE FROM playback_history WHERE id IN (SELECT id FROM playback_history ORDER BY at DESC LIMIT -1 OFFSET 5000)',
-    );
+    repositories(this.db).history.prune(this.now());
   }
   save(record) {
-    this.db
-      .prepare(
-        'INSERT INTO playback_history VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET at=excluded.at,record=excluded.record',
-      )
-      .run(record.id, record.userId, record.lastReceivedAt, JSON.stringify(record));
+    repositories(this.db).history.save(record.id, record.userId, record.lastReceivedAt, JSON.stringify(record));
   }
   end(viewer, reason) {
     if (viewer.tracking) {
@@ -213,15 +202,11 @@ class PlaybackTracking {
   history(userId) {
     const canonicalId = this.registry.canonical(userId)?.id;
     if (!canonicalId) return { retentionDays: 90, totals: [], sessions: [] };
-    const ids = this.db
-      .prepare(
-        'WITH RECURSIVE merged(id) AS (SELECT ? UNION SELECT u.id FROM users u JOIN merged m ON u.retiredInto=m.id) SELECT id FROM merged',
-      )
-      .all(canonicalId)
+    const ids = repositories(this.db)
+      .accounts.listMergedUsers(canonicalId)
       .map(u => u.id);
     if (ids.length === 0) return { retentionDays: 90, totals: [], sessions: [] };
-    if (this.registry.persistence.history) return this.registry.persistence.history(ids);
-    return require('./history-projection').historyProjection(this.db, ids);
+    return repositories(this.db).history.history(ids);
   }
 }
 module.exports = { PlaybackTracking, union, ObservationError };

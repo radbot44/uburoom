@@ -57,53 +57,49 @@ test('SQLite alone preserves contexts and encrypted logins across restart', asyn
     await accounts.close();
   }
 });
-test('disk locks delay persistence acknowledgement while the main playback event loop keeps running', async t => {
+test('locked direct writes fail before acknowledgement and can be retried after rollback', async t => {
   const { file, vault } = fixture(t),
     accounts = new Accounts(file, vault);
-  await accounts.flush();
   const lock = new DatabaseSync(file);
-  lock.exec('BEGIN EXCLUSIVE');
-  let ticks = 0,
-    completed = false;
-  const timer = setInterval(() => ticks++, 5);
-  const id = accounts.resolve('plex', '101', 'Alice').id,
-    flush = accounts.flush().then(() => {
-      completed = true;
-    });
+  lock.exec('BEGIN IMMEDIATE');
   try {
-    await new Promise(resolve => setTimeout(resolve, 150));
-    assert.equal(completed, false);
-    assert.ok(ticks >= 10, 'timer executes while the disk writer waits for its lock');
-    assert.equal(accounts.canonical(id).name, 'Alice', 'in-memory reads remain available');
-    lock.exec('COMMIT');
-    await flush;
+    assert.throws(() => accounts.resolve('plex', '101', 'Alice'), /locked/);
+    assert.equal(accounts.identity('plex', '101'), undefined);
+    assert.equal(accounts.db.prepare('SELECT COUNT(*) AS n FROM users').get().n, 0);
   } finally {
-    clearInterval(timer);
+    lock.exec('ROLLBACK');
     lock.close();
-    await accounts.close();
   }
-  const restarted = new Accounts(file, vault);
-  assert.equal(restarted.canonical(id).name, 'Alice');
-  await restarted.close();
-});
-test('worker write conflicts fail future durability acknowledgements without silently overwriting another writer', async t => {
-  const { file, vault } = fixture(t),
-    accounts = new Accounts(file, vault);
-  await accounts.flush();
-  const disk = new DatabaseSync(file);
-  disk.prepare('INSERT INTO meta VALUES(?,?)').run('conflict', 'external');
-  disk.close();
-  accounts.meta('conflict', 'memory');
-  await assert.rejects(accounts.flush(), /storage unavailable/);
-  assert.ok(accounts.persistence.error);
-  await assert.rejects(accounts.flush(), /storage unavailable/);
-  await assert.rejects(accounts.close(), /storage unavailable/);
+  const id = accounts.resolve('plex', '101', 'Alice').id;
   const read = new DatabaseSync(file);
-  assert.equal(read.prepare('SELECT value FROM meta WHERE key=?').get('conflict').value, 'external');
+  assert.equal(read.prepare('SELECT name FROM users WHERE id=?').get(id).name, 'Alice');
   read.close();
+  await accounts.close();
+  assert.equal(fs.existsSync(file + '-wal'), false, 'graceful close leaves a single database file');
 });
 
-test('worker-backed playback writes keep the local event-loop p95 below the synchronization budget', async t => {
+test('failed login transactions roll back all writes and retry without losing cached changes', async t => {
+  const { file, vault } = fixture(t),
+    accounts = new Accounts(file, vault);
+  try {
+    const store = loginStore('fixture', vault, accounts);
+    store.logins.set('login', { userId: 'fixture', expires: null });
+    accounts.db.exec(
+      "CREATE TRIGGER reject_login_context BEFORE UPDATE ON meta WHEN new.key='loginContext' BEGIN SELECT RAISE(ABORT,'fixture storage failure'); END",
+    );
+    assert.throws(() => store.save(), /fixture storage failure/);
+    assert.equal(accounts.db.prepare('SELECT COUNT(*) AS n FROM browser_logins').get().n, 0);
+    accounts.db.exec('DROP TRIGGER reject_login_context');
+    await store.save();
+    const read = new DatabaseSync(file);
+    assert.equal(JSON.parse(read.prepare('SELECT record FROM browser_logins').get().record).userId, 'fixture');
+    read.close();
+  } finally {
+    await accounts.close();
+  }
+});
+
+test('direct playback writes keep the local event-loop p95 below the synchronization budget', async t => {
   const { monitorEventLoopDelay } = require('node:perf_hooks'),
     { randomUUID } = require('node:crypto');
   const { PlaybackTracking } = require('../server/playback-tracking');
@@ -155,7 +151,7 @@ test('worker-backed playback writes keep the local event-loop p95 below the sync
   }
 });
 
-test('unsupported pre-release schema fails startup without leaving a live storage worker', async t => {
+test('unsupported pre-release schema fails startup without leaving an open database', async t => {
   const { directory } = fixture(t),
     keyFile = path.join(directory, 'key');
   fs.writeFileSync(keyFile, Buffer.alloc(32, 7));
@@ -250,41 +246,99 @@ test('matched offline SQLite and original-key backup restores UUIDs, credentials
   }
 });
 
-test('operation durability fences preserve acknowledged state without blocking unrelated work', async t => {
-  const { runOperation, commitOperation } = require('../server/operation');
-  const { file, vault } = fixture(t),
-    accounts = new Accounts(file, vault);
-  await accounts.flush();
-  const lock = new DatabaseSync(file);
-  lock.exec('BEGIN EXCLUSIVE');
-  let acknowledged = false;
+test('HTTP acknowledgements survive a forced process kill without graceful close', { timeout: 20000 }, async t => {
+  const { file, vault } = fixture(t);
+  const { spawn } = require('node:child_process');
+  const { once } = require('node:events');
+  const https = require('node:https');
+  const root = path.resolve(__dirname, '..');
+  // Fixture-only routes exercise the actual HTTP server and account/login/room/
+  // queue services. No provider, production config or credentials are loaded.
+  const source = `
+    const root = ${JSON.stringify(root)};
+    const fs = require('node:fs'), path = require('node:path');
+    const { Accounts, credentialVault } = require(path.join(root, 'server/accounts'));
+    const { loginStore } = require(path.join(root, 'server/storage'));
+    const { RoomStore } = require(path.join(root, 'server/room-store'));
+    const { RoomQueue } = require(path.join(root, 'server/room-queue'));
+    const accounts = new Accounts(${JSON.stringify(file)}, credentialVault());
+    const logins = loginStore('crash', accounts.vault, accounts);
+    const rooms = new RoomStore(accounts), queue = new RoomQueue(accounts, rooms);
+    const json = (res, status, value) => { res.writeHead(status, {'Content-Type':'application/json'}); res.end(JSON.stringify(value)); };
+    const server = require(path.join(root, 'server/http/server')).createHttpServer({
+      config: { publicUrl: 'https://localhost' }, logger: {}, json,
+      tls: { cert: fs.readFileSync(path.join(root,'certs/server-cert.pem')), key: fs.readFileSync(path.join(root,'certs/server-key.pem')) },
+      route: async ({res, url}) => {
+        const name = url.searchParams.get('name');
+        const user = accounts.resolve('plex', name, name);
+        const room = await rooms.create(user.id, {name});
+        await queue.add(room.id, user.id, {serverId:'fixture',mediaId:'42',type:'movie',title:'Fixture',duration:60,position:0});
+        logins.logins.set(user.id, {userId:user.id, expires:null});
+        await logins.save();
+        json(res, 200, {userId:user.id, roomId:room.id});
+        return true;
+      }
+    });
+    server.listen(0, '127.0.0.1', () => process.send(server.address().port));
+  `;
+  const child = spawn(process.execPath, ['-e', source], {
+    windowsHide: true,
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+  });
+  let errors = '';
+  child.stderr.on('data', data => (errors += data));
+  const exited = once(child, 'exit');
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await exited;
+  });
+  const [port] = await Promise.race([
+    once(child, 'message'),
+    exited.then(() => {
+      throw new Error(errors);
+    }),
+  ]);
+  const acknowledged = [];
+  for (let i = 0; i < 8; i++) {
+    const result = await new Promise((resolve, reject) => {
+      const req = https.request(
+        { hostname: '127.0.0.1', port, path: '/fixture?name=Crash' + i, method: 'POST', rejectUnauthorized: false },
+        res => {
+          let body = '';
+          res.on('data', data => (body += data));
+          res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(body) }));
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(result.status, 200, errors);
+    acknowledged.push(result.body);
+  }
+  child.kill('SIGKILL');
+  await exited;
+  assert.ok(fs.existsSync(file + '-wal'), 'unclean shutdown leaves committed WAL to recover');
+  const reopened = new Accounts(file, vault);
   try {
-    const mutation = runOperation(undefined, async () => {
-      accounts.resolve('plex', 'fenced', 'Fixture');
-      await commitOperation();
-      acknowledged = true;
-    });
-    const read = runOperation(undefined, () => {
-      accounts.identity('plex', 'fenced');
-      return commitOperation();
-    });
-    assert.equal(
-      runOperation(undefined, () => commitOperation()),
-      undefined,
-      'work without storage reads/writes has no durability dependency',
-    );
-    await new Promise(resolve => setTimeout(resolve, 50));
-    assert.equal(acknowledged, false);
-    lock.exec('COMMIT');
-    await Promise.all([mutation, read]);
-    assert.equal(acknowledged, true);
+    assert.equal(reopened.db.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
+    for (const { userId, roomId } of acknowledged) {
+      assert.ok(reopened.canonical(userId));
+      assert.equal(reopened.db.prepare('SELECT creatorId FROM watch_rooms WHERE id=?').get(roomId).creatorId, userId);
+      assert.equal(
+        reopened.db.prepare('SELECT mediaId FROM watch_queue_entries WHERE roomId=?').get(roomId).mediaId,
+        '42',
+      );
+      assert.equal(
+        JSON.parse(reopened.db.prepare('SELECT record FROM browser_logins WHERE id=?').get(userId).record).userId,
+        userId,
+      );
+    }
   } finally {
-    lock.close();
-    await accounts.close();
+    await reopened.close();
   }
 });
 
-test('history projections preserve overlapping totals while the worker services concurrent writes', async t => {
+test('history projections preserve overlapping totals while bounded reductions yield to concurrent writes', async t => {
   const { PlaybackTracking } = require('../server/playback-tracking');
   const { file, vault } = fixture(t),
     accounts = new Accounts(file, vault),
@@ -315,6 +369,38 @@ test('history projections preserve overlapping totals while the worker services 
     assert.deepEqual(history.totals, [{ mediaId: '1', watchedSeconds: 0.5, sourceSeconds: 500 }]);
     assert.ok(!history.sessions.some(row => row.wallIntervals || row.sourceIntervals));
     assert.equal(accounts.meta('during-history'), 'committed');
+    const reads = Array.from({ length: 8 }, () => tracking.history(user.id));
+    await assert.rejects(
+      Promise.resolve().then(() => tracking.history(user.id)),
+      error => error.status === 503 && /History is busy/.test(error.message),
+    );
+    await Promise.all(reads);
+    assert.equal((await tracking.history(user.id)).sessions.length, 100, 'read slots are released');
+  } finally {
+    await accounts.close();
+  }
+});
+
+test('history and audit retention bound age and row count without deleting recent account evidence', async t => {
+  const { file, vault } = fixture(t),
+    accounts = new Accounts(file, vault);
+  const { repositories } = require('../server/repositories');
+  const { history, accounts: repo } = repositories(accounts.db);
+  const now = Date.now(),
+    day = 86400000;
+  try {
+    accounts.transaction(() => {
+      for (let i = 0; i < 5002; i++) history.save(String(i), 'fixture', now - i, '{}');
+      history.save('expired', 'fixture', now - 91 * day, '{}');
+      for (let i = 0; i < 20002; i++) repo.insertAudit(now - i, 'fixture', 'account-change', '{}');
+      repo.insertAudit(now - 366 * day, 'fixture', 'expired', '{}');
+      history.prune(now);
+      repo.pruneAudit(now);
+    });
+    assert.equal(accounts.db.prepare('SELECT COUNT(*) AS n FROM playback_history').get().n, 5000);
+    assert.equal(accounts.db.prepare('SELECT MIN(at) AS at FROM playback_history').get().at, now - 4999);
+    assert.equal(accounts.db.prepare('SELECT COUNT(*) AS n FROM audit').get().n, 20000);
+    assert.equal(accounts.db.prepare('SELECT MIN(at) AS at FROM audit').get().at, now - 19999);
   } finally {
     await accounts.close();
   }

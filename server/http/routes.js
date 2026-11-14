@@ -61,8 +61,7 @@ function createRoutes({
         name: 'health',
         methods: ['GET'],
         path: '/health',
-        handle: ({ res }) =>
-          json(res, registry.persistence.error ? 503 : 200, { ok: !registry.persistence.error, version }),
+        handle: ({ res }) => json(res, 200, { ok: true, version }),
       },
     ],
     authRoutes({

@@ -1,4 +1,5 @@
 'use strict';
+const { repositories } = require('./repositories');
 
 /**
  * Guests: people a room's invite lets in who could not otherwise enter. Their browser session
@@ -88,7 +89,7 @@ function createGuests({ config, logger, registry, accounts, logins, rooms, ended
               login.guestRoom === roomId &&
               (!enabled() ||
                 (login.guestUntil ?? Infinity) <= now ||
-                !watch.roomState.store.db.prepare('SELECT 1 FROM watch_rooms WHERE id=?').get(roomId)),
+                !repositories(watch.roomState.store.db).rooms.exists(roomId)),
           )
           .map(login => login.userId);
         await endSessions(roomId, expired);

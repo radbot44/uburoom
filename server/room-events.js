@@ -1,4 +1,5 @@
 'use strict';
+const { repositories } = require('./repositories');
 const { randomUUID, createHash } = require('node:crypto');
 const RoomPolicy = require('./room-policy');
 const Engine = require('../shared/engine.mjs');
@@ -39,46 +40,39 @@ class RoomEvents {
     return row && { ...row, discord: row.discord ? JSON.parse(row.discord) : null };
   }
   get(key) {
-    return this.decode(this.db.prepare('SELECT * FROM watch_room_events WHERE id=?').get(key));
+    return this.decode(repositories(this.db).rooms.findRoomEventsById(key));
   }
   forRoom(roomId, now = Date.now()) {
-    return this.db
-      .prepare('SELECT * FROM watch_room_events WHERE roomId=? AND end>? ORDER BY start,id')
-      .all(roomId, iso(now))
+    return repositories(this.db)
+      .rooms.listRoomEventsByRoomIdEnd(roomId, iso(now))
       .map(row => this.decode(row));
   }
   upcoming(roomId, now = Date.now()) {
-    return !!this.db.prepare('SELECT 1 FROM watch_room_events WHERE roomId=? AND end>? LIMIT 1').get(roomId, iso(now));
+    return !!repositories(this.db).rooms.findRoomEventsByRoomIdEnd(roomId, iso(now));
   }
   async save(event) {
     this.store.healthy();
-    this.db
-      .prepare(
-        `INSERT INTO watch_room_events(id,roomId,creatorId,title,description,start,end,timeZone,state,createdAt,updatedAt,discord) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(id) DO UPDATE SET title=excluded.title,description=excluded.description,start=excluded.start,end=excluded.end,timeZone=excluded.timeZone,
-      state=excluded.state,updatedAt=excluded.updatedAt,discord=excluded.discord`,
-      )
-      .run(
-        event.id,
-        event.roomId,
-        event.creatorId,
-        event.title,
-        event.description,
-        event.start,
-        event.end,
-        event.timeZone,
-        event.state,
-        event.createdAt,
-        event.updatedAt,
-        event.discord ? JSON.stringify(event.discord) : null,
-      );
+    repositories(this.db).rooms.insertRoomEvents(
+      event.id,
+      event.roomId,
+      event.creatorId,
+      event.title,
+      event.description,
+      event.start,
+      event.end,
+      event.timeZone,
+      event.state,
+      event.createdAt,
+      event.updatedAt,
+      event.discord ? JSON.stringify(event.discord) : null,
+    );
     await this.registry.flush();
   }
   async remove(key) {
     this.store.healthy();
     clearTimeout(this.cancelTimers.get(key));
     this.cancelTimers.delete(key);
-    this.db.prepare('DELETE FROM watch_room_events WHERE id=?').run(key);
+    repositories(this.db).rooms.deleteRoomEventsById(key);
     await this.registry.flush();
   }
   lane(id, action) {
@@ -144,9 +138,7 @@ class RoomEvents {
     const now = Date.now(),
       rooms = new Map(),
       events = [];
-    for (const row of this.db
-      .prepare("SELECT * FROM watch_room_events WHERE end>? AND state='scheduled' ORDER BY start,id")
-      .all(iso(now))) {
+    for (const row of repositories(this.db).rooms.listRoomEventsByEndState(iso(now))) {
       if (!rooms.has(row.roomId)) rooms.set(row.roomId, this.room(row.roomId));
       const record = rooms.get(row.roomId);
       if (record && this.visible(record, actor)) events.push(this.present(this.decode(row), record, actor, now));
@@ -421,11 +413,10 @@ class RoomEvents {
     if (this.stopped) return;
     const now = iso(Date.now());
     // Ended watch nights leave the lobby; Discord ends its own copy at the end time.
-    const ended = this.db.prepare('SELECT id,roomId FROM watch_room_events WHERE end<=?').all(now);
+    const ended = repositories(this.db).rooms.listRoomEventsByEnd(now);
     const rooms = new Set(
-      this.db
-        .prepare('SELECT DISTINCT roomId FROM watch_room_events WHERE discord IS NOT NULL AND end>?')
-        .all(now)
+      repositories(this.db)
+        .rooms.listRoomEventsByDiscordEnd(now)
         .map(row => row.roomId),
     );
     await Promise.allSettled([

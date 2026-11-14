@@ -1,4 +1,5 @@
 'use strict';
+const { repositories } = require('./repositories');
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID, randomBytes, createCipheriv, createDecipheriv } = require('node:crypto');
@@ -66,6 +67,13 @@ class Accounts {
     if (file) fs.mkdirSync(path.dirname(file), { recursive: true });
     this.persistence = openDatabase(file, initializeSchema);
     this.db = this.persistence.db;
+    try {
+      repositories(this.db).accounts.pruneAudit(Date.now());
+      this.auditPrunedAt = Date.now();
+    } catch (error) {
+      this.persistence.abort();
+      throw error;
+    }
     this.vault = vault;
     this.credentialCache = new Map();
     if (file)
@@ -92,31 +100,27 @@ class Accounts {
    * @returns {{id:string,name:string,revision:number,retiredInto:string|null,signedInAt:number|null,guest:number}|undefined}
    */
   canonical(id) {
-    let row = this.db.prepare('SELECT * FROM users WHERE id=?').get(id);
+    let row = repositories(this.db).accounts.findUsersById(id);
     for (let n = 0; row?.retiredInto && n < 20; n++)
-      row = this.db.prepare('SELECT * FROM users WHERE id=?').get(row.retiredInto);
+      row = repositories(this.db).accounts.findUsersById(row.retiredInto);
     return row && !row.retiredInto ? row : undefined;
   }
   identity(provider, subject) {
-    return this.db.prepare('SELECT * FROM identities WHERE provider=? AND subject=?').get(provider, String(subject));
+    return repositories(this.db).accounts.findIdentitiesByProviderSubject(provider, String(subject));
   }
   identities(userId) {
-    return this.db
-      .prepare('SELECT provider,subject,name,verified,assigned FROM identities WHERE userId=? ORDER BY provider')
-      .all(userId);
+    return repositories(this.db).accounts.listIdentitiesByUserId(userId);
   }
   create(name) {
     const id = randomUUID();
-    this.db.prepare('INSERT INTO users(id,name) VALUES(?,?)').run(id, name);
+    repositories(this.db).accounts.insertUsers(id, name);
     return id;
   }
   // Guests have a typed, unverified name and no provider identity. They are never
   // listed in host search, never linked to a provider and are removed once unused.
   createGuest(name) {
     const id = randomUUID();
-    this.db
-      .prepare('INSERT INTO users(id,name,guest,signedInAt) VALUES(?,?,1,?)')
-      .run(id, displayName(name), Date.now());
+    repositories(this.db).accounts.insertGuest(id, displayName(name), Date.now());
     return id;
   }
   isGuest(id) {
@@ -124,20 +128,15 @@ class Accounts {
   }
   // Deletes guest accounts that no session, room or pass still uses.
   removeUnusedGuests(inUse) {
-    const unused = this.db
-      .prepare(
-        `SELECT id FROM users u WHERE guest=1 AND retiredInto IS NULL
-      AND NOT EXISTS(SELECT 1 FROM identities WHERE userId=u.id) AND NOT EXISTS(SELECT 1 FROM watch_rooms WHERE creatorId=u.id)
-      AND NOT EXISTS(SELECT 1 FROM watch_room_hosts WHERE userId=u.id) AND NOT EXISTS(SELECT 1 FROM watch_room_host_grants WHERE issuerId=u.id)`,
-      )
-      .all()
+    const unused = repositories(this.db)
+      .accounts.listUnusedGuests()
       .map(row => row.id)
       .filter(id => !inUse.has(id));
     if (unused.length)
       this.transaction(() => {
         for (const id of unused) {
-          this.db.prepare('DELETE FROM playback_history WHERE userId=?').run(id);
-          this.db.prepare('DELETE FROM users WHERE id=?').run(id);
+          repositories(this.db).history.deleteForUser(id);
+          repositories(this.db).accounts.deleteUsersById(id);
         }
       });
     return unused;
@@ -146,16 +145,15 @@ class Accounts {
     const user = this.canonical(userId);
     if (!user || typeof value !== 'string') throw new Error('Invalid display name');
     const name = displayName(value);
-    this.db.prepare('UPDATE users SET name=? WHERE id=?').run(name, user.id);
+    repositories(this.db).accounts.updateUsersSetNameById(name, user.id);
     return this.canonical(user.id);
   }
   seen(userId) {
-    this.db.prepare('UPDATE users SET signedInAt=COALESCE(signedInAt,?) WHERE id=?').run(Date.now(), userId);
+    repositories(this.db).accounts.updateUsersSetSignedInAtById(Date.now(), userId);
   }
   directory() {
-    return this.db
-      .prepare('SELECT id,name,signedInAt FROM users WHERE retiredInto IS NULL AND guest=0')
-      .all()
+    return repositories(this.db)
+      .accounts.listDirectory()
       .map(user => ({
         ...user,
         identities: this.identities(user.id)
@@ -167,20 +165,17 @@ class Accounts {
     subject = String(subject);
     const old = this.identity(provider, subject);
     if (old) {
-      if (verified) {
-        this.db
-          .prepare('UPDATE identities SET verified=1,name=? WHERE provider=? AND subject=?')
-          .run(name, provider, subject);
-        this.db.prepare('UPDATE users SET name=? WHERE id=? AND signedInAt IS NULL').run(name, old.userId);
-        this.seen(old.userId);
-      }
+      if (verified)
+        this.transaction(() => {
+          repositories(this.db).accounts.updateIdentitiesSetVerifiedNameByProviderSubject(name, provider, subject);
+          repositories(this.db).accounts.updateUsersSetNameByIdSignedInAt(name, old.userId);
+          this.seen(old.userId);
+        });
       return this.canonical(old.userId);
     }
     return this.transaction(() => {
       const id = this.create(name);
-      this.db
-        .prepare('INSERT INTO identities(provider,subject,userId,name,verified) VALUES(?,?,?,?,?)')
-        .run(provider, subject, id, name, Number(verified));
+      repositories(this.db).accounts.insertIdentities(provider, subject, id, name, Number(verified));
       if (verified) this.seen(id);
       return this.canonical(id);
     });
@@ -195,14 +190,13 @@ class Accounts {
     if (old && old.userId !== user.id) return { conflict: this.canonical(old.userId) };
     this.transaction(() => {
       if (old)
-        this.db
-          .prepare('UPDATE identities SET verified=1,name=? WHERE provider=? AND subject=?')
-          .run(name, provider, String(subject));
-      else
-        this.db
-          .prepare('INSERT INTO identities(provider,subject,userId,name,verified) VALUES(?,?,?,?,1)')
-          .run(provider, String(subject), user.id, name);
-      this.db.prepare('UPDATE users SET revision=revision+1 WHERE id=?').run(user.id);
+        repositories(this.db).accounts.updateIdentitiesSetVerifiedNameByProviderSubject(
+          name,
+          provider,
+          String(subject),
+        );
+      else repositories(this.db).accounts.insertVerifiedIdentity(provider, String(subject), user.id, name);
+      repositories(this.db).accounts.updateUsersSetRevisionById(user.id);
     });
     return { user: this.canonical(user.id) };
   }
@@ -216,11 +210,9 @@ class Accounts {
     );
     if (!remaining) throw new Error('Connect another sign-in method before removing this account');
     this.transaction(() => {
-      this.db
-        .prepare('DELETE FROM identities WHERE userId=? AND provider=? AND subject=?')
-        .run(user.id, provider, subject);
-      if (provider === 'plex') this.db.prepare('DELETE FROM credentials WHERE subject=?').run(subject);
-      this.db.prepare('UPDATE users SET revision=revision+1 WHERE id=?').run(user.id);
+      repositories(this.db).accounts.deleteIdentitiesByUserIdProviderSubject(user.id, provider, subject);
+      if (provider === 'plex') repositories(this.db).accounts.deleteCredentialsBySubject(subject);
+      repositories(this.db).accounts.updateUsersSetRevisionById(user.id);
       this.audit(user.id, 'self-unlink', { provider, subject });
     });
     if (provider === 'plex') this.credentialCache.delete(subject);
@@ -234,17 +226,16 @@ class Accounts {
     if (new Set(all.map(i => i.provider)).size !== all.length)
       throw new Error('Accounts have conflicting login identities');
     return this.transaction(() => {
-      this.db.prepare('UPDATE identities SET userId=? WHERE userId=?').run(survivor, retired);
+      repositories(this.db).accounts.updateIdentitiesSetUserIdByUserId(survivor, retired);
       if (verifiedIdentity?.provider && verifiedIdentity?.subject)
-        this.db
-          .prepare('UPDATE identities SET verified=1,name=COALESCE(?,name) WHERE userId=? AND provider=? AND subject=?')
-          .run(verifiedIdentity.name || null, survivor, verifiedIdentity.provider, String(verifiedIdentity.subject));
-      this.db.prepare('UPDATE users SET retiredInto=?,revision=revision+1 WHERE id=?').run(survivor, retired);
-      this.db
-        .prepare(
-          'UPDATE users SET revision=revision+1,signedInAt=COALESCE(signedInAt,(SELECT signedInAt FROM users WHERE id=?)) WHERE id=?',
-        )
-        .run(retired, survivor);
+        repositories(this.db).accounts.updateIdentitiesSetVerifiedNameByUserIdProviderSubject(
+          verifiedIdentity.name || null,
+          survivor,
+          verifiedIdentity.provider,
+          String(verifiedIdentity.subject),
+        );
+      repositories(this.db).accounts.updateUsersSetRetiredIntoRevisionById(survivor, retired);
+      repositories(this.db).accounts.updateUsersSetRevisionSignedInAtById(retired, survivor);
       this.audit(actor, action, { survivor, retired, identities: all });
       return survivor;
     });
@@ -276,12 +267,15 @@ class Accounts {
         ['plex', preview.plexId],
       ])
         if (!this.identity(provider, subject)) {
-          this.db
-            .prepare('INSERT INTO identities(provider,subject,userId,name,assigned) VALUES(?,?,?,?,1)')
-            .run(provider, subject, id, provider === 'discord' ? preview.discordName || subject : subject);
+          repositories(this.db).accounts.insertAssignedIdentity(
+            provider,
+            subject,
+            id,
+            provider === 'discord' ? preview.discordName || subject : subject,
+          );
           changed = true;
         }
-      if (changed) this.db.prepare('UPDATE users SET revision=revision+1 WHERE id=?').run(id);
+      if (changed) repositories(this.db).accounts.updateUsersSetRevisionById(id);
       this.audit(actor, 'owner-match', { userId: id, discordId: preview.discordId, plexId: preview.plexId });
     });
     return id;
@@ -300,25 +294,20 @@ class Accounts {
     );
   }
   list() {
-    return this.db
-      .prepare('SELECT id FROM users WHERE retiredInto IS NULL ORDER BY name LIMIT 200')
-      .all()
+    return repositories(this.db)
+      .accounts.listUsersByRetiredInto()
       .map(u => this.summary(u.id));
   }
   hasCredential(subject) {
-    return !!this.db.prepare('SELECT 1 FROM credentials WHERE subject=?').get(subject);
+    return !!repositories(this.db).accounts.hasCredential(subject);
   }
   credential(subject, value) {
     if (value !== undefined && JSON.stringify(this.credentialCache.get(subject)) !== JSON.stringify(value)) {
-      this.db
-        .prepare(
-          'INSERT INTO credentials(subject,value) VALUES(?,?) ON CONFLICT(subject) DO UPDATE SET value=excluded.value',
-        )
-        .run(subject, JSON.stringify(this.vault.seal(value)));
+      repositories(this.db).accounts.insertCredentials(subject, JSON.stringify(this.vault.seal(value)));
       this.credentialCache.set(subject, structuredClone(value));
     }
     if (this.credentialCache.has(subject)) return structuredClone(this.credentialCache.get(subject));
-    const row = this.db.prepare('SELECT value FROM credentials WHERE subject=?').get(subject);
+    const row = repositories(this.db).accounts.findCredential(subject);
     if (!row) return;
     const envelope = JSON.parse(row.value);
     if (envelope.encrypted !== 1) throw new Error('Invalid encrypted credential record');
@@ -327,19 +316,22 @@ class Accounts {
     return structuredClone(decoded);
   }
   meta(key, value) {
-    if (value !== undefined)
-      this.db
-        .prepare('INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
-        .run(key, value);
-    return this.db.prepare('SELECT value FROM meta WHERE key=?').get(key)?.value;
+    if (value !== undefined) repositories(this.db).accounts.insertMeta(key, value);
+    return repositories(this.db).accounts.findMetaByKey(key)?.value;
   }
   audit(actor, action, detail) {
-    this.db
-      .prepare('INSERT INTO audit(at,actor,action,detail) VALUES(?,?,?,?)')
-      .run(Date.now(), actor, action, JSON.stringify(detail));
+    const now = Date.now();
+    repositories(this.db).accounts.insertAudit(now, actor, action, JSON.stringify(detail));
+    // Retention runs at most hourly, outside the playback observation/tick path.
+    if (!this.auditPrunedAt || now - this.auditPrunedAt >= 3600000) {
+      repositories(this.db).accounts.pruneAudit(now);
+      this.auditPrunedAt = now;
+    }
   }
   flush() {
-    return this.persistence.flush();
+    // Kept as an async service settlement point for existing callers. There is
+    // no pending storage: every statement/transaction has already committed.
+    return Promise.resolve();
   }
   close() {
     this.credentialCache.clear();

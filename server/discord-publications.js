@@ -1,4 +1,5 @@
 'use strict';
+const { repositories } = require('./repositories');
 const { randomBytes } = require('node:crypto');
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const { discordRequest, retryDelay } = require('./discord-request');
@@ -21,9 +22,8 @@ class DiscordPublications {
     this.config = this.hub.config;
     this.registry = registry;
     this.records = new Map(
-      registry.db
-        .prepare('SELECT key,value FROM meta WHERE key LIKE ?')
-        .all(PREFIX + '%')
+      repositories(registry.db)
+        .accounts.listMetaPrefix(PREFIX + '%')
         .map(row => [row.key.slice(PREFIX.length), JSON.parse(row.value)]),
     );
     this.lanes = new Map();
@@ -57,7 +57,7 @@ class DiscordPublications {
       this.retries.delete(id);
       this.posters.delete(id);
       this.posterAttempts.delete(id);
-      this.registry.db.prepare('DELETE FROM meta WHERE key=?').run(PREFIX + id);
+      repositories(this.registry.db).accounts.deleteMetaByKey(PREFIX + id);
     }
     await this.registry.flush();
   }

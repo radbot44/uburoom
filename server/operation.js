@@ -1,5 +1,6 @@
 'use strict';
 const { AsyncLocalStorage } = require('node:async_hooks');
+const timers = require('node:timers');
 
 // Request ownership follows async calls, without changing provider identities.
 // Shared work explicitly installs its own lifetime rather than inheriting its
@@ -13,7 +14,7 @@ function runOperation(signal, action) {
   const forward = () => controller.abort(signal.reason);
   if (signal?.aborted) forward();
   else signal?.addEventListener('abort', forward, { once: true });
-  const store = { signal: controller?.signal, storage: new Set(), finished: false };
+  const store = { signal: controller?.signal, finished: false };
   const finish = () => {
     store.finished = true;
     signal?.removeEventListener('abort', forward);
@@ -29,12 +30,15 @@ function runOperation(signal, action) {
   else finish();
   return result;
 }
-function observeStorage(flush) {
-  operations.getStore()?.storage.add(flush);
-}
-function commitOperation() {
-  const storage = operations.getStore()?.storage;
-  return storage?.size ? Promise.all([...storage].map(flush => flush())) : undefined;
+// Temporary compatibility for plex-auth until its concurrent module split lands.
+// Direct writes are already committed; this is no longer a storage receipt.
+function commitOperation() {}
+// Unlike AbortSignal.timeout, an outstanding cleanup deadline must keep Node
+// alive after the HTTP server and storage connection have been closed.
+function createDeadline(ms) {
+  const controller = new AbortController();
+  const timer = timers.setTimeout(() => controller.abort(new DOMException('Operation timed out', 'TimeoutError')), ms);
+  return { signal: controller.signal, clear: () => timers.clearTimeout(timer) };
 }
 function currentSignal() {
   const store = operations.getStore();
@@ -68,7 +72,6 @@ class SharedTask {
         runOperation(this.signal, async () => {
           this.signal.throwIfAborted();
           const result = await action(this.signal);
-          await commitOperation();
           this.signal.throwIfAborted();
           return result;
         }),
@@ -103,4 +106,4 @@ class SharedTask {
     this.controller.abort();
   }
 }
-module.exports = { runOperation, currentSignal, waitFor, SharedTask, observeStorage, commitOperation };
+module.exports = { runOperation, currentSignal, waitFor, SharedTask, createDeadline, commitOperation };

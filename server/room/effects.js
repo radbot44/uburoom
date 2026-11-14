@@ -9,7 +9,7 @@
 /** @typedef {{countdown: any, mediaId: string, startAt: number, viewers: Map<string, any>, work?: MediaWork, dropped?: boolean, media?: any, fallbackStream?: InstanceType<typeof import('../fallback-stream').FallbackStream>, source?: Promise<any>}} Preload */
 
 const { FallbackStream } = require('../fallback-stream');
-const { runOperation, waitFor } = require('../operation');
+const { runOperation, waitFor, createDeadline } = require('../operation');
 const { isProviderOutage } = require('../resilience');
 const { clearPlaybackEnd } = require('../playback-end');
 const Engine = require('../../shared/engine.mjs');
@@ -125,19 +125,24 @@ module.exports = {
     return this.startMediaWork(room, () => this.plex.stop(media), { kind: 'cleanup' }).promise;
   },
   async drainMedia(room) {
-    const deadline = this.shutdownDeadline || AbortSignal.timeout(this.mediaDrainMs);
-    let failure;
-    for (;;) {
-      const pending = [...this.mediaWork].filter(work => !room || work.room === room);
-      if (!pending.length) break;
-      for (const work of pending) if (work.kind !== 'cleanup' && !work.committing) work.controller.abort();
-      const results = await waitFor(Promise.allSettled(pending.map(work => work.promise)), deadline);
-      for (const [index, result] of results.entries()) {
-        if (result.status === 'rejected' && (pending[index].kind === 'cleanup' || !pending[index].signal.aborted))
-          failure ||= result.reason;
+    const owned = this.shutdownDeadline ? undefined : createDeadline(this.mediaDrainMs);
+    const deadline = this.shutdownDeadline || owned.signal;
+    try {
+      let failure;
+      for (;;) {
+        const pending = [...this.mediaWork].filter(work => !room || work.room === room);
+        if (!pending.length) break;
+        for (const work of pending) if (work.kind !== 'cleanup' && !work.committing) work.controller.abort();
+        const results = await waitFor(Promise.allSettled(pending.map(work => work.promise)), deadline);
+        for (const [index, result] of results.entries()) {
+          if (result.status === 'rejected' && (pending[index].kind === 'cleanup' || !pending[index].signal.aborted))
+            failure ||= result.reason;
+        }
       }
+      if (failure) throw failure;
+    } finally {
+      owned?.clear();
     }
-    if (failure) throw failure;
   },
   /**
    * Prepare-then-adopt for autoplay. During the countdown the next video's metadata, its

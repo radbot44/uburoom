@@ -1,5 +1,6 @@
 // @ts-check
 'use strict';
+const { repositories } = require('./repositories');
 const { mediaIdentity } = require('../shared/room-protocol.mjs');
 
 const { randomUUID, randomInt } = require('node:crypto');
@@ -193,51 +194,42 @@ class RoomQueue {
     const room = this.room(roomId);
     if (clearCursor && room?.autoQueue?.cursor) {
       const autoQueue = { ...room.autoQueue, cursor: null };
-      this.db
-        .prepare(
-          'UPDATE watch_rooms SET autoQueue = ?, queueRevision = queueRevision + 1, updatedAt = ?, lastAccessedAt = ? WHERE id = ?',
-        )
-        .run(JSON.stringify(autoQueue), at, at, roomId);
+      repositories(this.db).rooms.updateRoomsSetAutoQueueQueueRevisionUpdatedAtLastAccessedAtById(
+        JSON.stringify(autoQueue),
+        at,
+        at,
+        roomId,
+      );
     } else {
-      this.db
-        .prepare(
-          'UPDATE watch_rooms SET queueRevision = queueRevision + 1, updatedAt = ?, lastAccessedAt = ? WHERE id = ?',
-        )
-        .run(at, at, roomId);
+      repositories(this.db).rooms.updateRoomsSetQueueRevisionUpdatedAtLastAccessedAtById(at, at, roomId);
     }
   }
 
   getEntry(entryId) {
     this.healthy();
     if (!UUID.test(entryId)) return null;
-    const row = this.db.prepare('SELECT * FROM watch_queue_entries WHERE id = ?').get(entryId);
+    const row = repositories(this.db).queue.findEntry(entryId);
     return rowToEntry(row);
   }
 
   current(roomId) {
     this.healthy();
     if (!UUID.test(roomId)) return null;
-    const row = this.db.prepare("SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'current'").get(roomId);
+    const row = repositories(this.db).queue.findCurrent(roomId);
     return rowToEntry(row);
   }
 
   peekNext(roomId) {
     this.healthy();
     if (!UUID.test(roomId)) return null;
-    const row = this.db
-      .prepare("SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'pending' ORDER BY rank ASC LIMIT 1")
-      .get(roomId);
+    const row = repositories(this.db).queue.findNextPending(roomId);
     return rowToEntry(row);
   }
 
   lastHistory(roomId) {
     this.healthy();
     if (!UUID.test(roomId)) return null;
-    const row = this.db
-      .prepare(
-        "SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'history' ORDER BY endedAt DESC, rowid DESC LIMIT 1",
-      )
-      .get(roomId);
+    const row = repositories(this.db).queue.findLatestHistory(roomId);
     return rowToEntry(row);
   }
 
@@ -254,11 +246,7 @@ class RoomQueue {
     if (expectedRevision !== undefined) this.assertRevision(room, expectedRevision);
     const item = validateItem(rawItem);
 
-    const pendingCount = /** @type {{count:number}} */ (
-      this.db
-        .prepare("SELECT COUNT(*) AS count FROM watch_queue_entries WHERE roomId = ? AND state = 'pending'")
-        .get(roomId)
-    ).count;
+    const pendingCount = /** @type {{count:number}} */ (repositories(this.db).queue.countPending(roomId)).count;
     if (pendingCount >= this.maxPending) {
       throw error('Queue limit reached (maximum ' + this.maxPending + ' upcoming items)', 400);
     }
@@ -266,33 +254,27 @@ class RoomQueue {
     const id = randomUUID(),
       at = this.now();
     this.registry.transaction(() => {
-      this.db
-        .prepare(
-          `
-        INSERT INTO watch_queue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      `,
-        )
-        .run(
-          id,
-          roomId,
-          'pending',
-          pendingCount,
-          item.serverId,
-          item.mediaId,
-          item.type,
-          item.title,
-          item.parentTitle,
-          item.grandparentTitle,
-          item.thumb,
-          item.duration,
-          item.position,
-          null,
-          item.provenance,
-          at,
-          null,
-          null,
-          at,
-        );
+      repositories(this.db).queue.insertQueueEntries(
+        id,
+        roomId,
+        'pending',
+        pendingCount,
+        item.serverId,
+        item.mediaId,
+        item.type,
+        item.title,
+        item.parentTitle,
+        item.grandparentTitle,
+        item.thumb,
+        item.duration,
+        item.position,
+        null,
+        item.provenance,
+        at,
+        null,
+        null,
+        at,
+      );
       this.bumpQueueRevision(roomId, at);
     });
 
@@ -301,14 +283,11 @@ class RoomQueue {
   }
 
   pending(roomId) {
-    return this.db
-      .prepare("SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'pending' ORDER BY rank ASC")
-      .all(roomId)
-      .map(rowToEntry);
+    return repositories(this.db).queue.listPending(roomId).map(rowToEntry);
   }
 
   insertPending(roomId, items, startRank, at) {
-    const insert = this.db.prepare('INSERT INTO watch_queue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+    const insert = repositories(this.db).queue.insertStatement;
     return items.map((item, index) => {
       const id = randomUUID();
       insert.run(
@@ -354,8 +333,7 @@ class RoomQueue {
     const key = item => item.serverId + ':' + item.mediaId;
     const excluded = new Set([...pending, ...(current ? [current] : [])].map(key));
     if (unfinished) {
-      for (const row of this.db.prepare('SELECT serverId,mediaId FROM watch_room_progress WHERE roomId=?').all(roomId))
-        excluded.add(key(row));
+      for (const row of repositories(this.db).queue.listRoomProgressByRoomId(roomId)) excluded.add(key(row));
     }
     const items = [];
     for (const raw of rawItems) {
@@ -397,7 +375,7 @@ class RoomQueue {
     }
     const at = this.now();
     this.registry.transaction(() => {
-      const update = this.db.prepare('UPDATE watch_queue_entries SET rank = ?, updatedAt = ? WHERE id = ?');
+      const update = repositories(this.db).queue.rankStatement;
       items.forEach((item, rank) => update.run(rank, at, item.id));
       this.bumpQueueRevision(roomId, at);
     });
@@ -432,11 +410,12 @@ class RoomQueue {
       : { mode: config.mode, scope, includeSpecials, cycle: 0, used, next: null };
     const at = this.now();
     this.registry.transaction(() => {
-      this.db
-        .prepare(
-          'UPDATE watch_rooms SET autoQueue = ?, queueRevision = queueRevision + 1, updatedAt = ?, lastAccessedAt = ? WHERE id = ?',
-        )
-        .run(JSON.stringify(autoQueue), at, at, roomId);
+      repositories(this.db).rooms.updateRoomsSetAutoQueueQueueRevisionUpdatedAtLastAccessedAtById(
+        JSON.stringify(autoQueue),
+        at,
+        at,
+        roomId,
+      );
     });
     await this.store.commit();
     return { autoQueue, queueRevision: room.queueRevision + 1 };
@@ -449,11 +428,12 @@ class RoomQueue {
     if (typeof enabled !== 'boolean') throw error('Choose autoplay on or off');
     const at = this.now();
     this.registry.transaction(() => {
-      this.db
-        .prepare(
-          'UPDATE watch_rooms SET autoplay = ?, revision = revision + 1, updatedAt = ?, lastAccessedAt = ? WHERE id = ?',
-        )
-        .run(enabled ? 1 : 0, at, at, roomId);
+      repositories(this.db).rooms.updateRoomsSetAutoplayRevisionUpdatedAtLastAccessedAtById(
+        enabled ? 1 : 0,
+        at,
+        at,
+        roomId,
+      );
     });
     await this.store.commit();
     return { autoplay: enabled, revision: room.revision + 1 };
@@ -468,15 +448,13 @@ class RoomQueue {
     if (autoQueue.mode === 'off') {
       autoQueue.next = null;
       const changed = JSON.stringify(room.autoQueue) !== JSON.stringify(autoQueue);
-      if (changed)
-        this.db.prepare('UPDATE watch_rooms SET autoQueue = ? WHERE id = ?').run(JSON.stringify(autoQueue), roomId);
+      if (changed) repositories(this.db).rooms.updateRoomsSetAutoQueueById(JSON.stringify(autoQueue), roomId);
       return { next: null, autoQueue, changed };
     }
     if (!corpus.length) {
       autoQueue.next = null;
       const changed = JSON.stringify(room.autoQueue) !== JSON.stringify(autoQueue);
-      if (changed)
-        this.db.prepare('UPDATE watch_rooms SET autoQueue = ? WHERE id = ?').run(JSON.stringify(autoQueue), roomId);
+      if (changed) repositories(this.db).rooms.updateRoomsSetAutoQueueById(JSON.stringify(autoQueue), roomId);
       return { next: null, autoQueue, changed };
     }
     const pending = this.pending(roomId),
@@ -574,8 +552,7 @@ class RoomQueue {
       }
     }
     const changed = JSON.stringify(room.autoQueue) !== JSON.stringify(autoQueue);
-    if (changed)
-      this.db.prepare('UPDATE watch_rooms SET autoQueue = ? WHERE id = ?').run(JSON.stringify(autoQueue), roomId);
+    if (changed) repositories(this.db).rooms.updateRoomsSetAutoQueueById(JSON.stringify(autoQueue), roomId);
     return { next: autoQueue.next, autoQueue, changed };
   }
 
@@ -650,7 +627,7 @@ class RoomQueue {
     this.registry.transaction(() => {
       if (room.autoQueue.mode === 'following' || room.autoQueue.mode === 'continue') {
         const updated = { ...room.autoQueue, cursor: autoNext.mediaId };
-        this.db.prepare('UPDATE watch_rooms SET autoQueue = ? WHERE id = ?').run(JSON.stringify(updated), roomId);
+        repositories(this.db).rooms.updateRoomsSetAutoQueueById(JSON.stringify(updated), roomId);
       }
       result = this.computeAutoNext(roomId, corpus, { forceAdvance: true });
       this.bumpQueueRevision(roomId, at, { clearCursor: false });
@@ -690,7 +667,7 @@ class RoomQueue {
           ? { used: [...new Set([...(room.autoQueue.used || []), autoNext.mediaId])] }
           : {}),
       };
-      this.db.prepare('UPDATE watch_rooms SET autoQueue = ? WHERE id = ?').run(JSON.stringify(cleared), roomId);
+      repositories(this.db).rooms.updateRoomsSetAutoQueueById(JSON.stringify(cleared), roomId);
       if (corpus !== undefined) {
         result = this.computeAutoNext(roomId, corpus, { forceAdvance: true });
       } else {
@@ -744,54 +721,32 @@ class RoomQueue {
     this.registry.transaction(() => {
       if (current) {
         const clamped = Math.min(Math.max(0, currentPosition || 0), current.duration);
-        this.db
-          .prepare(
-            `
-          UPDATE watch_queue_entries
-          SET state = 'history', rank = NULL, position = ?, outcome = 'interrupted', endedAt = ?, updatedAt = ?
-          WHERE id = ?
-        `,
-          )
-          .run(clamped, at, at, current.id);
+        repositories(this.db).queue.interruptCurrent(clamped, at, at, current.id);
       }
       if (skipPrevious) {
-        this.db
-          .prepare(
-            `
-          UPDATE watch_queue_entries
-          SET state = 'history', rank = NULL, outcome = 'skipped', endedAt = ?, updatedAt = ?
-          WHERE roomId = ? AND state = 'pending'
-        `,
-          )
-          .run(at, at, roomId);
+        repositories(this.db).queue.skipPending(at, at, roomId);
       }
-      this.db
-        .prepare(
-          `
-        INSERT INTO watch_queue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      `,
-        )
-        .run(
-          id,
-          roomId,
-          'current',
-          null,
-          autoNext.serverId,
-          autoNext.mediaId,
-          autoNext.type,
-          autoNext.title,
-          autoNext.parentTitle || null,
-          autoNext.grandparentTitle || null,
-          autoNext.thumb || null,
-          autoNext.duration,
-          0,
-          null,
-          autoNext.provenance || room.autoQueue.mode,
-          at,
-          at,
-          null,
-          at,
-        );
+      repositories(this.db).queue.insertQueueEntries(
+        id,
+        roomId,
+        'current',
+        null,
+        autoNext.serverId,
+        autoNext.mediaId,
+        autoNext.type,
+        autoNext.title,
+        autoNext.parentTitle || null,
+        autoNext.grandparentTitle || null,
+        autoNext.thumb || null,
+        autoNext.duration,
+        0,
+        null,
+        autoNext.provenance || room.autoQueue.mode,
+        at,
+        at,
+        null,
+        at,
+      );
       const bookmark = {
         serverId: autoNext.serverId,
         mediaId: autoNext.mediaId,
@@ -807,15 +762,12 @@ class RoomQueue {
           ? { cursor: autoNext.mediaId }
           : {}),
       };
-      this.db
-        .prepare(
-          `
-        UPDATE watch_rooms
-        SET bookmark = ?, autoQueue = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
-        WHERE id = ?
-      `,
-        )
-        .run(JSON.stringify(bookmark), JSON.stringify(cleared), at, roomId);
+      repositories(this.db).rooms.saveQueueAndAutoBookmark(
+        JSON.stringify(bookmark),
+        JSON.stringify(cleared),
+        at,
+        roomId,
+      );
       if (validatedCorpus) generated = this.computeAutoNext(roomId, validatedCorpus, { forceAdvance: true });
       this.pruneHistory(roomId);
     });
@@ -839,9 +791,7 @@ class RoomQueue {
       throw error('Queue item unavailable', 404);
     }
 
-    const rows = this.db
-      .prepare("SELECT id FROM watch_queue_entries WHERE roomId = ? AND state = 'pending' ORDER BY rank ASC")
-      .all(roomId);
+    const rows = repositories(this.db).queue.listPendingIds(roomId);
     const ids = rows.map(r => r.id);
     const fromIndex = ids.indexOf(entryId);
     if (fromIndex === -1) throw error('Queue item unavailable', 404);
@@ -857,7 +807,7 @@ class RoomQueue {
 
     const at = this.now();
     this.registry.transaction(() => {
-      const updateRank = this.db.prepare('UPDATE watch_queue_entries SET rank = ?, updatedAt = ? WHERE id = ?');
+      const updateRank = repositories(this.db).queue.rankStatement;
       for (let i = 0; i < ids.length; i++) {
         updateRank.run(i, at, ids[i]);
       }
@@ -886,18 +836,11 @@ class RoomQueue {
     if (entry.state === 'current') this.assertAllowed(room, userId, 'chooseMedia');
     const at = this.now();
     this.registry.transaction(() => {
-      this.db.prepare('DELETE FROM watch_queue_entries WHERE id = ?').run(entryId);
+      repositories(this.db).queue.deleteQueueEntriesById(entryId);
       if (entry.state === 'pending') {
-        this.db
-          .prepare(
-            "UPDATE watch_queue_entries SET rank = rank - 1, updatedAt = ? WHERE roomId = ? AND state = 'pending' AND rank > ?",
-          )
-          .run(at, roomId, entry.rank);
+        repositories(this.db).queue.closeRankGap(at, roomId, entry.rank);
       }
-      if (entry.state === 'current')
-        this.db
-          .prepare('UPDATE watch_rooms SET bookmark = NULL, checkpointRevision = checkpointRevision + 1 WHERE id = ?')
-          .run(roomId);
+      if (entry.state === 'current') repositories(this.db).rooms.clearBookmark(roomId);
       this.bumpQueueRevision(roomId, at);
     });
 
@@ -913,7 +856,7 @@ class RoomQueue {
 
     const at = this.now();
     this.registry.transaction(() => {
-      this.db.prepare("DELETE FROM watch_queue_entries WHERE roomId = ? AND state = 'pending'").run(roomId);
+      repositories(this.db).queue.clearPending(roomId);
       this.bumpQueueRevision(roomId, at);
     });
 
@@ -936,44 +879,30 @@ class RoomQueue {
     this.registry.transaction(() => {
       if (current) {
         const clamped = Math.min(Math.max(0, currentPosition || 0), current.duration);
-        this.db
-          .prepare(
-            `
-          UPDATE watch_queue_entries
-          SET state = 'history', rank = NULL, position = ?, outcome = 'interrupted', endedAt = ?, updatedAt = ?
-          WHERE id = ?
-        `,
-          )
-          .run(clamped, at, at, current.id);
+        repositories(this.db).queue.interruptCurrent(clamped, at, at, current.id);
       }
 
-      this.db
-        .prepare(
-          `
-        INSERT INTO watch_queue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      `,
-        )
-        .run(
-          id,
-          roomId,
-          'current',
-          null,
-          item.serverId,
-          item.mediaId,
-          item.type,
-          item.title,
-          item.parentTitle,
-          item.grandparentTitle,
-          item.thumb,
-          item.duration,
-          item.position || 0,
-          null,
-          item.provenance || 'manual',
-          at,
-          at,
-          null,
-          at,
-        );
+      repositories(this.db).queue.insertQueueEntries(
+        id,
+        roomId,
+        'current',
+        null,
+        item.serverId,
+        item.mediaId,
+        item.type,
+        item.title,
+        item.parentTitle,
+        item.grandparentTitle,
+        item.thumb,
+        item.duration,
+        item.position || 0,
+        null,
+        item.provenance || 'manual',
+        at,
+        at,
+        null,
+        at,
+      );
 
       const bookmark = {
         serverId: item.serverId,
@@ -984,15 +913,12 @@ class RoomQueue {
         position: item.position || 0,
       };
       const autoQueue = room.autoQueue?.cursor ? { ...room.autoQueue, cursor: null } : room.autoQueue;
-      this.db
-        .prepare(
-          `
-        UPDATE watch_rooms
-        SET bookmark = ?, autoQueue = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
-        WHERE id = ?
-      `,
-        )
-        .run(JSON.stringify(bookmark), JSON.stringify(autoQueue), at, roomId);
+      repositories(this.db).rooms.saveQueueAndAutoBookmark(
+        JSON.stringify(bookmark),
+        JSON.stringify(autoQueue),
+        at,
+        roomId,
+      );
 
       this.pruneHistory(roomId);
     });
@@ -1035,58 +961,18 @@ class RoomQueue {
     this.registry.transaction(() => {
       if (current) {
         const clamped = Math.min(Math.max(0, currentPosition || 0), current.duration);
-        this.db
-          .prepare(
-            `
-          UPDATE watch_queue_entries
-          SET state = 'history', rank = NULL, position = ?, outcome = 'interrupted', endedAt = ?, updatedAt = ?
-          WHERE id = ?
-        `,
-          )
-          .run(clamped, at, at, current.id);
+        repositories(this.db).queue.interruptCurrent(clamped, at, at, current.id);
       }
 
       if (skipPrevious) {
-        this.db
-          .prepare(
-            `
-          UPDATE watch_queue_entries
-          SET state = 'history', rank = NULL, outcome = 'skipped', endedAt = ?, updatedAt = ?
-          WHERE roomId = ? AND state = 'pending' AND rank < ?
-        `,
-          )
-          .run(at, at, roomId, target.rank);
+        repositories(this.db).queue.skipBefore(at, at, roomId, target.rank);
 
-        this.db
-          .prepare(
-            `
-          UPDATE watch_queue_entries
-          SET rank = rank - ?, updatedAt = ?
-          WHERE roomId = ? AND state = 'pending' AND rank > ?
-        `,
-          )
-          .run(target.rank + 1, at, roomId, target.rank);
+        repositories(this.db).queue.shiftRanksAfter(target.rank + 1, at, roomId, target.rank);
       } else {
-        this.db
-          .prepare(
-            `
-          UPDATE watch_queue_entries
-          SET rank = rank - 1, updatedAt = ?
-          WHERE roomId = ? AND state = 'pending' AND rank > ?
-        `,
-          )
-          .run(at, roomId, target.rank);
+        repositories(this.db).queue.closeSuccessorGap(at, roomId, target.rank);
       }
 
-      this.db
-        .prepare(
-          `
-        UPDATE watch_queue_entries
-        SET state = 'current', rank = NULL, startedAt = ?, updatedAt = ?
-        WHERE id = ?
-      `,
-        )
-        .run(at, at, target.id);
+      repositories(this.db).queue.startEntry(at, at, target.id);
 
       const bookmark = {
         serverId: target.serverId,
@@ -1097,15 +983,12 @@ class RoomQueue {
         position: target.position || 0,
       };
       const autoQueue = room.autoQueue?.cursor ? { ...room.autoQueue, cursor: null } : room.autoQueue;
-      this.db
-        .prepare(
-          `
-        UPDATE watch_rooms
-        SET bookmark = ?, autoQueue = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
-        WHERE id = ?
-      `,
-        )
-        .run(JSON.stringify(bookmark), JSON.stringify(autoQueue), at, roomId);
+      repositories(this.db).rooms.saveQueueAndAutoBookmark(
+        JSON.stringify(bookmark),
+        JSON.stringify(autoQueue),
+        at,
+        roomId,
+      );
 
       if (validatedCorpus) generated = this.computeAutoNext(roomId, validatedCorpus);
       this.pruneHistory(roomId);
@@ -1127,28 +1010,10 @@ class RoomQueue {
     if (!current) return { queueRevision: room.queueRevision };
     const at = this.now();
     this.registry.transaction(() => {
-      this.db
-        .prepare(
-          `
-        UPDATE watch_queue_entries
-        SET state = 'history', rank = NULL, position = duration, outcome = 'completed', endedAt = ?, updatedAt = ?
-        WHERE id = ?
-      `,
-        )
-        .run(at, at, current.id);
-      this.db
-        .prepare('INSERT OR IGNORE INTO watch_room_progress VALUES(?,?,?)')
-        .run(roomId, current.serverId, current.mediaId);
+      repositories(this.db).queue.completeCurrent(at, at, current.id);
+      repositories(this.db).queue.insertRoomProgress(roomId, current.serverId, current.mediaId);
 
-      this.db
-        .prepare(
-          `
-        UPDATE watch_rooms
-        SET bookmark = NULL, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
-        WHERE id = ?
-      `,
-        )
-        .run(at, roomId);
+      repositories(this.db).rooms.clearQueueBookmark(at, roomId);
 
       this.pruneHistory(roomId);
     });
@@ -1219,48 +1084,22 @@ class RoomQueue {
     let generated, targetId;
 
     this.registry.transaction(() => {
-      if (current && discardCurrent) this.db.prepare('DELETE FROM watch_queue_entries WHERE id = ?').run(current.id);
+      if (current && discardCurrent) repositories(this.db).queue.deleteQueueEntriesById(current.id);
       else if (current) {
         const clamped =
           validOutcome === 'completed'
             ? current.duration
             : Math.min(Math.max(0, currentPosition || 0), current.duration);
-        this.db
-          .prepare(
-            `
-          UPDATE watch_queue_entries
-          SET state = 'history', rank = NULL, position = ?, outcome = ?, endedAt = ?, updatedAt = ?
-          WHERE id = ?
-        `,
-          )
-          .run(clamped, validOutcome, at, at, current.id);
+        repositories(this.db).queue.endCurrent(clamped, validOutcome, at, at, current.id);
         if (validOutcome === 'completed')
-          this.db
-            .prepare('INSERT OR IGNORE INTO watch_room_progress VALUES(?,?,?)')
-            .run(roomId, current.serverId, current.mediaId);
+          repositories(this.db).queue.insertRoomProgress(roomId, current.serverId, current.mediaId);
       }
 
       if (nextPending) {
         targetId = nextPending.id;
-        this.db
-          .prepare(
-            `
-          UPDATE watch_queue_entries
-          SET state = 'current', rank = NULL, startedAt = ?, updatedAt = ?
-          WHERE id = ?
-        `,
-          )
-          .run(at, at, nextPending.id);
+        repositories(this.db).queue.startSuccessor(at, at, nextPending.id);
 
-        this.db
-          .prepare(
-            `
-          UPDATE watch_queue_entries
-          SET rank = rank - 1, updatedAt = ?
-          WHERE roomId = ? AND state = 'pending'
-        `,
-          )
-          .run(at, roomId);
+        repositories(this.db).queue.updateQueueEntriesSetRankUpdatedAtByRoomIdState(at, roomId);
 
         const bookmark = {
           serverId: nextPending.serverId,
@@ -1270,46 +1109,32 @@ class RoomQueue {
           duration: nextPending.duration,
           position: nextPending.position || 0,
         };
-        this.db
-          .prepare(
-            `
-          UPDATE watch_rooms
-          SET bookmark = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
-          WHERE id = ?
-        `,
-          )
-          .run(JSON.stringify(bookmark), at, roomId);
+        repositories(this.db).rooms.saveQueueBookmark(JSON.stringify(bookmark), at, roomId);
 
         if (validatedCorpus) generated = this.computeAutoNext(roomId, validatedCorpus);
       } else {
         targetId = randomUUID();
-        this.db
-          .prepare(
-            `
-          INSERT INTO watch_queue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        `,
-          )
-          .run(
-            targetId,
-            roomId,
-            'current',
-            null,
-            autoNext.serverId,
-            autoNext.mediaId,
-            autoNext.type,
-            autoNext.title,
-            autoNext.parentTitle || null,
-            autoNext.grandparentTitle || null,
-            autoNext.thumb || null,
-            autoNext.duration,
-            0,
-            null,
-            autoNext.provenance || room.autoQueue.mode,
-            at,
-            at,
-            null,
-            at,
-          );
+        repositories(this.db).queue.insertQueueEntries3(
+          targetId,
+          roomId,
+          'current',
+          null,
+          autoNext.serverId,
+          autoNext.mediaId,
+          autoNext.type,
+          autoNext.title,
+          autoNext.parentTitle || null,
+          autoNext.grandparentTitle || null,
+          autoNext.thumb || null,
+          autoNext.duration,
+          0,
+          null,
+          autoNext.provenance || room.autoQueue.mode,
+          at,
+          at,
+          null,
+          at,
+        );
 
         const bookmark = {
           serverId: autoNext.serverId,
@@ -1326,15 +1151,12 @@ class RoomQueue {
             ? { cursor: autoNext.mediaId }
             : {}),
         };
-        this.db
-          .prepare(
-            `
-          UPDATE watch_rooms
-          SET bookmark = ?, autoQueue = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
-          WHERE id = ?
-        `,
-          )
-          .run(JSON.stringify(bookmark), JSON.stringify(cleared), at, roomId);
+        repositories(this.db).rooms.saveTransitionBookmark(
+          JSON.stringify(bookmark),
+          JSON.stringify(cleared),
+          at,
+          roomId,
+        );
 
         if (validatedCorpus) generated = this.computeAutoNext(roomId, validatedCorpus, { forceAdvance: true });
       }
@@ -1359,13 +1181,9 @@ class RoomQueue {
     if (current && currentPosition >= thresholdSeconds) {
       const at = this.now();
       this.registry.transaction(() => {
-        this.db.prepare('UPDATE watch_queue_entries SET position = 0, updatedAt = ? WHERE id = ?').run(at, current.id);
+        repositories(this.db).queue.updateQueueEntriesSetPositionUpdatedAtById(at, current.id);
         const bookmark = room.bookmark ? { ...room.bookmark, position: 0 } : null;
-        this.db
-          .prepare(
-            'UPDATE watch_rooms SET bookmark = ?, checkpointRevision = checkpointRevision + 1, updatedAt = ? WHERE id = ?',
-          )
-          .run(bookmark ? JSON.stringify(bookmark) : null, at, roomId);
+        repositories(this.db).rooms.savePositionBookmark(bookmark ? JSON.stringify(bookmark) : null, at, roomId);
       });
       await this.store.commit();
       return { action: 'restart', position: 0, current, queueRevision: room.queueRevision };
@@ -1376,15 +1194,9 @@ class RoomQueue {
       if (current) {
         const at = this.now();
         this.registry.transaction(() => {
-          this.db
-            .prepare('UPDATE watch_queue_entries SET position = 0, updatedAt = ? WHERE id = ?')
-            .run(at, current.id);
+          repositories(this.db).queue.updateQueueEntriesSetPositionUpdatedAtById(at, current.id);
           const bookmark = room.bookmark ? { ...room.bookmark, position: 0 } : null;
-          this.db
-            .prepare(
-              'UPDATE watch_rooms SET bookmark = ?, checkpointRevision = checkpointRevision + 1, updatedAt = ? WHERE id = ?',
-            )
-            .run(bookmark ? JSON.stringify(bookmark) : null, at, roomId);
+          repositories(this.db).rooms.savePositionBookmark(bookmark ? JSON.stringify(bookmark) : null, at, roomId);
         });
         await this.store.commit();
       }
@@ -1397,44 +1209,30 @@ class RoomQueue {
     this.registry.transaction(() => {
       if (current) {
         const clamped = Math.min(Math.max(0, currentPosition || 0), current.duration);
-        this.db
-          .prepare(
-            `
-          UPDATE watch_queue_entries
-          SET state = 'history', rank = NULL, position = ?, outcome = 'interrupted', endedAt = ?, updatedAt = ?
-          WHERE id = ?
-        `,
-          )
-          .run(clamped, at, at, current.id);
+        repositories(this.db).queue.interruptCurrent(clamped, at, at, current.id);
       }
 
-      this.db
-        .prepare(
-          `
-        INSERT INTO watch_queue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      `,
-        )
-        .run(
-          id,
-          roomId,
-          'current',
-          null,
-          last.serverId,
-          last.mediaId,
-          last.type,
-          last.title,
-          last.parentTitle,
-          last.grandparentTitle,
-          last.thumb,
-          last.duration,
-          0,
-          null,
-          last.provenance,
-          at,
-          at,
-          null,
-          at,
-        );
+      repositories(this.db).queue.insertQueueEntries(
+        id,
+        roomId,
+        'current',
+        null,
+        last.serverId,
+        last.mediaId,
+        last.type,
+        last.title,
+        last.parentTitle,
+        last.grandparentTitle,
+        last.thumb,
+        last.duration,
+        0,
+        null,
+        last.provenance,
+        at,
+        at,
+        null,
+        at,
+      );
 
       const bookmark = {
         serverId: last.serverId,
@@ -1445,15 +1243,12 @@ class RoomQueue {
         position: 0,
       };
       const autoQueue = room.autoQueue?.cursor ? { ...room.autoQueue, cursor: null } : room.autoQueue;
-      this.db
-        .prepare(
-          `
-        UPDATE watch_rooms
-        SET bookmark = ?, autoQueue = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
-        WHERE id = ?
-      `,
-        )
-        .run(JSON.stringify(bookmark), JSON.stringify(autoQueue), at, roomId);
+      repositories(this.db).rooms.saveQueueAndAutoBookmark(
+        JSON.stringify(bookmark),
+        JSON.stringify(autoQueue),
+        at,
+        roomId,
+      );
 
       this.pruneHistory(roomId);
     });
@@ -1498,14 +1293,7 @@ class RoomQueue {
     }
 
     const current = this.current(roomId);
-    const history = restore
-      ? this.db
-          .prepare(
-            "SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'history' ORDER BY endedAt DESC, rowid DESC",
-          )
-          .all(roomId)
-          .map(rowToEntry)
-      : [];
+    const history = restore ? repositories(this.db).queue.listHistory(roomId).map(rowToEntry) : [];
     const restored = restore
       ? [
           ...history
@@ -1528,62 +1316,44 @@ class RoomQueue {
 
     this.registry.transaction(() => {
       if (restore) {
-        this.db
-          .prepare(
-            "UPDATE watch_queue_entries SET rank = rank + ?, updatedAt = ? WHERE roomId = ? AND state = 'pending'",
-          )
-          .run(restored.length, at, roomId);
+        repositories(this.db).queue.shiftPendingRanks(restored.length, at, roomId);
         restoredIds = this.insertPending(
           roomId,
           restored.map(item => ({ ...item, position: 0 })),
           0,
           at,
         );
-        const remove = this.db.prepare('DELETE FROM watch_queue_entries WHERE id = ?');
+        const remove = repositories(this.db).queue.deleteStatement;
         for (const item of restored) remove.run(item.id);
       } else if (current) {
         const clamped = Math.min(Math.max(0, currentPosition || 0), current.duration);
-        this.db
-          .prepare(
-            `
-          UPDATE watch_queue_entries
-          SET state = 'history', rank = NULL, position = ?, outcome = 'interrupted', endedAt = ?, updatedAt = ?
-          WHERE id = ?
-        `,
-          )
-          .run(clamped, at, at, current.id);
+        repositories(this.db).queue.interruptCurrent(clamped, at, at, current.id);
       }
 
-      this.db
-        .prepare(
-          `
-        INSERT INTO watch_queue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      `,
-        )
-        .run(
-          id,
-          roomId,
-          'current',
-          null,
-          historyEntry.serverId,
-          historyEntry.mediaId,
-          historyEntry.type,
-          historyEntry.title,
-          historyEntry.parentTitle,
-          historyEntry.grandparentTitle,
-          historyEntry.thumb,
-          historyEntry.duration,
-          targetPosition,
-          null,
-          historyEntry.provenance,
-          at,
-          at,
-          null,
-          at,
-        );
+      repositories(this.db).queue.insertQueueEntries(
+        id,
+        roomId,
+        'current',
+        null,
+        historyEntry.serverId,
+        historyEntry.mediaId,
+        historyEntry.type,
+        historyEntry.title,
+        historyEntry.parentTitle,
+        historyEntry.grandparentTitle,
+        historyEntry.thumb,
+        historyEntry.duration,
+        targetPosition,
+        null,
+        historyEntry.provenance,
+        at,
+        at,
+        null,
+        at,
+      );
       // Explicit replay moves this selection out of history. The new occurrence
       // keeps a fresh identity so stale observations cannot target its timeline.
-      this.db.prepare('DELETE FROM watch_queue_entries WHERE id = ?').run(historyEntryId);
+      repositories(this.db).queue.deleteQueueEntriesById(historyEntryId);
 
       const bookmark = {
         serverId: historyEntry.serverId,
@@ -1594,15 +1364,12 @@ class RoomQueue {
         position: targetPosition,
       };
       const autoQueue = room.autoQueue?.cursor ? { ...room.autoQueue, cursor: null } : room.autoQueue;
-      this.db
-        .prepare(
-          `
-        UPDATE watch_rooms
-        SET bookmark = ?, autoQueue = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
-        WHERE id = ?
-      `,
-        )
-        .run(JSON.stringify(bookmark), JSON.stringify(autoQueue), at, roomId);
+      repositories(this.db).rooms.saveQueueAndAutoBookmark(
+        JSON.stringify(bookmark),
+        JSON.stringify(autoQueue),
+        at,
+        roomId,
+      );
 
       this.pruneHistory(roomId);
     });
@@ -1623,7 +1390,7 @@ class RoomQueue {
 
     const at = this.now();
     this.registry.transaction(() => {
-      this.db.prepare("DELETE FROM watch_queue_entries WHERE roomId = ? AND state = 'history'").run(roomId);
+      repositories(this.db).queue.clearHistory(roomId);
       this.bumpQueueRevision(roomId, at);
     });
 
@@ -1635,9 +1402,11 @@ class RoomQueue {
     this.healthy();
     if (!UUID.test(roomId)) return;
     const at = this.now();
-    this.db
-      .prepare("UPDATE watch_queue_entries SET position = ?, updatedAt = ? WHERE roomId = ? AND state = 'current'")
-      .run(Math.max(0, position || 0), at, roomId);
+    repositories(this.db).queue.updateQueueEntriesSetPositionUpdatedAtByRoomIdState(
+      Math.max(0, position || 0),
+      at,
+      roomId,
+    );
   }
 
   list(roomId, { offset = 0, limit = 50 } = {}) {
@@ -1647,14 +1416,8 @@ class RoomQueue {
       throw error('Invalid queue page');
     }
     const room = this.room(roomId);
-    const rows = this.db
-      .prepare(
-        "SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'pending' ORDER BY rank ASC LIMIT ? OFFSET ?",
-      )
-      .all(roomId, limit, offset);
-    const count = this.db
-      .prepare("SELECT COUNT(*) AS count FROM watch_queue_entries WHERE roomId = ? AND state = 'pending'")
-      .get(roomId).count;
+    const rows = repositories(this.db).queue.pagePending(roomId, limit, offset);
+    const count = repositories(this.db).queue.countPending(roomId).count;
     return { items: rows.map(rowToEntry), total: count, queueRevision: room.queueRevision };
   }
 
@@ -1664,14 +1427,8 @@ class RoomQueue {
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw error('Invalid history page');
     }
-    const rows = this.db
-      .prepare(
-        "SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'history' ORDER BY endedAt DESC, rowid DESC LIMIT ? OFFSET ?",
-      )
-      .all(roomId, limit, offset);
-    const count = this.db
-      .prepare("SELECT COUNT(*) AS count FROM watch_queue_entries WHERE roomId = ? AND state = 'history'")
-      .get(roomId).count;
+    const rows = repositories(this.db).queue.pageHistory(roomId, limit, offset);
+    const count = repositories(this.db).queue.countHistory(roomId).count;
     return { items: rows.map(rowToEntry), total: count, queueRevision: this.room(roomId).queueRevision };
   }
 
@@ -1679,30 +1436,14 @@ class RoomQueue {
     this.healthy();
     if (!UUID.test(roomId)) return null;
     const pendingCount =
-      /** @type {{c:number}|undefined} */ (
-        this.db
-          .prepare("SELECT COUNT(*) AS c FROM watch_queue_entries WHERE roomId = ? AND state = 'pending'")
-          .get(roomId)
-      )?.c || 0;
+      /** @type {{c:number}|undefined} */ (repositories(this.db).queue.countPendingSummary(roomId))?.c || 0;
     const historyCount =
-      /** @type {{c:number}|undefined} */ (
-        this.db
-          .prepare("SELECT COUNT(*) AS c FROM watch_queue_entries WHERE roomId = ? AND state = 'history'")
-          .get(roomId)
-      )?.c || 0;
-    const currentRow = this.db
-      .prepare("SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'current'")
-      .get(roomId);
-    const nextRow = this.db
-      .prepare("SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'pending' ORDER BY rank ASC LIMIT 1")
-      .get(roomId);
-    const lastHistoryRow = this.db
-      .prepare(
-        "SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'history' ORDER BY endedAt DESC, rowid DESC LIMIT 1",
-      )
-      .get(roomId);
+      /** @type {{c:number}|undefined} */ (repositories(this.db).queue.countHistorySummary(roomId))?.c || 0;
+    const currentRow = repositories(this.db).queue.findCurrent(roomId);
+    const nextRow = repositories(this.db).queue.findNextPending(roomId);
+    const lastHistoryRow = repositories(this.db).queue.findLatestHistory(roomId);
     const roomRow = /** @type {{queueRevision:number,autoQueue:string|null,autoplay:number}|undefined} */ (
-      this.db.prepare('SELECT queueRevision,autoQueue,autoplay FROM watch_rooms WHERE id = ?').get(roomId)
+      repositories(this.db).rooms.findQueueSettings(roomId)
     );
     const autoQueue = roomRow?.autoQueue
       ? { next: null, ...JSON.parse(roomRow.autoQueue) }
@@ -1769,16 +1510,7 @@ class RoomQueue {
   }
 
   pruneHistory(roomId) {
-    this.db
-      .prepare(
-        `
-      DELETE FROM watch_queue_entries
-      WHERE roomId = ? AND state = 'history' AND id NOT IN (
-        SELECT id FROM watch_queue_entries WHERE roomId = ? AND state = 'history' ORDER BY endedAt DESC, rowid DESC LIMIT ?
-      )
-    `,
-      )
-      .run(roomId, roomId, this.maxHistory);
+    repositories(this.db).queue.trimHistory(roomId, roomId, this.maxHistory);
   }
 }
 

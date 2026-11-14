@@ -1,4 +1,5 @@
 'use strict';
+const { repositories } = require('./repositories');
 // First-release baseline. Future published schemas add explicit forward migrations.
 // Never repair or upgrade an unpublished layout implicitly: earlier pre-release
 // layouts move forward only through reviewed, explicitly run transfer scripts.
@@ -141,9 +142,8 @@ function loginStore(context, vault, registry) {
   const db = registry.db;
   const matching = registry.meta('loginContext') === context;
   const entries = matching
-    ? db
-        .prepare('SELECT id,record FROM browser_logins')
-        .all()
+    ? repositories(db)
+        .accounts.listBrowserLogins()
         .map(row => [row.id, JSON.parse(row.record)])
     : [];
   const now = Date.now();
@@ -161,31 +161,33 @@ function loginStore(context, vault, registry) {
     logins,
     ownerName: matching ? registry.meta('ownerName') || '' : '',
     save() {
+      const nextEncoded = new Map(encoded);
       registry.transaction(() => {
         for (const id of encoded.keys())
           if (!logins.has(id)) {
-            db.prepare('DELETE FROM browser_logins WHERE id=?').run(id);
-            encoded.delete(id);
+            repositories(db).accounts.deleteBrowserLoginsById(id);
+            nextEncoded.delete(id);
           }
         for (const [id, value] of logins) {
           const plain = JSON.stringify(value);
           if (encoded.get(id)?.plain === plain) continue;
           const record = JSON.stringify({ ...value, ...(value.oauth ? { oauth: vault.seal(value.oauth) } : {}) });
-          db.prepare('INSERT INTO browser_logins VALUES(?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(
-            id,
-            record,
-          );
-          encoded.set(id, { plain, value: record });
+          repositories(db).accounts.insertBrowserLogins(id, record);
+          nextEncoded.set(id, { plain, value: record });
         }
         registry.meta('loginContext', context);
         registry.meta('ownerName', store.ownerName);
       });
+      encoded.clear();
+      for (const [id, value] of nextEncoded) encoded.set(id, value);
       return registry.flush();
     },
   };
   if (!matching) {
-    db.exec('DELETE FROM browser_logins');
-    registry.meta('loginContext', context);
+    registry.transaction(() => {
+      repositories(db).accounts.clearBrowserLogins();
+      registry.meta('loginContext', context);
+    });
   }
   return store;
 }

@@ -1,200 +1,65 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { Worker } = require('node:worker_threads');
 const { DatabaseSync } = require('node:sqlite');
-const { observeStorage } = require('./operation');
+const { SCHEMA_VERSION } = require('./storage');
 
-// Only startup touches disk here. Runtime SQL targets memory; atomic changesets
-// are written to the same accounts.sqlite by one bounded worker.
-function openDatabase(file, initializeSchema) {
-  const db = new DatabaseSync(':memory:');
-  db.exec('PRAGMA foreign_keys=ON;');
-  if (!file) {
-    initializeSchema(db);
-    return { db, flush: async () => {}, close: () => db.close(), abort: () => db.close() };
+// Baseline 11 is the first supported layout. Add only published forward steps;
+// private pre-release transfers never belong here. No migrations are needed yet.
+const MIGRATIONS = Object.freeze([]);
+function runMigrations(db) {
+  const version = db.prepare('PRAGMA user_version').get().user_version;
+  if (version > SCHEMA_VERSION) throw new Error('Account database requires a newer uburoom version');
+  if (version < 11) throw new Error('Unsupported pre-release database; review a manual state transfer before starting');
+  const pending = MIGRATIONS.filter(step => step.version > version);
+  if (!pending.length) {
+    if (version !== SCHEMA_VERSION) throw new Error('Incomplete storage migration sequence');
+    return;
   }
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const disk = new DatabaseSync(file);
+  db.exec('BEGIN IMMEDIATE');
   try {
-    initializeSchema(disk);
-    disk.exec('PRAGMA journal_mode=DELETE;');
+    let current = version;
+    for (const { version: next, up } of pending) {
+      if (next !== current + 1 || next > SCHEMA_VERSION) throw new Error('Invalid storage migration sequence');
+      up(db);
+      db.exec('PRAGMA user_version=' + next);
+      current = next;
+    }
+    if (current !== SCHEMA_VERSION) throw new Error('Incomplete storage migration sequence');
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+// One direct connection; statements and short transactions commit before return.
+// WAL/NORMAL survives process crashes; sudden power loss can lose recent commits.
+function openDatabase(file, initializeSchema) {
+  if (file) fs.mkdirSync(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file || ':memory:');
+  try {
+    // Validate before changing journal mode, so rejected layouts stay unchanged.
+    if (db.prepare('PRAGMA user_version').get().user_version === 0) initializeSchema(db);
+    runMigrations(db);
+    initializeSchema(db);
+    // Lock contention fails quickly instead of stalling room ticks for seconds.
+    db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=100;');
   } catch (error) {
     db.close();
     throw error;
-  } finally {
-    disk.close();
   }
-  db.prepare('ATTACH DATABASE ? AS durable').run(file);
-  try {
-    const schema = db
-      .prepare(
-        "SELECT type,name,sql FROM durable.sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY type='index'",
-      )
-      .all();
-    for (const row of schema) if (row.type === 'table' || row.type === 'index') db.exec(row.sql);
-    for (const row of schema.filter(row => row.type === 'table')) {
-      const name = '"' + row.name.replaceAll('"', '""') + '"';
-      db.exec(`INSERT INTO main.${name} SELECT * FROM durable.${name}`);
-    }
-    db.exec(`PRAGMA user_version=${Number(db.prepare('PRAGMA durable.user_version').get().user_version)}`);
-  } finally {
-    db.exec('DETACH DATABASE durable');
-  }
-  let session = db.createSession(),
-    serial = Promise.resolve(),
-    failure,
-    closing = false,
-    sequence = 0,
-    pendingBytes = 0,
-    batch,
-    revision = 0;
-  const worker = new Worker(path.join(__dirname, 'storage-worker.js'), { workerData: { file } });
-  const pending = new Map();
-  function fail() {
-    if (!failure) {
-      failure = Object.assign(new Error('Account storage unavailable; restart after checking the database and disk'), {
-        status: 503,
-      });
-      console.error('[uburoom] ' + failure.message);
-    }
-    for (const request of pending.values()) request.reject(failure);
-    pending.clear();
-  }
-  worker.on('error', fail);
-  worker.on('exit', () => {
-    if (!closing || pending.size) fail();
-  });
-  worker.on('message', message => {
-    const request = pending.get(message.id);
-    if (!request) return;
-    pending.delete(message.id);
-    if (message.readError) {
-      request.reject(Object.assign(new Error(message.readError), { status: 503 }));
-      return;
-    }
-    if (message.error) {
-      request.reject(new Error(message.error));
-      fail();
-    } else request.resolve(message.value);
-  });
-  function send(changes, close = false, history) {
-    return new Promise((resolve, reject) => {
-      if (failure) return reject(failure);
-      const id = ++sequence;
-      pending.set(id, { resolve, reject });
-      worker.postMessage({ id, changes, close, history });
-    });
-  }
-  function flush() {
-    const rejected = () => {
-      const promise = Promise.reject(failure);
-      promise.catch(() => {});
-      return promise;
-    };
-    if (failure) return rejected();
-    const changes = session.changeset();
-    session.close();
-    session = db.createSession();
-    if (!changes.length) return serial;
-    revision++;
-    pendingBytes += changes.byteLength;
-    if (pendingBytes > 16 * 1024 * 1024) {
-      fail();
-      return rejected();
-    }
-    if (!batch) {
-      const current = (batch = { changes: [], bytes: 0 });
-      serial = serial
-        .then(async () => {
-          // Coalesce this event-loop turn's mutations into one disk transaction.
-          await new Promise(setImmediate);
-          batch = undefined;
-          await send(current.changes);
-        })
-        .finally(() => {
-          pendingBytes -= current.bytes;
-        });
-      serial.catch(fail);
-    }
-    batch.changes.push(changes);
-    batch.bytes += changes.byteLength;
-    return serial;
-  }
-  const timer = setInterval(() => {
-    void flush().catch(() => {});
-  }, 250);
-  timer.unref();
-  // Read projections use the committed worker database. Bound/coalesce admission
-  // before crossing the worker boundary; only compact metadata returns here.
-  const histories = new Map();
-  async function history(ids) {
-    const receipt = flush();
-    await receipt;
-    const key = JSON.stringify([revision, ids]);
-    if (histories.has(key)) return histories.get(key);
-    if (histories.size >= 8) throw Object.assign(new Error('History is busy; retry shortly'), { status: 503 });
-    const job = send(undefined, false, ids).finally(() => histories.delete(key));
-    histories.set(key, job);
-    return job;
-  }
-  // Operations that touch speculative account/room state must acknowledge its
-  // commit before publishing it. Static/media-only responses acquire no fence.
-  const observed = new Proxy(db, {
-    get(target, key) {
-      if (key === 'prepare')
-        return (...args) => {
-          const statement = target.prepare(...args);
-          return new Proxy(statement, {
-            get(stmt, method) {
-              const value = Reflect.get(stmt, method, stmt);
-              if (typeof value !== 'function') return value;
-              return (...values) => {
-                if (['run', 'get', 'all', 'iterate'].includes(method)) observeStorage(flush);
-                return value.apply(stmt, values);
-              };
-            },
-          });
-        };
-      const value = Reflect.get(target, key, target);
-      if (typeof value !== 'function') return value;
-      return (...args) => {
-        if (key === 'exec') observeStorage(flush);
-        return value.apply(target, args);
-      };
-    },
-  });
-  return {
-    db: observed,
-    flush,
-    history,
-    get error() {
-      return failure;
-    },
-    abort() {
-      clearInterval(timer);
-      closing = true;
-      failure ||= new Error('Account startup cancelled');
-      for (const request of pending.values()) request.reject(failure);
-      pending.clear();
-      session.close();
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    try {
+      const result = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+      if (result.busy) throw new Error('Account database checkpoint is busy; preserve the WAL file');
+    } finally {
       db.close();
-      return worker.terminate();
-    },
-    async close() {
-      clearInterval(timer);
-      try {
-        await flush();
-        await Promise.allSettled([...histories.values()]);
-        closing = true;
-        await send(undefined, true);
-      } finally {
-        closing = true;
-        session.close();
-        db.close();
-        await worker.terminate();
-      }
-    },
+      closed = true;
+    }
   };
+  return { db, close, abort: close };
 }
-module.exports = { openDatabase };
+module.exports = { openDatabase, runMigrations };

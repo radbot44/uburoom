@@ -96,7 +96,14 @@ async function startServer({ disk = false } = {}) {
     return new Promise((resolve, reject) => {
       const request = https.request(
         config.publicUrl + '/api/watch/demo-login',
-        { method: 'POST', ca: cert, headers: { Origin: config.publicUrl, 'Content-Type': 'application/json' } },
+        // A fast direct-storage restart must not reuse an idle TLS connection
+        // from the previous server while its close notification is in flight.
+        {
+          method: 'POST',
+          ca: cert,
+          agent: false,
+          headers: { Origin: config.publicUrl, 'Content-Type': 'application/json' },
+        },
         response => {
           let raw = '';
           response.on('data', bytes => (raw += bytes));

@@ -1,14 +1,9 @@
 'use strict';
 const busy = () =>
   Object.assign(new Error('History exceeds the current read budget; retry after retention cleanup'), { status: 503 });
-async function historyProjection(db, ids) {
-  const placeholders = ids.map(() => '?').join(',');
-  const where = `FROM playback_history WHERE userId IN (${placeholders})`;
-  // Snapshot committed strings before yielding, then let the same storage worker
-  // service writes between bounded reduction slices. No long read transaction.
-  const size = db.prepare(`SELECT COALESCE(SUM(length(record)),0) AS bytes ${where}`).get(...ids).bytes;
-  if (size > 32 * 1024 * 1024) throw busy();
-  const rows = db.prepare(`SELECT record ${where} ORDER BY at DESC`).all(...ids);
+async function historyProjection(rows) {
+  // The repository snapshots bounded committed strings before yielding. Reduce
+  // in slices so requests and room ticks can run between batches.
   const media = new Map(),
     sessions = [];
   let intervals = 0,

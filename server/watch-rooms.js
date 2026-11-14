@@ -1,5 +1,6 @@
 // @ts-check
 'use strict';
+const { repositories } = require('./repositories');
 const { RoomStore } = require('./room-store');
 const { RoomQueue } = require('./room-queue');
 const Policy = require('./room-policy');
@@ -32,14 +33,12 @@ class WatchRooms {
     });
     this.queue = new RoomQueue(registry, this.store);
     registry.transaction(() => {
-      for (const { roomId } of this.store.db
-        .prepare("SELECT roomId FROM watch_queue_entries WHERE state='history' GROUP BY roomId HAVING COUNT(*)>?")
-        .all(this.limits.maxHistory)) {
+      for (const { roomId } of repositories(this.store.db).queue.listOverHistoryLimit(this.limits.maxHistory)) {
         this.queue.pruneHistory(roomId);
-        this.store.db.prepare('UPDATE watch_rooms SET queueRevision=queueRevision+1 WHERE id=?').run(roomId);
+        repositories(this.store.db).rooms.updateRoomsSetQueueRevisionById(roomId);
       }
     });
-    for (const { id } of this.store.db.prepare('SELECT id FROM watch_rooms WHERE liveState IS NOT NULL').all()) {
+    for (const { id } of repositories(this.store.db).rooms.listRoomsByLiveState()) {
       const record = this.store.get(id);
       this.recoveries.set(id, { ...record.liveState, until: Infinity });
     }
@@ -176,17 +175,15 @@ class WatchRooms {
             if (!room.viewers.size) await this.watch.remove(id);
             else await this.save(room);
           } else {
-            this.store.db.prepare('UPDATE watch_rooms SET liveState=NULL WHERE id=?').run(id);
+            repositories(this.store.db).rooms.clearLiveState(id);
             await this.registry.flush();
             await this.deleteEmpty(id);
           }
         }
       if (!this.limits.inactiveDays) return;
       const cutoff = now - this.limits.inactiveDays * 86400000;
-      let count = /** @type {{n:number}} */ (this.store.db.prepare('SELECT COUNT(*) AS n FROM watch_rooms').get()).n;
-      for (const { id } of this.store.db
-        .prepare('SELECT id FROM watch_rooms WHERE lastAccessedAt<=? ORDER BY lastAccessedAt,id')
-        .all(cutoff)) {
+      let count = /** @type {{n:number}} */ (repositories(this.store.db).rooms.count()).n;
+      for (const { id } of repositories(this.store.db).rooms.listRoomsByLastAccessedAt(cutoff)) {
         if (count <= this.limits.minRetained) break;
         if (
           this.watch.rooms.has(id) ||
@@ -676,14 +673,12 @@ class WatchRooms {
           removed = previousHosts.filter(host => !hosts.includes(host));
         if (record.creatorId !== owner.id || added.length || removed.length)
           this.registry.transaction(() => {
-            this.store.db.prepare('UPDATE watch_rooms SET creatorId=? WHERE id=?').run(owner.id, id);
-            for (const host of added)
-              this.store.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id, host);
-            for (const host of removed)
-              this.store.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=? AND userId=?').run(id, host);
+            repositories(this.store.db).rooms.updateRoomsSetCreatorIdById(owner.id, id);
+            for (const host of added) repositories(this.store.db).rooms.insertRoomHosts(id, host);
+            for (const host of removed) repositories(this.store.db).rooms.deleteRoomHostsByRoomIdUserId(id, host);
             this.registry.meta('singleRoomDefaultHosts', JSON.stringify(hosts));
           });
-        this.store.db.prepare("UPDATE watch_rooms SET name='Room',slug='room',keepEmpty=1 WHERE id=?").run(id);
+        repositories(this.store.db).rooms.updateRoomsSetNameSlugKeepEmptyById(id);
         await this.registry.flush();
         record = this.store.get(id);
         if (this.recoveries.has(id) && !this.watch.rooms.has(id)) await this.recover(id, actor);
@@ -779,18 +774,13 @@ class WatchRooms {
         ]),
       ].filter(h => h !== record.creatorId);
       this.registry.transaction(() => {
-        this.store.db.prepare('DELETE FROM watch_room_progress WHERE roomId=?').run(id);
-        this.store.db.prepare('DELETE FROM watch_queue_entries WHERE roomId=?').run(id);
-        this.store.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=?').run(id);
-        this.store.db.prepare('DELETE FROM watch_room_host_grants WHERE roomId=?').run(id);
-        for (const host of hosts)
-          this.store.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id, host);
+        repositories(this.store.db).queue.deleteRoomProgressByRoomId(id);
+        repositories(this.store.db).queue.deleteQueueEntriesByRoomId(id);
+        repositories(this.store.db).rooms.deleteRoomHostsByRoomId(id);
+        repositories(this.store.db).rooms.deleteRoomHostGrantsByRoomId(id);
+        for (const host of hosts) repositories(this.store.db).rooms.insertRoomHosts(id, host);
         this.registry.meta('singleRoomDefaultHosts', JSON.stringify(hosts));
-        this.store.db
-          .prepare(
-            "UPDATE watch_rooms SET bookmark=NULL,checkpointRevision=checkpointRevision+1,queueRevision=queueRevision+1,revision=revision+1,autoplay=1,autoQueue=NULL,liveState=NULL,maxMembers=NULL,permissions=?,name=?,visibility='public' WHERE id=?",
-          )
-          .run(JSON.stringify(this.store.defaults), 'Room', id);
+        repositories(this.store.db).rooms.resetRoom(JSON.stringify(this.store.defaults), 'Room', id);
       });
       await this.registry.flush();
       this.recoveries.delete(id);
@@ -867,17 +857,18 @@ class WatchRooms {
         if (!final && this.watch.rooms.get(room.roomId) !== room) return;
         const { bookmark, live, active } = captured || this.capture(room, { closing });
         const record = this.store.get(room.roomId);
-        this.store.db
-          .prepare('UPDATE watch_rooms SET liveState=? WHERE id=?')
-          .run(
+        const saved = this.registry.transaction(() => {
+          repositories(this.store.db).rooms.saveLiveState(
             live
               ? JSON.stringify({ viewers: live.viewers.map(id => this.store.account(id)), wasPlaying: live.wasPlaying })
               : null,
             record.id,
           );
-        if (active) this.store.touch(record.id);
-        if (bookmark) this.queue.checkpoint(record.id, bookmark.position);
-        this.apply(room, await this.store.checkpoint(record.id, record.checkpointRevision, bookmark));
+          if (active) this.store.touch(record.id);
+          if (bookmark) this.queue.checkpoint(record.id, bookmark.position);
+          return this.store.writeCheckpoint(record.id, record.checkpointRevision, bookmark);
+        });
+        this.apply(room, await this.store.commit(saved));
         if (room.saveError) {
           room.saveError = undefined;
           this.watch.changed(room);
