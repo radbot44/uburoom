@@ -108,3 +108,7 @@ Checks:
 - `npm run ui:capture` and `npm run ui:compare`: captured `156` screenshots in Chrome and Firefox (`..\uburoom-evidence\artifacts\ui-capture\20261113-214739-9a3e064-dirty`); comparison against pre-Stage-2 baseline (`20261113-211248-a65b619`) reported `142 of 156 images differ` consistent with Stage 2 focus/spacing/target/codec-removal changes, with manual inspection confirming `#tracks-dialog`, Lobby Light, and Forced Colours alignment.
 - `npm run check` first run hit one known concurrent-load timing flake in `tests/subtitle-resources.test.js:973` (`NaN !== 0`, already listed in [testing.md](../testing.md)); immediate re-run of `npm run check` passed cleanly.
 - Final verification on the `web/` tree: `npm run format:check`, `npm run lint`, `npm run typecheck`, and `npm run test:full` (`node --test tests/*.test.js`: `453` tests, `453` passed, `0` failed, `0` skipped) all passed cleanly. Isolated fixture scope only; no real Plex, Discord, or production server touched. Physical assistive-technology/screen-reader traversal, real keyboard check on Firefox `#skip-link`, and owner acceptance remain open (`D`).
+
+## 2026-11-13 — Codec tester server cleanup (A)
+
+0888c60: the server no longer pre-renders the codec tester button that V5 removed from the client, so the library home it renders matches the client's. `tests/watch-page.test.js` passes.
