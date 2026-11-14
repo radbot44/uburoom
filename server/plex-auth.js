@@ -8,6 +8,13 @@ class PlexAccessError extends Error {
     this.revoked = revoked;
   }
 }
+// A person's own Plex sign-in that Plex no longer accepts (a password change signs out
+// every device) or that uburoom no longer holds. Only signing in to Plex again fixes it.
+const RECONNECT_PLEX =
+  'Your Plex sign-in has expired or was revoked, for example by a Plex password change. Reconnect Plex to continue.';
+function plexReconnectError(message = RECONNECT_PLEX) {
+  return Object.assign(new PlexAccessError(message, true), { status: 403, reconnect: 'plex' });
+}
 class PlexAuth {
   constructor(config, accounts, plex, fetcher = fetch) {
     this.config = config;
@@ -225,6 +232,9 @@ class PlexAuth {
         return scoped;
       } catch (error) {
         if (generation === this.generation) this.cache.delete(identity.subject);
+        // Plex refused this person's own sign-in. Say so, so they can reconnect;
+        // a lack of server membership stays its own answer.
+        if (error.revoked && !error.noServerAccess && !error.reconnect) throw plexReconnectError();
         throw error;
       }
     });
@@ -250,4 +260,4 @@ class PlexAuth {
     this.fallbackInflight = undefined;
   }
 }
-module.exports = { PlexAuth, PlexAccessError };
+module.exports = { PlexAuth, PlexAccessError, plexReconnectError, RECONNECT_PLEX };

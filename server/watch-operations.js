@@ -121,13 +121,15 @@ function watchOperations({
   validGrant,
 }) {
   const result = (status, value) => ({ status, value });
-  const refusal = error =>
-    result([400, 403, 404, 409, 429, 503].includes(error.status) ? error.status : 400, {
-      error:
-        error.status || error instanceof PlaybackError
-          ? error.message
-          : 'Request failed; check Plex/Discord configuration and try again',
+  const refusal = error => {
+    const known = error.status || error instanceof PlaybackError;
+    // The viewer gets a generic line; the operator needs the cause to fix it.
+    if (!known) hub.logger?.warn('Request', 'Request failed: ' + (error?.message || String(error)));
+    return result([400, 403, 404, 409, 429, 503].includes(error.status) ? error.status : 400, {
+      error: known ? error.message : 'Request failed; check Plex/Discord configuration and try again',
+      ...(error.reconnect ? { reconnect: error.reconnect } : {}),
     });
+  };
   /**
    * Signs the asker in for one piece of their own work, which also renews their place,
    * claims pending host invites and refreshes their admin standing, then runs it.

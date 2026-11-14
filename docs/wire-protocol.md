@@ -34,7 +34,7 @@ A request carries an `id` the client chooses (a non-negative integer, unique amo
 { "type": "error", "id": 12, "code": "refused", "status": 409, "message": "Room changed or command expired; retry manually" }
 ```
 
-`status` follows HTTP meanings (400 invalid, 403 not allowed, 404 unknown, 409 conflict or stale, 429 too many, 503 unavailable). `code` is `refused` for a refusal by the server's rules and `invalid` for a malformed request. A request may carry `timeoutMs`; `{ "type": "cancel", "id": 12 }` abandons one. Requests are never replayed: after a reconnect, read state before retrying a change.
+`status` follows HTTP meanings (400 invalid, 403 not allowed, 404 unknown, 409 conflict or stale, 429 too many, 503 unavailable). `code` is `refused` for a refusal by the server's rules and `invalid` for a malformed request. A refusal with `"reconnect": "plex"` means the person's own Plex sign-in has expired, was revoked (a Plex password change signs out every device) or is missing; offer to sign in to Plex again rather than retrying. A request may carry `timeoutMs`; `{ "type": "cancel", "id": 12 }` abandons one. Requests are never replayed: after a reconnect, read state before retrying a change.
 
 | Type | Fields | Answer |
 | --- | --- | --- |

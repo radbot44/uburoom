@@ -77,6 +77,7 @@ function watchSockets({
     status: result.status,
     message: result.value?.error || 'Request failed',
     ...(result.value?.rejoin ? { rejoin: true } : {}),
+    ...(result.value?.reconnect ? { reconnect: result.value.reconnect } : {}),
     ...(result.value?.rejection ? { rejection: result.value.rejection } : {}),
   });
   /** Who is asking, for the operations: the connection's credentials, socket and an abort signal. */

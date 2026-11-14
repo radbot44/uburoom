@@ -30,6 +30,8 @@ export function mount(host, deps) {
                     ? 'network'
                     : 'other',
       });
+      // The person's own Plex sign-in stopped working: offer the one fix, wherever it surfaced.
+      if (error?.reconnect === 'plex') deps.plexReconnect?.(error.message);
       throw error;
     }
   }
@@ -55,7 +57,11 @@ export function mount(host, deps) {
       outcome.decoded = true;
       if (!response.ok) {
         outcome.rejection = value.rejection;
-        throw Object.assign(new Error(value.error || 'Request failed'), { status: response.status, response: value });
+        throw Object.assign(new Error(value.error || 'Request failed'), {
+          status: response.status,
+          response: value,
+          reconnect: value.reconnect,
+        });
       }
       return value;
     });

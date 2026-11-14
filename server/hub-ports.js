@@ -1,4 +1,5 @@
 'use strict';
+const { plexReconnectError } = require('./plex-auth');
 const RoomPolicy = require('./room-policy');
 const { UserDirectory } = require('./user-directory');
 const { plexDirectory } = require('./plex-directory');
@@ -128,10 +129,11 @@ function createHubPorts({
         return plexAuth.fallback();
       };
       if (!identity) return fallback();
-      if (!registry.hasCredential(identity.subject)) throw new Error('Connect your Plex account again');
+      if (!registry.hasCredential(identity.subject))
+        throw plexReconnectError('Your Plex sign-in is missing. Reconnect Plex to continue.');
       try {
         const scoped = await plexAuth.forUser(actor.userId);
-        if (!scoped) throw new Error('Connect your Plex account again');
+        if (!scoped) throw plexReconnectError('Your Plex sign-in is missing. Reconnect Plex to continue.');
         return scoped;
       } catch (error) {
         // Only a confirmed lack of server membership may use explicit open-entry

@@ -276,6 +276,7 @@ function refusal(message) {
     code: message.code,
     rejection: message.rejection,
     rejoin: !!message.rejoin,
+    reconnect: message.reconnect,
   });
 }
 export { WatchTransport };

@@ -306,6 +306,26 @@ function fail(message, action) {
     });
   } else if (store.player.immersive && !document.body.classList.contains('activity-pip')) deps.toggleDrawer(true);
 }
+// A person's own Plex sign-in stopped working, for example after a Plex password change.
+deps.plexReconnect = message =>
+  toasts.show('plex-reconnect', {
+    type: 'error',
+    title: message,
+    symbol: 'alert-triangle',
+    persistent: true,
+    action: {
+      label: 'Reconnect Plex',
+      run: async () => {
+        if (deps.activity) return void deps.openInBrowser({ account: true, connectPlex: true });
+        try {
+          const { url } = await deps.api('/api/account/plex/connect', {});
+          location.assign(url);
+        } catch (error) {
+          toasts.show('plex-reconnect', { type: 'error', title: error.message, symbol: 'alert-triangle' });
+        }
+      },
+    },
+  });
 Object.assign(deps, connection.mount(document, deps));
 Object.assign(deps, transportBar.mount($('stage'), deps));
 Object.assign(deps, layout.mount(document.body, deps));

@@ -554,6 +554,8 @@ function watchHttp({
       json(res, 404, { error: 'Room controls require an authenticated WebSocket' });
       return true;
     } catch (error) {
+      if (!(error instanceof PlaybackError))
+        hub.logger?.warn('Request', 'Request failed: ' + (error?.message || String(error)));
       json(res, 400, {
         error:
           error instanceof PlaybackError

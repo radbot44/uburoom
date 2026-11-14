@@ -824,12 +824,12 @@ test(
     f.app.plexAuth.clear();
     assert.equal((await browser.request(endpoint)).status, 200);
     const deniedMedia = await browser.request('/api/watch/library');
-    assert.equal(
-      deniedMedia.status,
-      400,
-      'revoked media credentials retain the existing library failure behavior for operators',
-    );
-    assert.deepEqual(Object.keys(deniedMedia.body), ['error']);
+    // A revoked personal Plex sign-in (for example after a Plex password change) is refused
+    // as such, with the one fix named, never as a generic configuration failure.
+    assert.equal(deniedMedia.status, 403);
+    assert.equal(deniedMedia.body.reconnect, 'plex');
+    assert.match(deniedMedia.body.error, /Reconnect Plex/);
+    assert.deepEqual(Object.keys(deniedMedia.body).sort(), ['error', 'reconnect']);
     f.provider.revoked.clear();
     f.app.plexAuth.clear();
     const staleCookie = browser.jar.get('uburoom');
