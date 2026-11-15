@@ -11,7 +11,7 @@ const SubtitleResources = require('../../subtitle-resources');
 /** The media proxy: manifests, chunks, captions and subtitles served to a holder of a grant. */
 function mediaStream({ config, watch, json, grants, validCaptionGrant, validGrant }) {
   function resource(media, url) {
-    const target = media.provider.url(url).href;
+    const target = (media.hlsProvider || media.provider).url(url).href;
     for (const [key, value] of media.resources) if (value === target) return key;
     if (media.resources.size > 20000) throw new Error('Too many media resources');
     const key = randomBytes(12).toString('hex');

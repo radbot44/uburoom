@@ -1166,6 +1166,14 @@ test('embedded text stays client-rendered, so Original is not forced into a conv
       .route,
     'local',
   );
+  // Without a provider transcoder, uburoom copies the picture itself, for unplayable sound
+  // and for another audio track, but never when the picture itself must change.
+  const copy = { remux: true, outputs: ['av1'] };
+  assert.equal(planDelivery({ ...copy, quality: 'direct', fallback: 'audio', audioTracks: 1 }).route, 'remux');
+  assert.equal(planDelivery({ ...copy, quality: 'direct', audioTracks: 2 }).route, 'remux');
+  assert.equal(planDelivery({ ...copy, quality: 'direct', burn: true, audioTracks: 2 }).route, 'local');
+  assert.equal(planDelivery({ ...copy, quality: '720p4', audioTracks: 2 }).route, 'local');
+  assert.equal(planDelivery({ ...copy, quality: 'direct', audioTracks: 1 }).route, 'file');
 });
 
 test('codecMatches and trackItem handle PCM audio and embedded closed captions without false warnings', async () => {

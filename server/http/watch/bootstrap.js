@@ -23,6 +23,9 @@ function pageBootstrap({ config, watch, hub, registry, entryPolicy, diagnosticLo
         ? []
         : config.transcoding?.formats || ['av1'],
     outputs: config.transcoding?.policy === 'disabled' ? [] : config.transcoding?.outputs,
+    // uburoom can keep a picture and convert only its sound itself (server/remux.js).
+    copyVideo:
+      config.transcoding?.policy !== 'disabled' && !!(watch.pipeline?.av1?.ffmpeg && watch.pipeline.av1.ffprobe),
   });
   async function admissionStatus(req) {
     const identity = await rawLogin(req);

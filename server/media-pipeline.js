@@ -3,6 +3,7 @@ const { QUALITIES } = require('../shared/engine.mjs');
 const { AV1 } = require('./av1');
 const { CacheBudget } = require('./cache-budget');
 const { HLSPool } = require('./hls-pool');
+const { Remux } = require('./remux');
 const { ConversionPolicy } = require('./transcoding-policy');
 const SubtitleResources = require('./subtitle-resources');
 
@@ -20,6 +21,8 @@ class MediaPipeline {
     this.av1 = new AV1(config, execute, logger);
     this.av1.conversionPolicy = this.conversionPolicy;
     this.hlsPool = new HLSPool(media => media.provider.stop(media));
+    /** Copies a file's picture and converts only its sound, for providers with no transcoder. */
+    this.remux = new Remux(this.av1);
   }
   /** The offered qualities a source can fill: none above its own bitrate or picture height. */
   qualities(media) {
@@ -47,6 +50,7 @@ class MediaPipeline {
     // A shared output is ended by its pool once its last viewer leaves.
     if (media.hlsLease) return media.hlsLease.release();
     if (media.av1Lease) this.av1.release(media.av1Lease);
+    await media.remuxLease?.release();
     await own?.();
     media.releaseConversion?.();
     media.releaseConversion = undefined;
@@ -86,7 +90,7 @@ class MediaPipeline {
   }
   close() {
     this.cacheBudget.clear();
-    return (this.closing ||= Promise.all([this.hlsPool.close(), this.av1.close()]));
+    return (this.closing ||= Promise.all([this.hlsPool.close(), this.remux.close(), this.av1.close()]));
   }
 }
 

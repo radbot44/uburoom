@@ -36,6 +36,13 @@ class ConversionPolicy {
         { videoDisabled: true },
       );
   }
+  /** Copying the picture and converting only the sound is cheap, so it needs no job; "disabled" still forbids it. */
+  copy() {
+    if (this.settings?.policy === 'disabled')
+      throw this.failure(
+        'Playback needs audio conversion, which this server has disabled. Try another supported player/track.',
+      );
+  }
   acquire() {
     if (!this.settings) return () => {};
     if (this.jobs.size >= this.settings.maxJobs)

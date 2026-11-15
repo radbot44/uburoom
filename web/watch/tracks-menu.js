@@ -184,7 +184,9 @@ export function mount(host, deps) {
           info.format === 'file'
             ? 'Original file'
             : info.format === 'hls'
-              ? 'Plex streaming'
+              ? ['audio-conversion', 'multiple-audio'].includes(info.reason)
+                ? 'Original picture, converted sound'
+                : 'Media server conversion'
               : uburoomPlayback.localFormat(info.format)
                 ? 'uburoom conversion'
                 : info.format,

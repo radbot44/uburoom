@@ -46,13 +46,14 @@ export function mount(host, deps) {
         ? !skipPlex && !store.stream.localFallbackAttempts.has('provider')
         : localCandidates.includes(output),
     );
-    // H.264 or browser-supported HEVC with unplayable audio needs no new picture: Plex can copy the video and convert only the audio.
+    // H.264 or browser-supported HEVC with unplayable audio needs no new picture: uburoom, or a media
+    // server with its own transcoder, copies the video and converts only the audio.
     const canCopyVideo =
       /^(h264|avc1|hevc|h265|hvc1|hev1)$/i.test(store.room.state.videoCodec || '') &&
       !uburoomPlayback.needsVideoConversion(store.room.state, type => deps.video.canPlayType(type));
     if (
       preferHLS &&
-      order.includes('provider') &&
+      (order.includes('provider') || store.identity.config.copyVideo) &&
       canCopyVideo &&
       !store.stream.localFallbackAttempts.has('audio') &&
       !store.stream.localFallbackAttempts.has('provider')
@@ -217,7 +218,7 @@ export function mount(host, deps) {
     next.format === 'file' &&
     /^(h264|avc1|hevc|h265|hvc1|hev1)$/i.test(next.videoCodec || '') &&
     !uburoomPlayback.needsVideoConversion(next, type => deps.video.canPlayType(type)) &&
-    (store.identity.config.outputs || ['provider']).includes('provider') &&
+    ((store.identity.config.outputs || ['provider']).includes('provider') || store.identity.config.copyVideo) &&
     uburoomPlayback.needsAudioConversion(next, type => deps.video.canPlayType(type));
   function holdStream(next) {
     const hold = (store.stream.heldStream = { next, started: deps.time.mono() });

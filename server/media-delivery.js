@@ -2,11 +2,14 @@
 const { qualityId } = require('../shared/engine.mjs');
 const { PlaybackError } = require('./av1');
 const { planDelivery } = require('./delivery-plan');
+// Sound every current browser plays; anything else will likely come back as an "audio" fallback.
+const BROWSER_AUDIO = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac']);
 
 /**
  * Prepare one viewer's stream of one item. The provider scope says what the item
  * is and where its bytes are; this decides how they reach the viewer: the original
- * file, uburoom's own conversion, or the provider's transcode where it has one,
+ * file, the picture copied with only its sound converted, uburoom's own conversion,
+ * or the provider's transcode where it has one,
  * shared with other viewers when the output is identical.
  *
  * A provider implements `source(id, previous, choices)`, returning the prepared
@@ -29,6 +32,9 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
     !choices.sourceOnly &&
     (!fallback || fallback === 'audio') &&
     (burn || compatible || quality !== 'direct' || effectiveAudioTracks > 1);
+  // A provider with a transcoder of its own keeps the picture through that instead.
+  const remux =
+    !choices.sourceOnly && typeof provider.startTranscode !== 'function' && !!pipeline.remux?.available(media);
   const plan = planDelivery({
     quality,
     compatible,
@@ -36,10 +42,11 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
     burn,
     audioTracks: effectiveAudioTracks,
     sourceOnly: choices.sourceOnly,
+    remux,
     outputs: conversion ? await pipeline.usableOutputs(provider, choices.localCodecs) : undefined,
   });
   media.deliveryReason = plan.reason;
-  if (plan.route !== 'file') {
+  if (plan.route !== 'file' && plan.route !== 'remux') {
     media.hdr = false;
     media.hdrKind = 'sdr';
     media.hdrLabel = 'SDR';
@@ -50,6 +57,15 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
     'Delivery',
     `"${media.title}" ${quality}: ${plan.route}${plan.codec ? ' ' + plan.codec : ''} (${plan.reason}), source ${media.videoCodec}/${media.audioCodec}${fallback ? ', requested ' + fallback : ''}`,
   );
+  // An original whose sound the browser will likely refuse, or that offers other audio tracks,
+  // usually comes back as a copied-picture request moments later. Finding its keyframes is the
+  // slow part of that, so it starts now; it is remembered per file and changes nothing else.
+  if (
+    remux &&
+    plan.route === 'file' &&
+    (media.tracks.audio.length > 1 || (audio && !BROWSER_AUDIO.has(String(audio.codec).toLowerCase())))
+  )
+    pipeline.remux.boundaries(media, AbortSignal.timeout(180000)).catch(() => {});
   const directPlan = plan.route === 'provider-hls' ? await choices.directPlan?.() : undefined;
   const directHls = !!(directPlan || choices.directHls);
   if (directPlan) media.directHls = directPlan;
@@ -121,6 +137,20 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
   if (plan.route === 'file') {
     media.format = 'file';
     media.start = media.sourceStart;
+  } else if (plan.route === 'remux') {
+    try {
+      pipeline.conversionPolicy.copy();
+      if (choices.authorized && !(await choices.authorized()))
+        throw new PlaybackError('Viewing access or track selection expired.');
+      await pipeline.remux.acquire(media, audio);
+      media.compatible = compatible;
+    } catch (error) {
+      const failure = new PlaybackError(
+        error instanceof PlaybackError ? error.message : 'The video could not be copied.',
+      );
+      failure.media = media;
+      throw failure;
+    }
   } else if (plan.route === 'local') {
     const codec = plan.codec;
     try {

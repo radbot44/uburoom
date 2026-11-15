@@ -70,6 +70,10 @@
  *   What only this provider can say for the host's video check (server/media-check.js): how
  *   to name whoever listed a file's tracks, items checked once per file, and items about the
  *   provider itself, read fresh for every report.
+ * @property {(media: any) => Promise<string>} [filePath]
+ *   The file on this machine a prepared item's bytes come from, when they are a plain local
+ *   file with nothing to hide. FFmpeg then reads it directly instead of through the byte
+ *   bridge, which matters for seek-heavy work such as finding keyframes.
  * @property {() => Promise<any>} [close] - Called on the configured scope at shutdown.
  */
 

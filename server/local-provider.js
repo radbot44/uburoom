@@ -316,6 +316,10 @@ class LocalMedia {
     }
     throw failure('Local media unavailable', 404);
   }
+  /** The file on this machine a prepared item's bytes come from; FFmpeg may read it directly. */
+  async filePath(media) {
+    return (await this.locate(media.sourceStart)).file;
+  }
   /** Read a local resource as an HTTP response would carry it, honouring one byte range. */
   async request(resource, options = {}) {
     const { file, text, type = 'application/octet-stream' } = await this.locate(resource);
