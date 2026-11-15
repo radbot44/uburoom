@@ -21,6 +21,14 @@ function mediaIdentity(value) {
   const match = typeof value === 'string' && /^([A-Za-z0-9_-]{1,64})(?::([A-Za-z0-9_-]{1,64}))?$/.exec(value);
   return match ? { id: value, itemId: match[1], versionId: match[2], demo: false } : undefined;
 }
+// The server a media selector belongs to, when a request names one. Opaque here; the
+// server accepts only the id of a provider it is configured with.
+function withServer(args, a) {
+  if (a.serverId === undefined) return args;
+  if (typeof a.serverId !== 'string' || !/^[A-Za-z0-9._:-]{1,200}$/.test(a.serverId))
+    throw new Error('Choose a library item');
+  return { ...args, serverId: a.serverId };
+}
 function qualityDefinition(id) {
   id = qualityId(id);
   if (id === 'direct') return QUALITIES[0];
@@ -215,7 +223,7 @@ const COMMANDS = Object.freeze({
         if (typeof a.resume !== 'boolean') throw new Error('Invalid resume setting');
         args.resume = a.resume;
       }
-      return args;
+      return withServer(args, a);
     },
   },
   'media.previous': { scope: 'room', capability: 'chooseMedia', prepares: true, persists: true, args: none },
@@ -369,7 +377,7 @@ const COMMANDS = Object.freeze({
         !/^\d{1,20}$/.test(a.showId)
       )
         throw new Error('Choose an offer item');
-      return { mediaId: a.mediaId, showId: a.showId };
+      return withServer({ mediaId: a.mediaId, showId: a.showId }, a);
     },
   },
   'queue.bulk': {
@@ -387,7 +395,10 @@ const COMMANDS = Object.freeze({
         typeof a.includeSpecials !== 'boolean'
       )
         throw new Error('Choose show or season queue options');
-      return { type: a.type, mediaId: a.mediaId, unfinished: a.unfinished, includeSpecials: a.includeSpecials };
+      return withServer(
+        { type: a.type, mediaId: a.mediaId, unfinished: a.unfinished, includeSpecials: a.includeSpecials },
+        a,
+      );
     },
   },
   'queue.auto': {
@@ -408,7 +419,7 @@ const COMMANDS = Object.freeze({
           (a.scope.id !== undefined && (typeof a.scope.id !== 'string' || !/^\d{1,20}$/.test(a.scope.id)))
         )
           throw new Error('Choose an auto-queue source');
-        args.scope = { type: a.scope.type, ...(a.scope.id ? { id: a.scope.id } : {}) };
+        args.scope = withServer({ type: a.scope.type, ...(a.scope.id ? { id: a.scope.id } : {}) }, a.scope);
       } else {
         args.scope = null;
       }

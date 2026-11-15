@@ -72,7 +72,7 @@ module.exports = {
               this.prepareQuality(
                 room,
                 viewer,
-                await this.hub.mediaFor(actor),
+                await this.streamScope(actor, room.media),
                 source,
                 args.quality,
                 args.compatible === true || !!viewer.compatible,
@@ -169,7 +169,7 @@ module.exports = {
             this.prepareQuality(
               room,
               viewer,
-              await this.hub.mediaFor(actor),
+              await this.streamScope(actor, room.media),
               source,
               viewer.quality,
               viewer.compatible,
@@ -248,7 +248,7 @@ module.exports = {
             this.prepareQuality(
               room,
               viewer,
-              await this.hub.mediaFor(actor),
+              await this.streamScope(actor, room.media),
               source,
               viewer.quality,
               viewer.compatible,

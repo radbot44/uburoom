@@ -162,12 +162,13 @@ module.exports = {
       viewers: new Map(),
     }));
     preload.work = this.startMediaWork(room, async work => {
-      const plex = await this.hub.mediaFor(actor);
+      const plex = await this.hub.mediaFor(actor, next.serverId);
       const source = await plex.prepare(next.mediaId, 'direct', false, undefined, undefined, { sourceOnly: true });
       if (preload.dropped || work.signal.aborted) {
         await this.stopMedia(room, source);
         return;
       }
+      source.roomServerId = await this.providers.identify(source);
       this.mediaChecks.start(source);
       preload.media = source;
       const settings = this.hub.config.transcoding;

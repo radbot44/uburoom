@@ -86,7 +86,7 @@ module.exports = {
     }
     if (fromProvider(room.media)) {
       try {
-        const allowed = await (await this.hub.mediaFor(actor)).allows(room.media.id);
+        const allowed = await (await this.streamScope(actor, room.media)).allows(room.media.id);
         this.providerResponded();
         if (!allowed) return false;
       } catch (error) {
@@ -126,7 +126,8 @@ module.exports = {
         if (!this.hub.authorize(actor, record, 'room.view').ok) continue;
         if (record.bookmark) {
           try {
-            if (!(await (await this.hub.mediaFor(actor)).allows(record.bookmark.mediaId))) continue;
+            const saved = record.bookmark;
+            if (!(await (await this.hub.mediaFor(actor, saved.serverId)).allows(saved.mediaId))) continue;
           } catch {
             continue;
           }

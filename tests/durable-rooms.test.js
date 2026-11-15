@@ -1348,7 +1348,7 @@ test(
         },
       };
     f.app.hub.mediaFor = async () => catalog;
-    f.app.watch.roomState.identify = async item => (item.id === 'demo' ? 'local-demo' : 'fixture-plex');
+    f.app.watch.providers.primary.identity = async () => 'fixture-plex';
     await guest.call('/api/watch/rooms/' + id + '?viewer=' + b);
     const bulk = { action: 'bulk', type: 'show', mediaId: '900', unfinished: true, includeSpecials: true };
     assert.equal((await guest.call('/api/watch/rooms/' + id + '/queue', bulk)).status, 403);
@@ -1439,7 +1439,7 @@ test('held bulk expansions recheck a guest capability and active viewer after Pl
         },
       };
       f.app.hub.mediaFor = async () => catalog;
-      f.app.watch.roomState.identify = async item => (item.id === 'demo' ? 'local-demo' : 'fixture-plex');
+      f.app.watch.providers.primary.identity = async () => 'fixture-plex';
       const before = f.app.watch.roomState.queue.list(id),
         current = f.app.watch.roomState.queue.current(id);
       const pending = guest.call('/api/watch/rooms/' + id + '/queue', {
@@ -1498,7 +1498,7 @@ test(
       },
     };
     f.app.hub.mediaFor = async () => catalog;
-    f.app.watch.roomState.identify = async item => (item.id === 'demo' ? 'local-demo' : 'fixture-plex');
+    f.app.watch.providers.primary.identity = async () => 'fixture-plex';
     assert.equal(
       (
         await creator.call('/api/watch/rooms/' + id + '/queue', {
@@ -1756,7 +1756,7 @@ test('missing queue media remains removable, blocks raw additions and restores w
   const item = { serverId: 'fixture-server', mediaId: '9', type: 'movie', title: 'Missing movie', duration: 60 };
   f.app.hub.mediaFor = async () => plex;
   plex.allows = async () => true;
-  f.app.watch.roomState.identify = async () => item.serverId;
+  f.app.watch.providers.primary.identity = async () => item.serverId;
   plex.availability = async ids => new Map(ids.map(id => [id, false]));
   const missing = () =>
     Object.assign(new Error('Missing movie is unavailable.'), { code: 'MEDIA_UNAVAILABLE', status: 409 });

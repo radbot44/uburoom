@@ -555,8 +555,10 @@ function watchOperations({
       (lobbyScope || (room && watch.rooms.get(room.roomId) === room && (await watch.canView(room, auth.actor)))) &&
       (await login(context))?.userId === auth.actor.userId;
     if (!(await eligible())) return result(403, { error: 'Library access requires room access' });
-    const plex = await hub.mediaFor(auth.actor);
-    const scopeCurrent = async () => (await hub.mediaFor(auth.actor)).principal === plex.principal;
+    // The library names the server it is browsing; with none named it is the first one configured.
+    const server = text(args.server) ?? undefined;
+    const plex = await hub.mediaFor(auth.actor, server);
+    const scopeCurrent = async () => (await hub.mediaFor(auth.actor, server)).principal === plex.principal;
     const itemVisible = async () =>
       plex.principal === 'discord-shared' || (await plex.visible(text(args.item), text(args.type)));
     let data;

@@ -47,34 +47,22 @@ module.exports = {
       const nextItem = summary.next || summary.autoQueue?.next;
       const needed = [summary.lastHistory, nextItem].filter(Boolean);
       const viewer = [...room.viewers.values()][0];
-      const plex = viewer ? await this.hub.mediaFor(viewer.actor) : this.providers.primary.root;
       let changed = false;
-      if (plex?.details) {
-        for (const item of needed) {
-          if (!room.endingMeta.has(item.mediaId)) {
-            try {
-              const details = await plex.details(item.mediaId, item.type);
-              room.endingMeta.set(item.mediaId, {
-                summary: details?.summary || '',
-                subtitle: details?.subtitle || item.subtitle || '',
-                hasLandscape: Boolean(details?.hasLandscape || item.hasLandscape),
-                hasPoster: Boolean(details?.hasPoster || item.hasPoster),
-              });
-              while (room.endingMeta.size > 8) room.endingMeta.delete(room.endingMeta.keys().next().value);
-              changed = true;
-            } catch {
-              room.endingMeta.set(item.mediaId, {
-                summary: '',
-                subtitle: item.subtitle || '',
-                hasLandscape: Boolean(item.hasLandscape),
-                hasPoster: Boolean(item.hasPoster),
-              });
-            }
-          }
-        }
-      } else {
-        for (const item of needed) {
-          if (!room.endingMeta.has(item.mediaId)) {
+      for (const item of needed) {
+        if (!room.endingMeta.has(item.mediaId)) {
+          try {
+            const plex = await this.catalogScope(viewer?.actor, item.serverId);
+            if (!plex?.details) throw new Error('This provider has no item details');
+            const details = await plex.details(item.mediaId, item.type);
+            room.endingMeta.set(item.mediaId, {
+              summary: details?.summary || '',
+              subtitle: details?.subtitle || item.subtitle || '',
+              hasLandscape: Boolean(details?.hasLandscape || item.hasLandscape),
+              hasPoster: Boolean(details?.hasPoster || item.hasPoster),
+            });
+            while (room.endingMeta.size > 8) room.endingMeta.delete(room.endingMeta.keys().next().value);
+            changed = true;
+          } catch {
             room.endingMeta.set(item.mediaId, {
               summary: '',
               subtitle: item.subtitle || '',
@@ -107,7 +95,7 @@ module.exports = {
     const revision = record.queueRevision;
     const key = completed.id + ':' + revision;
     const viewer = [...room.viewers.values()][0];
-    const plex = viewer ? await this.hub.mediaFor(viewer.actor) : this.providers.primary.root;
+    const plex = await this.catalogScope(viewer?.actor, completed.serverId);
     if (!plex || typeof plex.nextEpisodeOffer !== 'function') {
       room.endingOffer = { key, offer: null };
       return;
@@ -492,14 +480,14 @@ module.exports = {
       target =
         oldPosition < (record ? 5 : 3) &&
         (record ? queue.lastHistory(id) : old?.previousId && { mediaId: old.previousId });
-    } else if (!removing) target = { mediaId: args.mediaId };
+    } else if (!removing) target = { mediaId: args.mediaId, serverId: args.serverId };
     room.transition = { kind: 'media' };
     // Transfer only after admission/target checks, inside the cleanup scope.
     if (preload) room.preload = undefined;
     try {
       await room.saving?.catch(() => {});
       if (target) {
-        const plex = await this.hub.mediaFor(actor);
+        const plex = await this.hub.mediaFor(actor, target.serverId);
         // A failed preload is this load's failure; preparing again would only repeat it.
         const preloaded = preload?.mediaId === target.mediaId ? await preload.source : undefined;
         if (preloaded && preloaded.principal === plex.principal) preload.sourceAdopted = true;
@@ -510,19 +498,22 @@ module.exports = {
               ? preloaded
               : await plex.prepare(target.mediaId, 'direct', false, undefined, undefined, { sourceOnly: true });
         if (!prepared) return { status: 'failed', message: 'Test video is unavailable.' };
+        prepared.roomServerId = await this.roomState.identify(prepared);
         if (record) {
-          prepared.roomServerId = await this.roomState.identify(prepared);
+          // A queue entry records what it was; a fresh choice names only its server.
+          const entry = target.duration !== undefined;
           if (
             target.serverId &&
             (target.serverId !== prepared.roomServerId ||
-              Math.abs(target.duration - prepared.duration) > 0.5 ||
-              (prepared.source?.type && target.type !== prepared.source.type))
+              (entry &&
+                (Math.abs(target.duration - prepared.duration) > 0.5 ||
+                  (prepared.source?.type && target.type !== prepared.source.type))))
           )
             throw Object.assign(new Error('The queued video changed; choose it again from the library'), {
               status: 409,
             });
         }
-        if ((await this.hub.mediaFor(actor)).principal !== plex.principal)
+        if ((await this.hub.mediaFor(actor, target.serverId)).principal !== plex.principal)
           return { status: 'unavailable', message: 'Plex access changed.' };
       }
       let corpus;

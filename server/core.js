@@ -58,7 +58,7 @@ const refused = () => {
  *   canAllowGuests: (record: any, actor: Actor) => boolean,
  *   canScheduleEvents: (actor: Actor) => boolean,
  *   endGuestSessions: (roomId: string, userIds?: string[]) => Promise<string[]>,
- *   mediaFor: (actor: Actor) => Promise<any>,
+ *   mediaFor: (actor: Actor, serverId?: string) => Promise<any>,
  *   singleRoomLeader: () => Promise<any>,
  *   renameAccount: (id: string, name: string) => Promise<any>,
  *   onCommand: (roomId: string | undefined) => (action: string | undefined) => void,

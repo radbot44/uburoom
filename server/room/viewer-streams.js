@@ -37,6 +37,14 @@ module.exports = {
     }).catch(() => {});
   },
   // What a viewer's stream depends on; a preload is adopted only if none of it changed.
+  /** The provider that holds a room's video, as this person may use it. */
+  streamScope(actor, media) {
+    return this.hub.mediaFor(actor, fromProvider(media) ? media.roomServerId : undefined);
+  },
+  /** A provider's catalog for work no one person asked for: as a viewer sees it, else as configured. */
+  async catalogScope(actor, serverId) {
+    return actor ? this.hub.mediaFor(actor, serverId) : (await this.providers.select(serverId)).root;
+  },
   streamChoices(viewer) {
     return JSON.stringify([
       viewer.preferredQuality || viewer.quality,
@@ -53,7 +61,7 @@ module.exports = {
     return this.startMediaWork(
       room,
       async work => {
-        const plex = await this.hub.mediaFor(viewer.actor),
+        const plex = await this.streamScope(viewer.actor, source),
           choices = this.streamChoices(viewer);
         const authorized = async () =>
           current() &&
@@ -148,7 +156,7 @@ module.exports = {
     if (!viewer || viewer.userId !== actor.userId) return;
     let plex;
     try {
-      plex = await this.hub.mediaFor(actor);
+      plex = await this.streamScope(actor, room.media);
     } catch (error) {
       // Plex cannot answer: keep what the viewer has and try again shortly.
       if (this.providerFailed(error)) {

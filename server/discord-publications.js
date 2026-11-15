@@ -178,7 +178,7 @@ class DiscordPublications {
           (async () => {
             if ((person.watchCurrent && !(await person.watchCurrent())) || !(await this.watch.canView(room, person)))
               return;
-            const plex = await this.hub.mediaFor(person);
+            const plex = await this.watch.streamScope(person, room.media);
             if (!plex?.artwork) return;
             const result = await plex.artwork(room.media.id, 'poster', room.media.source?.type);
             if (!(await this.watch.canView(room, person))) return;

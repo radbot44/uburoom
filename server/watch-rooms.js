@@ -96,8 +96,8 @@ class WatchRooms {
         try {
           const saved = record.bookmark;
           if (saved) {
-            if ((await this.identify(saved)) !== saved.serverId) throw failure('The saved Plex server changed', 409);
-            const plex = await this.watch.hub.mediaFor(actor);
+            if (!(await this.watch.providers.recorded(saved))) throw failure('The saved Plex server changed', 409);
+            const plex = await this.watch.hub.mediaFor(actor, saved.serverId);
             media =
               saved.mediaId === 'demo'
                 ? this.watch.demoMedia && { ...this.watch.demoMedia, id: 'demo', resources: new Map() }
@@ -286,10 +286,10 @@ class WatchRooms {
           scope = config.scope;
         if (!scope?.id || !['show', 'library', 'collection'].includes(scope.type))
           throw failure('Choose an auto-queue source');
-        const plex = await this.watch.hub.mediaFor(actor);
-        const items = await plex.queueItems({ ...scope, includeSpecials: !!config.includeSpecials });
         const serverId = await this.identify(scope);
-        if ((await this.watch.hub.mediaFor(actor)).principal !== plex.principal)
+        const plex = await this.watch.hub.mediaFor(actor, serverId);
+        const items = await plex.queueItems({ ...scope, includeSpecials: !!config.includeSpecials });
+        if ((await this.watch.hub.mediaFor(actor, serverId)).principal !== plex.principal)
           throw failure('Plex access changed', 403);
         creation = { ...options, autoQueue: { ...config, scope: { type: scope.type, id: scope.id, serverId } } };
         initialCorpus = items.map(item => this.watch.queueItem(item, serverId));
@@ -318,7 +318,7 @@ class WatchRooms {
     await this.eligible(actor, current);
     return record.id;
   }
-  /** The server id this media is recorded under. */
+  /** The server id this media, or a reference that names its server, is recorded under. */
   identify(media) {
     return this.watch.providers.identify(media);
   }
@@ -361,13 +361,13 @@ class WatchRooms {
           adopted = false;
         try {
           if (saved) {
-            if ((await this.identify(saved)) !== saved.serverId)
+            if (!(await this.watch.providers.recorded(saved)))
               throw failure('This room belongs to another Plex server; choose a new video');
             if (saved.mediaId === 'demo') {
               if (!this.watch.demoMedia) throw failure('The saved test video is unavailable');
               media = { ...this.watch.demoMedia, id: 'demo', resources: new Map() };
             } else {
-              const plex = await this.watch.hub.mediaFor(actor);
+              const plex = await this.watch.hub.mediaFor(actor, saved.serverId);
               media = await this.savedSource(plex, saved);
             }
             if (
@@ -681,8 +681,8 @@ class WatchRooms {
             let media,
               adopted = false;
             try {
-              if ((await this.identify(saved)) === saved.serverId) {
-                const plex = await this.watch.hub.mediaFor(actor);
+              if (await this.watch.providers.recorded(saved)) {
+                const plex = await this.watch.hub.mediaFor(actor, saved.serverId);
                 media =
                   saved.mediaId === 'demo'
                     ? this.watch.demoMedia && { ...this.watch.demoMedia, id: 'demo', resources: new Map() }
