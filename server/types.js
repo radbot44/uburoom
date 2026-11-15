@@ -77,7 +77,7 @@
  * @property {boolean} muted - Personal mute toggle.
  * @property {number} [joinedAt] - Timestamp (ms) when viewer joined.
  * @property {Array<{id:string,mediaId:string,title:string}>} [unavailableMedia] - Missing current or pending queue entries.
- * @property {any} [media] - Resolved personal media/stream descriptor from Plex.
+ * @property {any} [media] - Resolved personal media/stream descriptor from its provider.
  * @property {string} [mediaVersion] - Version token matching room media generation.
  * @property {string} [streamVersion] - Unique generation token for current personal stream.
  * @property {{status:string,score:number,lastKnownScore?:number,lastKnownLevel?:string,lastKnownAt?:number,updatedAt:number,
@@ -95,7 +95,7 @@
  * Live state of an active watch room: shared timeline, viewers and in-flight work.
  * @typedef {Object} RoomRuntime
  * @property {boolean} [saved] - Whether the room is backed by a saved room record.
- * @property {any} media - Currently loaded Plex media metadata object (or null).
+ * @property {any} media - Currently loaded media metadata object (or null).
  * @property {InstanceType<typeof import('./fallback-stream').FallbackStream>} [fallbackStream] - Ephemeral room-owned fallback; never persisted.
  * @property {string} mediaVersion - Random UUID rotated on media load/change.
  * @property {number} revision - Monotonically increasing room revision counter.

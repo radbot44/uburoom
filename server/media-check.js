@@ -159,19 +159,19 @@ class MediaChecks {
       return !at || !codecMatches(row.codec, at.codec_name);
     });
     const counts = type => streams.filter(stream => stream.codec_type === type).length;
-    const plexAudio = (media.tracks?.audio || []).filter(row => !row.external).length;
-    const plexSubtitles = (media.tracks?.subtitles || []).filter(
+    const listedAudio = (media.tracks?.audio || []).filter(row => !row.external).length;
+    const listedSubtitles = (media.tracks?.subtitles || []).filter(
       row => !row.external && !EMBEDDED_SUBTITLES.has(row.codec),
     ).length;
-    if (wrong.length || plexAudio !== counts('audio') || plexSubtitles !== counts('subtitle')) {
+    if (wrong.length || listedAudio !== counts('audio') || listedSubtitles !== counts('subtitle')) {
       const { name, owner, refresh } = media.provider?.checks?.label || LIBRARY;
       const detail =
-        plexAudio !== counts('audio') || plexSubtitles !== counts('subtitle')
+        listedAudio !== counts('audio') || listedSubtitles !== counts('subtitle')
           ? name +
             ' lists ' +
-            plexAudio +
+            listedAudio +
             ' audio and ' +
-            plexSubtitles +
+            listedSubtitles +
             ' subtitle tracks; the file has ' +
             counts('audio') +
             ' and ' +

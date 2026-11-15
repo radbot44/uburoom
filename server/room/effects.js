@@ -16,7 +16,7 @@ const { RoomAuthority } = require('../../shared/sync');
 const Engine = require('../../shared/engine.mjs');
 
 /**
- * What the room asks of the server: room effects, media work and Plex sessions, preloads and provider health.
+ * What the room asks of the server: room effects, media work and provider sessions, preloads and provider health.
  * Methods of Watch (server/watch.js), which composes these modules onto its prototype.
  */
 module.exports = {
@@ -44,15 +44,15 @@ module.exports = {
     this.providerDownSince = undefined;
     this.providerRecoveredAt = this.clock.now();
   },
-  // A viewer already watching keeps their place while Plex cannot answer. Nobody
-  // new is admitted, and the next answer from Plex applies any real denial.
+  // A viewer already watching keeps their place while a provider cannot answer. Nobody
+  // new is admitted, and its next answer applies any real denial.
   retainedThroughOutage(room, actor, error) {
     if (!this.providerFailed(error)) return false;
     return [...room.viewers.values(), ...room.disconnectedViewers.values()].some(
       viewer => viewer.userId === actor.userId,
     );
   },
-  // Silent unless someone is actually affected, including while recovering after Plex returns.
+  // Silent unless someone is actually affected, including while recovering after the provider returns.
   providerNotice(room) {
     if (this.providerDownSince === undefined && this.clock.now() - this.providerRecoveredAt >= 60000) return false;
     // A viewer retrying delivery reports seeking; a brief healthy seek stays below the client's delay.
@@ -162,8 +162,8 @@ module.exports = {
       viewers: new Map(),
     }));
     preload.work = this.startMediaWork(room, async work => {
-      const plex = await this.hub.mediaFor(actor, next.serverId);
-      const source = await plex.prepare(next.mediaId, 'direct', false, undefined, undefined, { sourceOnly: true });
+      const provider = await this.hub.mediaFor(actor, next.serverId);
+      const source = await provider.prepare(next.mediaId, 'direct', false, undefined, undefined, { sourceOnly: true });
       if (preload.dropped || work.signal.aborted) {
         await this.stopMedia(room, source);
         return;
@@ -178,7 +178,7 @@ module.exports = {
           settings,
           source,
           shareKey: [room.roomId, 'next', preload.countdown],
-          authorized: async () => !preload.dropped && (!plex.allows || (await plex.allows(source.id))),
+          authorized: async () => !preload.dropped && (!provider.allows || (await provider.allows(source.id))),
         });
         preload.fallbackStream.reconcile(preload.startAt, true);
       }
@@ -196,14 +196,14 @@ module.exports = {
     );
   },
   /** A viewer's preloaded stream for the room's current video, if it still fits them. */
-  takePreload(room, viewerId, viewer, source, plex) {
+  takePreload(room, viewerId, viewer, source, provider) {
     const preload = room.adoptable,
       task = preload?.media && preload.media === source ? preload.viewers.get(viewerId) : undefined;
     if (!task) return;
     preload.viewers.delete(viewerId);
     return task.then(
       result => {
-        if (result?.principal === plex.principal && result.choices === this.streamChoices(viewer)) {
+        if (result?.principal === provider.principal && result.choices === this.streamChoices(viewer)) {
           result.adopted = true;
           return result.media;
         }

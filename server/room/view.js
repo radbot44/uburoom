@@ -60,8 +60,8 @@ module.exports = {
   },
   /**
    * The synchronous part of canView for a viewer's published state. The asynchronous
-   * part (membership refresh, Plex item access) comes from the viewer's last check,
-   * which their presence keeps current; a viewer's state never waits on Plex for it.
+   * part (membership refresh, provider item access) comes from the viewer's last check,
+   * which their presence keeps current; a viewer's state never waits on a provider for it.
    */
   canSee(room, actor, viewer) {
     if (!room || this.rooms.get(room.roomId) !== room) return false;
@@ -72,7 +72,7 @@ module.exports = {
     return this.hub.authorize(actor, room, 'room.view').ok;
   },
   // Room access with the asynchronous provider checks authorize() leaves out:
-  // membership refresh and personal Plex access to the current item.
+  // membership refresh and personal provider access to the current item.
   async canView(room, actor) {
     if (!room || this.rooms.get(room.roomId) !== room) return false;
     // A frozen room is its host's alone until it wakes or closes.

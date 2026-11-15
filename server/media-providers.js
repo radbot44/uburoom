@@ -73,6 +73,10 @@ class MediaProviders {
   get configured() {
     return this.list.some(provider => provider.root?.configured);
   }
+  /** Whether a provider of this kind is set up. */
+  has(kind) {
+    return this.list.some(provider => provider.kind === kind && !!provider.root?.configured);
+  }
   // A provider that cannot say who it is right now must not hide the ones that can.
   async find(serverId) {
     let unanswered;
@@ -185,7 +189,8 @@ class MediaProviders {
   async reconcileSessions(inUse) {
     const reports = {};
     for (const provider of this.list)
-      if (provider.root?.reconcileSessions) reports[provider.kind] = await provider.root.reconcileSessions(inUse);
+      if (provider.root?.configured && provider.root.reconcileSessions)
+        reports[provider.kind] = await provider.root.reconcileSessions(inUse);
     return reports;
   }
   close() {

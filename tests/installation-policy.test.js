@@ -436,7 +436,7 @@ test('conversion policy follows Plex, fails closed when unknown and counts jobs 
     formats: ['av1'],
     maxJobs: 1,
   });
-  await assert.rejects(policy.video('uburoom', 'av1', plex), /Plex disables/);
+  await assert.rejects(policy.video('uburoom', 'av1', plex), /media server disables/);
   assert.equal(reads, 1);
   plex.shared.conversionPreference = undefined;
   disabled = '0';

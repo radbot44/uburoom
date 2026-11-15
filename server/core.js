@@ -38,7 +38,7 @@ function watching(room, actor, now) {
 }
 
 async function unconfiguredMedia() {
-  throw new Error('No Plex service is configured');
+  throw new Error('No media provider is configured');
 }
 const refused = () => {
   throw Object.assign(new Error('No controllable room.'), { status: 403 });
@@ -170,7 +170,7 @@ class Hub {
    * - 'room.host': act as one of the room's hosts (hosts and Admin mode, never guests).
    * Returns `{ok: true}`, or `{ok: false, reason}` where reason 'room' means the
    * actor has no access to the room and 'permission' means the room's permissions
-   * deny the action. Provider checks (membership refresh, Plex item access) are
+   * deny the action. Provider checks (membership refresh, provider item access) are
    * asynchronous and stay with Watch.canView.
    * @param {Actor} actor
    * @param {any} room

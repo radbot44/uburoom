@@ -171,8 +171,8 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
     // A direct output never serves video through this process, even if a client
     // tries a stale or manually constructed resource URL. Its start is text only.
     if (media.directHls && key === 'start' && !media.initialManifest)
-      return json(res, 409, { error: 'Direct Plex playlist unavailable' });
-    if (media.directHls && key !== 'start') return json(res, 409, { error: 'Use the direct Plex media route' });
+      return json(res, 409, { error: 'Direct playlist unavailable' });
+    if (media.directHls && key !== 'start') return json(res, 409, { error: 'Use the direct media route' });
     if (Playback.localFormat(media.format)) {
       if (key === 'start')
         return json(res, 200, {
@@ -274,7 +274,7 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
       try {
         text = rewriteManifest(media.initialManifest, target, media, grant.id);
       } catch {
-        return json(res, 409, { error: 'Plex playlist could not use the selected delivery route' });
+        return json(res, 409, { error: 'The playlist could not use the selected delivery route' });
       }
       res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
       return res.end(req.method === 'HEAD' ? undefined : text);
@@ -343,7 +343,7 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
             ([404, 410].includes(error.status) || (media.hlsLease && [401, 403].includes(error.status)))
             ? 410
             : 502,
-          { error: 'Plex playback failed; try a different quality or check server access' },
+          { error: 'Playback failed; try a different quality or check server access' },
         );
       else res.destroy();
     } finally {

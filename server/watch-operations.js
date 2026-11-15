@@ -130,7 +130,7 @@ function watchOperations({
     // The viewer gets a generic line; the operator needs the cause to fix it.
     if (!known) hub.logger?.warn('Request', 'Request failed: ' + (error?.message || String(error)));
     return result([400, 403, 404, 409, 429, 503].includes(error.status) ? error.status : 400, {
-      error: known ? error.message : 'Request failed; check Plex/Discord configuration and try again',
+      error: known ? error.message : 'Request failed; check the server configuration and try again',
       ...(error.reconnect ? { reconnect: error.reconnect } : {}),
     });
   };
@@ -392,7 +392,7 @@ function watchOperations({
   }
   /**
    * The server's own publication of a tab's view. It reads: it never joins, starts
-   * nothing and never asks Plex, so a tab the room let go of has to join again.
+   * nothing and never asks a provider, so a tab the room let go of has to join again.
    * @param {Context} context
    * @param {string} roomId
    * @param {string} viewerId
@@ -554,32 +554,32 @@ function watchOperations({
     if (!(await eligible())) return result(403, { error: 'Library access requires room access' });
     // The library names the server it is browsing; with none named it is the first one configured.
     const server = text(args.server) ?? undefined;
-    const plex = await hub.mediaFor(auth.actor, server);
-    const scopeCurrent = async () => (await hub.mediaFor(auth.actor, server)).principal === plex.principal;
+    const provider = await hub.mediaFor(auth.actor, server);
+    const scopeCurrent = async () => (await hub.mediaFor(auth.actor, server)).principal === provider.principal;
     const itemVisible = async () =>
-      plex.principal === 'discord-shared' || (await plex.visible(text(args.item), text(args.type)));
+      provider.principal === 'discord-shared' || (await provider.visible(text(args.item), text(args.type)));
     // What the library shows names the server it came from, so a choice can be sent back to it.
     const stamp = async items => {
-      if (!items?.length || !plex.configured) return;
-      const serverId = await watch.providers.identify({ serverId: server, provider: plex }).catch(() => undefined);
+      if (!items?.length || !provider.configured) return;
+      const serverId = await watch.providers.identify({ serverId: server, provider }).catch(() => undefined);
       if (serverId) for (const item of items) if (item) item.serverId = serverId;
     };
     let data;
     if (op === 'library.art') {
-      const art = await plex.artwork(text(args.item), text(args.kind) || 'poster', text(args.type));
+      const art = await provider.artwork(text(args.item), text(args.kind) || 'poster', text(args.type));
       if (!(await eligible()) || !(await scopeCurrent()) || !(await itemVisible()))
         return result(403, { error: 'Library access was revoked' });
       return { status: 200, resource: art };
     } else if (op === 'library.availability') {
       const ids = String(args.items || '').split(',');
       if (ids.length > 80 || ids.some(id => id === 'demo' || !mediaIdentity(id)))
-        return result(400, { error: 'Select between 1 and 80 Plex items' });
-      data = { items: [...(await plex.availability(ids))].map(([id, available]) => ({ id, available })) };
+        return result(400, { error: 'Select between 1 and 80 items' });
+      data = { items: [...(await provider.availability(ids))].map(([id, available]) => ({ id, available })) };
     } else if (op === 'library.item') {
-      data = { item: await plex.details(text(args.item), text(args.type)) };
+      data = { item: await provider.details(text(args.item), text(args.type)) };
       await stamp([data.item]);
       if (data.item) applyRoomProgress(watch, args.room, [data.item]);
-    } else if (op === 'library.filters') data = await plex.filters(text(args.section));
+    } else if (op === 'library.filters') data = await provider.filters(text(args.section));
     else {
       const query = Object.fromEntries(
         LIBRARY_QUERY.filter(key => args[key] !== undefined && args[key] !== null).map(key => [key, String(args[key])]),
@@ -588,7 +588,9 @@ function watchOperations({
       const home = server === undefined && !['section', 'parent', 'collection'].some(key => query[key]);
       if (home) data = await watch.providers.libraries(auth.actor, (actor, serverId) => hub.mediaFor(actor, serverId));
       else {
-        data = plex.configured ? await plex.browse(query) : { items: [], total: 0, offset: 0, nextOffset: null };
+        data = provider.configured
+          ? await provider.browse(query)
+          : { items: [], total: 0, offset: 0, nextOffset: null };
         await stamp(data.items);
       }
       data.testVideo = !!watch.demoMedia;

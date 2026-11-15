@@ -267,7 +267,7 @@ module.exports = {
       } catch (error) {
         return {
           status: 'failed',
-          message: error instanceof PlaybackError ? error.message : 'Plex could not refresh this stream.',
+          message: error instanceof PlaybackError ? error.message : 'This stream could not be refreshed.',
         };
       }
     });

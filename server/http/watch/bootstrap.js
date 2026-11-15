@@ -12,7 +12,8 @@ function pageBootstrap({ config, watch, hub, registry, entryPolicy, diagnosticLo
     clientId: config.clientId,
     discordRichPresence: config.discordRichPresence !== false,
     demo: !!config.demo,
-    plexConfigured: watch.providers.configured,
+    // Plex sign-in needs the Plex server itself, not just any media provider.
+    plexConfigured: watch.providers.has('plex'),
     testVideo: !!watch.demoMedia,
     access: entryPolicy?.public(),
     guests: !!hub.guestsEnabled(),

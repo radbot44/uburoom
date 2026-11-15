@@ -31,7 +31,7 @@ class ConversionPolicy {
     if (policy.policy === 'follow_plex' && (await provider?.videoConversionDisabled?.()))
       throw Object.assign(
         this.failure(
-          'Plex disables video transcoding. uburoom honors this setting; try Original playback in a compatible player.',
+          'The media server disables video transcoding. uburoom honors this setting; try Original playback in a compatible player.',
         ),
         { videoDisabled: true },
       );

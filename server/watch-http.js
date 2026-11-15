@@ -559,7 +559,7 @@ function watchHttp({
         error:
           error instanceof PlaybackError
             ? error.message
-            : 'Request failed; check Plex/Discord configuration and try again',
+            : 'Request failed; check the server configuration and try again',
       });
       return true;
     }

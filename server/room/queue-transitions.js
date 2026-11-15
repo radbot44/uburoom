@@ -51,9 +51,9 @@ module.exports = {
       for (const item of needed) {
         if (!room.endingMeta.has(item.mediaId)) {
           try {
-            const plex = await this.catalogScope(viewer?.actor, item.serverId);
-            if (!plex?.details) throw new Error('This provider has no item details');
-            const details = await plex.details(item.mediaId, item.type);
+            const provider = await this.catalogScope(viewer?.actor, item.serverId);
+            if (!provider?.details) throw new Error('This provider has no item details');
+            const details = await provider.details(item.mediaId, item.type);
             room.endingMeta.set(item.mediaId, {
               summary: details?.summary || '',
               subtitle: details?.subtitle || item.subtitle || '',
@@ -95,13 +95,13 @@ module.exports = {
     const revision = record.queueRevision;
     const key = completed.id + ':' + revision;
     const viewer = [...room.viewers.values()][0];
-    const plex = await this.catalogScope(viewer?.actor, completed.serverId);
-    if (!plex || typeof plex.nextEpisodeOffer !== 'function') {
+    const provider = await this.catalogScope(viewer?.actor, completed.serverId);
+    if (!provider || typeof provider.nextEpisodeOffer !== 'function') {
       room.endingOffer = { key, offer: null };
       return;
     }
     try {
-      const offer = await plex.nextEpisodeOffer(completed.mediaId);
+      const offer = await provider.nextEpisodeOffer(completed.mediaId);
       if (room.epoch !== epoch || this.roomState.store.get(record.id)?.queueRevision !== revision) return;
       room.endingOffer = { key, offer: offer || null };
       if (offer) {
@@ -321,9 +321,9 @@ module.exports = {
   /**
    * Changes the room's video in two phases. Inside the mailbox it checks the command
    * and reserves the room (`room.transition`, the handle on this work, with the
-   * mediaVersion and epoch it expects). Outside, Plex prepares the video and the queue
+   * mediaVersion and epoch it expects). Outside, the provider prepares the video and the queue
    * is written. Back inside, the result is adopted only if the room has not moved on;
-   * otherwise the prepared Plex session is stopped.
+   * otherwise the prepared provider session is stopped.
    */
   async changeQueueMedia(room, command, actor, ticket, options) {
     if (this.shuttingDown || room.closed) return { status: 'unavailable', message: 'Room is closing.' };
@@ -487,16 +487,16 @@ module.exports = {
     try {
       await room.saving?.catch(() => {});
       if (target) {
-        const plex = await this.hub.mediaFor(actor, target.serverId);
+        const provider = await this.hub.mediaFor(actor, target.serverId);
         // A failed preload is this load's failure; preparing again would only repeat it.
         const preloaded = preload?.mediaId === target.mediaId ? await preload.source : undefined;
-        if (preloaded && preloaded.principal === plex.principal) preload.sourceAdopted = true;
+        if (preloaded && preloaded.principal === provider.principal) preload.sourceAdopted = true;
         prepared =
           target.mediaId === 'demo'
             ? this.demoMedia && { ...this.demoMedia, id: 'demo', resources: new Map() }
             : preload?.sourceAdopted
               ? preloaded
-              : await plex.prepare(target.mediaId, 'direct', false, undefined, undefined, { sourceOnly: true });
+              : await provider.prepare(target.mediaId, 'direct', false, undefined, undefined, { sourceOnly: true });
         if (!prepared) return { status: 'failed', message: 'Test video is unavailable.' };
         prepared.roomServerId = await this.roomState.identify(prepared);
         if (record) {
@@ -513,8 +513,8 @@ module.exports = {
               status: 409,
             });
         }
-        if ((await this.hub.mediaFor(actor, target.serverId)).principal !== plex.principal)
-          return { status: 'unavailable', message: 'Plex access changed.' };
+        if ((await this.hub.mediaFor(actor, target.serverId)).principal !== provider.principal)
+          return { status: 'unavailable', message: 'Media access changed.' };
       }
       let corpus;
       if (record && (action === 'media.next' || advance || playEntry || playAuto)) {
@@ -660,7 +660,7 @@ module.exports = {
       room.autoplayError =
         error.status || error instanceof PlaybackError
           ? error.message
-          : 'The next video could not be loaded. Check Plex and server storage.';
+          : 'The next video could not be loaded. Check the media server and storage.';
       room.revision++;
       this.changed(room);
       return { status: 'failed', message: room.autoplayError };

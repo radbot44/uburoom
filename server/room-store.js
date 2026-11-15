@@ -79,7 +79,7 @@ function bookmark(value) {
   }
   // Allowlist source identity and progress. No token, URL, stream or viewer data.
   return {
-    serverId: text(value.serverId, 200, 'Plex server identity'),
+    serverId: text(value.serverId, 200, 'Media server identity'),
     mediaId: value.mediaId,
     type: value.type,
     title: text(value.title, 200, 'media title'),

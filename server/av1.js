@@ -224,7 +224,7 @@ function codecMatches(a, b) {
   return ca === cb;
 }
 
-// Plex's track list can be out of date for the file it serves. Its number counts only
+// A provider's track list can be out of date for the file it serves. Its number counts only
 // when the file agrees; otherwise the track is found by its order among its codec.
 function fileIndex(rows = [], track, streams = [], type) {
   if (!rows.length || !streams.some(stream => stream.codec_name)) return track.index;
@@ -236,7 +236,7 @@ function fileIndex(rows = [], track, streams = [], type) {
     .findIndex(row => row.id === track.id);
   if (!same[order])
     throw new PlaybackError(
-      'This track is not in the video file. Refresh its metadata in Plex or choose another track.',
+      'This track is not in the video file. Refresh its metadata on the media server or choose another track.',
     );
   return same[order].index;
 }

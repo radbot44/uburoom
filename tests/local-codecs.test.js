@@ -194,7 +194,7 @@ test('local VP8/VP9 preparation enforces allowed formats, Plex policy and subtit
     await assert.rejects(plex.prepare('1', 'direct', true, undefined, 'av1'), /not offered/);
     settings.policy = 'follow_plex';
     plex.transcode.videoConversionDisabled = async () => true;
-    await assert.rejects(plex.prepare('1', 'direct', true, undefined, 'vp9'), /Plex disables/);
+    await assert.rejects(plex.prepare('1', 'direct', true, undefined, 'vp9'), /media server disables/);
     settings.policy = 'override';
     const burned = await plex.prepare('1', 'direct', true, undefined, 'vp8', { subtitleId: '42' });
     assert.equal(burned.av1Lease.group.source.burn.id, '42');

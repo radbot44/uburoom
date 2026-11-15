@@ -49,7 +49,7 @@ function cleanNumber(value, min, max, label) {
 
 function validateItem(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw error('Invalid queue item');
-  const serverId = cleanText(raw.serverId, 200, 'Plex server identity');
+  const serverId = cleanText(raw.serverId, 200, 'Media server identity');
   const mediaId = mediaIdentity(raw.mediaId)?.id;
   if (!mediaId) throw error('Invalid media identity');
   if (mediaId === 'demo' && serverId !== 'local-demo') throw error('Invalid demo media source');
@@ -125,7 +125,7 @@ function validateAuto(config) {
     scope = {
       type: selected.type,
       id: selected.id,
-      serverId: cleanText(selected.serverId, 200, 'Plex server identity'),
+      serverId: cleanText(selected.serverId, 200, 'Media server identity'),
     };
   }
   return {
@@ -439,7 +439,7 @@ class RoomQueue {
     return { autoplay: enabled, revision: room.revision + 1 };
   }
 
-  // The caller resolves Plex access before supplying the full, ordered corpus.
+  // The caller resolves provider access before supplying the full, ordered corpus.
   // Bolt Optimization: Use Map indexing for O(1) item lookups in 'following'/'continue' modes
   // and maintain the 'available' array in 'random' mode for O(N) preview selection.
   computeAutoNext(roomId, corpus, { forceAdvance = false } = {}) {

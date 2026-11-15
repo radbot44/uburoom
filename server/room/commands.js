@@ -217,24 +217,24 @@ module.exports = {
         return this.acknowledge(room, declared, reply);
       };
     if (['media.play', 'media.toggle'].includes(action) && room.media?.kind !== 'demo') {
-      // Plex confirms the file outside the mailbox; the play applies only to the same video.
+      // The provider confirms the file outside the mailbox; the play applies only to the same video.
       const version = room.mediaVersion,
         media = room.media;
       return async () => {
         // An outage must not stop anyone resuming media already buffered. A file
-        // Plex confirms is missing still refuses, and access is checked below.
-        let plex,
+        // the provider confirms is missing still refuses, and access is checked below.
+        let provider,
           unconfirmed = false;
         try {
-          plex = await this.streamScope(actor, media);
-          if (plex.playableItem) await plex.playableItem(media.id);
+          provider = await this.streamScope(actor, media);
+          if (provider.playableItem) await provider.playableItem(media.id);
         } catch (error) {
           if (!this.providerFailed(error)) throw error;
           unconfirmed = true;
         }
         if (
           !(await this.canView(room, actor)) ||
-          (!unconfirmed && (await this.streamScope(actor, media)).principal !== plex.principal)
+          (!unconfirmed && (await this.streamScope(actor, media)).principal !== provider.principal)
         )
           return expired();
         const reply = await this.inRoom(room, () =>

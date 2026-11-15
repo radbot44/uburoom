@@ -25,7 +25,7 @@ const PERSONAL_KEYS = [
 ];
 // The access a viewer's republish relies on is rechecked this often from their own presence.
 const ACCESS_RECHECK_MS = 3000;
-// A stream that keeps a Plex transcode open is pinged this often.
+// A stream that keeps a provider transcode open is pinged this often.
 const TRANSCODE_PING_MS = 15000;
 // The answer to a command whose room, epoch, deadline or permission moved on before it applied.
 const expired = () => ({ status: 'unavailable', message: 'Room changed or command expired.' });

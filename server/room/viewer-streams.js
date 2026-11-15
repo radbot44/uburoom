@@ -61,7 +61,7 @@ module.exports = {
     return this.startMediaWork(
       room,
       async work => {
-        const plex = await this.streamScope(viewer.actor, source),
+        const provider = await this.streamScope(viewer.actor, source),
           choices = this.streamChoices(viewer);
         const authorized = async () =>
           current() &&
@@ -72,7 +72,7 @@ module.exports = {
         const media = await this.prepareQuality(
           room,
           viewer,
-          plex,
+          provider,
           source,
           viewer.preferredQuality || viewer.quality,
           viewer.compatible,
@@ -85,19 +85,19 @@ module.exports = {
           return;
         }
         this.warmSubtitles(media, preload.startAt);
-        return { media, choices, principal: plex.principal };
+        return { media, choices, principal: provider.principal };
       },
       { signal: preload.work?.signal },
     ).promise;
   },
-  async prepareQuality(room, viewer, plex, source, requested, compatible, fallback, authorized, extraOptions) {
+  async prepareQuality(room, viewer, provider, source, requested, compatible, fallback, authorized, extraOptions) {
     const opts =
       typeof authorized === 'object' && authorized !== null && typeof authorized !== 'function'
         ? { ...authorized, ...extraOptions }
         : { authorized, ...extraOptions };
     const authFn = opts.authorized;
     if (source.unavailable)
-      source = await plex.prepare(source.id, 'direct', false, undefined, undefined, { sourceOnly: true });
+      source = await provider.prepare(source.id, 'direct', false, undefined, undefined, { sourceOnly: true });
     const { candidates } = require('../quality-options');
     const choices = this.providers.qualities(source);
     if (!choices.length)
@@ -111,7 +111,7 @@ module.exports = {
         'No available quality is at or below your preferred setting. Your preference has been kept.',
       );
     const prepare = (value, sharedOnly = false) =>
-      this.prepareOutput(room, viewer, plex, source, value, compatible, fallback, {
+      this.prepareOutput(room, viewer, provider, source, value, compatible, fallback, {
         ...viewer.trackChoice,
         browserSubtitles: viewer.browserSubtitles,
         localCodecs: viewer.localCodecs,
@@ -144,21 +144,21 @@ module.exports = {
         : '';
     return media;
   },
-  prepareOutput(room, viewer, plex, source, quality, compatible, fallback, choices) {
-    return plex.prepare(source.id, quality, compatible, source, fallback, {
+  prepareOutput(room, viewer, provider, source, quality, compatible, fallback, choices) {
+    return provider.prepare(source.id, quality, compatible, source, fallback, {
       ...choices,
-      directPlan: () => this.providers.directPlan(plex, viewer, room, choices.authorized),
+      directPlan: () => this.providers.directPlan(provider, viewer, room, choices.authorized),
     });
   },
   async prepareViewer(room, actor, viewerId) {
     const viewer = room.viewers.get(viewerId),
       version = room.mediaVersion;
     if (!viewer || viewer.userId !== actor.userId) return;
-    let plex;
+    let provider;
     try {
-      plex = await this.streamScope(actor, room.media);
+      provider = await this.streamScope(actor, room.media);
     } catch (error) {
-      // Plex cannot answer: keep what the viewer has and try again shortly.
+      // The provider cannot answer: keep what the viewer has and try again shortly.
       if (this.providerFailed(error)) {
         this.retryStream(room, viewerId, 1000);
         return viewer.media;
@@ -187,10 +187,10 @@ module.exports = {
       recorded.get(serverId).push(item.mediaId);
     }
     // An empty queue is an answer too: nothing is unavailable any more.
-    let availability = !entries.length && plex.availability ? new Map() : undefined;
+    let availability = !entries.length && provider.availability ? new Map() : undefined;
     for (const [serverId, ids] of recorded) {
       try {
-        const scope = serverId === current ? plex : await this.hub.mediaFor(actor, serverId);
+        const scope = serverId === current ? provider : await this.hub.mediaFor(actor, serverId);
         if (!scope.availability) continue;
         const status = await scope.availability(ids);
         availability ||= new Map();
@@ -235,7 +235,7 @@ module.exports = {
         viewer.media &&
         viewer.mediaVersion === version &&
         viewer.media.format === 'local' &&
-        (!viewer.media.principal || viewer.media.principal === plex.principal)
+        (!viewer.media.principal || viewer.media.principal === provider.principal)
       )
         return viewer.media;
       this.tracking.end(viewer, 'stream-changed');
@@ -248,7 +248,7 @@ module.exports = {
         duration: room.media.duration,
         kind: room.media.kind,
         format: 'local',
-        principal: plex.principal,
+        principal: provider.principal,
         resources: new Map(),
         chapters: room.media.chapters || [],
         markers: room.media.markers || [],
@@ -264,7 +264,7 @@ module.exports = {
     if (
       viewer.media &&
       viewer.mediaVersion === version &&
-      (!viewer.media.principal || viewer.media.principal === plex.principal) &&
+      (!viewer.media.principal || viewer.media.principal === provider.principal) &&
       (!background || this.clock.now() < (viewer.fallbackRetryAt || 0))
     )
       return viewer.media;
@@ -296,7 +296,7 @@ module.exports = {
             actor,
             viewerId,
             async (authorized, source) => {
-              const media = await plex.prepare(
+              const media = await provider.prepare(
                 source.id,
                 viewer.preferredQuality || viewer.quality,
                 false,
@@ -309,7 +309,7 @@ module.exports = {
                 return this.prepareQuality(
                   room,
                   viewer,
-                  plex,
+                  provider,
                   source,
                   viewer.preferredQuality || viewer.quality,
                   viewer.compatible,
@@ -336,11 +336,11 @@ module.exports = {
           async (authorized, source) =>
             source.kind === 'demo'
               ? source
-              : (await this.takePreload(room, viewerId, viewer, source, plex)) ||
+              : (await this.takePreload(room, viewerId, viewer, source, provider)) ||
                 this.prepareQuality(
                   room,
                   viewer,
-                  plex,
+                  provider,
                   source,
                   viewer.preferredQuality || viewer.quality,
                   viewer.compatible,
@@ -440,7 +440,7 @@ module.exports = {
       // Back in the mailbox: the stream is adopted only by the same viewer, video and stream.
       return await this.inRoom(room, () => {
         if (!usable || !admitted()) return expired();
-        if (!accept(media)) throw new PlaybackError('Plex could not refresh this stream.');
+        if (!accept(media)) throw new PlaybackError('This stream could not be refreshed.');
         this.tracking.end(viewer, 'stream-changed');
         void this.reporting?.end(viewer, 'stream-changed');
         viewer.media = media;
@@ -517,7 +517,7 @@ module.exports = {
     }, ms);
     viewer.streamRetry.unref?.();
   },
-  /** Keeps open Plex transcodes alive while any viewer streams through one. */
+  /** Keeps open provider transcodes alive while any viewer streams through one. */
   keepTranscodes(room) {
     const ping = () => {
       const media = new Map(

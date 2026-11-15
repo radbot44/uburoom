@@ -103,7 +103,7 @@ module.exports = {
       viewer.accessChecking = false;
     });
   },
-  /** Records whether `viewer` may still see the room's current media (membership and Plex item access). */
+  /** Records whether `viewer` may still see the room's current media (membership and provider item access). */
   async checkAccess(room, viewer) {
     const media = room.media,
       at = this.clock.now(),

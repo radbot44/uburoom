@@ -33,7 +33,7 @@ function validateSuggestionItem(item) {
   if (!item || typeof item !== 'object' || Array.isArray(item)) {
     throw Object.assign(new Error('Invalid suggestion item'), { status: 400 });
   }
-  const serverId = textField(item.serverId, 200, 'Plex server identity', true);
+  const serverId = textField(item.serverId, 200, 'Media server identity', true);
   const mediaId = mediaIdentity(item.mediaId)?.id;
   if (!mediaId) throw Object.assign(new Error('Invalid media identity'), { status: 400 });
   if (mediaId === 'demo' && serverId !== 'local-demo') {
@@ -110,22 +110,22 @@ module.exports = {
         anchorOverride !== undefined ? anchorOverride : active.length ? active[active.length - 1] : lastHistory;
       if (!anchorItem || anchorItem.type !== 'episode' || anchorItem.mediaId === 'demo') return [];
       const serverId = anchorItem.serverId || (await this.roomState.identify(anchorItem));
-      const plex = await this.hub.mediaFor(actor, serverId);
-      const details = plex.details ? await plex.details(anchorItem.mediaId, 'episode') : null;
+      const provider = await this.hub.mediaFor(actor, serverId);
+      const details = provider.details ? await provider.details(anchorItem.mediaId, 'episode') : null;
       const showId = details?.showId;
       if (!showId) return [];
-      const items = await plex.queueItems({ type: 'show', id: String(showId), includeSpecials: false });
-      if ((await this.hub.mediaFor(actor, serverId)).principal !== plex.principal)
-        throw Object.assign(new Error('Plex access changed'), { status: 403 });
+      const items = await provider.queueItems({ type: 'show', id: String(showId), includeSpecials: false });
+      if ((await this.hub.mediaFor(actor, serverId)).principal !== provider.principal)
+        throw Object.assign(new Error('Media access changed'), { status: 403 });
       return items.map(item => this.queueItem(item, serverId));
     }
     const serverId = config.scope.serverId;
     if (!(await this.providers.recorded({ serverId })))
-      throw Object.assign(new Error('The auto-queue Plex server changed'), { status: 409 });
-    const plex = await this.hub.mediaFor(actor, serverId);
-    const items = await plex.queueItems({ ...config.scope, includeSpecials: config.includeSpecials });
-    if ((await this.hub.mediaFor(actor, serverId)).principal !== plex.principal)
-      throw Object.assign(new Error('Plex access changed'), { status: 403 });
+      throw Object.assign(new Error('The auto-queue media server changed'), { status: 409 });
+    const provider = await this.hub.mediaFor(actor, serverId);
+    const items = await provider.queueItems({ ...config.scope, includeSpecials: config.includeSpecials });
+    if ((await this.hub.mediaFor(actor, serverId)).principal !== provider.principal)
+      throw Object.assign(new Error('Media access changed'), { status: 403 });
     return items.map(item => this.queueItem(item, serverId));
   },
   async verifyAutoNext(id, actor, corpus) {
@@ -135,11 +135,11 @@ module.exports = {
       const currentAuto = this.roomState.store.get(id).autoQueue;
       const candidate = currentAuto?.mode !== 'off' ? currentAuto?.next : null;
       if (!candidate || candidate.mediaId === 'demo') return currentAuto;
-      const plex = await this.hub.mediaFor(actor, candidate.serverId);
-      if (!plex?.availability) return currentAuto;
-      const status = await plex.availability([candidate.mediaId]);
-      if ((await this.hub.mediaFor(actor, candidate.serverId)).principal !== plex.principal)
-        throw Object.assign(new Error('Plex access changed'), { status: 403 });
+      const provider = await this.hub.mediaFor(actor, candidate.serverId);
+      if (!provider?.availability) return currentAuto;
+      const status = await provider.availability([candidate.mediaId]);
+      if ((await this.hub.mediaFor(actor, candidate.serverId)).principal !== provider.principal)
+        throw Object.assign(new Error('Media access changed'), { status: 403 });
       if (status.get(candidate.mediaId) !== false) return currentAuto;
       remaining = (remaining || (await this.autoCorpus(id, actor)) || []).filter(
         item => item.mediaId !== candidate.mediaId,
@@ -180,12 +180,12 @@ module.exports = {
     const rawId = raw.mediaId || raw.id;
     // A provider that cannot answer leaves a named server unconfirmed, not refused.
     if (verifyServer && raw.serverId && !(await this.providers.recorded({ ...raw, mediaId: rawId }).catch(() => true)))
-      throw Object.assign(new Error('Plex server identity mismatch'), { status: 400 });
+      throw Object.assign(new Error('Media server identity mismatch'), { status: 400 });
     const serverId = raw.serverId || (await this.roomState.identify({ id: rawId }));
-    const plex = await this.hub.mediaFor(actor, serverId);
-    const checked = plex.playableItem && rawId !== 'demo' ? await plex.playableItem(rawId) : raw;
-    if ((await this.hub.mediaFor(actor, serverId)).principal !== plex.principal)
-      throw Object.assign(new Error('Plex access changed'), { status: 403 });
+    const provider = await this.hub.mediaFor(actor, serverId);
+    const checked = provider.playableItem && rawId !== 'demo' ? await provider.playableItem(rawId) : raw;
+    if ((await this.hub.mediaFor(actor, serverId)).principal !== provider.principal)
+      throw Object.assign(new Error('Media access changed'), { status: 403 });
     return this.queueItem(checked, serverId);
   },
   /** @param {any} room @param {string} suggestionId */
@@ -455,12 +455,12 @@ module.exports = {
           throw Object.assign(new Error('Queue is no longer empty'), { status: 409 });
         }
         const serverId = await this.roomState.identify({ id: args.mediaId, serverId: args.serverId });
-        const plex = await this.hub.mediaFor(actor, serverId);
-        const checked = plex.playableItem
-          ? await plex.playableItem(args.mediaId)
+        const provider = await this.hub.mediaFor(actor, serverId);
+        const checked = provider.playableItem
+          ? await provider.playableItem(args.mediaId)
           : { id: args.mediaId, type: 'episode' };
-        if ((await this.hub.mediaFor(actor, serverId)).principal !== plex.principal) {
-          throw Object.assign(new Error('Plex access changed'), { status: 403 });
+        if ((await this.hub.mediaFor(actor, serverId)).principal !== provider.principal) {
+          throw Object.assign(new Error('Media access changed'), { status: 403 });
         }
         await check();
         const autoConfig = { mode: 'continue', scope: null, includeSpecials: false };
@@ -487,14 +487,14 @@ module.exports = {
         value = await queue.playEntry(id, actor.userId, args.entryId, { skipPrevious, expectedRevision: revision });
       } else if (action === 'queue.bulk') {
         const serverId = await this.roomState.identify({ id: args.mediaId, serverId: args.serverId });
-        const plex = await this.hub.mediaFor(actor, serverId);
-        const items = await plex.queueItems({
+        const provider = await this.hub.mediaFor(actor, serverId);
+        const items = await provider.queueItems({
           type: args.type,
           id: args.mediaId,
           includeSpecials: args.includeSpecials,
         });
-        if ((await this.hub.mediaFor(actor, serverId)).principal !== plex.principal)
-          throw Object.assign(new Error('Plex access changed'), { status: 403 });
+        if ((await this.hub.mediaFor(actor, serverId)).principal !== provider.principal)
+          throw Object.assign(new Error('Media access changed'), { status: 403 });
         await check();
         value = await queue.addBulk(
           id,
