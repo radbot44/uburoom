@@ -226,7 +226,7 @@ module.exports = {
         let plex,
           unconfirmed = false;
         try {
-          plex = await this.hub.plexFor(actor);
+          plex = await this.hub.mediaFor(actor);
           if (plex.playableItem) await plex.playableItem(media.id);
         } catch (error) {
           if (!this.providerFailed(error)) throw error;
@@ -234,7 +234,7 @@ module.exports = {
         }
         if (
           !(await this.canView(room, actor)) ||
-          (!unconfirmed && (await this.hub.plexFor(actor)).principal !== plex.principal)
+          (!unconfirmed && (await this.hub.mediaFor(actor)).principal !== plex.principal)
         )
           return expired();
         const reply = await this.inRoom(room, () =>

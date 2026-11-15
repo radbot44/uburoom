@@ -169,7 +169,7 @@ test('anonymous entry gets a distinct account, shared media scope and no owner/a
   assert.notEqual(first.account.id, second.account.id);
   assert.equal(first.owner, false);
   assert.equal(first.adminEligible, false);
-  assert.equal((await f.app.hub.plexFor({ userId: first.account.id })).principal, 'discord-shared');
+  assert.equal((await f.app.hub.mediaFor({ userId: first.account.id })).principal, 'discord-shared');
   assert.equal((await a.post('/api/watch/rooms', {})).status, 201, 'no Discord channels needed for browser rooms');
 });
 
@@ -186,7 +186,7 @@ test('Plex-required admission supports pending Discord identity and linking, and
   assert.equal((await browser.plex('alice')).status, 302);
   const me = (await browser.request('/api/watch/me')).body;
   assert.deepEqual(me.account.identities.map(identity => identity.provider).sort(), ['discord', 'plex']);
-  assert.notEqual((await f.app.hub.plexFor({ userId: me.account.id })).principal, 'discord-shared');
+  assert.notEqual((await f.app.hub.mediaFor({ userId: me.account.id })).principal, 'discord-shared');
   const denied = f.browser();
   assert.equal((await denied.plex('denied')).status, 302);
   assert.equal((await denied.request('/api/watch/me')).status, 401);
@@ -198,14 +198,14 @@ test('open-entry fallback accepts confirmed nonmembership, can be disabled or co
   await browser.plex('denied');
   const me = (await browser.request('/api/watch/me')).body;
   assert.ok(me.account);
-  assert.equal((await f.app.hub.plexFor({ userId: me.account.id })).principal, 'discord-shared');
+  assert.equal((await f.app.hub.mediaFor({ userId: me.account.id })).principal, 'discord-shared');
   f.provider.revoked.add('103');
   f.app.plexAuth.clear();
-  await assert.rejects(f.app.hub.plexFor({ userId: me.account.id }), /expired|revoked/);
+  await assert.rejects(f.app.hub.mediaFor({ userId: me.account.id }), /expired|revoked/);
   const limited = f.browser();
   await limited.plex('bob');
   const user = (await limited.request('/api/watch/me')).body.account;
-  const scoped = await f.app.hub.plexFor({ userId: user.id });
+  const scoped = await f.app.hub.mediaFor({ userId: user.id });
   assert.notEqual(scoped.principal, 'discord-shared');
   await assert.rejects(scoped.allows('999'), /HTTP 404/);
 
@@ -217,9 +217,9 @@ test('open-entry fallback accepts confirmed nonmembership, can be disabled or co
   const dMe = (await discordUser.request('/api/watch/me')).body;
   f.config.plexFallback = { enabled: false, token: '' };
   f.app.plexAuth.clear();
-  await assert.rejects(f.app.hub.plexFor({ userId: dMe.account.id }), /fallback is disabled/);
+  await assert.rejects(f.app.hub.mediaFor({ userId: dMe.account.id }), /fallback is disabled/);
   f.config.plexFallback = { enabled: true, token: 'fixture-server-102' };
-  const separate = await f.app.hub.plexFor({ userId: dMe.account.id });
+  const separate = await f.app.hub.mediaFor({ userId: dMe.account.id });
   assert.equal(separate.token, 'fixture-server-102');
   assert.ok(!dMe.account.identities.some(identity => identity.provider === 'plex'));
 });
@@ -823,11 +823,11 @@ test('Plex exemption belongs only to verified Activity requests and survives bro
   // Sponsors confirmed nonmembers but never revoked credentials
   f.app.registry.link(me.body.account.id, 'plex', '103', 'Denied');
   f.app.registry.credential('103', { token: 'fixture-server-103', authType: 'traditional' });
-  assert.equal((await f.app.hub.plexFor({ userId: me.body.account.id, activity: true })).principal, 'discord-shared');
-  await assert.rejects(f.app.hub.plexFor({ userId: me.body.account.id }), /access|server/i);
+  assert.equal((await f.app.hub.mediaFor({ userId: me.body.account.id, activity: true })).principal, 'discord-shared');
+  await assert.rejects(f.app.hub.mediaFor({ userId: me.body.account.id }), /access|server/i);
   f.provider.revoked.add('103');
   f.app.plexAuth.clear();
-  await assert.rejects(f.app.hub.plexFor({ userId: me.body.account.id, activity: true }), /expired|revoked/);
+  await assert.rejects(f.app.hub.mediaFor({ userId: me.body.account.id, activity: true }), /expired|revoked/);
   f.provider.revoked.delete('103');
   f.app.plexAuth.clear();
 

@@ -37,7 +37,7 @@ function watching(room, actor, now) {
   return [...(room.viewers?.values() || [])].some(v => v.userId === actor.userId && now - v.at < PRESENCE_MS);
 }
 
-async function unconfiguredPlex() {
+async function unconfiguredMedia() {
   throw new Error('No Plex service is configured');
 }
 const refused = () => {
@@ -58,7 +58,7 @@ const refused = () => {
  *   canAllowGuests: (record: any, actor: Actor) => boolean,
  *   canScheduleEvents: (actor: Actor) => boolean,
  *   endGuestSessions: (roomId: string, userIds?: string[]) => Promise<string[]>,
- *   plexFor: (actor: Actor) => Promise<any>,
+ *   mediaFor: (actor: Actor) => Promise<any>,
  *   singleRoomLeader: () => Promise<any>,
  *   renameAccount: (id: string, name: string) => Promise<any>,
  *   onCommand: (roomId: string | undefined) => (action: string | undefined) => void,
@@ -85,7 +85,7 @@ const standalonePorts = () => ({
   canAllowGuests: () => false,
   canScheduleEvents: () => false,
   endGuestSessions: async () => [],
-  plexFor: unconfiguredPlex,
+  mediaFor: unconfiguredMedia,
   singleRoomLeader: async () => {
     throw new Error('No single-room leader is configured');
   },
@@ -128,7 +128,7 @@ class Hub {
     this.canAllowGuests = all.canAllowGuests;
     this.canScheduleEvents = all.canScheduleEvents;
     this.endGuestSessions = all.endGuestSessions;
-    this.plexFor = all.plexFor;
+    this.mediaFor = all.mediaFor;
     this.singleRoomLeader = all.singleRoomLeader;
     this.renameAccount = all.renameAccount;
     this.onCommand = all.onCommand;

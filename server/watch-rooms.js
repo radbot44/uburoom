@@ -97,7 +97,7 @@ class WatchRooms {
           const saved = record.bookmark;
           if (saved) {
             if ((await this.identify(saved)) !== saved.serverId) throw failure('The saved Plex server changed', 409);
-            const plex = await this.watch.hub.plexFor(actor);
+            const plex = await this.watch.hub.mediaFor(actor);
             media =
               saved.mediaId === 'demo'
                 ? this.watch.demoMedia && { ...this.watch.demoMedia, id: 'demo', resources: new Map() }
@@ -128,7 +128,7 @@ class WatchRooms {
           room.initialGate = !!room.media;
           if (room.media) this.watch.beginReadiness(room);
         } finally {
-          if (media) await this.watch.plex.stop(media);
+          if (media) await this.watch.providers.stop(media);
         }
       })();
       this.opening.set(id, opening);
@@ -286,10 +286,10 @@ class WatchRooms {
           scope = config.scope;
         if (!scope?.id || !['show', 'library', 'collection'].includes(scope.type))
           throw failure('Choose an auto-queue source');
-        const plex = await this.watch.hub.plexFor(actor);
+        const plex = await this.watch.hub.mediaFor(actor);
         const items = await plex.queueItems({ ...scope, includeSpecials: !!config.includeSpecials });
         const serverId = await this.identify(scope);
-        if ((await this.watch.hub.plexFor(actor)).principal !== plex.principal)
+        if ((await this.watch.hub.mediaFor(actor)).principal !== plex.principal)
           throw failure('Plex access changed', 403);
         creation = { ...options, autoQueue: { ...config, scope: { type: scope.type, id: scope.id, serverId } } };
         initialCorpus = items.map(item => this.watch.queueItem(item, serverId));
@@ -318,26 +318,9 @@ class WatchRooms {
     await this.eligible(actor, current);
     return record.id;
   }
-  async identify(media) {
-    if (media.id === 'demo' || media.mediaId === 'demo') return 'local-demo';
-    if (!this.identifying) {
-      this.identifying = (async () => {
-        const info = await this.watch.plex.json('/');
-        const id = info.machineIdentifier,
-          pinned = this.watch.hub.config.plexMachineIdentifier || this.registry.meta('plexMachineIdentifier');
-        if (typeof id !== 'string' || !id || (pinned && id !== pinned))
-          throw failure('The configured Plex server identity changed', 503);
-        if (!pinned) {
-          this.registry.meta('plexMachineIdentifier', id);
-          await this.registry.flush();
-        }
-        return id;
-      })();
-      this.identifying.catch(() => {
-        this.identifying = undefined;
-      });
-    }
-    return this.identifying;
+  /** The server id this media is recorded under. */
+  identify(media) {
+    return this.watch.providers.identify(media);
   }
   async savedSource(plex, saved) {
     try {
@@ -384,7 +367,7 @@ class WatchRooms {
               if (!this.watch.demoMedia) throw failure('The saved test video is unavailable');
               media = { ...this.watch.demoMedia, id: 'demo', resources: new Map() };
             } else {
-              const plex = await this.watch.hub.plexFor(actor);
+              const plex = await this.watch.hub.mediaFor(actor);
               media = await this.savedSource(plex, saved);
             }
             if (
@@ -415,7 +398,7 @@ class WatchRooms {
           adopted = true;
           return opened;
         } finally {
-          if (media && !adopted) await this.watch.plex.stop(media);
+          if (media && !adopted) await this.watch.providers.stop(media);
         }
       })();
       this.opening.set(id, opening);
@@ -699,7 +682,7 @@ class WatchRooms {
               adopted = false;
             try {
               if ((await this.identify(saved)) === saved.serverId) {
-                const plex = await this.watch.hub.plexFor(actor);
+                const plex = await this.watch.hub.mediaFor(actor);
                 media =
                   saved.mediaId === 'demo'
                     ? this.watch.demoMedia && { ...this.watch.demoMedia, id: 'demo', resources: new Map() }
@@ -727,7 +710,7 @@ class WatchRooms {
             } catch {
               room.saveError = 'The saved video could not be restored. Choose media after checking Plex access.';
             } finally {
-              if (media && !adopted) await this.watch.plex.stop(media);
+              if (media && !adopted) await this.watch.providers.stop(media);
             }
           }
         } else this.apply(this.watch.rooms.get(id), record);
@@ -796,7 +779,7 @@ class WatchRooms {
     const old = room.media;
     this.watch.dropMedia(room, 'room-reset');
     room.media = null;
-    void this.watch.plex.stop(old);
+    void this.watch.providers.stop(old);
     room.position = 0;
     room.mediaVersion = require('node:crypto').randomUUID();
     room.initialGate = false;

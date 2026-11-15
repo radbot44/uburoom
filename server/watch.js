@@ -14,6 +14,8 @@ const { randomUUID } = require('node:crypto');
 const { canWatch, Hub } = require('./core');
 const { PlaybackTracking } = require('./playback-tracking');
 const { PlexReporting } = require('./plex-reporting');
+const { MediaProviders } = require('./media-providers');
+const { plexProvider } = require('./plex-provider');
 const { WatchRooms } = require('./watch-rooms');
 const { clearPlaybackEnd } = require('./playback-end');
 const {
@@ -42,13 +44,15 @@ for (const part of parts)
     Object.defineProperty(WatchParts.prototype, name, { ...descriptor, enumerable: false });
 
 class Watch extends WatchParts {
-  constructor(hub, plex, demoMedia, registry, plexAuth, pipeline = plex?.pipeline) {
+  constructor(hub, plex, demoMedia, registry, plexAuth, pipeline = plex?.pipeline, providers) {
     super();
     // Room timelines and every in-memory deadline read this clock, never Date.now() (stored and external times excepted).
     this.clock = hub?.clock || createServerClock();
     this.tracking = new PlaybackTracking(registry);
     this.hub = hub;
+    // Plex-only wiring (direct delivery, reporting, its diagnostics) uses this; rooms use `providers`.
     this.plex = plex;
+    this.providers = providers || new MediaProviders([plexProvider({ plex, config: hub?.config, registry })]);
     /** @type {InstanceType<typeof import('./media-pipeline').MediaPipeline> | undefined} Conversion and pooling shared by every provider. */
     this.pipeline = pipeline;
     this.demoMedia = demoMedia;
@@ -109,7 +113,12 @@ class Watch extends WatchParts {
     this.providerRecoveredAt = 0;
     /** @type {any} Plex transcode sessions as last reconciled (reconcilePlexSessions). */
     this.plexSessions = undefined;
-    this.mediaChecks = new MediaChecks({ plex, pipeline, config: hub?.config || {}, sessions: () => this.plexSessions });
+    this.mediaChecks = new MediaChecks({
+      plex,
+      pipeline,
+      config: hub?.config || {},
+      sessions: () => this.plexSessions,
+    });
     /** @type {InstanceType<typeof import('./plex-delivery').PlexDelivery> | undefined} Attached by server/watch-http.js. */
     this.delivery = undefined;
   }
@@ -322,7 +331,7 @@ class Watch extends WatchParts {
       }
       results.push(
         ...(await Promise.allSettled(
-          [() => this.plex.close?.(), () => this.pipeline?.close(), () => this.reporting?.close()].map(action =>
+          [() => this.providers.close(), () => this.pipeline?.close(), () => this.reporting?.close()].map(action =>
             Promise.resolve().then(action),
           ),
         )),
@@ -367,13 +376,13 @@ function roomPorts(rooms) {
 
 /**
  * A hub and the rooms it serves, wired to each other. `ports` are the hub's other collaborators.
- * @param {{config: any, ports?: object, plex: any, pipeline?: any, demoMedia?: any, registry?: any, plexAuth?: any}} options
+ * @param {{config: any, ports?: object, plex: any, pipeline?: any, providers?: any, demoMedia?: any, registry?: any, plexAuth?: any}} options
  */
-function createRooms({ config, ports = {}, plex, pipeline, demoMedia, registry, plexAuth }) {
+function createRooms({ config, ports = {}, plex, pipeline, providers, demoMedia, registry, plexAuth }) {
   /** @type {Watch} */
   let watch;
-  const hub = new Hub(config, { plexFor: async () => plex, ...roomPorts(() => watch), ...ports });
-  watch = new Watch(hub, plex, demoMedia, registry, plexAuth, pipeline);
+  const hub = new Hub(config, { mediaFor: async () => plex, ...roomPorts(() => watch), ...ports });
+  watch = new Watch(hub, plex, demoMedia, registry, plexAuth, pipeline, providers);
   return { hub, watch };
 }
 module.exports = { Watch, createRooms, roomPorts, syncQualityParticipants, REJOIN };

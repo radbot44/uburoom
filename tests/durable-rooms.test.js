@@ -471,8 +471,8 @@ test(
     const image = Buffer.from('fixture-image-bytes');
     let reads = 0,
       allowed = true;
-    const originalPlexFor = f.app.hub.plexFor;
-    f.app.hub.plexFor = async () => ({
+    const originalPlexFor = f.app.hub.mediaFor;
+    f.app.hub.mediaFor = async () => ({
       allows: async () => allowed,
       artwork: async () => {
         reads++;
@@ -549,7 +549,7 @@ test(
       assert.equal((await get(next)).status, 404, 'removal revokes the cached artwork URL');
     } finally {
       room.media = undefined;
-      f.app.hub.plexFor = originalPlexFor;
+      f.app.hub.mediaFor = originalPlexFor;
     }
   },
 );
@@ -1347,7 +1347,7 @@ test(
           return episodes;
         },
       };
-    f.app.hub.plexFor = async () => catalog;
+    f.app.hub.mediaFor = async () => catalog;
     f.app.watch.roomState.identify = async item => (item.id === 'demo' ? 'local-demo' : 'fixture-plex');
     await guest.call('/api/watch/rooms/' + id + '?viewer=' + b);
     const bulk = { action: 'bulk', type: 'show', mediaId: '900', unfinished: true, includeSpecials: true };
@@ -1438,7 +1438,7 @@ test('held bulk expansions recheck a guest capability and active viewer after Pl
           return [{ id: '301', type: 'episode', title: 'Held episode', duration: 120 }];
         },
       };
-      f.app.hub.plexFor = async () => catalog;
+      f.app.hub.mediaFor = async () => catalog;
       f.app.watch.roomState.identify = async item => (item.id === 'demo' ? 'local-demo' : 'fixture-plex');
       const before = f.app.watch.roomState.queue.list(id),
         current = f.app.watch.roomState.queue.current(id);
@@ -1497,7 +1497,7 @@ test(
         return episodes;
       },
     };
-    f.app.hub.plexFor = async () => catalog;
+    f.app.hub.mediaFor = async () => catalog;
     f.app.watch.roomState.identify = async item => (item.id === 'demo' ? 'local-demo' : 'fixture-plex');
     assert.equal(
       (
@@ -1754,7 +1754,7 @@ test('missing queue media remains removable, blocks raw additions and restores w
     queue = f.app.watch.roomState.queue,
     plex = f.app.watch.plex;
   const item = { serverId: 'fixture-server', mediaId: '9', type: 'movie', title: 'Missing movie', duration: 60 };
-  f.app.hub.plexFor = async () => plex;
+  f.app.hub.mediaFor = async () => plex;
   plex.allows = async () => true;
   f.app.watch.roomState.identify = async () => item.serverId;
   plex.availability = async ids => new Map(ids.map(id => [id, false]));

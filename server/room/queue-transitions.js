@@ -47,7 +47,7 @@ module.exports = {
       const nextItem = summary.next || summary.autoQueue?.next;
       const needed = [summary.lastHistory, nextItem].filter(Boolean);
       const viewer = [...room.viewers.values()][0];
-      const plex = viewer ? await this.hub.plexFor(viewer.actor) : this.plex;
+      const plex = viewer ? await this.hub.mediaFor(viewer.actor) : this.providers.primary.root;
       let changed = false;
       if (plex?.details) {
         for (const item of needed) {
@@ -107,7 +107,7 @@ module.exports = {
     const revision = record.queueRevision;
     const key = completed.id + ':' + revision;
     const viewer = [...room.viewers.values()][0];
-    const plex = viewer ? await this.hub.plexFor(viewer.actor) : this.plex;
+    const plex = viewer ? await this.hub.mediaFor(viewer.actor) : this.providers.primary.root;
     if (!plex || typeof plex.nextEpisodeOffer !== 'function') {
       room.endingOffer = { key, offer: null };
       return;
@@ -499,7 +499,7 @@ module.exports = {
     try {
       await room.saving?.catch(() => {});
       if (target) {
-        const plex = await this.hub.plexFor(actor);
+        const plex = await this.hub.mediaFor(actor);
         // A failed preload is this load's failure; preparing again would only repeat it.
         const preloaded = preload?.mediaId === target.mediaId ? await preload.source : undefined;
         if (preloaded && preloaded.principal === plex.principal) preload.sourceAdopted = true;
@@ -522,7 +522,7 @@ module.exports = {
               status: 409,
             });
         }
-        if ((await this.hub.plexFor(actor)).principal !== plex.principal)
+        if ((await this.hub.mediaFor(actor)).principal !== plex.principal)
           return { status: 'unavailable', message: 'Plex access changed.' };
       }
       let corpus;
@@ -676,7 +676,7 @@ module.exports = {
     } finally {
       delete room.transition?.commit;
       if (room.transition?.kind === 'media') room.transition = undefined;
-      if (prepared && !adopted) await this.plex.stop(prepared);
+      if (prepared && !adopted) await this.providers.stop(prepared);
       if (preload && room.adoptable !== preload) {
         if (!adopted) preload.sourceAdopted = false;
         this.dropPreload(room, preload);

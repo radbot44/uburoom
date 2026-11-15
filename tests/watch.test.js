@@ -706,7 +706,7 @@ test(
       },
     };
     // The fixture has no real Plex server; viewers' Plex scope allows the title.
-    app.hub.plexFor = async () => ({ allows: async () => true });
+    app.hub.mediaFor = async () => ({ allows: async () => true });
     const av1State = (await getState()).body,
       base = av1State.mediaUrl.replace(/\/start$/, '/chunk-video-');
     assert.ok(av1State.fallbackStream, 'fallback uses a second per-viewer grant');
@@ -1219,7 +1219,7 @@ test('a Plex outage keeps admitted viewers in the room, admits nobody new and ne
       return true;
     },
   };
-  hub.plexFor = async () => plex;
+  hub.mediaFor = async () => plex;
   const { watch, actor, open } = liveWatch(hub, plex),
     a = actor('a'),
     b = actor('b');

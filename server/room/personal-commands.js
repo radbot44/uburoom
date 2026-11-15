@@ -71,7 +71,7 @@ module.exports = {
               this.prepareQuality(
                 room,
                 viewer,
-                await this.hub.plexFor(actor),
+                await this.hub.mediaFor(actor),
                 source,
                 args.quality,
                 args.compatible === true || !!viewer.compatible,
@@ -168,7 +168,7 @@ module.exports = {
             this.prepareQuality(
               room,
               viewer,
-              await this.hub.plexFor(actor),
+              await this.hub.mediaFor(actor),
               source,
               viewer.quality,
               viewer.compatible,
@@ -247,7 +247,7 @@ module.exports = {
             this.prepareQuality(
               room,
               viewer,
-              await this.hub.plexFor(actor),
+              await this.hub.mediaFor(actor),
               source,
               viewer.quality,
               viewer.compatible,

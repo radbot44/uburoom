@@ -124,7 +124,7 @@ module.exports = {
   },
   stopMedia(room, media) {
     if (!media) return Promise.resolve();
-    return this.startMediaWork(room, () => this.plex.stop(media), { kind: 'cleanup' }).promise;
+    return this.startMediaWork(room, () => this.providers.stop(media), { kind: 'cleanup' }).promise;
   },
   async drainMedia(room) {
     const owned = this.shutdownDeadline ? undefined : createDeadline(this.mediaDrainMs);
@@ -162,7 +162,7 @@ module.exports = {
       viewers: new Map(),
     }));
     preload.work = this.startMediaWork(room, async work => {
-      const plex = await this.hub.plexFor(actor);
+      const plex = await this.hub.mediaFor(actor);
       const source = await plex.prepare(next.mediaId, 'direct', false, undefined, undefined, { sourceOnly: true });
       if (preload.dropped || work.signal.aborted) {
         await this.stopMedia(room, source);
@@ -230,9 +230,9 @@ module.exports = {
         const results = await Promise.allSettled(viewers);
         for (const result of results)
           if (result.status === 'fulfilled' && result.value?.media && !result.value.adopted)
-            await this.plex.stop(result.value.media);
+            await this.providers.stop(result.value.media);
         const source = await preload.source.catch(() => undefined);
-        if (!preload.sourceAdopted && source) await this.plex.stop(source);
+        if (!preload.sourceAdopted && source) await this.providers.stop(source);
       },
       { kind: 'cleanup' },
     );
@@ -274,7 +274,7 @@ module.exports = {
         clearTimeout(viewer.streamRetry);
         clearTimeout(viewer.observationTimer);
         this.tracking.end(viewer, effect.tracking);
-        void this.plex.stop(viewer.media);
+        void this.providers.stop(viewer.media);
         void this.reporting?.end(viewer, effect.reporting);
         if (effect.left)
           this.hub.logger.info(
@@ -324,7 +324,7 @@ module.exports = {
   },
   // Server maintenance, not room lifecycle: Plex transcode sessions nothing holds are ended once a minute.
   maintainPlexSessions() {
-    if (this.plex.configured && !this.shuttingDown && Date.now() - (this.sessionsCheckedAt || 0) >= 60000) {
+    if (this.providers.configured && !this.shuttingDown && Date.now() - (this.sessionsCheckedAt || 0) >= 60000) {
       this.sessionsCheckedAt = Date.now();
       void this.reconcilePlexSessions().catch(() => {});
     }
@@ -344,7 +344,8 @@ module.exports = {
     return ids;
   },
   async reconcilePlexSessions() {
-    this.plexSessions = { ...(await this.plex.reconcileSessions(this.plexSessionsInUse())), checkedAt: Date.now() };
+    const reports = await this.providers.reconcileSessions(this.plexSessionsInUse());
+    this.plexSessions = { ...reports.plex, checkedAt: Date.now() };
     return this.plexSessions;
   },
 };

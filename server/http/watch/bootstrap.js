@@ -12,7 +12,7 @@ function pageBootstrap({ config, watch, hub, registry, entryPolicy, diagnosticLo
     clientId: config.clientId,
     discordRichPresence: config.discordRichPresence !== false,
     demo: !!config.demo,
-    plexConfigured: watch.plex.configured,
+    plexConfigured: watch.providers.configured,
     testVideo: !!watch.demoMedia,
     access: entryPolicy?.public(),
     guests: !!hub.guestsEnabled(),

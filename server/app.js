@@ -5,6 +5,8 @@ const { hash } = require('./core');
 const { loginStore } = require('./storage');
 const { Plex } = require('./plex');
 const { MediaPipeline } = require('./media-pipeline');
+const { MediaProviders } = require('./media-providers');
+const { plexProvider } = require('./plex-provider');
 const { createRooms } = require('./watch');
 const { watchHttp } = require('./watch-http');
 const { watchSockets } = require('./watch-socket');
@@ -108,12 +110,22 @@ function createApp(config, options = {}) {
     const entryPolicy = new AccessPolicy(config, registry, plexAuth, () => access.raw(), { logger, guests });
     const access = createAccess({ registry, config, plexAuth, entryPolicy });
     const sessions = createSessions({ config, logger, registry, accounts, access, oauthFetch });
+    const providers = new MediaProviders([plexProvider({ plex, config, registry, plexAuth, entryPolicy })]);
     // Rooms, and the hub that authorizes work in them.
     const { ports, setOwnerName } = createHubPorts({
-      ...{ config, logger, registry, accounts, access, plexAuth, entryPolicy, guests, sessions },
+      ...{ config, logger, registry, accounts, access, plexAuth, providers, guests, sessions },
       ...{ discord: { client: undefined }, hub: () => hub, rooms },
     });
-    ({ hub, watch } = createRooms({ config, ports, plex, pipeline, demoMedia: demoMedia(), registry, plexAuth }));
+    ({ hub, watch } = createRooms({
+      config,
+      ports,
+      plex,
+      pipeline,
+      providers,
+      demoMedia: demoMedia(),
+      registry,
+      plexAuth,
+    }));
     // Kept diagnostics: server log lines and viewer uploads share one daily timeline.
     const diagnosticLog = config.diagnostics?.enabled
       ? new DiagnosticLog({ ...config.diagnostics, logger })

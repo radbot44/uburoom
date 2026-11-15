@@ -264,7 +264,7 @@ function watchOperations({
       viewer.directProxyVersion = room.mediaVersion;
       viewer.streamVersion = randomUUID();
       viewer.ready = false;
-      void watch.plex.stop(previous);
+      void watch.providers.stop(previous);
     }
     if (context.controlSocket) viewer.watchSocket = context.controlSocket;
     if (viewer.browserSubtitles === undefined) viewer.browserSubtitles = preferences.subtitles === 'browser';
@@ -554,8 +554,8 @@ function watchOperations({
       (lobbyScope || (room && watch.rooms.get(room.roomId) === room && (await watch.canView(room, auth.actor)))) &&
       (await login(context))?.userId === auth.actor.userId;
     if (!(await eligible())) return result(403, { error: 'Library access requires room access' });
-    const plex = await hub.plexFor(auth.actor);
-    const scopeCurrent = async () => (await hub.plexFor(auth.actor)).principal === plex.principal;
+    const plex = await hub.mediaFor(auth.actor);
+    const scopeCurrent = async () => (await hub.mediaFor(auth.actor)).principal === plex.principal;
     const itemVisible = async () =>
       plex.principal === 'discord-shared' || (await plex.visible(text(args.item), text(args.type)));
     let data;
@@ -782,7 +782,7 @@ function watchOperations({
           const previous = viewer.media;
           viewer.media = undefined;
           viewer.mediaVersion = undefined;
-          void watch.plex.stop(previous);
+          void watch.providers.stop(previous);
         }
         viewer.streamVersion = randomUUID();
         viewer.ready = false;

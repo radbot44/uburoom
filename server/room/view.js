@@ -85,7 +85,7 @@ module.exports = {
     }
     if (room.media?.kind === 'plex') {
       try {
-        const allowed = await (await this.hub.plexFor(actor)).allows(room.media.id);
+        const allowed = await (await this.hub.mediaFor(actor)).allows(room.media.id);
         this.providerResponded();
         if (!allowed) return false;
       } catch (error) {
@@ -125,7 +125,7 @@ module.exports = {
         if (!this.hub.authorize(actor, record, 'room.view').ok) continue;
         if (record.bookmark) {
           try {
-            if (!(await (await this.hub.plexFor(actor)).allows(record.bookmark.mediaId))) continue;
+            if (!(await (await this.hub.mediaFor(actor)).allows(record.bookmark.mediaId))) continue;
           } catch {
             continue;
           }
@@ -337,7 +337,7 @@ module.exports = {
             },
           }
         : {}),
-      qualities: this.plex.qualities?.(room.media) || Engine.QUALITIES,
+      qualities: this.providers.qualities(room.media),
       ...(() => {
         const queueSummary = this.roomState.queue.summary(room.roomId);
         const completed = queueSummary?.lastHistory;

@@ -52,7 +52,7 @@ module.exports = {
     return this.startMediaWork(
       room,
       async work => {
-        const plex = await this.hub.plexFor(viewer.actor),
+        const plex = await this.hub.mediaFor(viewer.actor),
           choices = this.streamChoices(viewer);
         const authorized = async () =>
           current() &&
@@ -90,7 +90,7 @@ module.exports = {
     if (source.unavailable)
       source = await plex.prepare(source.id, 'direct', false, undefined, undefined, { sourceOnly: true });
     const { candidates } = require('../quality-options');
-    const choices = this.plex.qualities?.(source) || Engine.QUALITIES;
+    const choices = this.providers.qualities(source);
     if (!choices.length)
       throw new PlaybackError(
         'No configured quality is available for this video. Ask the owner to offer a lower quality or Original.',
@@ -147,7 +147,7 @@ module.exports = {
     if (!viewer || viewer.userId !== actor.userId) return;
     let plex;
     try {
-      plex = await this.hub.plexFor(actor);
+      plex = await this.hub.mediaFor(actor);
     } catch (error) {
       // Plex cannot answer: keep what the viewer has and try again shortly.
       if (this.providerFailed(error)) {
@@ -187,7 +187,7 @@ module.exports = {
         if (!viewer.media?.unavailable) {
           this.tracking.end(viewer, 'media-unavailable');
           void this.reporting?.end(viewer, 'media-unavailable');
-          await this.plex.stop(viewer.media);
+          await this.providers.stop(viewer.media);
         }
         if (room.mediaVersion !== version || room.viewers.get(viewerId) !== viewer) return;
         viewer.media = {
@@ -217,7 +217,7 @@ module.exports = {
         return viewer.media;
       this.tracking.end(viewer, 'stream-changed');
       void this.reporting?.end(viewer, 'stream-changed');
-      if (viewer.media) void this.plex.stop(viewer.media);
+      if (viewer.media) void this.providers.stop(viewer.media);
       viewer.directDelivery = undefined;
       viewer.media = {
         id: room.media.id,
@@ -282,7 +282,7 @@ module.exports = {
                 { ...viewer.trackChoice, browserSubtitles: viewer.browserSubtitles, sourceOnly: true, authorized },
               );
               if (media.selection?.subtitle?.delivery === 'burn') {
-                await this.plex.stop(media);
+                await this.providers.stop(media);
                 return this.prepareQuality(
                   room,
                   viewer,
@@ -437,12 +437,12 @@ module.exports = {
         this.coordinator.run(room, { type: 'stream', viewerId, available: media.format !== 'unavailable' });
         if (current && current !== media) {
           SubtitleResources.transfer(current, media);
-          void this.plex.stop(current);
+          void this.providers.stop(current);
         }
         return { status: 'applied' };
       });
     } finally {
-      if (media && !adopted && media !== current && media !== room.media) await this.plex.stop(media);
+      if (media && !adopted && media !== current && media !== room.media) await this.providers.stop(media);
     }
   },
   /**
@@ -505,7 +505,7 @@ module.exports = {
         room.transcodePing = undefined;
         return;
       }
-      for (const item of media.values()) void this.plex.ping(item);
+      for (const item of media.values()) void this.providers.ping(item);
     };
     if (room.transcodePing || ![...room.viewers.values()].some(v => v.media?.transcodeId)) return;
     room.transcodePing = setInterval(ping, TRANSCODE_PING_MS);

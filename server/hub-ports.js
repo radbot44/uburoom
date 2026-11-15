@@ -1,5 +1,4 @@
 'use strict';
-const { plexReconnectError } = require('./plex-auth');
 const RoomPolicy = require('./room-policy');
 const { UserDirectory } = require('./user-directory');
 const { plexDirectory } = require('./plex-directory');
@@ -7,7 +6,7 @@ const { plexDirectory } = require('./plex-directory');
 /**
  * What the hub calls out to, built from the services it needs. `hub` and `rooms` are read
  * when a port is called, because the hub and the rooms are built from these ports.
- * @param {{config: any, logger: any, registry: any, accounts: any, access: any, plexAuth: any, entryPolicy: any,
+ * @param {{config: any, logger: any, registry: any, accounts: any, access: any, plexAuth: any, providers: any,
  *   guests: any, sessions: any, discord: {client: any}, hub: () => any, rooms: () => any}} services
  */
 function createHubPorts({
@@ -17,7 +16,7 @@ function createHubPorts({
   accounts,
   access,
   plexAuth,
-  entryPolicy,
+  providers,
   guests,
   sessions,
   discord,
@@ -121,27 +120,7 @@ function createHubPorts({
             ...discordIdentity({ userId: actor.userId, name: actor.name || 'Discord user' }),
             discordId: actor.userId,
           },
-    plexFor: async actor => {
-      const identity = registry.identities(actor.userId).find(i => i.provider === 'plex' && i.verified);
-      const fallback = () => {
-        if (config.plexFallback?.enabled === false)
-          throw new Error('Connect a Plex account with access to this server; shared fallback is disabled');
-        return plexAuth.fallback();
-      };
-      if (!identity) return fallback();
-      if (!registry.hasCredential(identity.subject))
-        throw plexReconnectError('Your Plex sign-in is missing. Reconnect Plex to continue.');
-      try {
-        const scoped = await plexAuth.forUser(actor.userId);
-        if (!scoped) throw plexReconnectError('Your Plex sign-in is missing. Reconnect Plex to continue.');
-        return scoped;
-      } catch (error) {
-        // Only a confirmed lack of server membership may use explicit open-entry
-        // sponsorship. Expiry, network errors and item restrictions never do.
-        if (config.accessPolicy && !entryPolicy.requiresPlex(actor) && error.noServerAccess) return fallback();
-        throw error;
-      }
-    },
+    mediaFor: (actor, serverId) => providers.for(actor, serverId),
     renameAccount: async (id, name) => {
       const account = registry.rename(id, name);
       await registry.flush();

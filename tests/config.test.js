@@ -756,7 +756,7 @@ test('discord.rich_presence validates boolean configuration and defaults enabled
   const boot = config =>
     pageBootstrap({
       config,
-      watch: { plex: { configured: false }, demoMedia: false },
+      watch: { providers: { configured: false }, demoMedia: false },
       hub: { guestsEnabled: () => false },
     }).publicConfig();
   assert.equal(boot(normalizeConfig({})).discordRichPresence, true);

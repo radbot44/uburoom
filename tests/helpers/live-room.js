@@ -8,8 +8,8 @@ function wireRooms(hub, plex, watch) {
   // and does not re-check room visibility before each command.
   const { watchCanView, ...ports } = roomPorts(() => watch);
   plex.allows ??= async () => true;
-  const standalone = hub.plexFor.name === 'unconfiguredPlex';
-  Object.assign(hub, standalone ? { plexFor: async () => plex } : {}, ports);
+  const standalone = hub.mediaFor.name === 'unconfiguredMedia';
+  Object.assign(hub, standalone ? { mediaFor: async () => plex } : {}, ports);
   return watch;
 }
 

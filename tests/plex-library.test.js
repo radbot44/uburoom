@@ -308,7 +308,7 @@ test('every room-scoped library route rejects inaccessible viewers and rechecks 
   };
   const plexStub = { configured: true, browse: wait, details: wait, filters: wait, artwork: wait, availability: wait };
   const hub = {
-    plexFor: async () => plexStub,
+    mediaFor: async () => plexStub,
     canWatch: () => true,
     admit: async () => true,
     refreshAdmin: async () => {},
@@ -396,7 +396,7 @@ test('lobby catalog, details, filters and artwork recheck identity and Plex scop
     admit: async () => true,
     refreshAdmin: async () => {},
     guestsEnabled: () => false,
-    plexFor: async () => ({ ...plex, principal }),
+    mediaFor: async () => ({ ...plex, principal }),
   };
   const routes = watchHttp({
     config: { publicUrl: 'https://localhost' },
@@ -469,7 +469,7 @@ test('room watch party history takes priority over personal Plex progress in lib
     admit: async () => true,
     refreshAdmin: async () => {},
     guestsEnabled: () => false,
-    plexFor: async () => plex,
+    mediaFor: async () => plex,
     authorize: () => ({ ok: true }),
   };
   const mockItems = [

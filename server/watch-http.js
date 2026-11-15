@@ -55,7 +55,7 @@ function watchHttp({
     rawLogin,
     login,
   });
-  const delivery = new PlexDelivery(config, watch.plex, plexAuth, actor => hub.plexFor(actor));
+  const delivery = new PlexDelivery(config, watch.plex, plexAuth, actor => hub.mediaFor(actor));
   watch.delivery = delivery;
   const clockEpoch = randomUUID();
   const handoff = new Handoff();
@@ -517,7 +517,7 @@ function watchHttp({
         );
         handoff.get(issued.id).connectPlex = Boolean(
           ((auth.pending && config.accessPolicy?.requirePlex) || data.connectPlex) &&
-          watch.plex.configured &&
+          watch.providers.configured &&
           config.accessPolicy?.plex !== false,
         );
         json(res, 200, {
