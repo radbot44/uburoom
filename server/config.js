@@ -46,6 +46,7 @@ const KEYS = [
   'storage.data_directory',
   'tools.ffmpeg',
   'tools.ffprobe',
+  'local_media.libraries',
   'rooms.host_permissions',
   'rooms.viewer_permissions',
   'rooms.admin_discord_ids',
@@ -260,6 +261,40 @@ function normalizeConfig(
   if (config.serverOperator.plexId && !/^\d{1,20}$/.test(config.serverOperator.plexId))
     throw new Error('operator.plex_id must be a quoted Plex account ID');
   config.plexFallback = { enabled: boolean('plex.fallback_enabled', true), token: get('plex.fallback_token') };
+  // Folders of videos on this machine. Each library keeps its id for as long as its
+  // queue entries and resume positions should survive, wherever its folder moves.
+  const libraries = value.local_media?.libraries ?? [];
+  if (
+    !Array.isArray(libraries) ||
+    libraries.length > 32 ||
+    libraries.some(
+      library =>
+        !library ||
+        typeof library !== 'object' ||
+        Array.isArray(library) ||
+        Object.keys(library).some(key => !['id', 'name', 'path'].includes(key)) ||
+        typeof library.id !== 'string' ||
+        !/^[a-z][a-z0-9-]{0,31}$/.test(library.id) ||
+        typeof library.name !== 'string' ||
+        !library.name.trim() ||
+        library.name.length > 100 ||
+        /[\u0000-\u001f\u007f]/.test(library.name) ||
+        typeof library.path !== 'string' ||
+        !library.path,
+    )
+  )
+    throw new Error(
+      'local_media.libraries requires up to 32 entries with a quoted id (lowercase letters, digits and hyphens, starting with a letter), name and path',
+    );
+  if (new Set(libraries.map(library => library.id)).size !== libraries.length)
+    throw new Error('local_media.libraries must not repeat an id');
+  config.localMedia = {
+    libraries: libraries.map(library => ({
+      id: library.id,
+      name: library.name.trim(),
+      path: path.resolve(base, library.path),
+    })),
+  };
   config.plexReporting = {
     enabled: boolean('plex.reporting_enabled', true),
     watchState: boolean('plex.reporting_watch_state', true),

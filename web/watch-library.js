@@ -3,11 +3,12 @@ import * as uburoomIcons from './icons.js';
 import * as uburoomPopover from './watch-popover.js';
 import { mediaIdentity } from '../shared/room-protocol.mjs';
 
-/* One safe-DOM Plex browser for the website, fullscreen drawer and Activity. */
+/* One safe-DOM library browser for the website, fullscreen drawer and Activity. */
 function homeCards(items = []) {
   const cards = [];
   for (const tab of ['library', 'collections'])
     for (const section of items) {
+      if (tab === 'collections' && section.collections === false) continue;
       const title =
         tab === 'library' ? section.title : (section.title === 'Movies' ? 'Movie' : section.title) + ' Collections';
       const icon = tab === 'library' ? (section.mediaType === 'show' ? 'tv' : 'film') : 'layout-grid';
@@ -466,8 +467,14 @@ function mount(
     sentinel.hidden = !screen || ['details', 'home'].includes(screen.kind) || screen.nextOffset == null;
     if (!sentinel.hidden && !screen.loading && !screen.pageError) pageObserver.observe(sentinel);
   }
-  // A library read is made for the room being browsed from, or for the lobby.
-  const scoped = (query = {}) => ({ ...(room === 'lobby' ? {} : { room }), ...query });
+  // A library read is made for the room being browsed from, or for the lobby, and
+  // names the server of the library on screen. The front page names none: it lists
+  // every server's libraries.
+  const roomScope = () => (room === 'lobby' ? {} : { room });
+  const scoped = (query = {}) => {
+    const server = sections.find(item => item.id === screen?.section)?.serverId;
+    return { ...roomScope(), ...(server ? { server } : {}), ...query };
+  };
   function endpoint(path, query = {}) {
     return path + '?' + new URLSearchParams(scoped(query));
   }
@@ -1013,12 +1020,14 @@ function mount(
       !getPlayer()?.durable ||
       screen.kind !== 'library' ||
       screen.tab !== 'library' ||
-      section?.mediaType !== 'movie';
+      section?.mediaType !== 'movie' ||
+      section.autoQueue === false;
     if (!scopeActions.hidden) autoButton(scopeActions, { type: 'library', id: section.id }, section.title);
     tools.hidden = details || atHome;
     row.hidden = details || atHome;
     chips.hidden = details || atHome;
-    filterButton.hidden = !screen.section || collectionIndex || ['show', 'season'].includes(screen.kind);
+    filterButton.hidden =
+      !screen.section || section?.filters === false || collectionIndex || ['show', 'season'].includes(screen.kind);
     filterButton.classList.toggle('filter-active', !filters.hidden || !!(screen.genre || screen.year));
     const filterSpan = filterButton.querySelector('.filter-label');
     if (filterSpan)
@@ -1535,7 +1544,7 @@ function mount(
     const version = generation;
     async function start() {
       try {
-        const data = await request('library.browse', scoped(), imageController.signal);
+        const data = await request('library.browse', roomScope(), imageController.signal);
         if (version !== generation) return;
         sections = data.items;
         testVideo = !!data.testVideo;

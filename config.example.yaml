@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2q
+# Config schema v2r
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -108,6 +108,18 @@ tools:
   # Needed for subtitle extraction and optional AV1/VP9/VP8 conversion.
   ffmpeg: ''
   ffprobe: '' # Searches PATH first, then defaults beside the selected ffmpeg.
+
+# Folders of videos on this machine, shown in the library beside Plex. Everyone who
+# is admitted may watch them; they add no way in. Needs FFprobe, and FFmpeg for
+# files a browser cannot play as they are.
+local_media:
+  # Each entry: a short id, the name shown, and a folder (subfolders included).
+  # Keep an id for good: queues and resume positions are recorded under it, so a
+  # folder can move but a changed id forgets them. Example:
+  #   - id: 'films'
+  #     name: 'Films'
+  #     path: 'D:\Media\Films'
+  libraries: []
 
 # Logging behavior
 logging:

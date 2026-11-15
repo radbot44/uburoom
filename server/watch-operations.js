@@ -561,6 +561,12 @@ function watchOperations({
     const scopeCurrent = async () => (await hub.mediaFor(auth.actor, server)).principal === plex.principal;
     const itemVisible = async () =>
       plex.principal === 'discord-shared' || (await plex.visible(text(args.item), text(args.type)));
+    // What the library shows names the server it came from, so a choice can be sent back to it.
+    const stamp = async items => {
+      if (!items?.length || !plex.configured) return;
+      const serverId = await watch.providers.identify({ serverId: server, provider: plex }).catch(() => undefined);
+      if (serverId) for (const item of items) if (item) item.serverId = serverId;
+    };
     let data;
     if (op === 'library.art') {
       const art = await plex.artwork(text(args.item), text(args.kind) || 'poster', text(args.type));
@@ -574,13 +580,20 @@ function watchOperations({
       data = { items: [...(await plex.availability(ids))].map(([id, available]) => ({ id, available })) };
     } else if (op === 'library.item') {
       data = { item: await plex.details(text(args.item), text(args.type)) };
+      await stamp([data.item]);
       if (data.item) applyRoomProgress(watch, args.room, [data.item]);
     } else if (op === 'library.filters') data = await plex.filters(text(args.section));
     else {
       const query = Object.fromEntries(
         LIBRARY_QUERY.filter(key => args[key] !== undefined && args[key] !== null).map(key => [key, String(args[key])]),
       );
-      data = plex.configured ? await plex.browse(query) : { items: [], total: 0, offset: 0, nextOffset: null };
+      // With no server and no location named, the front page lists every provider's libraries.
+      const home = server === undefined && !['section', 'parent', 'collection'].some(key => query[key]);
+      if (home) data = await watch.providers.libraries(auth.actor, (actor, serverId) => hub.mediaFor(actor, serverId));
+      else {
+        data = plex.configured ? await plex.browse(query) : { items: [], total: 0, offset: 0, nextOffset: null };
+        await stamp(data.items);
+      }
       data.testVideo = !!watch.demoMedia;
       if (data.items?.length) applyRoomProgress(watch, args.room, data.items);
     }

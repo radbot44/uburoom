@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { Plex } = require('../server/plex');
 const { watchHttp } = require('../server/watch-http');
+const { MediaProviders } = require('../server/media-providers');
 const movie = (id, more = {}) => ({
   ratingKey: String(id),
   type: 'movie',
@@ -22,6 +23,10 @@ function fixture(handler, files) {
     return handler(url, options);
   });
 }
+
+// The registry a route fixture needs: its one catalog, recorded under a fixed server id.
+const providersOf = plex =>
+  new MediaProviders([{ kind: 'plex', root: plex, identity: async () => 'fixture-plex', scopeFor: async () => plex }]);
 
 // Library routes only touch room presence and saved progress; these tests have none.
 const roomStateStub = {
@@ -324,6 +329,7 @@ test('every room-scoped library route rejects inaccessible viewers and rechecks 
       roomState: roomStateStub,
       canView: async (room, actor) => manage && actor.userId === 'host',
       plex: plexStub,
+      providers: providersOf(plexStub),
     },
     user: async req => ({ userId: req.headers.cookie }),
     webActor: identity => identity,
@@ -401,7 +407,12 @@ test('lobby catalog, details, filters and artwork recheck identity and Plex scop
   const routes = watchHttp({
     config: { publicUrl: 'https://localhost' },
     hub,
-    watch: { clock: { now: () => Date.now() }, rooms: new Map(), roomState: roomStateStub },
+    watch: {
+      clock: { now: () => Date.now() },
+      rooms: new Map(),
+      roomState: roomStateStub,
+      providers: providersOf(plex),
+    },
     user: async () => (signedIn ? { userId: 'viewer' } : undefined),
     webActor: identity => identity,
     throttle: () => true,
@@ -490,6 +501,7 @@ test('room watch party history takes priority over personal Plex progress in lib
     position: () => 1500,
     canView: async () => true,
     plex,
+    providers: providersOf(plex),
   };
   const routes = watchHttp({
     config: { publicUrl: 'https://localhost' },

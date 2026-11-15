@@ -1597,7 +1597,9 @@ function mount(
 
   async function suggest(item, trigger) {
     if (onSuggest) return onSuggest(item, trigger);
-    return suggestionCommand('suggest', { item: { id: String(item.mediaId || item.id) } });
+    return suggestionCommand('suggest', {
+      item: { id: String(item.mediaId || item.id), ...(item.serverId ? { serverId: item.serverId } : {}) },
+    });
   }
 
   async function acceptSuggestion(suggestionId, trigger) {

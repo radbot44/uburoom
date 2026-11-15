@@ -906,6 +906,42 @@ function checkEvents(config) {
   ];
 }
 
+function checkLocalMedia(config) {
+  /** @type {DoctorCheck[]} */
+  const checks = [];
+  const libraries = config.localMedia?.libraries || [];
+  if (!libraries.length) return checks;
+  for (const library of libraries) {
+    let status = 'pass',
+      message = `"${library.name}" (${library.id}) reads ${library.path}`,
+      remediation;
+    try {
+      if (!fs.statSync(library.path).isDirectory()) throw new Error('not a folder');
+      fs.accessSync(library.path, fs.constants.R_OK);
+    } catch {
+      status = 'fail';
+      message = `"${library.name}" (${library.id}) cannot read ${library.path}`;
+      remediation = 'Point local_media.libraries path at a folder the uburoom account can read.';
+    }
+    checks.push({ category: 'Local Media', name: 'Library folder', status, message, remediation });
+  }
+  const ffprobe = config.ffprobePath || findOnPath('ffprobe'),
+    ffmpeg = config.ffmpegPath || findOnPath('ffmpeg');
+  checks.push({
+    category: 'Local Media',
+    name: 'Media tools',
+    status: !ffprobe ? 'fail' : ffmpeg ? 'pass' : 'warn',
+    message: !ffprobe
+      ? 'Local media cannot be read without FFprobe.'
+      : ffmpeg
+        ? 'FFprobe reads local files and FFmpeg converts those a browser cannot play.'
+        : 'Without FFmpeg, only files a browser plays as they are can be watched.',
+    remediation:
+      !ffprobe || !ffmpeg ? 'Install FFmpeg (with FFprobe) on PATH or set tools.ffmpeg and tools.ffprobe.' : undefined,
+  });
+  return checks;
+}
+
 async function runDoctor(options = {}) {
   const args = options.args || process.argv.slice(2);
   const jsonMode = args.includes('--json');
@@ -934,6 +970,7 @@ async function runDoctor(options = {}) {
     allChecks.push(...checkStorageAndKey(config));
     allChecks.push(...checkTlsCertificates(config));
     allChecks.push(...checkMediaTools(config));
+    allChecks.push(...checkLocalMedia(config));
     allChecks.push(...checkGuestPasses(config));
     allChecks.push(...checkEvents(config));
     allChecks.push(...(await checkProviderConnectivity(config)));

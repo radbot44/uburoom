@@ -268,7 +268,11 @@ const queueUI = uburoomQueueUI.mount($('queue-content'), {
     return library?.openItem(item);
   },
   artwork: fetchArtwork,
-  onSuggest: item => deps.execute({ action: 'queue.suggest', args: { item: { id: String(item.mediaId || item.id) } } }),
+  onSuggest: item =>
+    deps.execute({
+      action: 'queue.suggest',
+      args: { item: { id: String(item.mediaId || item.id), ...(item.serverId ? { serverId: item.serverId } : {}) } },
+    }),
   onAcceptSuggestion: async suggestionId => {
     const result = await deps.execute({ action: 'queue.suggestion.accept', args: { suggestionId } });
     await queueUI.fetchData(true);

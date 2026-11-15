@@ -235,6 +235,7 @@ export function mount(host, deps) {
       action: 'media.load',
       args: {
         mediaId: item.id,
+        ...(item.serverId ? { serverId: item.serverId } : {}),
         quality: item.id === 'demo' ? 'direct' : store.preferences.preferredQuality,
         ...options,
       },

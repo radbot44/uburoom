@@ -76,6 +76,32 @@ class MediaProviders {
   owner(scope) {
     return this.list.find(provider => provider.root === scope || provider.root === scope?.root);
   }
+  /**
+   * The libraries of every configured provider this person may use, each naming its
+   * server. A provider that cannot answer leaves its libraries out rather than
+   * hiding the others'; with a single provider its failure is the answer.
+   */
+  async libraries(actor, scopeFor = (person, serverId) => this.for(person, serverId)) {
+    const items = [];
+    let unanswered;
+    for (const provider of this.list) {
+      if (!provider.root?.configured) continue;
+      try {
+        // The first provider is the one a request reaches by naming no server, so its
+        // libraries stay listed even while it cannot say which server it is.
+        const first = provider === this.primary,
+          serverId = await provider.identity().catch(error => {
+            if (!first) throw error;
+          });
+        const scope = await scopeFor(actor, first ? undefined : serverId);
+        for (const item of (await scope.browse({})).items || []) items.push(serverId ? { ...item, serverId } : item);
+      } catch (error) {
+        unanswered ||= error;
+      }
+    }
+    if (unanswered && !items.length) throw unanswered;
+    return { items, total: items.length, offset: 0, nextOffset: null };
+  }
   /** Whoever prepared a media object releases it; one that no provider prepared holds only pipeline state. */
   stop(media) {
     if (media?.provider) return media.provider.stop(media);
