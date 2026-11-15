@@ -1,6 +1,5 @@
 'use strict';
 const { qualityDefinition, qualityId } = require('../shared/room-protocol.mjs');
-const Sources = require('./plex-source');
 
 // A fixed preference is a ceiling in both resolution and bitrate. Original
 // qualifies by source bitrate alone, never as an unbounded fallback.
@@ -9,9 +8,8 @@ function candidates(choices, requested, source, { transcode = false } = {}) {
   if (requested === 'direct') return choices.filter(q => q.id === 'direct');
   const target = qualityDefinition(requested);
   if (!target) return [];
-  const original = source?.source && Sources.select(source.source, source.sourceSelection).media;
-  const directHeight = Math.max(original?.height || 0, Math.round(((original?.width || 0) * 9) / 16));
-  const size = q => (q.id === 'direct' ? { height: directHeight, bitrate: original?.bitrate } : q);
+  const directHeight = Math.max(source?.sourceHeight || 0, Math.round(((source?.sourceWidth || 0) * 9) / 16));
+  const size = q => (q.id === 'direct' ? { height: directHeight, bitrate: source?.sourceBitrate } : q);
   return choices
     .filter(q => {
       if (transcode && q.id === 'direct') return false;

@@ -797,7 +797,7 @@ test('shared window jobs isolate caller cancellation, reject obsolete selection,
       const asset = windowMedia();
       asset.selection.subtitle.delivery = 'ass';
       asset.selection.subtitle.external = true;
-      asset.source.Media[0].Part[0].Stream[0].key = '/library/streams/23.ass';
+      asset.selection.subtitle.resources = { data: '/library/streams/23.ass' };
       asset.provider = plex;
       assets.push(asset);
       await SubtitleResources.load(plex.av1, asset, new AbortController().signal);
@@ -1126,7 +1126,7 @@ test('retained window buffers participate in aggregate server cache eviction', a
   const asset = windowMedia();
   asset.selection.subtitle.delivery = 'ass';
   asset.selection.subtitle.external = true;
-  asset.source.Media[0].Part[0].Stream[0].key = '/library/streams/23';
+  asset.selection.subtitle.resources = { data: '/library/streams/23.ass' };
   asset.provider = plex;
   try {
     for (let i = 0; i < 6; i++) {

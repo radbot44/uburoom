@@ -1110,7 +1110,9 @@ test('multi-version Plex items resolve subtitles and metadata from the selected/
   const assMedia = {
     source: multiItem,
     sourceSelection: selected.identity,
-    selection: { subtitle: { id: '32', delivery: 'ass', external: true } },
+    selection: {
+      subtitle: { id: '32', delivery: 'ass', external: true, resources: { data: '/library/streams/32.ass' } },
+    },
     provider: assPlex,
     captionVersion: '1',
     subtitleAbort: new AbortController(),
@@ -1127,7 +1129,9 @@ test('multi-version Plex items resolve subtitles and metadata from the selected/
   const textMedia = {
     source: multiItem,
     sourceSelection: selected.identity,
-    selection: { subtitle: { id: '31', delivery: 'text', available: true } },
+    selection: {
+      subtitle: { id: '31', delivery: 'text', available: true, resources: { data: '/library/streams/31.srt' } },
+    },
     provider: mockPlex,
     subtitleAbort: new AbortController(),
   };

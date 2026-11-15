@@ -1,6 +1,30 @@
 'use strict';
 const flag = value => value === true || value === 1 || value === '1';
 const id = value => (/^\d{1,20}$/.test(String(value ?? '')) ? String(value) : undefined);
+const EXTENSION = {
+  subrip: 'srt',
+  webvtt: 'vtt',
+  ssa: 'ass',
+  pgs: 'sup',
+  hdmv_pgs_subtitle: 'sup',
+  vobsub: 'sub',
+  dvd_subtitle: 'sub',
+};
+
+// Where Plex serves a sidecar subtitle: the file itself, the same subtitle converted to
+// WebVTT text, and for VobSub the index that accompanies its image data.
+function sidecar(stream) {
+  if (typeof stream.key !== 'string' || !/^\/library\/streams\/\d{1,20}(?:\.[a-z0-9]+)?$/.test(stream.key)) return;
+  const codec = String(stream.codec || '').toLowerCase(),
+    bare = stream.key.replace(/\.[a-z0-9]+$/, ''),
+    image = EXTENSION[codec] === 'sub';
+  const data = image || bare === stream.key ? bare + '.' + (EXTENSION[codec] || codec) : stream.key;
+  return {
+    data,
+    text: data + '?' + new URLSearchParams({ format: 'webvtt', encoding: 'utf-8' }),
+    ...(image ? { index: bare + '.idx' } : {}),
+  };
+}
 
 /**
  * A Plex media part's audio and subtitle streams as the neutral descriptors
@@ -30,7 +54,7 @@ function streams(part) {
       commentary: flag(stream.commentary),
       description: flag(stream.visualImpaired),
       channels: stream.channels,
-      external: typeof stream.key === 'string' && /^\/library\/streams\/\d{1,20}(?:\.[a-z0-9]+)?$/.test(stream.key),
+      resources: sidecar(stream),
     });
   }
   return sources;

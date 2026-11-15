@@ -922,6 +922,9 @@ test('viewer quality ceilings include fitting Original and survive lower outputs
     title: 'Fixture',
     roomServerId: 'fixture',
     duration: 60,
+    sourceHeight: height,
+    sourceWidth: (height * 16) / 9,
+    sourceBitrate: bitrate,
     source: {
       duration: 60000,
       Media: [{ height, width: (height * 16) / 9, bitrate, Part: [{ key: '/library/parts/1/file.mp4' }] }],

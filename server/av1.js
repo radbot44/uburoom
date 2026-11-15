@@ -892,10 +892,7 @@ class AV1 {
     }
     let data;
     if (track.external) {
-      const key = /\.[a-z0-9]+$/.test(track.key)
-        ? track.key
-        : track.key + '.' + ({ subrip: 'srt', webvtt: 'vtt' }[track.codec] || track.codec);
-      const response = await source.provider.request(key, { signal, headers: { Accept: '*/*' } });
+      const response = await source.provider.request(track.resources.data, { signal, headers: { Accept: '*/*' } });
       if (!response.ok) throw new PlaybackError('The subtitle file is unavailable.');
       data = Buffer.from(await response.arrayBuffer());
     } else {

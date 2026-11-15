@@ -5,13 +5,31 @@ const id = value => (/^[A-Za-z0-9_-]{1,64}$/.test(String(value ?? '')) ? String(
 const plain = new Set(['srt', 'subrip', 'webvtt', 'vtt', 'mov_text', 'text']);
 const burnable = new Set([...plain, 'ass', 'ssa', 'pgs', 'hdmv_pgs_subtitle', 'vobsub', 'dvd_subtitle']);
 /**
+ * Where a provider serves a subtitle that is not inside the video file. Each value is
+ * a provider resource read through the scope's `request()`; none is shown to a viewer.
+ * @typedef {Object} SidecarResources
+ * @property {string} data - The subtitle file as stored.
+ * @property {string} [text] - The same subtitle as UTF-8 SRT or WebVTT text, when that is not `data`.
+ * @property {string} [index] - The index that accompanies VobSub image data.
+ */
+/**
  * One audio or subtitle stream as its provider describes it. `index` is the stream's
- * position in the file, when the provider knows it; `external` marks a sidecar the
+ * position in the file, when the provider knows it; `resources` marks a sidecar the
  * provider serves separately from the file.
  * @typedef {{kind: 'audio'|'subtitles', id: string, index?: number, codec?: string, language?: string,
  *   languageName?: string, title?: string, label?: string, selected?: boolean, default?: boolean, forced?: boolean,
- *   sdh?: boolean, commentary?: boolean, description?: boolean, channels?: number, external?: boolean}} TrackSource
+ *   sdh?: boolean, commentary?: boolean, description?: boolean, channels?: number,
+ *   resources?: SidecarResources}} TrackSource
  */
+/** @param {any} value @returns {SidecarResources | undefined} */
+function sidecar(value) {
+  if (!value || typeof value.data !== 'string' || !value.data) return;
+  /** @type {SidecarResources} */
+  const resources = { data: value.data };
+  for (const name of ['text', 'index'])
+    if (typeof value[name] === 'string' && value[name]) resources[name] = value[name];
+  return resources;
+}
 /**
  * The tracks a viewer may choose from, and how each subtitle can reach their player.
  * @param {TrackSource[]} sources
@@ -26,7 +44,8 @@ function catalog(sources, { browserSubtitles = false, extractSubtitles = false }
       language = clean(stream.language).toLowerCase();
     const index =
       Number.isSafeInteger(stream.index) && stream.index >= 0 && stream.index <= 1023 ? stream.index : undefined;
-    const external = stream.external === true;
+    const resources = kind === 'subtitles' ? sidecar(stream.resources) : undefined,
+      external = !!resources;
     const track = {
       id: streamId,
       index,
@@ -44,6 +63,7 @@ function catalog(sources, { browserSubtitles = false, extractSubtitles = false }
       description: stream.description === true,
       channels: Number(stream.channels) || undefined,
       external,
+      resources,
       delivery:
         kind === 'subtitles'
           ? external && plain.has(codec)
@@ -115,7 +135,7 @@ function select(tracks, options = {}) {
   return { audioChoice, subtitleChoice, audio, subtitle };
 }
 function publicCatalog(tracks) {
-  const publicRow = ({ index, ordinal, ...row }) => row;
+  const publicRow = ({ index, ordinal, resources, ...row }) => row;
   return { audio: tracks.audio.map(publicRow), subtitles: tracks.subtitles.map(publicRow) };
 }
 module.exports = { catalog, select, intent, publicCatalog, matchIntent };

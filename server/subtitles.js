@@ -1,6 +1,5 @@
 'use strict';
 const { PlaybackError } = require('./av1');
-const Sources = require('./plex-source');
 const LIMIT = 4 * 1024 * 1024;
 function timestamp(value) {
   const m = /^(?:(\d{1,6}):)?(\d{2}):(\d{2})[.,](\d{3})$/.exec(value);
@@ -61,20 +60,10 @@ async function load(media, signal) {
   media.subtitleCache ||= new Map();
   if (media.subtitleCache.has(key)) return media.subtitleCache.get(key);
   const abort = AbortSignal.any([signal, media.subtitleAbort.signal, AbortSignal.timeout(30000)]);
-  const part = media.sourceSelection
-    ? Sources.select(media.source, media.sourceSelection).part
-    : media.source?.Media?.[0]?.Part?.[0];
-  const source = part?.Stream?.find(s => String(s.id) === track.id);
-  if (!source || !/^\/library\/streams\/\d{1,20}(?:\.[a-z0-9]+)?$/.test(source.key || ''))
-    throw new PlaybackError('Subtitle selection no longer belongs to this file.');
-  const resource = /\.[a-z0-9]+$/.test(source.key)
-    ? source.key
-    : source.key + '.' + ({ subrip: 'srt', webvtt: 'vtt' }[track.codec] || track.codec);
-  const url = media.provider.url(resource);
-  url.searchParams.set('format', 'webvtt');
-  url.searchParams.set('encoding', 'utf-8');
+  const resource = track.resources?.text || track.resources?.data;
+  if (!resource) throw new PlaybackError('Subtitle selection no longer belongs to this file.');
   const text = await readText(
-    await media.provider.request(url.href, { signal: abort, headers: { Accept: 'text/vtt,text/plain' } }),
+    await media.provider.request(resource, { signal: abort, headers: { Accept: 'text/vtt,text/plain' } }),
     abort,
   );
   if (abort.aborted) throw new PlaybackError('Subtitle loading was cancelled.');

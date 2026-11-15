@@ -103,6 +103,8 @@ class PlexSessions {
       sourceHdrKind: hdrInfo.kind,
       sourceHdrLabel: hdrInfo.label,
       sourceBitrate: Number(original.bitrate) || undefined,
+      sourceWidth: Number(original.width) || undefined,
+      sourceHeight: Number(original.height) || undefined,
       ...(sameSource ? { previousId: source.previousId, nextId: source.nextId } : await this.plex.neighbors(item)),
     };
     media.chapters = parseChapters(item);

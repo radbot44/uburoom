@@ -7,7 +7,6 @@ const fs = require('node:fs/promises'),
   os = require('node:os'),
   path = require('node:path');
 const { PlaybackError, fileIndex } = require('./av1');
-const Sources = require('./plex-source');
 const LIMIT = 64 * 1024 * 1024,
   FONTS = 16 * 1024 * 1024,
   TOTAL = 96 * 1024 * 1024;
@@ -135,12 +134,7 @@ function source(media) {
   const track = media.selection?.subtitle;
   if (!track || !['ass', 'pgs', 'vobsub', 'cues'].includes(track.delivery))
     throw new PlaybackError('No browser-rendered subtitle is selected.');
-  const part = media.sourceSelection
-    ? Sources.select(media.source, media.sourceSelection).part
-    : media.source?.Media?.[0]?.Part?.[0];
-  const row = part?.Stream?.find(s => String(s.id) === track.id);
-  if (!row) throw new PlaybackError('Subtitle selection no longer belongs to this file.');
-  return { track, row };
+  return { track };
 }
 function startPgsJob(av1, media) {
   const { track } = source(media),
@@ -466,7 +460,7 @@ async function extract(av1, media, track, signal) {
   }
 }
 async function load(av1, media, signal) {
-  const { track, row } = source(media),
+  const { track } = source(media),
     version = media.captionVersion;
   const previous = cache.get(media);
   if (previous?.version === version) {
@@ -482,15 +476,10 @@ async function load(av1, media, signal) {
   job.promise = runOperation(abort, async () => {
     let result;
     if (track.external) {
-      if (!/^\/library\/streams\/\d{1,20}(?:\.[a-z0-9]+)?$/.test(row.key))
-        throw new PlaybackError('Invalid subtitle resource.');
-      const ext = track.delivery === 'ass' ? 'ass' : track.delivery === 'pgs' ? 'sup' : 'sub';
-      const key =
-        track.delivery !== 'vobsub' && /\.[a-z0-9]+$/.test(row.key)
-          ? row.key
-          : row.key.replace(/\.[a-z0-9]+$/, '') + '.' + ext;
+      const { data: file, index } = track.resources || {};
+      if (!file || (track.delivery === 'vobsub' && !index)) throw new PlaybackError('Invalid subtitle resource.');
       const data = await read(
-        await media.provider.request(key, { signal: abort, headers: { Accept: '*/*' } }),
+        await media.provider.request(file, { signal: abort, headers: { Accept: '*/*' } }),
         abort,
         track.delivery === 'ass' ? 4 * 1024 * 1024 : LIMIT,
       );
@@ -499,7 +488,7 @@ async function load(av1, media, signal) {
         result.assets.set(
           'index',
           await read(
-            await media.provider.request(key.replace(/\.sub$/, '.idx'), { signal: abort, headers: { Accept: '*/*' } }),
+            await media.provider.request(index, { signal: abort, headers: { Accept: '*/*' } }),
             abort,
             1024 * 1024,
           ),
