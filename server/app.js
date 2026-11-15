@@ -8,6 +8,7 @@ const { MediaPipeline } = require('./media-pipeline');
 const { MediaProviders } = require('./media-providers');
 const { plexProvider } = require('./plex-provider');
 const { localProvider } = require('./local-provider');
+const { jellyfinProvider } = require('./jellyfin-provider');
 const { createRooms } = require('./watch');
 const { watchHttp } = require('./watch-http');
 const { watchSockets } = require('./watch-socket');
@@ -82,7 +83,12 @@ const demoMedia = () =>
  * Services that need one another before either exists are given a function that finds it when called.
  */
 function createApp(config, options = {}) {
-  const { authorizeUrl = 'https://discord.com/oauth2/authorize', plexFetch = fetch, plexDemo } = options;
+  const {
+    authorizeUrl = 'https://discord.com/oauth2/authorize',
+    plexFetch = fetch,
+    jellyfinFetch = fetch,
+    plexDemo,
+  } = options;
   const logger = options.logger || silentLogger;
   const oauthFetch = resilientFetch(options.oauthFetch || fetch, { timeoutMs: 10000 });
   const tls = options.tls || { cert: config.cert, key: config.key };
@@ -114,6 +120,7 @@ function createApp(config, options = {}) {
     const providers = new MediaProviders(
       [
         plexProvider({ plex, config, registry, plexAuth, entryPolicy }),
+        jellyfinProvider({ config, pipeline, registry, logger, fetcher: jellyfinFetch }),
         localProvider({ config, pipeline, logger }),
       ].filter(Boolean),
       pipeline,

@@ -906,6 +906,50 @@ function checkEvents(config) {
   ];
 }
 
+async function checkJellyfin(config) {
+  /** @type {DoctorCheck[]} */
+  const checks = [];
+  if (!config.jellyfin) return checks;
+  const { Jellyfin } = require('../server/jellyfin-provider');
+  const jellyfin = new Jellyfin(config.jellyfin, { pipeline: {} });
+  const check = async (name, action, remediation) => {
+    try {
+      checks.push({ category: 'Jellyfin', name, status: 'pass', message: await action() });
+      return true;
+    } catch (error) {
+      checks.push({ category: 'Jellyfin', name, status: 'fail', message: String(error.message || error), remediation });
+      return false;
+    }
+  };
+  const reached = await check(
+    'Server',
+    async () => {
+      const info = await jellyfin.json('System/Info/Public');
+      return `Reached ${String(info.ServerName || 'Jellyfin').slice(0, 60)} ${String(info.Version || '').slice(0, 20)} at ${config.jellyfin.url}`;
+    },
+    'Check jellyfin.url (include any base path) and that the server is running.',
+  );
+  if (reached)
+    await check(
+      'API key and user',
+      async () => {
+        await jellyfin.userId();
+        const libraries = await jellyfin.libraries();
+        return `User "${config.jellyfin.user}" offers ${libraries.length} movie or show ${libraries.length === 1 ? 'library' : 'libraries'}`;
+      },
+      'Create an API key in the Jellyfin dashboard and set jellyfin.user to an existing username.',
+    );
+  if (!(config.ffmpegPath || findOnPath('ffmpeg')))
+    checks.push({
+      category: 'Jellyfin',
+      name: 'Media tools',
+      status: 'warn',
+      message: 'Without FFmpeg, only files a browser plays as they are can be watched.',
+      remediation: 'Install FFmpeg on PATH or set tools.ffmpeg.',
+    });
+  return checks;
+}
+
 function checkLocalMedia(config) {
   /** @type {DoctorCheck[]} */
   const checks = [];
@@ -971,6 +1015,7 @@ async function runDoctor(options = {}) {
     allChecks.push(...checkTlsCertificates(config));
     allChecks.push(...checkMediaTools(config));
     allChecks.push(...checkLocalMedia(config));
+    allChecks.push(...(await checkJellyfin(config)));
     allChecks.push(...checkGuestPasses(config));
     allChecks.push(...checkEvents(config));
     allChecks.push(...(await checkProviderConnectivity(config)));

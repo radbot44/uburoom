@@ -11,7 +11,7 @@ const DEMO_SERVER = 'local-demo';
  * streams reach a provider only through here, addressed by the server id stored
  * with every queue entry, bookmark and prepared media object. Only a request that
  * has no media yet, such as opening the library, may name no server; it gets the
- * first one configured.
+ * first one that is configured.
  *
  * @typedef {Object} MediaProvider
  * @property {string} kind
@@ -26,8 +26,9 @@ class MediaProviders {
     this.list = list;
     this.pipeline = pipeline;
   }
+  /** The provider a request reaches by naming no server: the first one that is configured. */
   get primary() {
-    return this.list[0];
+    return this.list.find(provider => provider.root?.configured) || this.list[0];
   }
   get configured() {
     return this.list.some(provider => provider.root?.configured);
@@ -39,7 +40,8 @@ class MediaProviders {
       try {
         if ((await provider.identity()) === serverId) return provider;
       } catch (error) {
-        unanswered ||= error;
+        // One that is not set up has no id to give; that is not a failure to answer.
+        if (provider.root?.configured !== false) unanswered ||= error;
       }
     }
     if (unanswered) throw unanswered;

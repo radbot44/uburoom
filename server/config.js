@@ -14,6 +14,9 @@ const KEYS = [
   'directory.expose_discord_members',
   'directory.expose_plex_members',
   ...Object.keys(require('./room-limits').SETTINGS).map(key => 'rooms.' + key),
+  'jellyfin.url',
+  'jellyfin.api_key',
+  'jellyfin.user',
   'plex.url',
   'plex.token',
   'plex.machine_identifier',
@@ -295,6 +298,25 @@ function normalizeConfig(
       path: path.resolve(base, library.path),
     })),
   };
+  // One Jellyfin server, seen through one of its users. Blank url leaves it out.
+  const jellyfinUrl = get('jellyfin.url');
+  if (jellyfinUrl) {
+    let url;
+    try {
+      url = new URL(jellyfinUrl);
+    } catch {
+      throw new Error('jellyfin.url must be an HTTP(S) address');
+    }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash)
+      throw new Error('jellyfin.url must be an HTTP(S) address without credentials or a query');
+    const apiKey = get('jellyfin.api_key'),
+      user = get('jellyfin.user');
+    if (!apiKey || !/^[\x21-\x7e]{1,200}$/.test(apiKey) || apiKey.includes('"'))
+      throw new Error('jellyfin.api_key is required with jellyfin.url');
+    if (!user || user.length > 100 || /[\u0000-\u001f\u007f]/.test(user))
+      throw new Error('jellyfin.user is required with jellyfin.url: the Jellyfin user whose libraries are offered');
+    config.jellyfin = { url: url.origin + url.pathname.replace(/\/+$/, ''), apiKey, user };
+  }
   config.plexReporting = {
     enabled: boolean('plex.reporting_enabled', true),
     watchState: boolean('plex.reporting_watch_state', true),
