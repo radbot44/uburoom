@@ -19,7 +19,7 @@ Decoupled session reporting, shared-producer stop safety, activity-only default 
 
 **Reporting versus streaming:** A single normalized viewer address could be attached to that viewer's timeline reports without changing the reporting/transcode identity separation. Forwarding on stream requests is a separate scope: `Plex.transcodeParams`, decision/start, pooled HLS fetches, proxied file/segment requests and local-conversion source reads do not all belong to an individual viewer. One shared producer cannot truthfully have several simultaneous viewer source addresses. Do not put a mutable viewer address on cached account scopes, the global Plex client, or shared producer requests. Browser-direct delivery has its own network peer. A reporting-only experiment must establish whether timeline headers alone change `Player.address`, `local` and stream policy; it cannot justify forwarding on all stream paths.
 
-**Conclusion:** `X-Forwarded-For` is a credible candidate for public viewer addresses over the current loopback topology. Its effect on uburoom reporting, Vigrid's installed PMS version, private viewer addresses and stream limits remains unknown. No request to Vigrid/PMS, live test, configuration change or forwarding implementation was made for this follow-up.
+**Conclusion:** `X-Forwarded-For` is a credible candidate for public viewer addresses over the current loopback topology. Its effect on uburoom reporting, the installed PMS version, private viewer addresses and stream limits remains unknown. No request to the live PMS, live test, configuration change or forwarding implementation was made for this follow-up.
 
 ### Baseline causes of split viewing sessions
 

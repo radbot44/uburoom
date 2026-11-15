@@ -32,13 +32,13 @@ Room teardown and writer contention: final snapshots preserve room intent before
 
 ## 2026-11-08 — M1-P11 / M1-P14 container rehearsal and key resilience (B)
 
-Automated rehearsal via Docker Compose (`desktop-linux`, container Node v22.23.4 / Debian 12, host Node v22.22.2 / Windows): clean installation, diagnosis, matched snapshot backup, destructive mutation rollback and credential key protection, without touching Vigrid or production data. `scripts/doctor.js --json` passed 14 checks against isolated `fake-plex`. Probe 7A: a missing `credentials.key` fails doctor without generating a replacement. Probe 7B: a mismatched key is rejected without overwriting credentials. Probe 7C: restoring the original key bytes passes every check and `/health` returns 200. Sanitized trace: `rehearsal/results/rehearsal-evidence.json` in the evidence folder.
+Automated rehearsal via Docker Compose (`desktop-linux`, container Node v22.23.4 / Debian 12, host Node v22.22.2 / Windows): clean installation, diagnosis, matched snapshot backup, destructive mutation rollback and credential key protection, without touching any production installation or data. `scripts/doctor.js --json` passed 14 checks against isolated `fake-plex`. Probe 7A: a missing `credentials.key` fails doctor without generating a replacement. Probe 7B: a mismatched key is rejected without overwriting credentials. Probe 7C: restoring the original key bytes passes every check and `/health` returns 200. Sanitized trace: `rehearsal/results/rehearsal-evidence.json` in the evidence folder.
 
 ## 2026-11-08 — M2-P3 / M2-P9 invites and Discord events (A/B)
 
 Room invites with guest limits and the trusted server tier verified in isolated tests. Discord scheduled event lifecycle: start/end scheduling, room rename sync, cancellation with share removal, conflict resolution without room revision locking.
 
-At 09befae watch nights became uburoom events (schema 11) with optional Discord posting. Isolated tests cover lobby visibility following room privacy, the `events.schedulers` tier, new-room scheduling leaving no room behind on a rejected form, room retention while an event is upcoming, Discord edits and interested count, persistence across restart and removal at the end time. Full suite 443 passed, 0 failed, 0 skipped. The private v10→v11 transfer was run on a synthetic copy, including a repeat run, then on Vigrid; the Vigrid suite passed.
+At 09befae watch nights became uburoom events (schema 11) with optional Discord posting. Isolated tests cover lobby visibility following room privacy, the `events.schedulers` tier, new-room scheduling leaving no room behind on a rejected form, room retention while an event is upcoming, Discord edits and interested count, persistence across restart and removal at the end time. Full suite 443 passed, 0 failed, 0 skipped. The v10→v11 transfer was run on a synthetic copy, including a repeat run, then on a live installation; the suite passed.
 
 ## 2026-11-09 — M2-P9 watch-night UI (B, main after 09befae)
 
