@@ -45,6 +45,15 @@ plex:
   reporting_enabled: true # Enable timeline activity reporting to Plex.
   reporting_watch_state: true # Allow personal watch-state (resume/scrobble) synchronization.
 
+# A Jellyfin server, shown in the library beside Plex. Blank url leaves it out.
+# Everyone who is admitted watches through the one Jellyfin user named here and
+# sees what that user may see; it adds no way in. Original files play as they are
+# and uburoom converts the rest itself (needs FFmpeg); Jellyfin does not transcode.
+jellyfin:
+  url: '' # e.g. 'http://127.0.0.1:8096', including any base path.
+  api_key: '' # Jellyfin Dashboard -> API Keys. Keep this file private.
+  user: '' # A Jellyfin username; give it only the libraries people may watch here.
+
 discord:
   bot_token: ''
   client_id: ''
@@ -108,15 +117,6 @@ tools:
   # Needed for subtitle extraction and optional AV1/VP9/VP8 conversion.
   ffmpeg: ''
   ffprobe: '' # Searches PATH first, then defaults beside the selected ffmpeg.
-
-# A Jellyfin server, shown in the library beside Plex. Blank url leaves it out.
-# Everyone who is admitted watches through the one Jellyfin user named here and
-# sees what that user may see; it adds no way in. Original files play as they are
-# and uburoom converts the rest itself (needs FFmpeg); Jellyfin does not transcode.
-jellyfin:
-  url: '' # e.g. 'http://127.0.0.1:8096', including any base path.
-  api_key: '' # Jellyfin Dashboard -> API Keys. Keep this file private.
-  user: '' # A Jellyfin username; give it only the libraries people may watch here.
 
 # Folders of videos on this machine, shown in the library beside Plex. Everyone who
 # is admitted may watch them; they add no way in. Needs FFprobe, and FFmpeg for

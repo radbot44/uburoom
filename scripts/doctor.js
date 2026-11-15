@@ -1016,6 +1016,14 @@ async function runDoctor(options = {}) {
     allChecks.push(...checkMediaTools(config));
     allChecks.push(...checkLocalMedia(config));
     allChecks.push(...(await checkJellyfin(config)));
+    if (!config.plexUrl && !config.jellyfin && !config.localMedia?.libraries?.length)
+      allChecks.push({
+        category: 'Media',
+        name: 'Media source',
+        status: 'warn',
+        message: 'No media source is configured, so the library will be empty.',
+        remediation: 'Set plex.url and plex.token, the jellyfin settings, or local_media.libraries.',
+      });
     allChecks.push(...checkGuestPasses(config));
     allChecks.push(...checkEvents(config));
     allChecks.push(...(await checkProviderConnectivity(config)));
