@@ -33,6 +33,30 @@ const BEHIND = 6; // Segments kept behind the oldest recent request.
 const IDLE_MS = 45000;
 const TIMESCALE = 90000;
 const COPYABLE = /^(h264|avc1|hevc|h265|hvc1|hev1)$/i;
+// Segments are written under one folder per server process. A server that is killed rather
+// than shut down cannot remove its own, so each start removes those of processes that are gone.
+const ROOT = path.join(os.tmpdir(), 'uburoom-remux');
+
+/** Remove the segment folders of server processes that no longer run. */
+function sweep() {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(ROOT);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    const pid = Number(name);
+    if (!Number.isSafeInteger(pid) || pid === process.pid) continue;
+    try {
+      process.kill(pid, 0);
+      continue; // Still running, possibly another uburoom on this machine.
+    } catch (error) {
+      if (error.code === 'EPERM') continue;
+    }
+    fs.rm(path.join(ROOT, name), { recursive: true, force: true }, () => {});
+  }
+}
 
 const failure = message => new PlaybackError(message);
 
@@ -93,7 +117,7 @@ class RemuxSession {
     this.audio = audio;
     this.users = 0;
     this.closed = false;
-    this.directory = path.join(os.tmpdir(), 'uburoom-remux-' + this.id);
+    this.directory = path.join(ROOT, String(process.pid), this.id);
     /** @type {Map<number, {file: string, size: number}>} */
     this.segments = new Map();
     /** @type {Map<number, {resolve: Function, reject: Function}[]>} */
@@ -368,6 +392,7 @@ class Remux {
   /** @param {any} av1 - The pipeline's FFmpeg tools and source bridge. */
   constructor(av1) {
     this.av1 = av1;
+    sweep();
     /** @type {Map<string, RemuxSession>} */
     this.sessions = new Map();
     /** @type {Map<string, RemuxSession>} */
@@ -534,8 +559,9 @@ class Remux {
       headers: { 'Content-Type': 'video/iso.segment', 'Content-Length': String(segment.size) },
     });
   }
-  close() {
-    return Promise.all([...this.byId.values()].map(session => session.close()));
+  async close() {
+    await Promise.all([...this.byId.values()].map(session => session.close()));
+    await fs.promises.rm(path.join(ROOT, String(process.pid)), { recursive: true, force: true }).catch(() => {});
   }
 }
 
