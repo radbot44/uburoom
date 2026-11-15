@@ -136,6 +136,20 @@ FFmpeg and FFprobe are found on the service user's PATH or at `tools.ffmpeg`/`to
 
 At capacity, a conversion may wait briefly or reuse an existing compatible output. uburoom will not evict viewers or exceed its job limit; conversions started by other Plex applications are outside that counter. See [playback decisions](playback-reliability.md#playback-decisions).
 
+## Jellyfin
+
+`jellyfin.url`, `jellyfin.api_key` and `jellyfin.user` add one Jellyfin server beside Plex. Each movie or show library that user may see appears as a card on Libraries home, with seasons, posters, genre and year filters, sorting and auto-queue sources.
+
+| Setting | Behavior |
+| --- | --- |
+| `url` | The server's address, including any base path. Blank leaves Jellyfin out. |
+| `api_key` | A key from the Jellyfin dashboard (API Keys). It is sent only as a request header to that server. |
+| `user` | A Jellyfin username. Libraries and parental limits follow this user, so give it only what people may watch here. |
+
+Jellyfin accounts are not linked to uburoom accounts: everyone uburoom admits, including guests in their room, watches through the configured user, and Jellyfin never becomes another way in. `access.require_plex` keeps its meaning as an entry rule. The server is remembered by its own id the first time it answers; a different server at the same address is refused.
+
+Original files play as they are, and files a browser cannot play need FFmpeg and a local output in `transcoding.outputs`: uburoom converts them itself and Jellyfin's transcoder is not used. Choosing one of several audio tracks converts the video too. Embedded subtitles are read from the file; external text subtitles (SRT, WebVTT, ASS) are offered as tracks and other external formats are left out. Nothing is reported back to Jellyfin: no play state, progress or watched marks. Collections, multiple versions of one item, intro and credit markers and personal Jellyfin sign-in are not supported. `npm run doctor` checks the address, key and user.
+
 ## Local media
 
 `local_media.libraries` lists folders of videos on the server's own disk. Each appears as a card on Libraries home beside the Plex libraries and opens one title-sorted list of every video beneath it, subfolders included.
