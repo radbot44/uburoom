@@ -253,6 +253,12 @@ class PlexSessions {
       }
     }
   }
+  // What identifies one of our transcode sessions on requests for its playlists and segments.
+  sessionHeaders(media, { session = false } = {}) {
+    const id = media?.transcodeId;
+    if (!id) return {};
+    return { 'X-Plex-Client-Identifier': id, ...(session ? { 'X-Plex-Session-Identifier': id } : {}) };
+  }
   // Plex can accept a session and then refuse to run it, for example when its transcode
   // drive is nearly full. Without this the viewer gets a black screen and no error.
   async confirmStarted(media, manifest) {

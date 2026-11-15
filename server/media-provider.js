@@ -17,6 +17,12 @@
  * @property {(resource: string, options?: {signal?: AbortSignal, method?: string, headers?: Record<string,string>, streaming?: boolean}) => Promise<Response>} request
  *   Read a provider resource with this scope's credential. The pipeline never sees the credential.
  * @property {(media: any) => Promise<any>} stop - Release whatever the provider holds for a prepared media object.
+ * @property {(media: any, options?: {session?: boolean}) => Record<string,string>} [sessionHeaders]
+ *   Headers that identify one of the provider's own transcode sessions on requests for its output.
+ * @property {(id: string, previous?: any, choices?: any) => Promise<{media: any, detail: any}>} [source]
+ *   What an item is and where its bytes are; see server/media-delivery.js.
+ * @property {(media: any, detail: any, request: any) => Promise<void>} [startTranscode]
+ *   Start the provider's own transcode of a prepared source; absent when it has none.
  * @property {() => Promise<boolean>} [videoConversionDisabled]
  *   Whether the provider's own setting forbids video conversion; absent when it has no such setting.
  */

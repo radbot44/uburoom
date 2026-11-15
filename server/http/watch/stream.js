@@ -296,7 +296,7 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
           streaming: true,
           headers: {
             Accept: '*/*',
-            ...(media.transcodeId ? { 'X-Plex-Client-Identifier': media.transcodeId } : {}),
+            ...(media.hlsProvider || media.provider).sessionHeaders?.(media),
             ...(req.headers.range ? { Range: req.headers.range } : {}),
           },
         }));

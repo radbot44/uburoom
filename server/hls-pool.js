@@ -2,7 +2,7 @@
 const { runOperation, waitFor, currentSignal } = require('./operation');
 const { PlaybackError } = require('./av1');
 // Only live, identical outputs in one authorized room/media generation are pooled.
-// A cached segment-zero anchor prevents a late join from rewinding Plex's encoder.
+// A cached segment-zero anchor prevents a late join from rewinding the provider's encoder.
 class HLSPool {
   constructor(stop, { maxGroups = 32, maxBytes = 64 * 1024 * 1024, anchorBytes = 16 * 1024 * 1024 } = {}) {
     this.stop = stop;
@@ -22,7 +22,7 @@ class HLSPool {
       timer = setTimeout(() => controller.abort(), timeoutMs);
     timer.unref?.();
     const signal = currentSignal() ? AbortSignal.any([controller.signal, currentSignal()]) : controller.signal;
-    const options = { signal, headers: { Accept: '*/*', 'X-Plex-Client-Identifier': media.transcodeId } };
+    const options = { signal, headers: { Accept: '*/*', ...provider.sessionHeaders?.(media) } };
     const wait = promise =>
       new Promise((resolve, reject) => {
         const abort = () => reject(signal.reason);
@@ -99,14 +99,12 @@ class HLSPool {
       timer = setTimeout(() => controller.abort(), timeoutMs);
     timer.unref?.();
     try {
-      const target = provider.url(new URL(first, media.start).href).href,
-        id = media.transcodeId;
+      const target = provider.url(new URL(first, media.start).href).href;
       const response = await provider.request(target, {
         signal: controller.signal,
         headers: {
           Accept: 'application/vnd.apple.mpegurl',
-          'X-Plex-Client-Identifier': id,
-          'X-Plex-Session-Identifier': id,
+          ...provider.sessionHeaders?.(media, { session: true }),
         },
       });
       return (await response.text()).startsWith('#EXTM3U');

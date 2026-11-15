@@ -233,6 +233,9 @@ class Plex {
   startTranscode(...args) {
     return this.lifecycle.startTranscode(...args);
   }
+  sessionHeaders(media, options) {
+    return this.lifecycle.sessionHeaders(media, options);
+  }
   confirmStarted(media, manifest) {
     return this.lifecycle.confirmStarted(media, manifest);
   }
