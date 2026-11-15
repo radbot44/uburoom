@@ -64,7 +64,7 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
     },
     transcoding: {
       policy: 'auto',
-      plex: true,
+      provider: true,
       uburoom: true,
       encoder: 'hardware',
       cpuFallback: false,
@@ -136,7 +136,7 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
     plex: true,
   });
   assert.equal(result.settings.transcoding.policy, 'auto');
-  assert.equal(result.settings.transcoding.plex, true);
+  assert.equal(result.settings.transcoding.provider, true);
   assert.equal(result.settings.transcoding.uburoom, true);
   assert.equal(result.settings.transcoding.encoder, 'hardware');
   assert.equal(result.settings.transcoding.cpuFallback, false);

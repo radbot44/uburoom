@@ -263,7 +263,7 @@ function mount({ request, trigger }) {
   );
   const transcoding = node('div', panels.transcoding, null, 'server-settings-grid');
   const policy = field(transcoding, 'transcoding.policy', 'Conversion policy', 'select', [
-    ['follow_plex', 'Follow Plex'],
+    ['follow_provider', 'Follow the media server'],
     ['disabled', 'Disabled'],
     ['override', 'Allow conversion'],
   ]);
@@ -285,7 +285,7 @@ function mount({ request, trigger }) {
     ['software', 'Software'],
   ]);
   field(transcoding, 'transcoding.max_jobs', 'Maximum shared conversion jobs', 'number');
-  checkbox(panels.transcoding, 'transcoding.plex', 'Allow Plex conversion');
+  checkbox(panels.transcoding, 'transcoding.provider', 'Allow media server conversion');
   checkbox(panels.transcoding, 'transcoding.uburoom', 'Allow uburoom conversion');
   checkbox(panels.transcoding, 'transcoding.cpu_fallback', 'Allow software fallback');
   node('h3', panels.transcoding, 'uburoom video formats');
@@ -400,7 +400,7 @@ function mount({ request, trigger }) {
                   )
                   .join(', ') || 'None'
             : {
-                follow_plex: 'Follow Plex settings',
+                follow_provider: 'Follow media server settings',
                 override: 'Allow conversion',
                 disabled: 'Disable conversion',
                 auto: 'Automatic',

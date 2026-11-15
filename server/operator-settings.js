@@ -42,7 +42,7 @@ function runningSettings(config) {
       },
       directory: select(config.directory, ['discord', 'plex']),
       transcoding: {
-        ...select(transcoding, ['policy', 'plex', 'uburoom', 'encoder', 'cpuFallback', 'maxJobs']),
+        ...select(transcoding, ['policy', 'provider', 'uburoom', 'encoder', 'cpuFallback', 'maxJobs']),
         formats: transcoding?.formats?.slice() || [],
         allowOriginal: !!transcoding?.qualities?.some(quality => quality.id === 'direct'),
         qualities: (transcoding?.qualities || [])

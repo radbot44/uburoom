@@ -6,7 +6,7 @@ const { localFormat } = require('../web/playback-policy');
  * @typedef {Object} DeliveryRequest
  * @property {string} quality - Normalized quality identifier.
  * @property {boolean} [compatible] - Viewer needs an output the browser can decode.
- * @property {string} [fallback] - Output this viewer fell back to: a local codec, 'plex', or 'audio' for Plex keeping the video and converting only audio.
+ * @property {string} [fallback] - Output this viewer fell back to: a local codec, 'provider' for its own transcoder, or 'audio' for the provider keeping the video and converting only audio.
  * @property {boolean} [burn] - Selected subtitles must be burned into the video.
  * @property {number} audioTracks - Audio tracks offered by the selected source.
  * @property {boolean} [sourceOnly] - Resolve the source without preparing delivery.
@@ -17,7 +17,7 @@ const { localFormat } = require('../web/playback-policy');
  * @typedef {Object} DeliveryPlan
  * @property {'file'|'local'|'provider-hls'} route - The original file, uburoom's own conversion, or the provider's HLS transcode.
  * @property {string} [codec] - Local output codec.
- * @property {'source-only'|'original'|'local-fallback'|'plex-fallback'|'audio-conversion'|'burn-in'|'compatible'|'multiple-audio'|'quality-limit'} reason
+ * @property {'source-only'|'original'|'local-fallback'|'provider-fallback'|'audio-conversion'|'burn-in'|'compatible'|'multiple-audio'|'quality-limit'} reason
  */
 
 /**
@@ -26,10 +26,10 @@ const { localFormat } = require('../web/playback-policy');
  * @param {DeliveryRequest} request
  * @returns {DeliveryPlan}
  */
-function planDelivery({ quality, compatible, fallback, burn, audioTracks, sourceOnly, outputs = ['plex'] }) {
+function planDelivery({ quality, compatible, fallback, burn, audioTracks, sourceOnly, outputs = ['provider'] }) {
   if (sourceOnly) return { route: 'file', reason: 'source-only' };
   if (localFormat(fallback)) return { route: 'local', codec: fallback, reason: 'local-fallback' };
-  if (fallback === 'plex') return { route: 'provider-hls', reason: 'plex-fallback' };
+  if (fallback === 'provider') return { route: 'provider-hls', reason: 'provider-fallback' };
   if (fallback === 'audio' && quality === 'direct' && !burn)
     return { route: 'provider-hls', reason: 'audio-conversion' };
   const reason = burn
@@ -42,8 +42,8 @@ function planDelivery({ quality, compatible, fallback, burn, audioTracks, source
           ? 'multiple-audio'
           : undefined;
   if (!reason) return { route: 'file', reason: 'original' };
-  // Choosing one audio track can keep the video untouched only through Plex.
-  if (reason === 'multiple-audio' && outputs.includes('plex')) return { route: 'provider-hls', reason };
+  // Choosing one audio track can keep the video untouched only through the provider's transcoder.
+  if (reason === 'multiple-audio' && outputs.includes('provider')) return { route: 'provider-hls', reason };
   const first = outputs[0];
   return localFormat(first) ? { route: 'local', codec: first, reason } : { route: 'provider-hls', reason };
 }

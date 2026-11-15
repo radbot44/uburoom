@@ -24,7 +24,7 @@ const EDITABLE = new Set([
   'rooms.host_permissions',
   'rooms.viewer_permissions',
   'transcoding.policy',
-  'transcoding.plex',
+  'transcoding.provider',
   'transcoding.uburoom',
   'transcoding.encoder',
   'transcoding.formats',
@@ -72,7 +72,7 @@ function editableSettings(config) {
       key => config.roomPermissions.viewer[key],
     ),
     'transcoding.policy': config.transcoding.policy,
-    'transcoding.plex': config.transcoding.plex,
+    'transcoding.provider': config.transcoding.provider,
     'transcoding.uburoom': config.transcoding.uburoom,
     'transcoding.encoder': config.transcoding.encoder,
     'transcoding.formats': config.transcoding.formats.slice(),
@@ -167,17 +167,17 @@ function validate(bytes, file) {
 // The dialog's provider and codec fields edit the one ordered outputs list.
 function outputChanges(changes, transcoding) {
   const {
-    'transcoding.plex': plex = transcoding.plex,
+    'transcoding.provider': provider = transcoding.provider,
     'transcoding.uburoom': uburoom = transcoding.uburoom,
     'transcoding.formats': formats = transcoding.formats,
     ...rest
   } = changes;
   if (Object.keys(rest).length === Object.keys(changes).length) return changes;
   const local = uburoom ? (formats.length ? formats : ['av1']) : [];
-  const kept = transcoding.outputs.filter(output => (output === 'plex' ? plex : local.includes(output)));
+  const kept = transcoding.outputs.filter(output => (output === 'provider' ? provider : local.includes(output)));
   const added = [
     ...local.filter(output => !kept.includes(output)),
-    ...(plex && !kept.includes('plex') ? ['plex'] : []),
+    ...(provider && !kept.includes('provider') ? ['provider'] : []),
   ];
   return { ...rest, 'transcoding.outputs': [...kept, ...added] };
 }

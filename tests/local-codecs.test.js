@@ -10,11 +10,11 @@ const Engine = require('../shared/engine.mjs');
 const { accountFixture } = require('../scripts/account-fixture');
 
 test('local codec configuration and fallback commands are ordered, bounded allowlists', () => {
-  assert.deepEqual(normalizeConfig({ transcoding: { outputs: ['vp9', 'plex', 'av1'] } }).transcoding.formats, [
+  assert.deepEqual(normalizeConfig({ transcoding: { outputs: ['vp9', 'provider', 'av1'] } }).transcoding.formats, [
     'vp9',
     'av1',
   ]);
-  assert.deepEqual(normalizeConfig({}).transcoding.outputs, ['av1', 'plex']);
+  assert.deepEqual(normalizeConfig({}).transcoding.outputs, ['av1', 'provider']);
   for (const outputs of [['h264'], ['vp9', 'vp9'], ['__proto__'], 'vp8'])
     assert.throws(() => normalizeConfig({ transcoding: { outputs } }));
   for (const codec of ['av1', 'vp9', 'vp8'])
@@ -192,7 +192,7 @@ test('local VP8/VP9 preparation enforces allowed formats, Plex policy and subtit
       await plex.stop(media);
     }
     await assert.rejects(plex.prepare('1', 'direct', true, undefined, 'av1'), /not offered/);
-    settings.policy = 'follow_plex';
+    settings.policy = 'follow_provider';
     plex.transcode.videoConversionDisabled = async () => true;
     await assert.rejects(plex.prepare('1', 'direct', true, undefined, 'vp9'), /media server disables/);
     settings.policy = 'override';

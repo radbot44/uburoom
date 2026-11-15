@@ -1,7 +1,7 @@
 'use strict';
 
 // Whether a conversion may run, and how many run at once. `producer` is who would
-// convert: 'uburoom' locally or 'plex' for a provider's own transcoder.
+// convert: 'uburoom' locally or 'provider' for a provider's own transcoder.
 class ConversionPolicy {
   constructor(settings) {
     this.settings = settings;
@@ -15,7 +15,7 @@ class ConversionPolicy {
    * @param {string} producer
    * @param {string} [codec]
    * @param {import('./media-provider').ProviderScope} [provider] The provider serving this media; under
-   *   follow_plex its own conversion setting is honored.
+   *   follow_provider its own conversion setting is honored.
    */
   async video(producer, codec = 'av1', provider) {
     const policy = this.settings;
@@ -23,12 +23,12 @@ class ConversionPolicy {
     if (policy.policy === 'disabled' || !policy[producer])
       throw this.failure(
         'Playback needs ' +
-          producer +
+          (producer === 'provider' ? "the media server's" : producer) +
           ' conversion, which this server has disabled. Try Original quality or another supported player/track.',
       );
     if (producer === 'uburoom' && !policy.formats.includes(codec))
       throw this.failure(codec.toUpperCase() + ' conversion is not offered by this server.');
-    if (policy.policy === 'follow_plex' && (await provider?.videoConversionDisabled?.()))
+    if (policy.policy === 'follow_provider' && (await provider?.videoConversionDisabled?.()))
       throw Object.assign(
         this.failure(
           'The media server disables video transcoding. uburoom honors this setting; try Original playback in a compatible player.',

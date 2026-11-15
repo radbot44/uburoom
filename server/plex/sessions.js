@@ -140,7 +140,7 @@ class PlexSessions {
         let copyOnly = false;
         try {
           try {
-            await this.plex.pipeline.conversionPolicy.video('plex', undefined, this.plex);
+            await this.plex.pipeline.conversionPolicy.video('provider', undefined, this.plex);
           } catch (error) {
             if (error.videoDisabled) copyOnly = true;
             else throw error;

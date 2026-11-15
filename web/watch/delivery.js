@@ -34,16 +34,16 @@ export function mount(host, deps) {
     }
     if (uburoomPlayback.localFormat(store.room.state.format))
       store.stream.localFallbackAttempts.add(store.room.state.format);
-    if (store.room.state.format === 'hls') store.stream.localFallbackAttempts.add('plex');
+    if (store.room.state.format === 'hls') store.stream.localFallbackAttempts.add('provider');
     const localCandidates = uburoomPlayback.fallbackCodecs(
       store.identity.config.localFormats || ['av1'],
       store.stream.localFallbackAttempts,
       mime => typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(mime),
     );
-    const order = store.identity.config.outputs || [...localCandidates, 'plex'];
+    const order = store.identity.config.outputs || [...localCandidates, 'provider'];
     const candidates = order.filter(output =>
-      output === 'plex'
-        ? !skipPlex && !store.stream.localFallbackAttempts.has('plex')
+      output === 'provider'
+        ? !skipPlex && !store.stream.localFallbackAttempts.has('provider')
         : localCandidates.includes(output),
     );
     // H.264 or browser-supported HEVC with unplayable audio needs no new picture: Plex can copy the video and convert only the audio.
@@ -52,10 +52,10 @@ export function mount(host, deps) {
       !uburoomPlayback.needsVideoConversion(store.room.state, type => deps.video.canPlayType(type));
     if (
       preferHLS &&
-      order.includes('plex') &&
+      order.includes('provider') &&
       canCopyVideo &&
       !store.stream.localFallbackAttempts.has('audio') &&
-      !store.stream.localFallbackAttempts.has('plex')
+      !store.stream.localFallbackAttempts.has('provider')
     )
       candidates.unshift('audio');
     if (!candidates.length) {
@@ -96,7 +96,7 @@ export function mount(host, deps) {
           store.player.playbackError =
             reason +
             ' ' +
-            (['plex', 'audio'].includes(codec) ? 'Plex' : codec.toUpperCase()) +
+            (['provider', 'audio'].includes(codec) ? 'Media server' : codec.toUpperCase()) +
             ' fallback failed: ' +
             error.message;
         }
@@ -217,7 +217,7 @@ export function mount(host, deps) {
     next.format === 'file' &&
     /^(h264|avc1|hevc|h265|hvc1|hev1)$/i.test(next.videoCodec || '') &&
     !uburoomPlayback.needsVideoConversion(next, type => deps.video.canPlayType(type)) &&
-    (store.identity.config.outputs || ['plex']).includes('plex') &&
+    (store.identity.config.outputs || ['provider']).includes('provider') &&
     uburoomPlayback.needsAudioConversion(next, type => deps.video.canPlayType(type));
   function holdStream(next) {
     const hold = (store.stream.heldStream = { next, started: deps.time.mono() });

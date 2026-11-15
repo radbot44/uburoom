@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2s
+# Config schema v2t
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -219,14 +219,16 @@ directory:
 
 # Transcoding behavior
 transcoding:
-  # follow_plex: honors Plex's setting
+  # These apply to every media source.
+  # follow_provider: honors the media server's own setting (Plex can forbid video conversion)
   # disabled: no conversion paths
-  # override: allows regardless of Plex's setting
-  policy: 'follow_plex' # follow_plex | disabled | override
+  # override: allows regardless of the media server's setting
+  policy: 'follow_provider' # follow_provider | disabled | override
   # Tried in order when a viewer needs conversion. Leave one out to disable it.
-  # Use av1, vp9, vp8 and plex. AV1 goes first only with a working hardware encoder
-  # unless it is the last choice. [] disables conversion.
-  outputs: [av1, plex]
+  # Use av1, vp9, vp8 and provider. 'provider' is the media server's own transcoder;
+  # only Plex has one, so it is skipped for Jellyfin and local folders. AV1 goes first
+  # only with a working hardware encoder unless it is the last choice. [] disables conversion.
+  outputs: [av1, provider]
 
   # Settings are for the uburoom encoder. Plex controls its own.
   # Software encoders: libsvtav1 (AV1), libvpx-vp9 (VP9), libvpx (VP8).

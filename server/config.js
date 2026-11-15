@@ -408,16 +408,17 @@ function normalizeConfig(
   const maxJobs = value.transcoding?.max_jobs ?? 5;
   if (!Number.isSafeInteger(maxJobs) || maxJobs < 1 || maxJobs > 32)
     throw new Error('transcoding.max_jobs must be an integer from 1 to 32');
-  const outputs = list('transcoding.outputs') ?? ['av1', 'plex'];
+  const outputs = list('transcoding.outputs') ?? ['av1', 'provider'];
   const { localFormat } = require('../web/playback-policy');
-  if (outputs.some(output => output !== 'plex' && !localFormat(output)))
-    throw new Error('transcoding.outputs supports av1, vp9, vp8 and plex');
+  if (outputs.some(output => output !== 'provider' && !localFormat(output)))
+    throw new Error('transcoding.outputs supports av1, vp9, vp8 and provider');
   if (new Set(outputs).size !== outputs.length) throw new Error('transcoding.outputs must not repeat an output');
-  const formats = outputs.filter(output => output !== 'plex');
+  const formats = outputs.filter(output => output !== 'provider');
   config.transcoding = {
-    policy: choice('transcoding.policy', 'follow_plex', ['follow_plex', 'disabled', 'override']),
+    policy: choice('transcoding.policy', 'follow_provider', ['follow_provider', 'disabled', 'override']),
     outputs,
-    plex: outputs.includes('plex'),
+    // Whether a provider's own transcoder may be used, where the provider has one.
+    provider: outputs.includes('provider'),
     uburoom: formats.length > 0,
     encoder: choice('transcoding.encoder', 'auto', ['auto', 'hardware', 'qsv', 'nvenc', 'software']),
     cpuFallback: boolean('transcoding.cpu_fallback', true),

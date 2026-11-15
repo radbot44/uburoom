@@ -430,8 +430,8 @@ test('conversion policy follows Plex, fails closed when unknown and counts jobs 
     });
   const plex = server(() => [{ id: 'TranscoderCanOnlyRemuxVideo', value: disabled }]);
   const policy = new ConversionPolicy({
-    policy: 'follow_plex',
-    plex: true,
+    policy: 'follow_provider',
+    provider: true,
     uburoom: true,
     formats: ['av1'],
     maxJobs: 1,
@@ -441,7 +441,7 @@ test('conversion policy follows Plex, fails closed when unknown and counts jobs 
   plex.shared.conversionPreference = undefined;
   disabled = '0';
   await policy.video('uburoom', 'av1', plex);
-  await policy.video('plex', undefined, plex.scope('viewer-token', 'viewer'));
+  await policy.video('provider', undefined, plex.scope('viewer-token', 'viewer'));
   assert.equal(reads, 2, 'a viewer scope follows the setting read with the server token');
   const release = policy.acquire();
   assert.throws(() => policy.acquire(), /conversion jobs/);
@@ -457,13 +457,13 @@ test('conversion policy follows Plex, fails closed when unknown and counts jobs 
   assert.equal(policy.jobs.size, 1);
   background();
   policy.settings.policy = 'disabled';
-  await assert.rejects(policy.video('plex'), /disabled/);
+  await assert.rejects(policy.video('provider'), /disabled/);
   policy.settings.policy = 'override';
   disabled = '1';
   await policy.video('uburoom', 'av1', plex);
   policy.settings.formats = [];
   await assert.rejects(policy.video('uburoom'), /not offered/);
-  const missing = new ConversionPolicy({ ...policy.settings, policy: 'follow_plex', formats: ['av1'] });
+  const missing = new ConversionPolicy({ ...policy.settings, policy: 'follow_provider', formats: ['av1'] });
   await assert.rejects(
     missing.video(
       'uburoom',
@@ -482,7 +482,7 @@ test('Plex conversions reserve/release shared global capacity and follow video-c
     {
       plexUrl: 'http://plex-fixture.invalid:32400',
       plexToken: 'fixture-owner',
-      transcoding: { policy: 'follow_plex', plex: true, uburoom: true, formats: ['av1'], maxJobs: 1 },
+      transcoding: { policy: 'follow_provider', provider: true, uburoom: true, formats: ['av1'], maxJobs: 1 },
     },
     async (input, options) => {
       const url = new URL(input);
@@ -539,7 +539,7 @@ test('Plex requests opportunistic directStream when burn and fallback compatible
     {
       plexUrl: 'http://plex-fixture.invalid:32400',
       plexToken: 'fixture-owner',
-      transcoding: { policy: 'follow_plex', plex: true, uburoom: true, formats: ['av1'], maxJobs: 2 },
+      transcoding: { policy: 'follow_provider', provider: true, uburoom: true, formats: ['av1'], maxJobs: 2 },
     },
     async (input, options) => {
       const url = new URL(input);
@@ -712,7 +712,7 @@ test('explicit software AV1 uses/probes only software and identical viewers cons
   });
   manager.conversionPolicy = new ConversionPolicy({
     policy: 'override',
-    plex: true,
+    provider: true,
     uburoom: true,
     formats: ['av1'],
     maxJobs: 1,

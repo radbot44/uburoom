@@ -31,7 +31,7 @@ class PlexChecks {
   /** What Plex says it would do, for Original and the best converted quality. */
   async decisionItem(media) {
     const pipeline = this.plex.pipeline;
-    if (!pipeline.conversionPolicy?.settings?.outputs?.includes('plex')) return;
+    if (!pipeline.conversionPolicy?.settings?.outputs?.includes('provider')) return;
     const offered = pipeline.qualities(media),
       labels = new Map(offered.map(q => [q.id, q.id === 'direct' ? 'Original' : q.label || q.id]));
     const checks = ['direct', offered.find(q => q.id !== 'direct')?.id].filter(id => id && labels.has(id));

@@ -253,7 +253,8 @@ const COMMANDS = Object.freeze({
         args.compatible = a.compatible;
       }
       if (a.fallback !== undefined) {
-        if (!['av1', 'vp8', 'vp9', 'plex', 'audio'].includes(a.fallback)) throw new Error('Invalid playback fallback');
+        if (!['av1', 'vp8', 'vp9', 'provider', 'audio'].includes(a.fallback))
+          throw new Error('Invalid playback fallback');
         args.fallback = a.fallback;
       }
       if (a.reset === true) args.reset = true;

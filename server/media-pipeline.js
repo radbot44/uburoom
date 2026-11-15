@@ -55,24 +55,28 @@ class MediaPipeline {
   maxTranscodeQuality() {
     return this.qualityOptions.find(q => q.id !== 'direct') || QUALITIES[1];
   }
-  // Configured outputs this viewer can use, in priority order. 'plex' stands for the
+  // Configured outputs this viewer can use, in priority order. 'provider' stands for the
   // provider's own transcode and is usable only where the provider has one. Without a
   // working hardware encoder, a local codec waits behind it rather than loading the CPU.
   async usableOutputs(provider, localCodecs = []) {
     const remote = typeof provider?.startTranscode === 'function';
-    const configured = (this.conversionPolicy.settings?.outputs || ['plex']).filter(
-        output => output !== 'plex' || remote,
+    const configured = (this.conversionPolicy.settings?.outputs || ['provider']).filter(
+        output => output !== 'provider' || remote,
       ),
       usable = [];
     for (const [index, output] of configured.entries()) {
-      if (output === 'plex') {
+      if (output === 'provider') {
         usable.push(output);
         continue;
       }
       if (!this.av1.ffmpeg || !localCodecs.includes(output)) continue;
       try {
         const encoder = await this.av1.selectEncoder(output);
-        if (encoder !== 'software' || this.av1.encoder === 'software' || !configured.slice(index + 1).includes('plex'))
+        if (
+          encoder !== 'software' ||
+          this.av1.encoder === 'software' ||
+          !configured.slice(index + 1).includes('provider')
+        )
           usable.push(output);
       } catch {
         /* An output with no working encoder is skipped. */

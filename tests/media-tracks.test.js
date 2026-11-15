@@ -1148,21 +1148,22 @@ test('embedded text stays client-rendered, so Original is not forced into a conv
   ).subtitles;
   assert.equal(track.delivery, 'cues');
   assert.equal(
-    planDelivery({ quality: 'direct', burn: track.delivery === 'burn', audioTracks: 1, outputs: ['av1', 'plex'] })
+    planDelivery({ quality: 'direct', burn: track.delivery === 'burn', audioTracks: 1, outputs: ['av1', 'provider'] })
       .route,
     'file',
   );
   // Unplayable audio alone keeps the picture, unless another reason needs a conversion.
   assert.equal(
-    planDelivery({ quality: 'direct', fallback: 'audio', audioTracks: 1, outputs: ['av1', 'plex'] }).reason,
+    planDelivery({ quality: 'direct', fallback: 'audio', audioTracks: 1, outputs: ['av1', 'provider'] }).reason,
     'audio-conversion',
   );
   assert.equal(
-    planDelivery({ quality: '720p4', fallback: 'audio', audioTracks: 1, outputs: ['av1', 'plex'] }).route,
+    planDelivery({ quality: '720p4', fallback: 'audio', audioTracks: 1, outputs: ['av1', 'provider'] }).route,
     'local',
   );
   assert.equal(
-    planDelivery({ quality: 'direct', fallback: 'audio', burn: true, audioTracks: 1, outputs: ['av1', 'plex'] }).route,
+    planDelivery({ quality: 'direct', fallback: 'audio', burn: true, audioTracks: 1, outputs: ['av1', 'provider'] })
+      .route,
     'local',
   );
 });
