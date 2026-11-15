@@ -7,7 +7,7 @@ const PlexTracks = require('./tracks');
 const Output = require('../plex-output');
 const Sources = require('../plex-source');
 const SubtitleResources = require('../subtitle-resources');
-const { planDelivery } = require('../delivery-plan');
+const { prepareStream } = require('../media-delivery');
 const { plexIdentity } = require('./identity');
 const { runOperation, currentSignal } = require('../operation');
 
@@ -62,10 +62,12 @@ class PlexSessions {
     this.partQueues = shared.partQueues;
     this.hlsPool = shared.pipeline.hlsPool;
   }
-  async prepare(id, quality, compatible = false, source, fallback, choices = {}) {
-    quality = qualityId(quality);
-    if (!choices.sourceOnly && !this.plex.pipeline.qualityOptions.some(q => q.id === quality))
-      throw new PlaybackError('This quality is not offered by the server.');
+  prepare(id, quality, compatible = false, source, fallback, choices = {}) {
+    return prepareStream(this.plex, id, quality, compatible, source, fallback, choices);
+  }
+  // What this item is and where its bytes are, as this scope may see it. How it is
+  // delivered is decided by server/media-delivery.js.
+  async source(id, source, choices = {}) {
     const sameSource = source && (source.principal || 'discord-shared') === this.plex.principal;
     const { ratingKey, mediaId: targetMediaId } = plexIdentity(this.plex.id(id));
     const item = (await this.plex.json(`/library/metadata/${ratingKey}?checkFiles=1`)).Metadata?.[0];
@@ -80,7 +82,6 @@ class PlexSessions {
       title: String(item.title).slice(0, 200),
       subtitle: this.plex.subtitle(item),
       duration: item.duration / 1000,
-      quality,
       kind: this.plex.kind,
       resources: new Map(),
       id,
@@ -101,6 +102,7 @@ class PlexSessions {
       sourceHdr: hdrInfo.hdr,
       sourceHdrKind: hdrInfo.kind,
       sourceHdrLabel: hdrInfo.label,
+      sourceBitrate: Number(original.bitrate) || undefined,
       ...(sameSource ? { previousId: source.previousId, nextId: source.nextId } : await this.plex.neighbors(item)),
     };
     media.chapters = parseChapters(item);
@@ -125,150 +127,13 @@ class PlexSessions {
     ]);
     media.captionVersion = randomUUID();
     media.subtitleAbort = new AbortController();
-    const audio = media.selection.audio;
-    if (audio) media.audioCodec = audio.codec;
-    const burn = media.selection.subtitle?.available && media.selection.subtitle.delivery === 'burn';
-    const effectiveAudioTracks = hdrInfo.hdr && (!audio || audio.ordinal === 0) ? 1 : media.tracks.audio.length;
-    const conversion =
-      !choices.sourceOnly &&
-      (!fallback || fallback === 'audio') &&
-      (burn || compatible || quality !== 'direct' || effectiveAudioTracks > 1);
-    const plan = planDelivery({
-      quality,
-      compatible,
-      fallback,
-      burn,
-      audioTracks: effectiveAudioTracks,
-      sourceOnly: choices.sourceOnly,
-      outputs: conversion ? await this.plex.usableOutputs(choices.localCodecs) : undefined,
-    });
-    media.deliveryReason = plan.reason;
-    if (plan.route !== 'file') {
-      media.hdr = false;
-      media.hdrKind = 'sdr';
-      media.hdrLabel = 'SDR';
-      media.doviProfile = null;
-      media.bitDepth = 8;
-    }
-    this.plex.pipeline.av1.logger.info(
-      'Delivery',
-      `"${media.title}" ${quality}: ${plan.route}${plan.codec ? ' ' + plan.codec : ''} (${plan.reason}), source ${media.videoCodec}/${media.audioCodec}${fallback ? ', requested ' + fallback : ''}`,
-    );
-    const directPlan = plan.route === 'provider-hls' ? await choices.directPlan?.() : undefined;
-    const directHls = !!(directPlan || choices.directHls);
-    if (directPlan) media.directHls = directPlan;
-    if (choices.shareKey && plan.route === 'provider-hls') {
-      if (choices.authorized && !(await choices.authorized()))
-        throw new PlaybackError('Viewing access or stream selection expired.');
-      const key = JSON.stringify([
-        choices.shareKey,
-        media.sourceKey,
-        qualityId(quality),
-        audio?.id,
-        burn ? media.selection.subtitle.id : null,
-        directHls,
-        !!compatible,
-      ]);
-      let shared;
-      try {
-        shared = await this.hlsPool.acquire(
-          key,
-          authorized =>
-            this.plex.prepare(id, quality, compatible, source, fallback, {
-              ...choices,
-              directPlan: undefined,
-              directHls,
-              shareKey: undefined,
-              excludeLease: undefined,
-              authorized,
-            }),
-          choices.authorized,
-          choices.excludeLease,
-          choices.shareWaitMs,
-          choices.sharedOnly,
-          directHls,
-        );
-      } catch (error) {
-        media.subtitleAbort.abort();
-        if (error instanceof PlaybackError) {
-          const failure = Object.assign(new PlaybackError(error.message), {
-            conversionCapacity: !!error.conversionCapacity,
-            media,
-          });
-          throw failure;
-        }
-        throw error;
-      }
-      for (const field of [
-        'format',
-        'transcodeId',
-        'start',
-        'initialManifest',
-        'videoCodec',
-        'audioCodec',
-        'bitrate',
-        'bitrateCeiling',
-        'output',
-        'hdr',
-        'hdrKind',
-        'hdrLabel',
-        'doviProfile',
-        'bitDepth',
-      ])
-        media[field] = shared.media[field];
-      media.compatible = compatible;
-      media.hlsProvider = shared.media.provider;
-      if (shared.lease) media.hlsLease = shared.lease;
-      else media.releaseConversion = shared.media.releaseConversion;
-      return media;
-    }
-    if (plan.route === 'file') {
-      media.format = 'file';
-      media.start = media.sourceStart;
-    } else if (plan.route === 'local') {
-      const codec = plan.codec;
-      try {
-        await this.plex.pipeline.conversionPolicy.video('uburoom', codec, this.plex);
-      } catch (error) {
-        const failure = new PlaybackError(error.message);
-        failure.media = media;
-        throw failure;
-      }
-      const maxTranscode = this.plex.maxTranscodeQuality();
-      const preset =
-        quality === 'direct' ? maxTranscode : this.plex.pipeline.qualityOptions.find(q => q.id === qualityId(quality));
-      media.bitrateCeiling =
-        quality === 'direct'
-          ? Math.min(maxTranscode?.bitrate || 20000, Math.max(2000, original.bitrate || maxTranscode?.bitrate || 20000))
-          : preset?.bitrate;
-      const localSource = {
-        ...media,
-        start: media.sourceStart,
-        audioIndex: audio?.index,
-        audioOrdinal: audio?.ordinal,
-        audioTrack: audio,
-        shareKey: choices.shareKey,
-        burn: burn ? media.selection.subtitle : undefined,
-      };
-      media.format = codec;
-      media.videoCodec = codec;
-      media.audioCodec = 'opus';
-      media.compatible = true;
-      if (
-        !choices.sharedOnly &&
-        this.plex.pipeline.conversionPolicy.settings &&
-        this.plex.pipeline.conversionPolicy.jobs.size >= this.plex.pipeline.conversionPolicy.settings.maxJobs
-      ) {
-        try {
-          media.av1Lease = this.plex.pipeline.av1.acquire(localSource, quality, true, codec);
-        } catch (error) {
-          if (!error.conversionCapacity) throw error;
-          const release = await this.plex.pipeline.conversionPolicy.wait({ authorized: choices.authorized });
-          release();
-        }
-      }
-      media.av1Lease ||= this.plex.pipeline.av1.acquire(localSource, quality, choices.sharedOnly, codec);
-    } else {
+    return { media, detail: { ratingKey, selected, original, hdrInfo, sourceBitDepth } };
+  }
+  // Plex's own HLS transcode of a prepared source, serialized per part because
+  // starting one briefly changes the part's selected streams.
+  async startTranscode(media, detail, { quality, compatible, burn, audio, directHls, choices = {} }) {
+    const { ratingKey, selected, original, hdrInfo, sourceBitDepth } = detail;
+    {
       const prepare = async () => {
         let copyOnly = false;
         try {
@@ -387,7 +252,6 @@ class PlexSessions {
         throw failure;
       }
     }
-    return media;
   }
   // Plex can accept a session and then refuse to run it, for example when its transcode
   // drive is nearly full. Without this the viewer gets a black screen and no error.

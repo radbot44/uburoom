@@ -20,6 +20,35 @@ class MediaPipeline {
     this.av1.conversionPolicy = this.conversionPolicy;
     this.hlsPool = new HLSPool(media => media.provider.stop(media));
   }
+  /** The best quality a conversion may produce. */
+  maxTranscodeQuality() {
+    return this.qualityOptions.find(q => q.id !== 'direct') || QUALITIES[1];
+  }
+  // Configured outputs this viewer can use, in priority order. 'plex' stands for the
+  // provider's own transcode and is usable only where the provider has one. Without a
+  // working hardware encoder, a local codec waits behind it rather than loading the CPU.
+  async usableOutputs(provider, localCodecs = []) {
+    const remote = typeof provider?.startTranscode === 'function';
+    const configured = (this.conversionPolicy.settings?.outputs || ['plex']).filter(
+        output => output !== 'plex' || remote,
+      ),
+      usable = [];
+    for (const [index, output] of configured.entries()) {
+      if (output === 'plex') {
+        usable.push(output);
+        continue;
+      }
+      if (!this.av1.ffmpeg || !localCodecs.includes(output)) continue;
+      try {
+        const encoder = await this.av1.selectEncoder(output);
+        if (encoder !== 'software' || this.av1.encoder === 'software' || !configured.slice(index + 1).includes('plex'))
+          usable.push(output);
+      } catch {
+        /* An output with no working encoder is skipped. */
+      }
+    }
+    return usable;
+  }
   close() {
     this.cacheBudget.clear();
     return (this.closing ||= Promise.all([this.hlsPool.close(), this.av1.close()]));

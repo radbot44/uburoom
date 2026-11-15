@@ -1,6 +1,6 @@
 'use strict';
 const { randomUUID } = require('node:crypto');
-const { QUALITIES, qualityId } = require('../../shared/engine.mjs');
+const { qualityId } = require('../../shared/engine.mjs');
 const { PlaybackError } = require('../av1');
 const Sources = require('../plex-source');
 const { plexIdentity } = require('./identity');
@@ -66,7 +66,7 @@ class PlexTranscode {
     return shared.conversionPreference.disabled;
   }
   maxTranscodeQuality() {
-    return this.plex.pipeline.qualityOptions.find(q => q.id !== 'direct') || QUALITIES[1];
+    return this.plex.pipeline.maxTranscodeQuality();
   }
   // The one recipe for a Plex HLS session, used to start playback and to ask Plex
   // beforehand whether it would.
@@ -211,31 +211,6 @@ class PlexTranscode {
       throw error;
     }
     return restore;
-  }
-  // Configured outputs this viewer can use, in priority order. Without a working
-  // hardware encoder, a local codec waits behind Plex rather than loading the CPU.
-  async usableOutputs(localCodecs = []) {
-    const configured = this.plex.pipeline.conversionPolicy.settings?.outputs || ['plex'],
-      usable = [];
-    for (const [index, output] of configured.entries()) {
-      if (output === 'plex') {
-        usable.push(output);
-        continue;
-      }
-      if (!this.plex.pipeline.av1.ffmpeg || !localCodecs.includes(output)) continue;
-      try {
-        const encoder = await this.plex.pipeline.av1.selectEncoder(output);
-        if (
-          encoder !== 'software' ||
-          this.plex.pipeline.av1.encoder === 'software' ||
-          !configured.slice(index + 1).includes('plex')
-        )
-          usable.push(output);
-      } catch {
-        /* An output with no working encoder is skipped. */
-      }
-    }
-    return usable;
   }
   async selectSubtitleForBurn(media, choices) {
     // PMS uses this user's stored part selection for burn-in. Hold the part

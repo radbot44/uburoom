@@ -220,15 +220,18 @@ class Plex {
   videoConversionDisabled() {
     return this.transcode.videoConversionDisabled();
   }
-  usableOutputs(localCodecs) {
-    return this.transcode.usableOutputs(localCodecs);
-  }
   selectSubtitleForBurn(media, choices) {
     return this.transcode.selectSubtitleForBurn(media, choices);
   }
   // Session lifecycle
   prepare(...args) {
     return this.lifecycle.prepare(...args);
+  }
+  source(...args) {
+    return this.lifecycle.source(...args);
+  }
+  startTranscode(...args) {
+    return this.lifecycle.startTranscode(...args);
   }
   confirmStarted(media, manifest) {
     return this.lifecycle.confirmStarted(media, manifest);
