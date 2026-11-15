@@ -12,6 +12,16 @@ const DISK = { warning: 25 * GB, problem: 10 * GB };
 const IMAGE_SUBTITLES = new Set(['pgs', 'vobsub', 'dvd_subtitle', 'hdmv_pgs_subtitle']);
 const EMBEDDED_SUBTITLES = new Set(['eia_608', 'eia_708', 'cea_608', 'cea_708']);
 const LEVELS = ['problem', 'warning', 'info', 'ok'];
+// Who listed the file's tracks, and how to make that list current again.
+const CATALOGS = {
+  plex: { name: 'Plex', owner: "Plex's", refresh: " In Plex, open the item's menu and choose Analyze." },
+  jellyfin: {
+    name: 'Jellyfin',
+    owner: "Jellyfin's",
+    refresh: " In Jellyfin, open the item's menu and choose Refresh metadata.",
+  },
+};
+const catalog = media => CATALOGS[media?.kind] || { name: 'The library', owner: "the library's", refresh: '' };
 
 /**
  * @typedef {{level:'problem'|'warning'|'info'|'ok', topic:string, title:string, detail?:string}} CheckItem
@@ -20,7 +30,8 @@ const LEVELS = ['problem', 'warning', 'info', 'ok'];
 /**
  * Checks a video before and while a room plays it, for the host's info screen. File facts
  * (tracks, HDR, audio start, bitrate, what Plex would do) are gathered once per file and
- * kept; disk space and Plex sessions are read fresh each time. Nothing here changes playback.
+ * kept; disk space and Plex sessions are read fresh each time. The Plex checks run only for
+ * a video Plex serves. Nothing here changes playback.
  */
 class MediaChecks {
   /** @param {{plex:any, pipeline:any, config:any, sessions?:() => any}} options */
@@ -70,7 +81,7 @@ class MediaChecks {
   /** The full report for a room's current video. */
   async report(media) {
     const entry = this.start(media);
-    const live = await Promise.all([this.diskItem(), this.sessionItem()]);
+    const live = media?.kind === 'plex' ? await Promise.all([this.diskItem(), this.sessionItem()]) : [];
     const items = [...(entry?.items || []), ...live.filter(Boolean)];
     if (entry && !entry.items) items.push({ level: 'info', topic: 'file', title: 'Checking the file…' });
     items.sort((a, b) => LEVELS.indexOf(a.level) - LEVELS.indexOf(b.level));
@@ -157,7 +168,7 @@ class MediaChecks {
     }
     return null;
   }
-  /** Plex's track list against the file it serves (the Star Wars remux case). */
+  /** The provider's track list against the file it serves (the Star Wars remux case). */
   trackItem(media, streams) {
     const rows = [...(media.tracks?.audio || []), ...(media.tracks?.subtitles || [])].filter(
       row => !row.external && Number.isInteger(row.index) && !EMBEDDED_SUBTITLES.has(row.codec),
@@ -172,9 +183,11 @@ class MediaChecks {
       row => !row.external && !EMBEDDED_SUBTITLES.has(row.codec),
     ).length;
     if (wrong.length || plexAudio !== counts('audio') || plexSubtitles !== counts('subtitle')) {
+      const { name, owner, refresh } = catalog(media);
       const detail =
         plexAudio !== counts('audio') || plexSubtitles !== counts('subtitle')
-          ? 'Plex lists ' +
+          ? name +
+            ' lists ' +
             plexAudio +
             ' audio and ' +
             plexSubtitles +
@@ -182,15 +195,21 @@ class MediaChecks {
             counts('audio') +
             ' and ' +
             counts('subtitle') +
-            ". uburoom finds tracks by order, but some may be wrong. In Plex, open the item's menu and choose Analyze."
-          : "The file's tracks do not match Plex's saved stream information. In Plex, open the item's menu and choose Analyze.";
-      return { level: 'problem', topic: 'tracks', title: "Plex's track info is out of date for this file", detail };
+            '. uburoom finds tracks by order, but some may be wrong.' +
+            refresh
+          : "The file's tracks do not match " + owner + ' saved stream information.' + refresh;
+      return {
+        level: 'problem',
+        topic: 'tracks',
+        title: owner[0].toUpperCase() + owner.slice(1) + ' track info is out of date for this file',
+        detail,
+      };
     }
     return { level: 'ok', topic: 'tracks', title: 'Tracks match the file' };
   }
   /** What Plex says it would do, for Original and the best converted quality. */
   async decisionItem(media) {
-    if (!this.config.transcoding?.plex) return;
+    if (media.kind !== 'plex' || !this.config.transcoding?.plex) return;
     const offered = this.pipeline.qualities(media),
       labels = new Map(offered.map(q => [q.id, q.id === 'direct' ? 'Original' : q.label || q.id]));
     const checks = ['direct', offered.find(q => q.id !== 'direct')?.id].filter(id => id && labels.has(id));

@@ -176,7 +176,7 @@ Loading and catch-up show a delayed spinner over the subtitle button, without a 
 
 ### Video check and diagnostics
 
-- **Video check:** hosts get it in Player settings under Media information, listing file and Plex checks most serious first with an icon each and Check again. A problem or warning gives one action toast per video with View. Viewers never see it.
+- **Video check:** hosts get it in Player settings under Media information, listing file checks, and Plex checks for a video Plex serves, most serious first with an icon each and Check again. A problem or warning gives one action toast per video with View. Viewers never see it.
 - **Diagnostic report:** "Copy diagnostic report" in Technical details copies a recent report and confirms with a popover, downloading a file if the clipboard is blocked. When the server keeps diagnostics, the hint states for how long.
 
 ## 7. Review and maintenance

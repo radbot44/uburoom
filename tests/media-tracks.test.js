@@ -1174,6 +1174,7 @@ test('codecMatches and trackItem handle PCM audio and embedded closed captions w
 
   // Buster Keaton / PCM scenario: Plex says pcm at index 1, file has pcm_s16le at index 1
   const pcmMedia = {
+    kind: 'plex',
     tracks: {
       audio: [{ id: '1', index: 1, codec: 'pcm' }],
       subtitles: [],
