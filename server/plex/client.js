@@ -1,6 +1,6 @@
 'use strict';
 const { resilientFetch } = require('../resilience');
-const { mediaIdentity } = require('../../shared/room-protocol.mjs');
+const { plexIdentity } = require('./identity');
 
 // The Plex HTTP client for one token: resource URLs on the configured server only, and
 // authenticated requests. Each access scope has its own client.
@@ -58,7 +58,7 @@ class PlexClient {
     return (await (await this.plex.request(resource, options)).json()).MediaContainer || {};
   }
   id(value) {
-    const identity = mediaIdentity(String(value || ''));
+    const identity = plexIdentity(String(value || ''));
     if (!identity) throw new Error('Invalid Plex item');
     return identity.id;
   }

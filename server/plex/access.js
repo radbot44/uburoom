@@ -1,5 +1,5 @@
 'use strict';
-const { mediaIdentity } = require('../../shared/room-protocol.mjs');
+const { plexIdentity } = require('./identity');
 const { SharedTask } = require('../operation');
 
 // Access scoping: whether this token may play or see an item, with short-lived positive
@@ -10,7 +10,7 @@ class PlexAccess {
     this.allowedItems = new Map();
   }
   async allows(id) {
-    const baseId = mediaIdentity(this.plex.id(id)).ratingKey;
+    const baseId = plexIdentity(this.plex.id(id)).ratingKey;
     return this.plex.checkItem(
       'play:' + baseId,
       '/library/metadata/' + baseId,

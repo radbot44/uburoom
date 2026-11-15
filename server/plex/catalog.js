@@ -1,7 +1,7 @@
 'use strict';
 const { createHash } = require('node:crypto');
 const Sources = require('../plex-source');
-const { mediaIdentity } = require('../../shared/room-protocol.mjs');
+const { plexIdentity } = require('./identity');
 const { SharedTask } = require('../operation');
 
 // Catalog browsing: library, search, details, artwork, queue expansion and file
@@ -108,7 +108,7 @@ class PlexCatalog {
           result.set(
             raw,
             value &&
-              (!mediaIdentity(raw).mediaId || records.get(baseId).versions?.has(mediaIdentity(raw).mediaId) === true),
+              (!plexIdentity(raw).mediaId || records.get(baseId).versions?.has(plexIdentity(raw).mediaId) === true),
           );
       }
     }
@@ -122,7 +122,7 @@ class PlexCatalog {
             ...item,
             available:
               record.available &&
-              (!mediaIdentity(item.id)?.mediaId || record.versions?.has(mediaIdentity(item.id).mediaId) === true),
+              (!plexIdentity(item.id)?.mediaId || record.versions?.has(plexIdentity(item.id).mediaId) === true),
           }
         : item;
     });
@@ -137,7 +137,7 @@ class PlexCatalog {
     return items.map(item => (statuses.has(item.id) ? { ...item, available: statuses.get(item.id) } : item));
   }
   async playableItem(id) {
-    const identity = mediaIdentity(this.plex.id(id)),
+    const identity = plexIdentity(this.plex.id(id)),
       baseId = identity.ratingKey;
     const data = await this.plex.json('/library/metadata/' + this.plex.id(baseId) + '?checkFiles=1'),
       source = data.Metadata?.[0];
@@ -414,7 +414,7 @@ class PlexCatalog {
   async details(id, type) {
     if (type && !['movie', 'show', 'season', 'episode', 'collection'].includes(type))
       throw new Error('Invalid item type');
-    const { ratingKey, mediaId: targetMediaId } = mediaIdentity(this.plex.id(id));
+    const { ratingKey, mediaId: targetMediaId } = plexIdentity(this.plex.id(id));
     const data = await this.plex.catalog(
       `/library/${type === 'collection' ? 'collections' : 'metadata'}/${this.plex.id(ratingKey)}`,
     );
@@ -714,9 +714,7 @@ class PlexCatalog {
   }
   async nextEpisodeOffer(episodeMediaId) {
     try {
-      const data = await this.plex.catalog(
-        '/library/metadata/' + mediaIdentity(this.plex.id(episodeMediaId)).ratingKey,
-      );
+      const data = await this.plex.catalog('/library/metadata/' + plexIdentity(this.plex.id(episodeMediaId)).ratingKey);
       const source = data.Metadata?.[0];
       if (source?.type !== 'episode' || !source.grandparentRatingKey) return null;
       const leavesData = await this.plex.catalog(`/library/metadata/${source.grandparentRatingKey}/allLeaves`);

@@ -1,7 +1,7 @@
 /* Room and playback command validation. Generic sync commands come from shared/sync;
- * Plex media, track, quality and catalog queue extensions stay here.
+ * Media, track, quality and catalog queue extensions stay here.
  */
-/** @typedef {{id: string, demo: boolean, ratingKey?: string, mediaId?: string}} MediaIdentity */
+/** @typedef {{id: string, demo: boolean, itemId?: string, versionId?: string}} MediaIdentity */
 import { numeric, senderName as syncSenderName, validateSyncCommand } from './sync/protocol.mjs';
 
 const QUALITIES = Object.freeze([
@@ -13,12 +13,13 @@ const QUALITIES = Object.freeze([
   { id: '720p2', label: '720p · 2 Mbps', width: 1280, height: 720, bitrate: 2000 },
 ]);
 const qualityId = id => ({ '720p': '720p4', '1080p': '1080p8' })[id] || id;
-// A selector retains its explicit version. Only provider API adapters use
-// ratingKey; equality of rating keys alone never establishes timeline identity.
+// A media selector: "<item>" or "<item>:<version>", and a selector retains its explicit
+// version. The parts are opaque here; each provider checks its own form before using
+// them, and equality of items alone never establishes timeline identity.
 function mediaIdentity(value) {
   if (value === 'demo') return { id: value, demo: true };
-  const match = typeof value === 'string' && /^(\d{1,20})(?::(\d{1,20}))?$/.exec(value);
-  return match ? { id: value, ratingKey: match[1], mediaId: match[2], demo: false } : undefined;
+  const match = typeof value === 'string' && /^([A-Za-z0-9_-]{1,64})(?::([A-Za-z0-9_-]{1,64}))?$/.exec(value);
+  return match ? { id: value, itemId: match[1], versionId: match[2], demo: false } : undefined;
 }
 function qualityDefinition(id) {
   id = qualityId(id);

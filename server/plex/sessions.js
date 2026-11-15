@@ -8,7 +8,7 @@ const Output = require('../plex-output');
 const Sources = require('../plex-source');
 const SubtitleResources = require('../subtitle-resources');
 const { planDelivery } = require('../delivery-plan');
-const { mediaIdentity } = require('../../shared/room-protocol.mjs');
+const { plexIdentity } = require('./identity');
 const { runOperation, currentSignal } = require('../operation');
 
 function parseChapters(item) {
@@ -67,7 +67,7 @@ class PlexSessions {
     if (!choices.sourceOnly && !this.plex.pipeline.qualityOptions.some(q => q.id === quality))
       throw new PlaybackError('This quality is not offered by the server.');
     const sameSource = source && (source.principal || 'discord-shared') === this.plex.principal;
-    const { ratingKey, mediaId: targetMediaId } = mediaIdentity(this.plex.id(id));
+    const { ratingKey, mediaId: targetMediaId } = plexIdentity(this.plex.id(id));
     const item = (await this.plex.json(`/library/metadata/${ratingKey}?checkFiles=1`)).Metadata?.[0];
     if (!item || !['movie', 'episode'].includes(item.type)) throw new Error('Select a movie or episode');
     const pinned = targetMediaId ? { mediaId: targetMediaId } : source?.sourceSelection;

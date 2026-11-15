@@ -2,7 +2,7 @@
 'use strict';
 const { runOperation } = require('./operation');
 const { randomUUID } = require('node:crypto');
-const { mediaIdentity } = require('../shared/room-protocol.mjs');
+const { plexIdentity } = require('./plex/identity');
 const { RECONNECT_GRACE_MS } = require('../shared/sync');
 const RECOVERABLE = new Set(['stream-changed', 'delivery-changed', 'observation-timeout']);
 
@@ -402,7 +402,7 @@ class PlexReporting {
               this.discard(session);
               break;
             }
-            const identity = mediaIdentity(session.mediaId);
+            const identity = plexIdentity(session.mediaId);
             if (!identity?.ratingKey) continue;
             const query = new URLSearchParams({
               key: '/library/metadata/' + identity.ratingKey,

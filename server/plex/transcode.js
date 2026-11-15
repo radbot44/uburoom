@@ -3,7 +3,7 @@ const { randomUUID } = require('node:crypto');
 const { QUALITIES, qualityId } = require('../../shared/engine.mjs');
 const { PlaybackError } = require('../av1');
 const Sources = require('../plex-source');
-const { mediaIdentity } = require('../../shared/room-protocol.mjs');
+const { plexIdentity } = require('./identity');
 const { runOperation, SharedTask } = require('../operation');
 const policyFailure = message => Object.assign(new PlaybackError(message), { playbackPolicy: true });
 
@@ -123,7 +123,7 @@ class PlexTranscode {
    * @returns {Promise<{ok:boolean, reason?:string}>}
    */
   async startDecision(media, quality) {
-    const { ratingKey } = mediaIdentity(this.plex.id(media.id)),
+    const { ratingKey } = plexIdentity(this.plex.id(media.id)),
       selected = Sources.select(media.source, media.sourceSelection);
     const params = this.plex.transcodeParams({
       ratingKey,
@@ -153,7 +153,7 @@ class PlexTranscode {
     // under the part lock, then restore the preference before releasing it.
     const read = async () =>
       Sources.select(
-        (await this.plex.json('/library/metadata/' + mediaIdentity(media.id).ratingKey)).Metadata?.[0] || {},
+        (await this.plex.json('/library/metadata/' + plexIdentity(media.id).ratingKey)).Metadata?.[0] || {},
         media.sourceSelection,
       ).part;
     const selected = (part, confirming = false) => {
@@ -243,7 +243,7 @@ class PlexTranscode {
     // it before this conversion has captured its intended source stream.
     const read = async () =>
       Sources.select(
-        (await this.plex.json('/library/metadata/' + mediaIdentity(media.id).ratingKey)).Metadata?.[0] || {},
+        (await this.plex.json('/library/metadata/' + plexIdentity(media.id).ratingKey)).Metadata?.[0] || {},
         media.sourceSelection,
       ).part;
     const part = await read(),

@@ -399,7 +399,7 @@ test('viewer leave, reconnect grace expiry, room reset, and room close clear eph
   assert.equal(f.room.suggestions.length, 0);
 
   // Protocol validation enforces expected shape without note.
-  assert.throws(() => validate({ action: 'queue.suggest', args: { item: { id: 'bad-id' } } }), /library item/);
+  assert.throws(() => validate({ action: 'queue.suggest', args: { item: { id: 'bad/id' } } }), /library item/);
   assert.throws(
     () => validate({ action: 'queue.suggestion.accept', args: { suggestionId: 'not-a-uuid' } }),
     /suggestion/,
