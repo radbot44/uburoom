@@ -64,7 +64,7 @@ async function fixture(t, { fallback = false } = {}) {
         format: 'file',
         duration: 100,
         title: 'Video ' + id,
-        source: { type: 'movie' },
+        type: 'movie',
         resources: new Map(),
       };
       if (fallback)
@@ -799,7 +799,7 @@ test('next-episode offer: ending episode with empty queue and autoQueue off offe
   const origPrepare = f.plex.prepare;
   f.plex.prepare = async (mediaId, ...args) => {
     const res = await origPrepare(mediaId, ...args);
-    if (mediaId === '201' || mediaId === '202') res.source = { type: 'episode' };
+    if (mediaId === '201' || mediaId === '202') res.type = 'episode';
     return res;
   };
 
@@ -887,7 +887,7 @@ test('turning auto-queue on in an idle room with autoplay enabled immediately ma
   const origPrepare = f.plex.prepare;
   f.plex.prepare = async (mediaId, ...args) => {
     const res = await origPrepare(mediaId, ...args);
-    res.source = { type: 'episode' };
+    res.type = 'episode';
     return res;
   };
   f.plex.availability = async ids => new Map(ids.map(itemId => [itemId, itemId !== '300']));

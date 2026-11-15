@@ -180,7 +180,7 @@ class DiscordPublications {
               return;
             const plex = await this.watch.streamScope(person, room.media);
             if (!plex?.artwork) return;
-            const result = await plex.artwork(room.media.id, 'poster', room.media.source?.type);
+            const result = await plex.artwork(room.media.id, 'poster', room.media.type);
             if (!(await this.watch.canView(room, person))) return;
             return result;
           })(),

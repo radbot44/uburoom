@@ -82,6 +82,7 @@ class PlexSessions {
       subtitle: this.plex.subtitle(item),
       duration: item.duration / 1000,
       kind: this.plex.kind,
+      type: item.type,
       resources: new Map(),
       id,
       source: item,

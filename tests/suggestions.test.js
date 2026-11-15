@@ -57,7 +57,7 @@ async function fixture(t, { config = {}, plexOverrides = {} } = {}) {
       kind: 'plex',
       duration: catalog.get(String(id))?.duration || 100,
       title: catalog.get(String(id))?.title || 'Video ' + id,
-      source: { type: catalog.get(String(id))?.type || 'movie' },
+      type: catalog.get(String(id))?.type || 'movie',
       resources: new Map(),
     }),
     stop: async () => {},

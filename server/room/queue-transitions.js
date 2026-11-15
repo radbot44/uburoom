@@ -507,7 +507,7 @@ module.exports = {
             (target.serverId !== prepared.roomServerId ||
               (entry &&
                 (Math.abs(target.duration - prepared.duration) > 0.5 ||
-                  (prepared.source?.type && target.type !== prepared.source.type))))
+                  (prepared.type && target.type !== prepared.type))))
           )
             throw Object.assign(new Error('The queued video changed; choose it again from the library'), {
               status: 409,
@@ -593,7 +593,7 @@ module.exports = {
             id,
             actor.userId,
             this.queueItem(
-              { ...prepared, type: prepared.source?.type || 'movie', position: startPosition },
+              { ...prepared, type: prepared.type || 'movie', position: startPosition },
               prepared.roomServerId,
             ),
             position,

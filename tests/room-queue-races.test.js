@@ -35,7 +35,7 @@ async function roomFixture({ disk = false } = {}) {
       provider: plex,
       duration: 100,
       title: 'Video ' + id,
-      source: { type: 'movie' },
+      type: 'movie',
       resources: new Map(),
     }),
     stop: async media => {

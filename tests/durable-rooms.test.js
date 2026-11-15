@@ -488,7 +488,7 @@ test(
       duration: 60,
       resources: new Map(),
       roomServerId: 'fixture-server',
-      source: { type: 'movie' },
+      type: 'movie',
     };
     const get = url =>
       new Promise((resolve, reject) =>

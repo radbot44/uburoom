@@ -102,11 +102,7 @@ class WatchRooms {
               saved.mediaId === 'demo'
                 ? this.watch.demoMedia && { ...this.watch.demoMedia, id: 'demo', resources: new Map() }
                 : await this.savedSource(plex, saved);
-            if (
-              !media ||
-              Math.abs(media.duration - saved.duration) > 0.5 ||
-              (media.source?.type && media.source.type !== saved.type)
-            )
+            if (!media || Math.abs(media.duration - saved.duration) > 0.5 || (media.type && media.type !== saved.type))
               throw failure('The saved video changed or is unavailable', 409);
             media.roomServerId = saved.serverId;
           }
@@ -331,7 +327,7 @@ class WatchRooms {
         id: saved.mediaId,
         title: saved.title,
         duration: saved.duration,
-        source: { type: saved.type },
+        type: saved.type,
         kind: plex.kind,
         resources: new Map(),
         unavailable: true,
@@ -370,10 +366,7 @@ class WatchRooms {
               const plex = await this.watch.hub.mediaFor(actor, saved.serverId);
               media = await this.savedSource(plex, saved);
             }
-            if (
-              Math.abs(media.duration - saved.duration) > 0.5 ||
-              (media.source?.type && media.source.type !== saved.type)
-            ) {
+            if (Math.abs(media.duration - saved.duration) > 0.5 || (media.type && media.type !== saved.type)) {
               throw failure(
                 'The saved video changed. Clear its saved video in room settings before choosing it again.',
               );
@@ -690,7 +683,7 @@ class WatchRooms {
                 if (
                   !media ||
                   Math.abs(media.duration - saved.duration) > 0.5 ||
-                  (media.source?.type && media.source.type !== saved.type)
+                  (media.type && media.type !== saved.type)
                 ) {
                   room.saveError = 'The saved video could not be restored. Choose media after checking Plex access.';
                 } else {
@@ -802,7 +795,7 @@ class WatchRooms {
       ? {
           serverId: media.roomServerId,
           mediaId: media.id,
-          type: media.source?.type || 'movie',
+          type: media.type || 'movie',
           title: media.title,
           duration: media.duration,
           position: this.watch.position(room, at),
