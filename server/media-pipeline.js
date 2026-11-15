@@ -4,6 +4,7 @@ const { AV1 } = require('./av1');
 const { CacheBudget } = require('./cache-budget');
 const { HLSPool } = require('./hls-pool');
 const { ConversionPolicy } = require('./transcoding-policy');
+const SubtitleResources = require('./subtitle-resources');
 
 // What every media provider plays through: local conversion, pooled provider HLS,
 // the shared conversion capacity and the offered qualities. One per server, owned
@@ -19,6 +20,36 @@ class MediaPipeline {
     this.av1 = new AV1(config, execute, logger);
     this.av1.conversionPolicy = this.conversionPolicy;
     this.hlsPool = new HLSPool(media => media.provider.stop(media));
+  }
+  /** The offered qualities a source can fill: none above its own bitrate or picture height. */
+  qualities(media) {
+    const source = media?.unavailable ? undefined : media,
+      bitrate = source?.sourceBitrate,
+      height = source?.sourceHeight && Math.max(source.sourceHeight, ((source.sourceWidth || 0) * 9) / 16);
+    return this.qualityOptions
+      .filter(q => !q.bitrate || ((!bitrate || q.bitrate <= bitrate) && (!height || q.height <= height)))
+      .map(q =>
+        q.id === 'direct' && bitrate > 0 ? { ...q, label: 'Original · ' + Math.round(bitrate / 1000) + ' Mbps' } : q,
+      );
+  }
+  /**
+   * Release what the pipeline holds for a prepared media object: its subtitle work,
+   * its place on a shared output, its local conversion and its conversion capacity.
+   * A provider's `stop` calls this with `own`, which ends whatever the provider itself
+   * started; media no provider prepared holds nothing else.
+   * @param {any} media @param {() => Promise<any>} [own]
+   */
+  async release(media, own) {
+    if (!media) return;
+    media.subtitleAbort?.abort();
+    media.subtitleCache?.clear();
+    SubtitleResources.clear(media);
+    // A shared output is ended by its pool once its last viewer leaves.
+    if (media.hlsLease) return media.hlsLease.release();
+    if (media.av1Lease) this.av1.release(media.av1Lease);
+    await own?.();
+    media.releaseConversion?.();
+    media.releaseConversion = undefined;
   }
   /** The best quality a conversion may produce. */
   maxTranscodeQuality() {

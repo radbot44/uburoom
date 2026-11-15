@@ -1,5 +1,6 @@
 'use strict';
 const { QUALITIES } = require('../shared/engine.mjs');
+const { runOperation } = require('./operation');
 
 const failure = (message, status = 409) => Object.assign(new Error(message), { status });
 /** What the built-in demo is recorded under. It is not a provider, so it names no server. */
@@ -20,9 +21,10 @@ const DEMO_SERVER = 'local-demo';
  *   The provider as this person may use it; refuses rather than widening access.
  */
 class MediaProviders {
-  /** @param {MediaProvider[]} [list] */
-  constructor(list = []) {
+  /** @param {MediaProvider[]} [list] @param {any} [pipeline] - What every provider plays through. */
+  constructor(list = [], pipeline) {
     this.list = list;
+    this.pipeline = pipeline;
   }
   get primary() {
     return this.list[0];
@@ -76,13 +78,16 @@ class MediaProviders {
   }
   /** Whoever prepared a media object releases it; one that no provider prepared holds only pipeline state. */
   stop(media) {
-    return (media?.provider || this.primary?.root)?.stop(media);
+    if (media?.provider) return media.provider.stop(media);
+    return runOperation(undefined, async () => this.pipeline?.release(media));
   }
+  /** Keep a provider's own transcode alive; media without one has nothing to keep. */
   ping(media) {
-    return (media?.provider || this.primary?.root)?.ping?.(media);
+    return media?.provider?.ping?.(media);
   }
+  /** The qualities offered for a video, which the pipeline decides from its source. */
   qualities(media) {
-    return (media?.provider || this.primary?.root)?.qualities?.(media) || QUALITIES;
+    return this.pipeline?.qualities(media) || QUALITIES;
   }
   /** End provider transcodes uburoom started and no longer holds; each provider reports under its kind. */
   async reconcileSessions(inUse) {

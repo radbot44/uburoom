@@ -60,6 +60,7 @@ async function fixture(t, { fallback = false } = {}) {
       const source = {
         id,
         kind: 'plex',
+        provider: plex,
         format: 'file',
         duration: 100,
         title: 'Video ' + id,

@@ -32,6 +32,7 @@ async function roomFixture({ disk = false } = {}) {
     prepare: async id => ({
       id,
       kind: 'plex',
+      provider: plex,
       duration: 100,
       title: 'Video ' + id,
       source: { type: 'movie' },

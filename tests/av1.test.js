@@ -161,22 +161,11 @@ test('hardware decode falls back to the CPU for the stream only when the CPU pro
 test('quality tiers respect source bitrate/resolution; AV1 clamps Original to the highest configured quality and tonemaps PQ/HLG', async () => {
   const plex = new Plex({});
   assert.deepEqual(
-    plex
-      .qualities({
-        source: {
-          duration: 60000,
-          Media: [{ height: 1080, bitrate: 13000, Part: [{ key: '/library/parts/1/file' }] }],
-        },
-      })
-      .map(q => q.id),
+    plex.pipeline.qualities({ sourceHeight: 1080, sourceBitrate: 13000 }).map(q => q.id),
     ['direct', '1080p12', '1080p8', '720p4', '720p2'],
   );
   assert.deepEqual(
-    plex
-      .qualities({
-        source: { duration: 60000, Media: [{ height: 720, bitrate: 1500, Part: [{ key: '/library/parts/1/file' }] }] },
-      })
-      .map(q => q.id),
+    plex.pipeline.qualities({ sourceHeight: 720, sourceBitrate: 1500 }).map(q => q.id),
     ['direct'],
   );
   const info = {

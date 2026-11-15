@@ -149,6 +149,7 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
         quality,
         compatible,
         kind: 'plex',
+        provider: plex,
         duration: 60,
         format: 'hls',
         resources: new Map(),
@@ -244,6 +245,7 @@ test('HLS recovery replaces only the authorized viewer stream and preserves pers
       const media = {
         id,
         kind: 'plex',
+        provider: plex,
         format: 'hls',
         duration: 60,
         quality,
@@ -903,7 +905,7 @@ test('viewer quality ceilings include fitting Original and survive lower outputs
   const catalog = new Plex({ plexUrl: 'http://fixture.invalid', plexToken: 'fixture' });
   const attempted = [];
   const plex = {
-    qualities: media => catalog.qualities(media),
+    pipeline: catalog.pipeline,
     stop: async () => {},
     prepare: async (id, quality) => {
       attempted.push(quality);
@@ -995,6 +997,7 @@ test('slow personal quality preparation has a bounded completion budget and reta
         return replacement;
       },
     };
+    replacement.provider = plex;
     const fixture = liveWatch(hub, plex),
       watch = fixture.watch,
       host = fixture.actor('host');
@@ -1004,7 +1007,7 @@ test('slow personal quality preparation has a bounded completion budget and reta
     watch.join(room, host, viewerId, { alive: async () => live });
     room.media = { kind: 'plex', title: 'Fixture', id: '12', duration: 60, roomServerId: 'fixture' };
     const viewer = room.viewers.get(viewerId),
-      old = { kind: 'plex', duration: 60 };
+      old = { kind: 'plex', provider: plex, duration: 60 };
     viewer.media = old;
     viewer.mediaVersion = room.mediaVersion;
     const originalCanView = watch.canView.bind(watch);

@@ -6,7 +6,6 @@ const Tracks = require('../media-tracks');
 const PlexTracks = require('./tracks');
 const Output = require('../plex-output');
 const Sources = require('../plex-source');
-const SubtitleResources = require('../subtitle-resources');
 const { prepareStream } = require('../media-delivery');
 const { plexIdentity } = require('./identity');
 const { runOperation, currentSignal } = require('../operation');
@@ -316,16 +315,9 @@ class PlexSessions {
   stop(media) {
     return runOperation(undefined, () => this.plex.stopOwned(media));
   }
-  async stopOwned(media) {
-    media?.subtitleAbort?.abort();
-    media?.subtitleCache?.clear();
-    if (media) SubtitleResources.clear(media);
-    if (media?.hlsLease) {
-      await media.hlsLease.release();
-      return;
-    }
-    if (media?.av1Lease) this.plex.pipeline.av1.release(media.av1Lease);
-    if (media?.transcodeId) {
+  stopOwned(media) {
+    return this.plex.pipeline.release(media, async () => {
+      if (!media.transcodeId) return;
       const id = media.transcodeId,
         headers = { 'X-Plex-Client-Identifier': id, 'X-Plex-Session-Identifier': id };
       const entry = this.sessions.get(id);
@@ -333,9 +325,7 @@ class PlexSessions {
       await (media.hlsProvider || media.provider || this.plex)
         .request('/video/:/transcode/universal/stop?' + new URLSearchParams({ session: id, ...headers }), { headers })
         .catch(() => {});
-    }
-    media?.releaseConversion?.();
-    if (media) media.releaseConversion = undefined;
+    });
   }
   /**
    * Desired state for Plex sessions: every transcode uburoom started and no longer uses

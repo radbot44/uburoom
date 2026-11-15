@@ -52,7 +52,7 @@ class Watch extends WatchParts {
     this.hub = hub;
     // Plex-only wiring (direct delivery, reporting, its diagnostics) uses this; rooms use `providers`.
     this.plex = plex;
-    this.providers = providers || new MediaProviders([plexProvider({ plex, config: hub?.config, registry })]);
+    this.providers = providers || new MediaProviders([plexProvider({ plex, config: hub?.config, registry })], pipeline);
     /** @type {InstanceType<typeof import('./media-pipeline').MediaPipeline> | undefined} Conversion and pooling shared by every provider. */
     this.pipeline = pipeline;
     this.demoMedia = demoMedia;

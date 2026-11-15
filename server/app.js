@@ -110,7 +110,7 @@ function createApp(config, options = {}) {
     const entryPolicy = new AccessPolicy(config, registry, plexAuth, () => access.raw(), { logger, guests });
     const access = createAccess({ registry, config, plexAuth, entryPolicy });
     const sessions = createSessions({ config, logger, registry, accounts, access, oauthFetch });
-    const providers = new MediaProviders([plexProvider({ plex, config, registry, plexAuth, entryPolicy })]);
+    const providers = new MediaProviders([plexProvider({ plex, config, registry, plexAuth, entryPolicy })], pipeline);
     // Rooms, and the hub that authorizes work in them.
     const { ports, setOwnerName } = createHubPorts({
       ...{ config, logger, registry, accounts, access, plexAuth, providers, guests, sessions },

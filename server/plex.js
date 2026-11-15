@@ -202,9 +202,6 @@ class Plex {
     return this.catalogs.nextEpisodeOffer(episodeMediaId);
   }
   // Transcode decision
-  qualities(media) {
-    return this.transcode.qualities(media);
-  }
   maxTranscodeQuality() {
     return this.transcode.maxTranscodeQuality();
   }

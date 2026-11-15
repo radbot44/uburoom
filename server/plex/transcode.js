@@ -13,21 +13,6 @@ class PlexTranscode {
   constructor(plex) {
     this.plex = plex;
   }
-  qualities(media) {
-    const original = !media?.unavailable && media?.source && Sources.select(media.source, media.sourceSelection).media;
-    return this.plex.pipeline.qualityOptions
-      .filter(
-        q =>
-          !q.bitrate ||
-          ((!original?.bitrate || q.bitrate <= original.bitrate) &&
-            (!original?.height || q.height <= Math.max(original.height, ((original.width || 0) * 9) / 16))),
-      )
-      .map(q =>
-        q.id === 'direct' && original?.bitrate > 0
-          ? { ...q, label: 'Original · ' + Math.round(original.bitrate / 1000) + ' Mbps' }
-          : q,
-      );
-  }
   // Whether this Plex server forbids video conversion. Read with the configured
   // server token (a viewer's token cannot see server preferences) and remembered
   // briefly; an answer that cannot be read is a refusal, never permission.
