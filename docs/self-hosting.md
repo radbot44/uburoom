@@ -136,6 +136,20 @@ FFmpeg and FFprobe are found on the service user's PATH or at `tools.ffmpeg`/`to
 
 At capacity, a conversion may wait briefly or reuse an existing compatible output. uburoom will not evict viewers or exceed its job limit; conversions started by other Plex applications are outside that counter. See [playback decisions](playback-reliability.md#playback-decisions).
 
+## Local media
+
+`local_media.libraries` lists folders of videos on the server's own disk. Each appears as a card on Libraries home beside the Plex libraries and opens one title-sorted list of every video beneath it, subfolders included.
+
+| Setting | Behavior |
+| --- | --- |
+| `id` | Short permanent name (lowercase letters, digits and hyphens, starting with a letter). Queue entries and resume positions are recorded under it: the folder may move, but a changed `id` forgets them. |
+| `name` | The card's title. |
+| `path` | The folder. Relative paths resolve beside `config.yaml`. Symbolic links are not followed. |
+
+Local media has no accounts of its own: everyone uburoom admits, including guests in their room, may browse and watch it, and it never becomes another way in. `access.require_plex` keeps its meaning as an entry rule. Viewers name a file only by an opaque token, never a path.
+
+FFprobe is required to read a file's duration and tracks. Files a browser cannot play as they are need FFmpeg and a local output in `transcoding.outputs`; there is no Plex transcode for local files, and choosing one of several audio tracks converts the video too. Subtitle files beside a video that share its name (`Film.srt`, `Film.en.srt`, `Film.en.forced.ass`, `.vtt`, `.sup`, `.sub` with `.idx`) are offered as tracks. Folders are re-read at most once a minute. There is no artwork, no shows or seasons, no collections and no filters. `npm run doctor` checks each folder and the tools.
+
 ## Discord (optional)
 
 Create an application in the [Discord Developer Portal](https://discord.com/developers/applications) and fill in `discord.bot_token`, `client_id`, `client_secret`, `owner_id` and `guild_id`.
@@ -157,7 +171,11 @@ One post shows the room name, selected movie/episode and its poster when availab
 
 Closing or resetting the room marks its post Closed and removes Join; reopening requires explicit Publish. An empty room retains publication while it remains open. Known message IDs survive a server restart and are reconciled after reconnect. Removing a post while Discord is unavailable records pending removal and reports that it has not completed. Provider failures can delay edits/removal; playback stays independent. Deleted posts are not automatically recreated. An uncertain creation response is recovered from the bot's nonce in the latest 100 channel messages when possible; if it cannot be confirmed, fresh creation stops and the host is told to check Discord, preventing automatic duplicate posts.
 
-Publication records use the existing SQLite metadata store; this increment introduces no database schema change. `discord.share_channel_id` is YAML-only. Personal Rich Presence remains separately scoped.
+Publication records use the existing SQLite metadata store; this increment introduces no database schema change. `discord.share_channel_id` is YAML-only.
+
+### Personal Discord Rich Presence (Activity)
+
+Inside the Discord Activity, viewers can opt into sharing their watching status from **Player settings** (`discord.rich_presence` defaults to `true` in `config.yaml`, YAML-only). Baseline login remains silent (`identify` only); toggling Rich Presence on incrementally requests `rpc.activities.write`. Public rooms show the active media title, subtitle/room name and live playback timestamps while playing; private rooms show only generic `Watching in uburoom` status, and no Plex URLs or room invite links are sent. Setting `discord.rich_presence: false` disables and hides the control server-wide.
 
 ### Post watch nights to Discord
 
