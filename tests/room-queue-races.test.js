@@ -337,7 +337,7 @@ test('shutdown drains an unfinished preload and bounds a provider that ignores c
   f.watch.mediaDrainMs = 30;
   await assert.rejects(f.watch.close(), error => error.name === 'TimeoutError');
   assert.equal(f.events.includes('provider-closed'), true, 'deadline failure still closes the available subsystems');
-  assert.equal(f.watch.reporting.closed, true);
+  assert.equal(f.watch.reporting.reporters[0].closed, true);
   release();
   await Promise.allSettled([...f.watch.mediaWork].map(work => work.promise));
   await f.watch.drainMedia();
@@ -383,7 +383,7 @@ test('a final checkpoint failure still closes provider/reporting and the applica
   } finally {
     disk.close();
   }
-  assert.equal(app.watch.reporting.closed, true);
+  assert.equal(app.watch.reporting.reporters[0].closed, true);
   assert.equal(app.watch.roomState.stopped, true);
   assert.throws(() => app.registry.db.prepare('SELECT 1'), /not open|closed/i);
 });

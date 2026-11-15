@@ -2,7 +2,7 @@
 const { randomBytes } = require('node:crypto');
 const { hash } = require('./core');
 const { isServerOperator } = require('./operator-policy');
-const { clientAddress } = require('./plex-delivery');
+const { clientAddress } = require('./client-address');
 
 function accountHttp({
   config,

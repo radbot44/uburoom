@@ -1,7 +1,7 @@
 // @ts-check
 'use strict';
 const { WebSocketServer } = require('ws');
-const { clientAddress } = require('./plex-delivery');
+const { clientAddress } = require('./client-address');
 const { runOperation, waitFor } = require('./operation');
 const {
   validateSyncQualityMessage,

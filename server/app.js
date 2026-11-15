@@ -159,7 +159,7 @@ function createApp(config, options = {}) {
     const server = createHttpServer({ config, logger, tls, json: sessions.json, route });
     const sockets = watchSockets({ server, config, routes: watchRoutes, watch, hub, throttle: sessions.throttle });
     const sweep = setInterval(() => {
-      watch.maintainPlexSessions();
+      watch.maintainProviderSessions();
       for (const service of [watchRoutes, accountRoutes, signIn, sessions]) service.sweep();
       void guests.sweep();
     }, 1000);

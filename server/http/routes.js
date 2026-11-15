@@ -1,5 +1,5 @@
 'use strict';
-const { clientAddress } = require('../plex-delivery');
+const { clientAddress } = require('../client-address');
 const { createRouter } = require('./router');
 const { pageRoutes } = require('./pages');
 const { mediaRoutes } = require('./media');

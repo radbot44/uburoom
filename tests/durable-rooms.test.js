@@ -1752,7 +1752,7 @@ test('missing queue media remains removable, blocks raw additions and restores w
   await client.call(root + '?viewer=' + viewer);
   const room = f.app.watch.rooms.get(id),
     queue = f.app.watch.roomState.queue,
-    plex = f.app.watch.plex;
+    plex = f.app.watch.providers.primary.root;
   const item = { serverId: 'fixture-server', mediaId: '9', type: 'movie', title: 'Missing movie', duration: 60 };
   f.app.hub.mediaFor = async () => plex;
   plex.allows = async () => true;

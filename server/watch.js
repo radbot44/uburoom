@@ -13,7 +13,6 @@ const { waitFor, createDeadline } = require('./operation');
 const { randomUUID } = require('node:crypto');
 const { canWatch, Hub } = require('./core');
 const { PlaybackTracking } = require('./playback-tracking');
-const { PlexReporting } = require('./plex-reporting');
 const { MediaProviders } = require('./media-providers');
 const { plexProvider } = require('./plex-provider');
 const { WatchRooms } = require('./watch-rooms');
@@ -50,9 +49,9 @@ class Watch extends WatchParts {
     this.clock = hub?.clock || createServerClock();
     this.tracking = new PlaybackTracking(registry);
     this.hub = hub;
-    // Plex-only wiring (direct delivery, reporting, its diagnostics) uses this; rooms use `providers`.
-    this.plex = plex;
-    this.providers = providers || new MediaProviders([plexProvider({ plex, config: hub?.config, registry })], pipeline);
+    // Rooms reach media only through the providers; what one of them alone offers hangs off it.
+    this.providers =
+      providers || new MediaProviders([plexProvider({ plex, config: hub?.config, registry, plexAuth })], pipeline);
     /** @type {InstanceType<typeof import('./media-pipeline').MediaPipeline> | undefined} Conversion and pooling shared by every provider. */
     this.pipeline = pipeline;
     this.demoMedia = demoMedia;
@@ -91,11 +90,8 @@ class Watch extends WatchParts {
     this.publicationCount = 0;
     /** @type {WeakMap<Room, string>} What the lobby last listed for each room (lobbyStamp). */
     this.lobbyStamps = new WeakMap();
-    this.reporting = new PlexReporting({
-      config: hub?.config,
+    this.reporting = this.providers.reporting({
       hub,
-      plexAuth,
-      registry,
       now: () => this.clock.now(),
       authorize: async (room, viewer) => {
         const authenticated = viewer.reportingAuthorized || viewer.alive;
@@ -111,16 +107,7 @@ class Watch extends WatchParts {
     this.mediaDrainMs = 35000;
     this.providerDownSince = undefined;
     this.providerRecoveredAt = 0;
-    /** @type {any} Plex transcode sessions as last reconciled (reconcilePlexSessions). */
-    this.plexSessions = undefined;
-    this.mediaChecks = new MediaChecks({
-      plex,
-      pipeline,
-      config: hub?.config || {},
-      sessions: () => this.plexSessions,
-    });
-    /** @type {InstanceType<typeof import('./plex-delivery').PlexDelivery> | undefined} Attached by server/watch-http.js. */
-    this.delivery = undefined;
+    this.mediaChecks = new MediaChecks({ pipeline });
   }
   create(actor, visibility = 'public', saved) {
     if (this.shuttingDown) throw new Error('Server is closing');

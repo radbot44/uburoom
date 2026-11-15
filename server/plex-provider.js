@@ -1,19 +1,26 @@
 'use strict';
 const { plexReconnectError } = require('./plex-auth');
+const { PlexDelivery } = require('./plex/delivery');
+const { PlexReporting } = require('./plex-reporting');
 
 const failure = (message, status = 409) => Object.assign(new Error(message), { status });
 
 /**
- * Plex as a media provider: which server it is, and which Plex scope a person
- * watches through. Catalog, sessions and transcodes stay in server/plex.js.
+ * Plex as a media provider: which server it is, which Plex scope a person watches
+ * through, and the two things only Plex offers: playback reports to a viewer's own Plex
+ * account and direct delivery from the Plex server. Catalog, sessions and transcodes
+ * stay in server/plex.js.
  * @param {{plex: any, config?: any, registry?: any, plexAuth?: any, entryPolicy?: any}} services
  * @returns {import('./media-providers').MediaProvider}
  */
 function plexProvider({ plex, config = {}, registry, plexAuth, entryPolicy }) {
   let identifying;
-  return {
+  const provider = {
     kind: 'plex',
     root: plex,
+    reporting: services => new PlexReporting({ config, plexAuth, registry, ...services }),
+    // Direct credentials are personal, so there is no direct path without the services that know people.
+    direct: plexAuth ? new PlexDelivery(config, plex, plexAuth, actor => provider.scopeFor(actor)) : undefined,
     // The machine identifier, pinned the first time it is seen so a different
     // server behind the same address is refused rather than mistaken for this one.
     identity() {
@@ -60,6 +67,7 @@ function plexProvider({ plex, config = {}, registry, plexAuth, entryPolicy }) {
       }
     },
   };
+  return provider;
 }
 
 module.exports = { plexProvider };

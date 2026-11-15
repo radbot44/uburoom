@@ -147,7 +147,7 @@ module.exports = {
   prepareOutput(room, viewer, plex, source, quality, compatible, fallback, choices) {
     return plex.prepare(source.id, quality, compatible, source, fallback, {
       ...choices,
-      directPlan: () => this.delivery?.hlsPlan(plex, viewer, room, choices.authorized),
+      directPlan: () => this.providers.directPlan(plex, viewer, room, choices.authorized),
     });
   },
   async prepareViewer(room, actor, viewerId) {

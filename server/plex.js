@@ -6,6 +6,7 @@ const { PlexAccess } = require('./plex/access');
 const { PlexCatalog } = require('./plex/catalog');
 const { PlexTranscode } = require('./plex/transcode');
 const { PlexSessions } = require('./plex/sessions');
+const { PlexChecks } = require('./plex/checks');
 
 // One Plex server, seen through one token. The work is split by concern:
 // client (HTTP to the configured server), access (what this token may see),
@@ -51,6 +52,8 @@ class Plex {
     this.catalogs = new PlexCatalog(this, this.shared.pipeline.cacheBudget);
     this.transcode = new PlexTranscode(this);
     this.lifecycle = new PlexSessions(this, this.shared);
+    /** What only Plex can say for the host's video check. */
+    this.checks = new PlexChecks(this);
   }
   get kind() {
     return 'plex';
@@ -245,8 +248,10 @@ class Plex {
   stopOwned(media) {
     return this.lifecycle.stopOwned(media);
   }
-  reconcileSessions(...args) {
-    return this.lifecycle.reconcileSessions(...args);
+  async reconcileSessions(...args) {
+    const report = await this.lifecycle.reconcileSessions(...args);
+    this.shared.sessionReport = { ...report, checkedAt: Date.now() };
+    return report;
   }
   ping(media) {
     return this.lifecycle.ping(media);

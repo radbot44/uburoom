@@ -141,7 +141,7 @@ async function main() {
     grandparentThumb: solo.thumb,
   }));
   const all = [...movies, show, solo, ...seasons, ...episodes, soloSeason, ...soloEpisodes, collection];
-  app.watch.plex.fetch = async url => {
+  app.watch.providers.primary.root.fetch = async url => {
     const p = url.pathname,
       query = url.searchParams;
     if (failNext && p.endsWith('/all')) {
@@ -208,7 +208,7 @@ async function main() {
     }
     return new Response(JSON.stringify({ MediaContainer: data }));
   };
-  app.watch.plex.prepare = async id => ({
+  app.watch.providers.primary.root.prepare = async id => ({
     ...app.watch.demoMedia,
     id,
     title: all.find(x => x.ratingKey === id)?.title || 'Fixture',

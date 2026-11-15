@@ -588,7 +588,7 @@ test('shared HTTP delivery retains viewer grants and own-scope access checks, an
     plexToken: 'alpha',
   };
   const app = createApp(config, { plexFetch: f.fetch }),
-    root = app.watch.plex;
+    root = app.watch.providers.primary.root;
   const scopes = new Map([
     ['demo-host', root.scope('alpha', 'alice')],
     ['demo-guest', root.scope('beta', 'bob')],

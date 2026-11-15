@@ -5,7 +5,7 @@ const { PlaybackError } = require('./av1');
 const { Handoff, SECRET } = require('./handoff');
 const { watchOperations } = require('./watch-operations');
 const { CALLS } = require('../shared/wire-protocol.mjs');
-const { PlexDelivery, clientAddress } = require('./plex-delivery');
+const { clientAddress, trustProxies } = require('./client-address');
 const Ubumfa = require('../web/ubumfa');
 const { watchIdentity } = require('./http/watch/identity');
 const { mediaGrants } = require('./http/watch/grants');
@@ -55,8 +55,7 @@ function watchHttp({
     rawLogin,
     login,
   });
-  const delivery = new PlexDelivery(config, watch.plex, plexAuth, actor => hub.mediaFor(actor));
-  watch.delivery = delivery;
+  trustProxies(config);
   const clockEpoch = randomUUID();
   const handoff = new Handoff();
   // The reads a page may make by GET before it has a room connection (shared/wire-protocol.mjs).
@@ -77,7 +76,6 @@ function watchHttp({
     throttle,
     registry,
     clockEpoch,
-    delivery,
     validGrant: id => validGrant(grants.get(id)),
   });
   const page = pageBootstrap({ config, watch, hub, registry, entryPolicy, diagnosticLog, rawLogin, login, operations });
@@ -617,7 +615,7 @@ function watchHttp({
     },
     rewriteManifest,
     deliveryOrigins: req =>
-      delivery.deliveryOrigins(typeof req === 'string' || req === undefined ? req : clientAddress(req)),
+      watch.providers.directOrigins(typeof req === 'string' || req === undefined ? req : clientAddress(req)),
   };
 }
 module.exports = { watchHttp };

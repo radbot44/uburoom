@@ -323,15 +323,15 @@ module.exports = {
         { roomId: room.roomId, action: 'media.play' },
       );
   },
-  // Server maintenance, not room lifecycle: Plex transcode sessions nothing holds are ended once a minute.
-  maintainPlexSessions() {
+  // Server maintenance, not room lifecycle: provider transcodes nothing holds are ended once a minute.
+  maintainProviderSessions() {
     if (this.providers.configured && !this.shuttingDown && Date.now() - (this.sessionsCheckedAt || 0) >= 60000) {
       this.sessionsCheckedAt = Date.now();
-      void this.reconcilePlexSessions().catch(() => {});
+      void this.reconcileProviderSessions().catch(() => {});
     }
   },
   /** Transcode sessions that something in uburoom still holds. */
-  plexSessionsInUse() {
+  transcodesInUse() {
     const ids = new Set(),
       add = media => {
         if (media?.transcodeId) ids.add(media.transcodeId);
@@ -344,9 +344,7 @@ module.exports = {
     for (const group of this.pipeline?.hlsPool.groups.values() || []) add(group.media);
     return ids;
   },
-  async reconcilePlexSessions() {
-    const reports = await this.providers.reconcileSessions(this.plexSessionsInUse());
-    this.plexSessions = { ...reports.plex, checkedAt: Date.now() };
-    return this.plexSessions;
+  reconcileProviderSessions() {
+    return this.providers.reconcileSessions(this.transcodesInUse());
   },
 };

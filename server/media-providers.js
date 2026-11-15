@@ -19,7 +19,47 @@ const DEMO_SERVER = 'local-demo';
  * @property {() => Promise<string>} identity - The stable server id media from this provider is recorded under.
  * @property {(actor: any) => Promise<import('./media-provider').ProviderScope>} scopeFor
  *   The provider as this person may use it; refuses rather than widening access.
+ * @property {(services: {hub: any, now: () => number, authorize: (room: any, viewer: any) => Promise<boolean>}) => any} [reporting]
+ *   Builds what reports a viewer's playback back to this provider; absent when it takes no reports.
+ * @property {any} [direct]
+ *   Lets a viewer fetch media straight from this provider's server with a credential of
+ *   their own: `file`, `hlsPlan` and `deliveryOrigins`. Absent when it has no such path.
  */
+
+/** Playback reports, sent to every provider that takes them; each ignores media that is not its own. */
+class ProviderReporting {
+  constructor(reporters) {
+    this.reporters = reporters;
+  }
+  each(method, args) {
+    return Promise.all(this.reporters.map(reporter => reporter[method](...args)));
+  }
+  isEligible(userId) {
+    return this.reporters.some(reporter => reporter.isEligible(userId));
+  }
+  reconnect(...args) {
+    for (const reporter of this.reporters) reporter.reconnect(...args);
+  }
+  updateConsent(...args) {
+    for (const reporter of this.reporters) reporter.updateConsent(...args);
+  }
+  observe(...args) {
+    return this.each('observe', args);
+  }
+  end(...args) {
+    return this.each('end', args);
+  }
+  endViewer(...args) {
+    return this.each('endViewer', args);
+  }
+  endRoom(...args) {
+    return this.each('endRoom', args);
+  }
+  close() {
+    return this.each('close', []);
+  }
+}
+
 class MediaProviders {
   /** @param {MediaProvider[]} [list] @param {any} [pipeline] - What every provider plays through. */
   constructor(list = [], pipeline) {
@@ -116,6 +156,30 @@ class MediaProviders {
   /** The qualities offered for a video, which the pipeline decides from its source. */
   qualities(media) {
     return this.pipeline?.qualities(media) || QUALITIES;
+  }
+  /** What reports playback back to the providers that take reports. */
+  reporting(services) {
+    return new ProviderReporting(this.list.filter(provider => provider.reporting).map(p => p.reporting(services)));
+  }
+  /**
+   * An address the viewer can fetch this file from directly. Undefined, with nothing
+   * asked of anyone, when its provider has no direct path or the owner left it off.
+   */
+  directFile(media, auth, valid, remoteAddress) {
+    const direct = this.owner(media?.provider)?.direct;
+    return direct?.enabled ? direct.file(media, auth, valid, remoteAddress) : undefined;
+  }
+  /** Where and with what credential this viewer may fetch the provider's own HLS directly. */
+  directPlan(scope, viewer, room, valid) {
+    const direct = this.owner(scope)?.direct;
+    return direct?.enabled ? direct.hlsPlan(scope, viewer, room, valid) : undefined;
+  }
+  /** Every origin a page may be sent to for direct delivery; the player's security policy names them. */
+  async directOrigins(remoteAddress) {
+    const origins = [];
+    for (const { direct } of this.list)
+      if (direct?.enabled) origins.push(...((await direct.deliveryOrigins(remoteAddress)) || []));
+    return origins;
   }
   /** End provider transcodes uburoom started and no longer holds; each provider reports under its kind. */
   async reconcileSessions(inUse) {

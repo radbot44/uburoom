@@ -519,7 +519,7 @@ async function main() {
   const originalAV1 = app.watch.pipeline.av1;
   let encoded = 0;
   app.watch.pipeline.av1 = new AV1(
-    app.watch.plex,
+    app.watch.providers.primary.root,
     { ffmpegPath: ffmpeg, ffprobePath: ffprobe, transcoding: { encoder: 'software' } },
     async (binary, parameters, signal) => {
       const encoding = parameters.includes('-c:v');

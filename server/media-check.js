@@ -1,45 +1,27 @@
 // @ts-check
 'use strict';
 const { fromProvider } = require('./media-provider');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
 const { run, codecMatches, classifyHdr } = require('./av1');
 
-const GB = 1024 ** 3;
-// Plex refuses to transcode when its drive is nearly full; warn well before that.
-const DISK = { warning: 25 * GB, problem: 10 * GB };
+// How a track list is named when its provider does not say.
+const LIBRARY = { name: 'The library', owner: "the library's", refresh: '' };
 const IMAGE_SUBTITLES = new Set(['pgs', 'vobsub', 'dvd_subtitle', 'hdmv_pgs_subtitle']);
 const EMBEDDED_SUBTITLES = new Set(['eia_608', 'eia_708', 'cea_608', 'cea_708']);
 const LEVELS = ['problem', 'warning', 'info', 'ok'];
-// Who listed the file's tracks, and how to make that list current again.
-const CATALOGS = {
-  plex: { name: 'Plex', owner: "Plex's", refresh: " In Plex, open the item's menu and choose Analyze." },
-  jellyfin: {
-    name: 'Jellyfin',
-    owner: "Jellyfin's",
-    refresh: " In Jellyfin, open the item's menu and choose Refresh metadata.",
-  },
-};
-const catalog = media => CATALOGS[media?.kind] || { name: 'The library', owner: "the library's", refresh: '' };
-
 /**
  * @typedef {{level:'problem'|'warning'|'info'|'ok', topic:string, title:string, detail?:string}} CheckItem
  */
 
 /**
  * Checks a video before and while a room plays it, for the host's info screen. File facts
- * (tracks, HDR, audio start, bitrate, what Plex would do) are gathered once per file and
- * kept; disk space and Plex sessions are read fresh each time. The Plex checks run only for
- * a video Plex serves. Nothing here changes playback.
+ * (tracks, HDR, audio start, bitrate) are gathered once per file and kept. The provider
+ * that serves the video adds what only it can say (its `checks`): per file, such as whether
+ * it would play it, and about itself, read fresh each time. Nothing here changes playback.
  */
 class MediaChecks {
-  /** @param {{plex:any, pipeline:any, config:any, sessions?:() => any}} options */
-  constructor({ plex, pipeline, config, sessions }) {
-    this.plex = plex;
+  /** @param {{pipeline?:any}} options */
+  constructor({ pipeline } = {}) {
     this.pipeline = pipeline;
-    this.config = config;
-    this.sessions = sessions;
     /** @type {Map<string,{promise:Promise<CheckItem[]>, items?:CheckItem[], checkedAt?:number}>} */
     this.files = new Map();
   }
@@ -74,14 +56,14 @@ class MediaChecks {
     while (this.files.size > 50) this.files.delete(this.files.keys().next().value);
     return entry;
   }
-  /** Drop a file's results so the next report checks it again (after Analyze in Plex). */
+  /** Drop a file's results so the next report checks it again. */
   forget(media) {
     this.files.delete(this.key(media));
   }
   /** The full report for a room's current video. */
   async report(media) {
     const entry = this.start(media);
-    const live = media?.kind === 'plex' ? await Promise.all([this.diskItem(), this.sessionItem()]) : [];
+    const live = (await media?.provider?.checks?.server?.().catch(() => [])) || [];
     const items = [...(entry?.items || []), ...live.filter(Boolean)];
     if (entry && !entry.items) items.push({ level: 'info', topic: 'file', title: 'Checking the file…' });
     items.sort((a, b) => LEVELS.indexOf(a.level) - LEVELS.indexOf(b.level));
@@ -112,8 +94,7 @@ class MediaChecks {
       streams = info.streams || [],
       items = [];
     items.push(this.trackItem(media, streams));
-    const decisions = await this.decisionItem(media);
-    if (decisions) items.push(decisions);
+    items.push(...((await media.provider?.checks?.file?.(media)) || []));
     const video = streams.find(stream => stream.codec_type === 'video');
     const hdr = this.hdrItem(video);
     if (hdr) items.push(hdr);
@@ -183,7 +164,7 @@ class MediaChecks {
       row => !row.external && !EMBEDDED_SUBTITLES.has(row.codec),
     ).length;
     if (wrong.length || plexAudio !== counts('audio') || plexSubtitles !== counts('subtitle')) {
-      const { name, owner, refresh } = catalog(media);
+      const { name, owner, refresh } = media.provider?.checks?.label || LIBRARY;
       const detail =
         plexAudio !== counts('audio') || plexSubtitles !== counts('subtitle')
           ? name +
@@ -206,34 +187,6 @@ class MediaChecks {
       };
     }
     return { level: 'ok', topic: 'tracks', title: 'Tracks match the file' };
-  }
-  /** What Plex says it would do, for Original and the best converted quality. */
-  async decisionItem(media) {
-    if (media.kind !== 'plex' || !this.config.transcoding?.plex) return;
-    const offered = this.pipeline.qualities(media),
-      labels = new Map(offered.map(q => [q.id, q.id === 'direct' ? 'Original' : q.label || q.id]));
-    const checks = ['direct', offered.find(q => q.id !== 'direct')?.id].filter(id => id && labels.has(id));
-    const results = [];
-    for (const quality of checks) {
-      const result = await this.plex
-        .startDecision(media, quality)
-        .catch(error => ({ ok: false, reason: String(error.message || error).slice(0, 200) }));
-      results.push({ quality, ...result });
-    }
-    const name = quality => labels.get(quality);
-    const refused = results.filter(result => !result.ok);
-    if (refused.length)
-      return {
-        level: 'problem',
-        topic: 'plex',
-        title: 'Plex says it would not play ' + refused.map(result => name(result.quality)).join(' or '),
-        detail: refused.map(result => name(result.quality) + ': ' + result.reason).join(' '),
-      };
-    return {
-      level: 'ok',
-      topic: 'plex',
-      title: 'Plex would play ' + results.map(result => name(result.quality)).join(' and '),
-    };
   }
   /** Audio that starts after the picture (the Hope case). */
   async audioStartItem(media) {
@@ -314,73 +267,6 @@ class MediaChecks {
         }
       : { level: 'info', topic: 'bitrate', title: text };
   }
-  /** Free space where Plex writes transcodes, when Plex runs on this computer. */
-  async diskItem() {
-    if (!this.config.plexUrl || !this.plex.configured) return;
-    let host;
-    try {
-      host = new URL(this.config.plexUrl).hostname.replace(/^\[|\]$/g, '').toLowerCase();
-    } catch {
-      return;
-    }
-    if (!['127.0.0.1', 'localhost', '::1', os.hostname().toLowerCase()].includes(host)) {
-      return {
-        level: 'info',
-        topic: 'disk',
-        title: "Plex's free space can't be checked",
-        detail: 'Plex runs on another computer.',
-      };
-    }
-    const prefs = await this.plex.json('/:/prefs').catch(() => undefined);
-    const configured = prefs?.Setting?.find(setting => setting.id === 'TranscoderTempDirectory')?.value;
-    const home = os.homedir(),
-      fallback =
-        process.platform === 'win32'
-          ? path.join(
-              process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'),
-              'Plex Media Server',
-              'Cache',
-              'Transcode',
-            )
-          : process.platform === 'darwin'
-            ? path.join(home, 'Library', 'Application Support', 'Plex Media Server', 'Cache', 'Transcode')
-            : '/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Cache/Transcode';
-    let directory = configured || fallback;
-    while (!fs.existsSync(directory) && path.dirname(directory) !== directory) directory = path.dirname(directory);
-    const stats = await fs.promises.statfs(directory).catch(() => undefined);
-    if (!stats) return;
-    const free = stats.bavail * stats.bsize,
-      text = Math.round(free / GB) + ' GB free on the drive Plex transcodes to';
-    if (free < DISK.problem)
-      return {
-        level: 'problem',
-        topic: 'disk',
-        title: 'Plex is almost out of transcode space',
-        detail: text + '. Plex refuses to convert below about 10 GB. Free some space.',
-      };
-    if (free < DISK.warning)
-      return { level: 'warning', topic: 'disk', title: "Plex's transcode drive is getting full", detail: text + '.' };
-    return { level: 'ok', topic: 'disk', title: text };
-  }
-  sessionItem() {
-    const sessions = this.sessions?.();
-    if (!sessions) return;
-    const title =
-      'Plex is running ' +
-      sessions.plexSessions +
-      (sessions.plexSessions === 1 ? ' conversion' : ' conversions') +
-      ', ' +
-      sessions.uburoomSessions +
-      ' for uburoom';
-    return sessions.ended
-      ? {
-          level: 'warning',
-          topic: 'sessions',
-          title,
-          detail: 'uburoom ended ' + sessions.ended + ' it was no longer using in the last check.',
-        }
-      : { level: 'ok', topic: 'sessions', title };
-  }
 }
 
-module.exports = { MediaChecks, DISK };
+module.exports = { MediaChecks };

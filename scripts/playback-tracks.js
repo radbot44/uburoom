@@ -75,7 +75,7 @@ async function main() {
     });
     originalAV1 = app.watch.pipeline.av1;
     app.watch.pipeline.av1 = new AV1(
-      app.watch.plex,
+      app.watch.providers.primary.root,
       { ffmpegPath: ffmpeg, ffprobePath: ffprobe },
       async (binary, parameters, signal) => {
         let actual = [...parameters];

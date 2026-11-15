@@ -11,7 +11,7 @@ const Engine = require('../shared/engine.mjs');
 const { PlaybackError } = require('./av1');
 const { localFormat } = require('../web/playback-policy');
 const { ObservationError } = require('./playback-tracking');
-const { clientAddress } = require('./plex-delivery');
+const { clientAddress } = require('./client-address');
 const { REJOIN } = require('./watch');
 const { CALLS, splitView } = require('../shared/wire-protocol.mjs');
 
@@ -122,7 +122,6 @@ function watchOperations({
   throttle,
   registry,
   clockEpoch,
-  delivery,
   validGrant,
 }) {
   const result = (status, value) => ({ status, value });
@@ -327,13 +326,11 @@ function watchOperations({
           state.directHls = { ...media.directHls, session: media.transcodeId };
           state.directDelivery = true;
           viewer.directDelivery = media;
-        } else if (
-          !media.bootstrapFallback &&
-          config.plexDelivery?.mode === 'auto' &&
-          viewer.directProxyVersion !== room.mediaVersion
-        ) {
-          const direct = await delivery?.file(media, auth, () => validGrant(grant), viewer.remoteAddress);
-          if (!(await validGrant(grant))) return result(409, { error: 'Playback delivery changed' });
+        } else if (!media.bootstrapFallback && viewer.directProxyVersion !== room.mediaVersion) {
+          // Only a provider with direct delivery turned on is asked, so nothing else waits on it.
+          const attempt = watch.providers.directFile(media, auth, () => validGrant(grant), viewer.remoteAddress);
+          const direct = attempt && (await attempt);
+          if (attempt && !(await validGrant(grant))) return result(409, { error: 'Playback delivery changed' });
           if (direct) {
             state.mediaUrl = direct;
             state.directDelivery = true;

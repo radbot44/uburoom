@@ -28,7 +28,7 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
     hostId = randomUUID(),
     guestId = randomUUID();
   const reports = [];
-  watch.reporting.plexAuth = {
+  watch.reporting.reporters[0].plexAuth = {
     forUser: async () => ({
       principal: 'personal',
       clientId: 'fixture',
@@ -60,7 +60,7 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
     };
     const accepted = watch.tracking.observe(room, viewer, guestId, data);
     await watch.reporting.observe(room, viewer, guestId, data, accepted);
-    await watch.reporting.sessions.get(guestId)?.dispatched;
+    await watch.reporting.reporters[0].sessions.get(guestId)?.dispatched;
   };
   watch.join(room, host, hostId);
   watch.join(room, guest, guestId);
@@ -126,7 +126,7 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
   room.viewers.get(guestId).at = watch.clock.now() - 11000;
   watch.review(room);
   await watch.leave(room, guest, guestId);
-  assert.equal(watch.reporting.sessions.has(guestId), false, 'explicit leave ends suspended reporting');
+  assert.equal(watch.reporting.reporters[0].sessions.has(guestId), false, 'explicit leave ends suspended reporting');
   watch.join(room, guest, guestId);
   assert.equal(room.viewers.get(guestId).trackChoice, undefined, 'explicit leave does not restore personal choices');
   await watch.close();

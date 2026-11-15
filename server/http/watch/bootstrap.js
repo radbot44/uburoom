@@ -1,5 +1,5 @@
 'use strict';
-const { clientAddress } = require('../../plex-delivery');
+const { clientAddress } = require('../../client-address');
 
 /** What the watch page is given before it opens a connection: public configuration and its first reads. */
 function pageBootstrap({ config, watch, hub, registry, entryPolicy, diagnosticLog, rawLogin, login, operations }) {

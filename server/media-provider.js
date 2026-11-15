@@ -66,6 +66,10 @@
  *   Whether the provider's own setting forbids video conversion; absent when it has no such setting.
  * @property {(inUse: Set<string>) => Promise<any>} [reconcileSessions]
  *   End provider transcodes uburoom started and no longer holds. Called on the configured scope only.
+ * @property {{label?: {name: string, owner: string, refresh: string}, file?: (media: any) => Promise<any[]>, server?: () => Promise<any[]>}} [checks]
+ *   What only this provider can say for the host's video check (server/media-check.js): how
+ *   to name whoever listed a file's tracks, items checked once per file, and items about the
+ *   provider itself, read fresh for every report.
  * @property {() => Promise<any>} [close] - Called on the configured scope at shutdown.
  */
 

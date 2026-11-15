@@ -73,6 +73,16 @@ class Jellyfin {
     /** @type {Map<string,string>} Library id to the kind of item it holds. */
     this.views = new Map();
   }
+  /** For the host's video check: who listed a file's tracks and how to refresh that list. */
+  get checks() {
+    return {
+      label: {
+        name: 'Jellyfin',
+        owner: "Jellyfin's",
+        refresh: " In Jellyfin, open the item's menu and choose Refresh metadata.",
+      },
+    };
+  }
   get kind() {
     return 'jellyfin';
   }

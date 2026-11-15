@@ -2,7 +2,7 @@
 const { randomBytes } = require('node:crypto');
 const { hash } = require('../../core');
 const { displayName } = require('../../accounts');
-const { clientAddress } = require('../../plex-delivery');
+const { clientAddress } = require('../../client-address');
 const Ubumfa = require('../../../web/ubumfa');
 const Policy = require('../../room-policy');
 

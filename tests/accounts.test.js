@@ -186,7 +186,7 @@ test('configured account fallback resolves its own PMS token and keeps discovery
   const scope = scopes[0];
   assert.equal(scope.token, 'fixture-server-102');
   assert.equal(scope.discoveryToken, 'fixture-user-102');
-  const { PlexDelivery } = require('../server/plex-delivery'),
+  const { PlexDelivery } = require('../server/plex/delivery'),
     delivery = new PlexDelivery(config, plex, auth, async () => auth.fallback());
   const direct = await delivery.file(
     {
@@ -1008,7 +1008,8 @@ test(
     };
     f.config.trustedProxies = ['127.0.0.1', '::1'];
     f.config.trustedProxyHeader = 'cf-connecting-ip';
-    f.app.watch.delivery.discoveredLanOrigin = 'https://plex-lan.invalid:32400';
+    f.app.watch.providers.list.find(provider => provider.kind === 'plex').direct.discoveredLanOrigin =
+      'https://plex-lan.invalid:32400';
     const alice = f.browser(),
       bob = f.browser();
     await alice.plex('alice');
@@ -1086,7 +1087,8 @@ test(
 );
 
 test('direct fallback requires verified non-ownership and never delegates configured owner credentials', async t => {
-  const { PlexDelivery, clientAddress } = require('../server/plex-delivery');
+  const { PlexDelivery } = require('../server/plex/delivery');
+  const { clientAddress } = require('../server/client-address');
   const config = {
     plexUrl: 'http://plex.invalid:32400',
     plexToken: 'owner',
@@ -1654,7 +1656,7 @@ test(
         r => r.path.includes('/transcode/universal/decision') && r.token === 'fixture-server-102',
       ),
     );
-    await f.app.watch.plex.stop(hls);
+    await f.app.watch.providers.primary.root.stop(hls);
     f.app.watch.pipeline.av1.ffmpeg = 'fixture-only';
     const av1 = await scoped.prepare('123', 'direct', true, undefined, 'av1');
     assert.equal(
@@ -1662,8 +1664,8 @@ test(
       'fixture-server-102',
       'shared encoder input uses an authorized user context',
     );
-    await f.app.watch.plex.stop(av1);
-    const ownerSource = await f.app.watch.plex.prepare('999', 'direct');
+    await f.app.watch.providers.primary.root.stop(av1);
+    const ownerSource = await f.app.watch.providers.primary.root.prepare('999', 'direct');
     await assert.rejects(
       scoped.prepare('999', 'direct', false, ownerSource),
       'owner metadata cannot bypass a restricted user context',
