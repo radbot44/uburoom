@@ -15,7 +15,7 @@ const { localFormat } = require('../web/playback-policy');
 
 /**
  * @typedef {Object} DeliveryPlan
- * @property {'file'|'local'|'plex-hls'} route
+ * @property {'file'|'local'|'provider-hls'} route - The original file, uburoom's own conversion, or the provider's HLS transcode.
  * @property {string} [codec] - Local output codec.
  * @property {'source-only'|'original'|'local-fallback'|'plex-fallback'|'audio-conversion'|'burn-in'|'compatible'|'multiple-audio'|'quality-limit'} reason
  */
@@ -29,8 +29,9 @@ const { localFormat } = require('../web/playback-policy');
 function planDelivery({ quality, compatible, fallback, burn, audioTracks, sourceOnly, outputs = ['plex'] }) {
   if (sourceOnly) return { route: 'file', reason: 'source-only' };
   if (localFormat(fallback)) return { route: 'local', codec: fallback, reason: 'local-fallback' };
-  if (fallback === 'plex') return { route: 'plex-hls', reason: 'plex-fallback' };
-  if (fallback === 'audio' && quality === 'direct' && !burn) return { route: 'plex-hls', reason: 'audio-conversion' };
+  if (fallback === 'plex') return { route: 'provider-hls', reason: 'plex-fallback' };
+  if (fallback === 'audio' && quality === 'direct' && !burn)
+    return { route: 'provider-hls', reason: 'audio-conversion' };
   const reason = burn
     ? 'burn-in'
     : compatible
@@ -42,9 +43,9 @@ function planDelivery({ quality, compatible, fallback, burn, audioTracks, source
           : undefined;
   if (!reason) return { route: 'file', reason: 'original' };
   // Choosing one audio track can keep the video untouched only through Plex.
-  if (reason === 'multiple-audio' && outputs.includes('plex')) return { route: 'plex-hls', reason };
+  if (reason === 'multiple-audio' && outputs.includes('plex')) return { route: 'provider-hls', reason };
   const first = outputs[0];
-  return localFormat(first) ? { route: 'local', codec: first, reason } : { route: 'plex-hls', reason };
+  return localFormat(first) ? { route: 'local', codec: first, reason } : { route: 'provider-hls', reason };
 }
 
 module.exports = { planDelivery };

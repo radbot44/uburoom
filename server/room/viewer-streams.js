@@ -1,5 +1,6 @@
 // @ts-check
 'use strict';
+const { fromProvider } = require('../media-provider');
 /** @typedef {import('../types').Room} Room */
 /** @typedef {import('../types').Viewer} Viewer */
 /** @typedef {import('../types').Actor} Actor */
@@ -194,7 +195,7 @@ module.exports = {
           id: room.media.id,
           title: room.media.title,
           duration: room.media.duration,
-          kind: 'plex',
+          kind: room.media.kind,
           format: 'unavailable',
           resources: new Map(),
           unavailable: true,
@@ -398,7 +399,7 @@ module.exports = {
             id: source.id,
             title: source.title,
             duration: source.duration,
-            kind: 'plex',
+            kind: source.kind,
             resources: new Map(),
             unavailable: true,
             format: 'unavailable',
@@ -532,7 +533,7 @@ module.exports = {
       settings.policy === 'disabled' ||
       !room.media ||
       !room.viewers.size ||
-      room.media.kind !== 'plex'
+      !fromProvider(room.media)
     ) {
       room.fallbackStream?.close();
       room.fallbackStream = undefined;

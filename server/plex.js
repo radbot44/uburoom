@@ -52,6 +52,9 @@ class Plex {
     this.transcode = new PlexTranscode(this);
     this.lifecycle = new PlexSessions(this, this.shared);
   }
+  get kind() {
+    return 'plex';
+  }
   get configured() {
     return this.client.configured;
   }

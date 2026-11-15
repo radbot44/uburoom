@@ -1,39 +1,47 @@
 'use strict';
 const { PlaybackError } = require('./av1');
-const flag = value => value === true || value === 1 || value === '1';
 const clean = value => (typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 200) : '');
-const id = value => (/^\d{1,20}$/.test(String(value ?? '')) ? String(value) : undefined);
+const id = value => (/^[A-Za-z0-9_-]{1,64}$/.test(String(value ?? '')) ? String(value) : undefined);
 const plain = new Set(['srt', 'subrip', 'webvtt', 'vtt', 'mov_text', 'text']);
 const burnable = new Set([...plain, 'ass', 'ssa', 'pgs', 'hdmv_pgs_subtitle', 'vobsub', 'dvd_subtitle']);
-function catalog(part, { browserSubtitles = false, extractSubtitles = false } = {}) {
+/**
+ * One audio or subtitle stream as its provider describes it. `index` is the stream's
+ * position in the file, when the provider knows it; `external` marks a sidecar the
+ * provider serves separately from the file.
+ * @typedef {{kind: 'audio'|'subtitles', id: string, index?: number, codec?: string, language?: string,
+ *   languageName?: string, title?: string, label?: string, selected?: boolean, default?: boolean, forced?: boolean,
+ *   sdh?: boolean, commentary?: boolean, description?: boolean, channels?: number, external?: boolean}} TrackSource
+ */
+/**
+ * The tracks a viewer may choose from, and how each subtitle can reach their player.
+ * @param {TrackSource[]} sources
+ */
+function catalog(sources, { browserSubtitles = false, extractSubtitles = false } = {}) {
   const tracks = { audio: [], subtitles: [] };
-  for (const stream of part.Stream || []) {
-    const kind = Number(stream.streamType) === 2 ? 'audio' : Number(stream.streamType) === 3 ? 'subtitles' : undefined;
+  for (const stream of sources || []) {
+    const kind = stream.kind === 'audio' || stream.kind === 'subtitles' ? stream.kind : undefined;
     const streamId = id(stream.id);
     if (!kind || !streamId || tracks[kind].some(t => t.id === streamId)) continue;
     const codec = clean(stream.codec).toLowerCase(),
-      language = clean(stream.languageCode || stream.languageTag || stream.language).toLowerCase();
+      language = clean(stream.language).toLowerCase();
     const index =
       Number.isSafeInteger(stream.index) && stream.index >= 0 && stream.index <= 1023 ? stream.index : undefined;
-    const external =
-      typeof stream.key === 'string' && /^\/library\/streams\/\d{1,20}(?:\.[a-z0-9]+)?$/.test(stream.key);
+    const external = stream.external === true;
     const track = {
       id: streamId,
       index,
       ordinal: tracks[kind].length,
       codec,
       language,
-      languageName: clean(stream.language),
+      languageName: clean(stream.languageName),
       title: clean(stream.title),
-      label:
-        clean(stream.displayTitle || stream.title || stream.language) ||
-        (kind === 'audio' ? 'Audio' : 'Subtitles') + ' ' + (tracks[kind].length + 1),
-      selected: flag(stream.selected),
-      default: flag(stream.default),
-      forced: flag(stream.forced),
-      sdh: flag(stream.hearingImpaired),
-      commentary: flag(stream.commentary),
-      description: flag(stream.visualImpaired),
+      label: clean(stream.label) || (kind === 'audio' ? 'Audio' : 'Subtitles') + ' ' + (tracks[kind].length + 1),
+      selected: stream.selected === true,
+      default: stream.default === true,
+      forced: stream.forced === true,
+      sdh: stream.sdh === true,
+      commentary: stream.commentary === true,
+      description: stream.description === true,
       channels: Number(stream.channels) || undefined,
       external,
       delivery:

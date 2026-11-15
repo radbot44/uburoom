@@ -1,5 +1,6 @@
 // @ts-check
 'use strict';
+const { fromProvider } = require('../media-provider');
 /** @typedef {import('../types').Room} Room */
 /** @typedef {import('../types').Viewer} Viewer */
 /** @typedef {import('../types').Actor} Actor */
@@ -67,7 +68,7 @@ module.exports = {
     if (room.frozen && actor.userId !== room.hostId) return false;
     if (!canWatch(this.hub.access, actor.userId, actor) && !(viewer?.access?.ok && viewer.access.media === room.media))
       return false;
-    if (room.media?.kind === 'plex' && viewer?.access?.media === room.media && !viewer.access.ok) return false;
+    if (fromProvider(room.media) && viewer?.access?.media === room.media && !viewer.access.ok) return false;
     return this.hub.authorize(actor, room, 'room.view').ok;
   },
   // Room access with the asynchronous provider checks authorize() leaves out:
@@ -83,7 +84,7 @@ module.exports = {
         if (!this.retainedThroughOutage(room, actor, error)) return false;
       }
     }
-    if (room.media?.kind === 'plex') {
+    if (fromProvider(room.media)) {
       try {
         const allowed = await (await this.hub.mediaFor(actor)).allows(room.media.id);
         this.providerResponded();

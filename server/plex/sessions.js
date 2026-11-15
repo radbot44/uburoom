@@ -3,6 +3,7 @@ const { randomUUID } = require('node:crypto');
 const { qualityId } = require('../../shared/engine.mjs');
 const { PlaybackError, classifyHdr } = require('../av1');
 const Tracks = require('../media-tracks');
+const PlexTracks = require('./tracks');
 const Output = require('../plex-output');
 const Sources = require('../plex-source');
 const SubtitleResources = require('../subtitle-resources');
@@ -80,7 +81,7 @@ class PlexSessions {
       subtitle: this.plex.subtitle(item),
       duration: item.duration / 1000,
       quality,
-      kind: 'plex',
+      kind: this.plex.kind,
       resources: new Map(),
       id,
       source: item,
@@ -104,7 +105,7 @@ class PlexSessions {
     };
     media.chapters = parseChapters(item);
     media.markers = parseMarkers(item);
-    media.tracks = Tracks.catalog(part, {
+    media.tracks = Tracks.catalog(PlexTracks.streams(part), {
       browserSubtitles: choices.browserSubtitles,
       extractSubtitles: !!this.plex.pipeline.av1.ffmpeg,
     });
@@ -153,10 +154,10 @@ class PlexSessions {
       'Delivery',
       `"${media.title}" ${quality}: ${plan.route}${plan.codec ? ' ' + plan.codec : ''} (${plan.reason}), source ${media.videoCodec}/${media.audioCodec}${fallback ? ', requested ' + fallback : ''}`,
     );
-    const directPlan = plan.route === 'plex-hls' ? await choices.directPlan?.() : undefined;
+    const directPlan = plan.route === 'provider-hls' ? await choices.directPlan?.() : undefined;
     const directHls = !!(directPlan || choices.directHls);
     if (directPlan) media.directHls = directPlan;
-    if (choices.shareKey && plan.route === 'plex-hls') {
+    if (choices.shareKey && plan.route === 'provider-hls') {
       if (choices.authorized && !(await choices.authorized()))
         throw new PlaybackError('Viewing access or stream selection expired.');
       const key = JSON.stringify([

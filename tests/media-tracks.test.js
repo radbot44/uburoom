@@ -14,6 +14,7 @@ const path = require('node:path');
 const https = require('node:https');
 const { createApp } = require('../server/app');
 
+const catalogPart = (part, options) => Tracks.catalog(require('../server/plex/tracks').streams(part), options);
 function provider() {
   const state = {
     selected: undefined,
@@ -218,7 +219,7 @@ function provider() {
 }
 test('track catalog distinguishes source IDs, selected flags, roles and text versus burn-in', () => {
   const { streams } = provider(),
-    rows = Tracks.catalog({ Stream: streams() });
+    rows = catalogPart({ Stream: streams() });
   assert.equal(rows.audio[1].selected, false);
   assert.equal(Tracks.select(rows).audio.id, '11');
   assert.equal(rows.subtitles[0].delivery, 'text');
@@ -226,7 +227,7 @@ test('track catalog distinguishes source IDs, selected flags, roles and text ver
   assert.equal(rows.subtitles[2].available, true);
   assert.equal(Tracks.select(rows, { subtitleId: 'off' }).subtitle, undefined);
   assert.throws(() => Tracks.select(rows, { subtitleId: '999' }), /does not belong/);
-  const next = Tracks.catalog({
+  const next = catalogPart({
     Stream: [{ id: 99, streamType: 2, languageCode: 'fra', codec: 'aac', selected: '0' }],
   });
   assert.equal(
@@ -1137,7 +1138,7 @@ test('multi-version Plex items resolve subtitles and metadata from the selected/
 
 test('embedded text stays client-rendered, so Original is not forced into a conversion', () => {
   const { planDelivery } = require('../server/delivery-plan');
-  const [track] = Tracks.catalog(
+  const [track] = catalogPart(
     { Stream: [{ id: 1, streamType: 3, codec: 'srt', index: 2 }] },
     { browserSubtitles: true, extractSubtitles: true },
   ).subtitles;

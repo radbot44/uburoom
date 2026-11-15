@@ -1,5 +1,6 @@
 // @ts-check
 'use strict';
+const { fromProvider } = require('./media-provider');
 const { repositories } = require('./repositories');
 const { UUID, hash } = require('./core');
 const { randomUUID } = require('node:crypto');
@@ -417,7 +418,7 @@ function watchOperations({
       if (viewer.userId !== auth.actor.userId) throw new Error('Viewer identity mismatch');
       // It only waits for this tab's own stream work, which events start.
       await viewer.streamWork;
-      if (room.media?.kind === 'plex' && viewer.access?.media !== room.media) await watch.checkAccess(room, viewer);
+      if (fromProvider(room.media) && viewer.access?.media !== room.media) await watch.checkAccess(room, viewer);
       if (viewer.streamFailure) throw viewer.streamFailure;
       const { alive } = signedIn(context, auth);
       if (!watch.canSee(room, auth.actor, viewer) || !(await alive()) || room.viewers.get(viewerId) !== viewer)
@@ -750,8 +751,7 @@ function watchOperations({
       inRoom(context, roomId, async (auth, room) => {
         if (!hub.authorize(auth.actor, room, 'roomSettings').ok)
           return result(403, { error: 'Only hosts can see the video check' });
-        if (!room.media || room.media.kind !== 'plex')
-          return result(200, { items: [], level: 'ok', title: room.media?.title });
+        if (!fromProvider(room.media)) return result(200, { items: [], level: 'ok', title: room.media?.title });
         if (args.refresh) {
           if (!throttle('video-check:' + auth.actor.userId, 6))
             return result(429, { error: 'Wait a moment before checking again' });

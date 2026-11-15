@@ -332,7 +332,7 @@ class WatchRooms {
         title: saved.title,
         duration: saved.duration,
         source: { type: saved.type },
-        kind: 'plex',
+        kind: plex.kind,
         resources: new Map(),
         unavailable: true,
         playbackError: error.message,

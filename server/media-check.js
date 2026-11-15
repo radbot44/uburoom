@@ -1,5 +1,6 @@
 // @ts-check
 'use strict';
+const { fromProvider } = require('./media-provider');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -37,7 +38,7 @@ class MediaChecks {
   /** Begin the file checks in the background; repeated calls share one run. */
   start(media) {
     const key = this.key(media);
-    if (!key || media.kind !== 'plex') return;
+    if (!key || !fromProvider(media)) return;
     let entry = this.files.get(key);
     if (entry) {
       this.files.delete(key);

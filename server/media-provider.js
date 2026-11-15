@@ -21,4 +21,7 @@
  *   Whether the provider's own setting forbids video conversion; absent when it has no such setting.
  */
 
-module.exports = {};
+/** Media a provider prepared or recorded, as opposed to the built-in demo. */
+const fromProvider = media => !!media && media.kind !== 'demo';
+
+module.exports = { fromProvider };

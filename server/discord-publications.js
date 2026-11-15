@@ -1,4 +1,5 @@
 'use strict';
+const { fromProvider } = require('./media-provider');
 const { repositories } = require('./repositories');
 const { randomBytes } = require('node:crypto');
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
@@ -133,7 +134,7 @@ class DiscordPublications {
     };
   }
   posterKey(room) {
-    return room?.media?.kind === 'plex' ? String(room.media.roomServerId || '') + ':' + room.media.id : undefined;
+    return fromProvider(room?.media) ? String(room.media.roomServerId || '') + ':' + room.media.id : undefined;
   }
   posterUrl(id) {
     const poster = this.posters.get(id);

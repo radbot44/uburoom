@@ -1,5 +1,6 @@
 // @ts-check
 'use strict';
+const { fromProvider } = require('../media-provider');
 /** @typedef {import('../types').Room} Room */
 /** @typedef {import('../types').Viewer} Viewer */
 /** @typedef {import('../types').Actor} Actor */
@@ -130,7 +131,7 @@ module.exports = {
   changeTracks(room, viewer, args, actor, ticket) {
     const current = viewer.media,
       version = room.mediaVersion;
-    if (!current?.tracks || current.kind !== 'plex')
+    if (!current?.tracks || !fromProvider(current))
       return { status: 'unsupported', message: 'Audio and subtitles are unavailable for this video.' };
     if (viewer.preparing || viewer.change)
       return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
@@ -231,7 +232,7 @@ module.exports = {
   refreshStream(room, viewer, args, actor, ticket) {
     const current = viewer.media,
       version = room.mediaVersion;
-    if (!current || current.kind !== 'plex' || !room.media || current.format !== 'hls')
+    if (!fromProvider(current) || !room.media || current.format !== 'hls')
       return { status: 'unsupported', message: 'This stream cannot be refreshed.' };
     if (viewer.preparing || viewer.change)
       return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
