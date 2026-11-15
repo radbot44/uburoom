@@ -29,7 +29,7 @@ module.exports = {
    */
   warmSubtitles(media, seconds) {
     if (media?.selection?.subtitle?.delivery !== 'cues' || media.unavailable) return;
-    void SubtitleResources.window(media.plexContext || this.plex, media, {
+    void SubtitleResources.window(this.pipeline?.av1, media, {
       atMs: Math.max(0, seconds || 0) * 1000,
       beforeMs: 5000,
       afterMs: 15000,
@@ -540,11 +540,11 @@ module.exports = {
       room.fallbackTimer = undefined;
       return;
     }
-    if (!room.fallbackStream && room.media.tracks && this.plex.av1) {
+    if (!room.fallbackStream && room.media.tracks && this.pipeline?.av1) {
       const source = room.media,
         version = room.mediaVersion;
       room.fallbackStream = new FallbackStream({
-        av1: this.plex.av1,
+        av1: this.pipeline.av1,
         settings,
         source,
         shareKey: [room.roomId, version],

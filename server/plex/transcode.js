@@ -4,7 +4,8 @@ const { QUALITIES, qualityId } = require('../../shared/engine.mjs');
 const { PlaybackError } = require('../av1');
 const Sources = require('../plex-source');
 const { mediaIdentity } = require('../../shared/room-protocol.mjs');
-const { runOperation } = require('../operation');
+const { runOperation, SharedTask } = require('../operation');
+const policyFailure = message => Object.assign(new PlaybackError(message), { playbackPolicy: true });
 
 // Transcode decision: offered qualities, Plex transcode parameters, audio and subtitle
 // selection for conversion, and the local outputs a viewer can use.
@@ -14,7 +15,7 @@ class PlexTranscode {
   }
   qualities(media) {
     const original = !media?.unavailable && media?.source && Sources.select(media.source, media.sourceSelection).media;
-    return this.plex.qualityOptions
+    return this.plex.pipeline.qualityOptions
       .filter(
         q =>
           !q.bitrate ||
@@ -27,8 +28,45 @@ class PlexTranscode {
           : q,
       );
   }
+  // Whether this Plex server forbids video conversion. Read with the configured
+  // server token (a viewer's token cannot see server preferences) and remembered
+  // briefly; an answer that cannot be read is a refusal, never permission.
+  async videoConversionDisabled() {
+    const shared = this.plex.shared;
+    if (!shared.conversionPreference || shared.conversionPreference.until <= Date.now()) {
+      if (!shared.conversionReading || shared.conversionReading.signal.aborted) {
+        const task = (shared.conversionReading = new SharedTask(async () => {
+          try {
+            const preferences = await shared.root.json('/:/prefs');
+            const setting = preferences.Setting?.find(value => value.id === 'TranscoderCanOnlyRemuxVideo');
+            if (!setting || ![true, false, 0, 1, '0', '1'].includes(setting.value))
+              throw policyFailure(
+                'The Plex video-conversion policy could not be verified. Ask the owner to check Plex settings or deliberately configure an override.',
+              );
+            shared.conversionPreference = {
+              until: Date.now() + 30000,
+              disabled: [true, 1, '1'].includes(setting.value),
+            };
+          } catch (error) {
+            throw error.playbackPolicy
+              ? error
+              : policyFailure(
+                  'Cannot read the Plex conversion policy. Original playback remains available; ask the owner to check the server credentials.',
+                );
+          }
+        }));
+        task.promise
+          .finally(() => {
+            if (shared.conversionReading === task) shared.conversionReading = undefined;
+          })
+          .catch(() => {});
+      }
+      await shared.conversionReading.join();
+    }
+    return shared.conversionPreference.disabled;
+  }
   maxTranscodeQuality() {
-    return this.plex.qualityOptions.find(q => q.id !== 'direct') || QUALITIES[1];
+    return this.plex.pipeline.qualityOptions.find(q => q.id !== 'direct') || QUALITIES[1];
   }
   // The one recipe for a Plex HLS session, used to start playback and to ask Plex
   // beforehand whether it would.
@@ -39,7 +77,7 @@ class PlexTranscode {
         ? directStream
           ? Math.max(20000, original.bitrate || 0)
           : Math.min(maxTranscode?.bitrate || 20000, Math.max(2000, original.bitrate || maxTranscode?.bitrate || 20000))
-        : this.plex.qualityOptions.find(q => q.id === qualityId(quality))?.bitrate || 4000;
+        : this.plex.pipeline.qualityOptions.find(q => q.id === qualityId(quality))?.bitrate || 4000;
     const sourceVideo =
       original?.videoCodec || selected?.part?.Stream?.find(x => Number(x.streamType) === 1)?.codec || '';
     const videoCodecs = directStream && /^(hevc|h265|hvc1|hev1)$/i.test(sourceVideo) ? 'h264,hevc' : 'h264';
@@ -73,7 +111,7 @@ class PlexTranscode {
       params.set('subtitleSize', '100');
     }
     if (quality !== 'direct') {
-      const q = this.plex.qualityOptions.find(q => q.id === qualityId(quality));
+      const q = this.plex.pipeline.qualityOptions.find(q => q.id === qualityId(quality));
       params.set('videoResolution', `${q.width}x${q.height}`);
     } else if (!directStream && maxTranscode?.width && maxTranscode?.height) {
       params.set('videoResolution', `${maxTranscode.width}x${maxTranscode.height}`);
@@ -95,7 +133,7 @@ class PlexTranscode {
       session: randomUUID(),
       directStream: quality === 'direct',
     });
-    const decision = await (media.plexContext || this.plex).json('/video/:/transcode/universal/decision?' + params);
+    const decision = await (media.provider || this.plex).json('/video/:/transcode/universal/decision?' + params);
     const code = Number(decision.generalDecisionCode),
       playable = !!decision.Metadata?.[0]?.Media?.[0]?.Part?.length;
     if (playable && !(code >= 2000)) return { ok: true };
@@ -177,19 +215,19 @@ class PlexTranscode {
   // Configured outputs this viewer can use, in priority order. Without a working
   // hardware encoder, a local codec waits behind Plex rather than loading the CPU.
   async usableOutputs(localCodecs = []) {
-    const configured = this.plex.conversionPolicy.settings?.outputs || ['plex'],
+    const configured = this.plex.pipeline.conversionPolicy.settings?.outputs || ['plex'],
       usable = [];
     for (const [index, output] of configured.entries()) {
       if (output === 'plex') {
         usable.push(output);
         continue;
       }
-      if (!this.plex.av1.ffmpeg || !localCodecs.includes(output)) continue;
+      if (!this.plex.pipeline.av1.ffmpeg || !localCodecs.includes(output)) continue;
       try {
-        const encoder = await this.plex.av1.selectEncoder(output);
+        const encoder = await this.plex.pipeline.av1.selectEncoder(output);
         if (
           encoder !== 'software' ||
-          this.plex.av1.encoder === 'software' ||
+          this.plex.pipeline.av1.encoder === 'software' ||
           !configured.slice(index + 1).includes('plex')
         )
           usable.push(output);

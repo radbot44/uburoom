@@ -422,22 +422,27 @@ test('single room fixes creator, assigns configured hosts and requires explicit 
 test('conversion policy follows Plex, fails closed when unknown and counts jobs rather than users', async () => {
   let disabled = '1',
     reads = 0;
-  const policy = new ConversionPolicy(
-    { policy: 'follow_plex', plex: true, uburoom: true, formats: ['av1'], maxJobs: 1 },
-    {
-      json: async () => {
-        reads++;
-        return { Setting: [{ id: 'TranscoderCanOnlyRemuxVideo', value: disabled }] };
-      },
-    },
-  );
-  await assert.rejects(policy.video('uburoom'), /Plex disables/);
+  const { Plex } = require('../server/plex');
+  const server = settings =>
+    new Plex({ plexUrl: 'http://plex-fixture.invalid:32400', plexToken: 'fixture-owner' }, async () => {
+      reads++;
+      return new Response(JSON.stringify({ MediaContainer: { Setting: settings() } }));
+    });
+  const plex = server(() => [{ id: 'TranscoderCanOnlyRemuxVideo', value: disabled }]);
+  const policy = new ConversionPolicy({
+    policy: 'follow_plex',
+    plex: true,
+    uburoom: true,
+    formats: ['av1'],
+    maxJobs: 1,
+  });
+  await assert.rejects(policy.video('uburoom', 'av1', plex), /Plex disables/);
   assert.equal(reads, 1);
-  policy.preference = undefined;
+  plex.shared.conversionPreference = undefined;
   disabled = '0';
-  await policy.video('uburoom');
-  await policy.video('plex');
-  assert.equal(reads, 2);
+  await policy.video('uburoom', 'av1', plex);
+  await policy.video('plex', undefined, plex.scope('viewer-token', 'viewer'));
+  assert.equal(reads, 2, 'a viewer scope follows the setting read with the server token');
   const release = policy.acquire();
   assert.throws(() => policy.acquire(), /conversion jobs/);
   release();
@@ -455,14 +460,18 @@ test('conversion policy follows Plex, fails closed when unknown and counts jobs 
   await assert.rejects(policy.video('plex'), /disabled/);
   policy.settings.policy = 'override';
   disabled = '1';
-  await policy.video('uburoom');
+  await policy.video('uburoom', 'av1', plex);
   policy.settings.formats = [];
   await assert.rejects(policy.video('uburoom'), /not offered/);
-  const missing = new ConversionPolicy(
-    { ...policy.settings, policy: 'follow_plex', formats: ['av1'] },
-    { json: async () => ({}) },
+  const missing = new ConversionPolicy({ ...policy.settings, policy: 'follow_plex', formats: ['av1'] });
+  await assert.rejects(
+    missing.video(
+      'uburoom',
+      'av1',
+      server(() => undefined),
+    ),
+    /could not be verified/,
   );
-  await assert.rejects(missing.video('uburoom'), /could not be verified/);
 });
 
 test('Plex conversions reserve/release shared global capacity and follow video-copy decisions', async () => {
@@ -502,20 +511,20 @@ test('Plex conversions reserve/release shared global capacity and follow video-c
   );
   try {
     const media = await plex.prepare('1', '720p4', true);
-    assert.equal(plex.conversionPolicy.jobs.size, 1);
+    assert.equal(plex.pipeline.conversionPolicy.jobs.size, 1);
     await assert.rejects(plex.prepare('2', '720p4', true), /conversion jobs/);
-    assert.equal(plex.conversionPolicy.jobs.size, 1);
+    assert.equal(plex.pipeline.conversionPolicy.jobs.size, 1);
     await plex.stop(media);
-    assert.equal(plex.conversionPolicy.jobs.size, 0);
-    plex.conversionPolicy.preference = undefined;
+    assert.equal(plex.pipeline.conversionPolicy.jobs.size, 0);
+    plex.shared.conversionPreference = undefined;
     onlyRemux = '1';
     await assert.rejects(plex.prepare('1', '720p4', true), /video transcoding/);
-    assert.equal(plex.conversionPolicy.jobs.size, 0);
+    assert.equal(plex.pipeline.conversionPolicy.jobs.size, 0);
     copy = true;
     const remux = await plex.prepare('1', 'direct', true);
     await plex.stop(remux);
-    assert.equal(plex.conversionPolicy.jobs.size, 0);
-    plex.conversionPolicy.settings.policy = 'disabled';
+    assert.equal(plex.pipeline.conversionPolicy.jobs.size, 0);
+    plex.pipeline.conversionPolicy.settings.policy = 'disabled';
     assert.equal((await plex.prepare('1', 'direct')).format, 'file');
     await assert.rejects(plex.prepare('1', '720p4', true), /disabled/);
   } finally {
@@ -687,28 +696,27 @@ test('explicit software AV1 uses/probes only software and identical viewers cons
       started = resolve;
     }),
     encoderArgs = [];
-  const manager = new AV1(
-    {},
-    { ffmpegPath: 'fixture', transcoding: { encoder: 'software' } },
-    async (_binary, args) => {
-      if (args.includes('-show_entries'))
-        return Buffer.from(JSON.stringify({ streams: [{ index: 0, codec_type: 'video', width: 640, height: 360 }] }));
-      encoderArgs.push(args);
-      if (args.includes('-ss')) {
-        encodes++;
-        started();
-        await new Promise(resolve => {
-          releaseEncode = resolve;
-        });
-        return { video: Buffer.alloc(200), audio: Buffer.alloc(50) };
-      }
-      return Buffer.alloc(200);
-    },
-  );
-  manager.conversionPolicy = new ConversionPolicy(
-    { policy: 'override', plex: true, uburoom: true, formats: ['av1'], maxJobs: 1 },
-    {},
-  );
+  const manager = new AV1({ ffmpegPath: 'fixture', transcoding: { encoder: 'software' } }, async (_binary, args) => {
+    if (args.includes('-show_entries'))
+      return Buffer.from(JSON.stringify({ streams: [{ index: 0, codec_type: 'video', width: 640, height: 360 }] }));
+    encoderArgs.push(args);
+    if (args.includes('-ss')) {
+      encodes++;
+      started();
+      await new Promise(resolve => {
+        releaseEncode = resolve;
+      });
+      return { video: Buffer.alloc(200), audio: Buffer.alloc(50) };
+    }
+    return Buffer.alloc(200);
+  });
+  manager.conversionPolicy = new ConversionPolicy({
+    policy: 'override',
+    plex: true,
+    uburoom: true,
+    formats: ['av1'],
+    maxJobs: 1,
+  });
   const source = {
     id: '1',
     duration: 60,

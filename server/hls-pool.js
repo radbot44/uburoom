@@ -17,7 +17,7 @@ class HLSPool {
     this.warmLimitMs = 12000;
   }
   async anchor(media, timeoutMs) {
-    const plex = media.plexContext;
+    const provider = media.provider;
     const controller = new AbortController(),
       timer = setTimeout(() => controller.abort(), timeoutMs);
     timer.unref?.();
@@ -40,14 +40,14 @@ class HLSPool {
       text = media.initialManifest;
     try {
       for (let depth = 0; depth < 3; depth++) {
-        if (!text) text = await wait((await wait(plex.request(url, options))).text());
+        if (!text) text = await wait((await wait(provider.request(url, options))).text());
         if (text.length > 2e6 || !text.startsWith('#EXTM3U') || /#EXT-X-(?:KEY|MAP):/.test(text)) return;
         const first = text
           .split(/\r?\n/)
           .map(line => line.trim())
           .find(line => line && !line.startsWith('#'));
         if (!first) return;
-        const target = plex.url(new URL(first.trim(), url).href).href;
+        const target = provider.url(new URL(first.trim(), url).href).href;
         if (!/#EXTINF:/.test(text)) {
           url = target;
           text = undefined;
@@ -55,7 +55,7 @@ class HLSPool {
         }
         const sequence = /#EXT-X-MEDIA-SEQUENCE:([^\r\n]+)/.exec(text);
         if (sequence && Number(sequence[1]) !== 0) return;
-        const response = await wait(plex.request(target, { ...options, streaming: true })),
+        const response = await wait(provider.request(target, { ...options, streaming: true })),
           reader = response.body.getReader();
         const chunks = [];
         let size = 0;
@@ -89,19 +89,19 @@ class HLSPool {
     }
   }
   async alive(media, timeoutMs = 3000) {
-    const plex = media?.plexContext,
+    const provider = media?.provider,
       first = media?.initialManifest
         ?.split(/\r?\n/)
         .map(line => line.trim())
         .find(line => line && !line.startsWith('#'));
-    if (!plex || !first || !media.start) return false;
+    if (!provider || !first || !media.start) return false;
     const controller = new AbortController(),
       timer = setTimeout(() => controller.abort(), timeoutMs);
     timer.unref?.();
     try {
-      const target = plex.url(new URL(first, media.start).href).href,
+      const target = provider.url(new URL(first, media.start).href).href,
         id = media.transcodeId;
-      const response = await plex.request(target, {
+      const response = await provider.request(target, {
         signal: controller.signal,
         headers: {
           Accept: 'application/vnd.apple.mpegurl',

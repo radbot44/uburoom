@@ -11,7 +11,7 @@ const SubtitleResources = require('../../subtitle-resources');
 /** The media proxy: manifests, chunks, captions and subtitles served to a holder of a grant. */
 function mediaStream({ config, watch, json, grants, validCaptionGrant, validGrant }) {
   function resource(media, url) {
-    const target = watch.plex.url(url).href;
+    const target = media.provider.url(url).href;
     for (const [key, value] of media.resources) if (value === target) return key;
     if (media.resources.size > 20000) throw new Error('Too many media resources');
     const key = randomBytes(12).toString('hex');
@@ -21,7 +21,7 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
   function rewriteManifest(text, upstream, media, grantId) {
     const resolve = value => {
       if (media.directHls) {
-        const source = watch.plex.url(new URL(value, upstream).href);
+        const source = media.provider.url(new URL(value, upstream).href);
         const target = new URL(source.pathname + source.search, media.directHls.origin);
         return Playback.directHlsUrl(target.href, { ...media.directHls, session: media.transcodeId });
       }
@@ -76,7 +76,7 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
           const atMs = url?.searchParams?.has('atMs') ? Number(url.searchParams.get('atMs')) : 0;
           const beforeMs = url?.searchParams?.has('beforeMs') ? Number(url.searchParams.get('beforeMs')) : 15000;
           const afterMs = url?.searchParams?.has('afterMs') ? Number(url.searchParams.get('afterMs')) : 60000;
-          const win = await SubtitleResources.window(media.plexContext || watch.plex, media, {
+          const win = await SubtitleResources.window(watch.pipeline.av1, media, {
             atMs,
             beforeMs,
             afterMs,
@@ -103,10 +103,10 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
             return json(res, 403, { error: 'Subtitle access expired or selection changed.' });
           req.setTimeout?.(0);
           res.setTimeout?.(0);
-          await SubtitleResources.pipe(media.plexContext || watch.plex, media, req, res, controller.signal);
+          await SubtitleResources.pipe(watch.pipeline.av1, media, req, res, controller.signal);
           return;
         }
-        const result = await SubtitleResources.load(media.plexContext || watch.plex, media, controller.signal);
+        const result = await SubtitleResources.load(watch.pipeline.av1, media, controller.signal);
         if (controller.signal.aborted || !(await validCaptionGrant(grant, match[1])))
           return json(res, 403, { error: 'Subtitle access expired or selection changed.' });
         res.setHeader('Cache-Control', 'no-store');
@@ -152,7 +152,7 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
       }, 2000);
       try {
         const media = grant.room.viewers.get(grant.viewerId)?.media;
-        const cues = await Subtitles.load(media.plexContext || watch.plex, media, abort.signal);
+        const cues = await Subtitles.load(media, abort.signal);
         if (abort.signal.aborted || !(await validCaptionGrant(grant, match[1])))
           return json(res, 403, { error: 'Subtitle access expired or selection changed.' });
         json(res, 200, { cues });
@@ -203,7 +203,7 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
       }, 2000);
       try {
         const background = req.headers['x-uburoom-prefetch'] === '1';
-        const chunk = await watch.plex.av1.chunk(media.av1Lease, index, abort.signal, {
+        const chunk = await watch.pipeline.av1.chunk(media.av1Lease, index, abort.signal, {
             urgent: !background && Math.abs(index - Math.floor(watch.position(grant.room) / CHUNK)) <= 1,
             background,
           }),
@@ -289,8 +289,8 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
     try {
       // The grant's own source access is checked before cached or producer bytes.
       response =
-        (media.plexContext || watch.plex).hlsPool?.response(media.hlsLease, target, req.method, req.headers.range) ||
-        (await (media.hlsContext || media.plexContext || watch.plex).request(target, {
+        watch.pipeline.hlsPool.response(media.hlsLease, target, req.method, req.headers.range) ||
+        (await (media.hlsProvider || media.provider).request(target, {
           method: req.method,
           signal: abort.signal,
           streaming: true,

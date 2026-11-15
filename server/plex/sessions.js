@@ -59,11 +59,11 @@ class PlexSessions {
     this.plex = plex;
     this.sessions = shared.sessions;
     this.partQueues = shared.partQueues;
-    this.hlsPool = shared.hlsPool;
+    this.hlsPool = shared.pipeline.hlsPool;
   }
   async prepare(id, quality, compatible = false, source, fallback, choices = {}) {
     quality = qualityId(quality);
-    if (!choices.sourceOnly && !this.plex.qualityOptions.some(q => q.id === quality))
+    if (!choices.sourceOnly && !this.plex.pipeline.qualityOptions.some(q => q.id === quality))
       throw new PlaybackError('This quality is not offered by the server.');
     const sameSource = source && (source.principal || 'discord-shared') === this.plex.principal;
     const { ratingKey, mediaId: targetMediaId } = mediaIdentity(this.plex.id(id));
@@ -86,7 +86,7 @@ class PlexSessions {
       source: item,
       sourceSelection: selected.identity,
       principal: this.plex.principal,
-      plexContext: this.plex,
+      provider: this.plex,
       videoCodec: original.videoCodec || videoStream?.codec,
       audioCodec:
         original.audioCodec ||
@@ -106,7 +106,7 @@ class PlexSessions {
     media.markers = parseMarkers(item);
     media.tracks = Tracks.catalog(part, {
       browserSubtitles: choices.browserSubtitles,
-      extractSubtitles: !!this.plex.av1.ffmpeg,
+      extractSubtitles: !!this.plex.pipeline.av1.ffmpeg,
     });
     media.selection = Tracks.select(media.tracks, choices);
     media.sourceStart = this.plex.url(part.key).href;
@@ -149,7 +149,7 @@ class PlexSessions {
       media.doviProfile = null;
       media.bitDepth = 8;
     }
-    this.plex.av1.logger.info(
+    this.plex.pipeline.av1.logger.info(
       'Delivery',
       `"${media.title}" ${quality}: ${plan.route}${plan.codec ? ' ' + plan.codec : ''} (${plan.reason}), source ${media.videoCodec}/${media.audioCodec}${fallback ? ', requested ' + fallback : ''}`,
     );
@@ -216,7 +216,7 @@ class PlexSessions {
       ])
         media[field] = shared.media[field];
       media.compatible = compatible;
-      media.hlsContext = shared.media.plexContext;
+      media.hlsProvider = shared.media.provider;
       if (shared.lease) media.hlsLease = shared.lease;
       else media.releaseConversion = shared.media.releaseConversion;
       return media;
@@ -227,7 +227,7 @@ class PlexSessions {
     } else if (plan.route === 'local') {
       const codec = plan.codec;
       try {
-        await this.plex.conversionPolicy.video('uburoom', codec);
+        await this.plex.pipeline.conversionPolicy.video('uburoom', codec, this.plex);
       } catch (error) {
         const failure = new PlaybackError(error.message);
         failure.media = media;
@@ -235,7 +235,7 @@ class PlexSessions {
       }
       const maxTranscode = this.plex.maxTranscodeQuality();
       const preset =
-        quality === 'direct' ? maxTranscode : this.plex.qualityOptions.find(q => q.id === qualityId(quality));
+        quality === 'direct' ? maxTranscode : this.plex.pipeline.qualityOptions.find(q => q.id === qualityId(quality));
       media.bitrateCeiling =
         quality === 'direct'
           ? Math.min(maxTranscode?.bitrate || 20000, Math.max(2000, original.bitrate || maxTranscode?.bitrate || 20000))
@@ -255,24 +255,24 @@ class PlexSessions {
       media.compatible = true;
       if (
         !choices.sharedOnly &&
-        this.plex.conversionPolicy.settings &&
-        this.plex.conversionPolicy.jobs.size >= this.plex.conversionPolicy.settings.maxJobs
+        this.plex.pipeline.conversionPolicy.settings &&
+        this.plex.pipeline.conversionPolicy.jobs.size >= this.plex.pipeline.conversionPolicy.settings.maxJobs
       ) {
         try {
-          media.av1Lease = this.plex.av1.acquire(localSource, quality, true, codec);
+          media.av1Lease = this.plex.pipeline.av1.acquire(localSource, quality, true, codec);
         } catch (error) {
           if (!error.conversionCapacity) throw error;
-          const release = await this.plex.conversionPolicy.wait({ authorized: choices.authorized });
+          const release = await this.plex.pipeline.conversionPolicy.wait({ authorized: choices.authorized });
           release();
         }
       }
-      media.av1Lease ||= this.plex.av1.acquire(localSource, quality, choices.sharedOnly, codec);
+      media.av1Lease ||= this.plex.pipeline.av1.acquire(localSource, quality, choices.sharedOnly, codec);
     } else {
       const prepare = async () => {
         let copyOnly = false;
         try {
           try {
-            await this.plex.conversionPolicy.video('plex');
+            await this.plex.pipeline.conversionPolicy.video('plex', undefined, this.plex);
           } catch (error) {
             if (error.videoDisabled) copyOnly = true;
             else throw error;
@@ -281,7 +281,7 @@ class PlexSessions {
             throw Object.assign(new PlaybackError('No matching shared output is available.'), {
               conversionCapacity: true,
             });
-          media.releaseConversion = await this.plex.conversionPolicy.wait({ authorized: choices.authorized });
+          media.releaseConversion = await this.plex.pipeline.conversionPolicy.wait({ authorized: choices.authorized });
         } catch (error) {
           throw error instanceof PlaybackError ? error : new PlaybackError(error.message);
         }
@@ -326,7 +326,7 @@ class PlexSessions {
           }
           const preset =
             quality !== 'direct'
-              ? this.plex.qualityOptions.find(q => q.id === qualityId(quality))
+              ? this.plex.pipeline.qualityOptions.find(q => q.id === qualityId(quality))
               : !directStream
                 ? this.plex.maxTranscodeQuality()
                 : undefined;
@@ -412,7 +412,7 @@ class PlexSessions {
       } catch (error) {
         if (![404, 500].includes(error.status)) return;
         if (attempt) {
-          this.plex.av1.logger.warn(
+          this.plex.pipeline.av1.logger.warn(
             'Plex',
             `Plex accepted a session for "${media.title}" and then refused it (HTTP ${error.status}). Check Plex's log and its transcode drive's free space.`,
           );
@@ -451,13 +451,13 @@ class PlexSessions {
       await media.hlsLease.release();
       return;
     }
-    if (media?.av1Lease) this.plex.av1.release(media.av1Lease);
+    if (media?.av1Lease) this.plex.pipeline.av1.release(media.av1Lease);
     if (media?.transcodeId) {
       const id = media.transcodeId,
         headers = { 'X-Plex-Client-Identifier': id, 'X-Plex-Session-Identifier': id };
       const entry = this.sessions.get(id);
       if (entry) entry.stoppedAt = Date.now();
-      await (media.hlsContext || media.plexContext || this.plex)
+      await (media.hlsProvider || media.provider || this.plex)
         .request('/video/:/transcode/universal/stop?' + new URLSearchParams({ session: id, ...headers }), { headers })
         .catch(() => {});
     }
@@ -497,7 +497,7 @@ class PlexSessions {
         this.sessions.delete(id);
     }
     if (ended.length)
-      this.plex.av1.logger.warn(
+      this.plex.pipeline.av1.logger.warn(
         'Plex',
         `Ended ${ended.length} Plex transcode ${ended.length === 1 ? 'session' : 'sessions'} that uburoom no longer used (${ended.filter(item => item.stopped).length} had already been asked to stop).`,
       );
@@ -512,7 +512,7 @@ class PlexSessions {
     const id = media.transcodeId,
       headers = { 'X-Plex-Client-Identifier': id, 'X-Plex-Session-Identifier': id };
     try {
-      await (media.hlsContext || media.plexContext || this.plex).request(
+      await (media.hlsProvider || media.provider || this.plex).request(
         '/video/:/transcode/universal/ping?' + new URLSearchParams({ session: id, ...headers }),
         { headers },
       );

@@ -73,8 +73,8 @@ async function main() {
         throw new Error('Live OAuth disabled.');
       },
     });
-    originalAV1 = app.watch.plex.av1;
-    app.watch.plex.av1 = new AV1(
+    originalAV1 = app.watch.pipeline.av1;
+    app.watch.pipeline.av1 = new AV1(
       app.watch.plex,
       { ffmpegPath: ffmpeg, ffprobePath: ffprobe },
       async (binary, parameters, signal) => {

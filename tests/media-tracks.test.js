@@ -467,11 +467,11 @@ test('sidecar requests retain the viewer Plex scope, cap content, and do not fet
     scoped = plex.scope('viewer-only', 'viewer');
   try {
     const media = await scoped.prepare('1', 'direct', false, undefined, undefined, { subtitleId: '21' });
-    const cues = await Subtitles.load(scoped, media, new AbortController().signal);
+    const cues = await Subtitles.load(media, new AbortController().signal);
     assert.equal(cues[0].text, 'Bonjour');
     assert.equal(state.events.find(e => e.path === '/library/streams/21.srt').token, 'viewer-only');
     const burn = await scoped.prepare('1', 'direct', false, undefined, undefined, { subtitleId: '22' });
-    await assert.rejects(Subtitles.load(scoped, burn, new AbortController().signal), /external text/);
+    await assert.rejects(Subtitles.load(burn, new AbortController().signal), /external text/);
   } finally {
     await plex.close();
   }
@@ -602,10 +602,10 @@ test('browser subtitle resources enforce grants, selection generations and expli
   let member = true;
   const app = createApp(config, { plexFetch: fixture.plex.fetch });
   app.access.connect({ isMember: () => member, refresh: async () => member, options: () => ({ available: true }) });
-  app.watch.plex.av1.input = async (source, signal, action) => action('http://127.0.0.1/synthetic-capability');
-  app.watch.plex.av1.run = async binary =>
+  app.watch.pipeline.av1.input = async (source, signal, action) => action('http://127.0.0.1/synthetic-capability');
+  app.watch.pipeline.av1.run = async binary =>
     Buffer.from(binary.includes('ffprobe') ? '{"streams":[]}' : '[Script Info]\n[Events]\n');
-  app.watch.plex.av1.stream = async (binary, args, signal, onChunk) => {
+  app.watch.pipeline.av1.stream = async (binary, args, signal, onChunk) => {
     onChunk(Buffer.from('PGS-RAW-CHUNK-1'));
     onChunk(Buffer.from('PGS-RAW-CHUNK-2'));
   };
@@ -727,7 +727,7 @@ test('browser subtitle resources enforce grants, selection generations and expli
   assert.equal(pgsAsset.body, 'PGS-RAW-CHUNK-1PGS-RAW-CHUNK-2');
   // Hold real window work across selection replacement and detected revocation.
   let started, windowSignal;
-  app.watch.plex.av1.run = async (binary, args, signal) => {
+  app.watch.pipeline.av1.run = async (binary, args, signal) => {
     windowSignal = signal;
     started?.();
     return new Promise((resolve, reject) =>
@@ -1110,10 +1110,11 @@ test('multi-version Plex items resolve subtitles and metadata from the selected/
     source: multiItem,
     sourceSelection: selected.identity,
     selection: { subtitle: { id: '32', delivery: 'ass', external: true } },
+    provider: assPlex,
     captionVersion: '1',
     subtitleAbort: new AbortController(),
   };
-  const assResult = await SubtitleResources.load(assPlex, assMedia, new AbortController().signal);
+  const assResult = await SubtitleResources.load(undefined, assMedia, new AbortController().signal);
   assert.equal(assResult.format, 'ass');
   assert.ok(assResult.assets.get('data').toString().includes('Dialogue:'));
 
@@ -1126,9 +1127,10 @@ test('multi-version Plex items resolve subtitles and metadata from the selected/
     source: multiItem,
     sourceSelection: selected.identity,
     selection: { subtitle: { id: '31', delivery: 'text', available: true } },
+    provider: mockPlex,
     subtitleAbort: new AbortController(),
   };
-  const cues = await Subtitles.load(mockPlex, textMedia, new AbortController().signal);
+  const cues = await Subtitles.load(textMedia, new AbortController().signal);
   assert.equal(cues.length, 1);
   assert.equal(cues[0].text, 'Hello');
 });

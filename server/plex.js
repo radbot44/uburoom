@@ -1,10 +1,6 @@
 'use strict';
-const { CacheBudget } = require('./cache-budget');
 const { createHash } = require('node:crypto');
-const { QUALITIES } = require('../shared/engine.mjs');
-const { AV1 } = require('./av1');
-const { HLSPool } = require('./hls-pool');
-const { ConversionPolicy } = require('./transcoding-policy');
+const { MediaPipeline } = require('./media-pipeline');
 const { PlexClient } = require('./plex/client');
 const { PlexAccess } = require('./plex/access');
 const { PlexCatalog } = require('./plex/catalog');
@@ -20,7 +16,7 @@ const { PlexSessions } = require('./plex/sessions');
 // No arbitrary upstream URLs: callers select Plex IDs, and only Plex-produced
 // media paths on the configured server are eligible for proxying.
 class Plex {
-  constructor(config, fetcher = fetch, { logger } = {}, scoped) {
+  constructor(config, fetcher = fetch, { logger, pipeline } = {}, scoped) {
     if (scoped) {
       this.shared = scoped.shared;
       this.client = new PlexClient(this, scoped.client);
@@ -39,22 +35,20 @@ class Plex {
           throw new Error('PLEX_URL must be an HTTP(S) origin');
       }
       this.client = new PlexClient(this, { fetcher, token: config.plexToken, base, principal: 'discord-shared' });
-      // State every scope shares: conversions, Plex sessions and their part locks.
+      // State every scope shares: the pipeline streams play through, Plex sessions and
+      // their part locks. A Plex built without a pipeline owns one and closes it.
       this.shared = {
-        cacheBudget: new CacheBudget(),
+        root: this,
+        pipeline: pipeline || new MediaPipeline(config, { logger }),
+        ownsPipeline: !pipeline,
         partQueues: new Map(),
         /** @type {Map<string,{context:any,at:number,stoppedAt?:number}>} Plex transcode sessions uburoom started */
         sessions: new Map(),
-        qualityOptions: config.transcoding?.qualities || QUALITIES,
-        hlsPool: new HLSPool(media => (media.plexContext || this).stop(media)),
       };
-      this.shared.av1 = new AV1(this, config, undefined, logger);
-      this.shared.conversionPolicy = new ConversionPolicy(config.transcoding, this);
-      this.shared.av1.conversionPolicy = this.shared.conversionPolicy;
     }
     this.scopes = new Map();
     this.access = new PlexAccess(this);
-    this.catalogs = new PlexCatalog(this, this.shared.cacheBudget);
+    this.catalogs = new PlexCatalog(this, this.shared.pipeline.cacheBudget);
     this.transcode = new PlexTranscode(this);
     this.lifecycle = new PlexSessions(this, this.shared);
   }
@@ -79,26 +73,18 @@ class Plex {
   get clientId() {
     return this.client.clientId;
   }
-  get av1() {
-    return this.shared.av1;
+  get pipeline() {
+    return this.shared.pipeline;
   }
-  get hlsPool() {
-    return this.shared.hlsPool;
+  /** The scope holding the configured server token. */
+  get root() {
+    return this.shared.root;
   }
   get sessions() {
     return this.shared.sessions;
   }
   get partQueues() {
     return this.shared.partQueues;
-  }
-  get conversionPolicy() {
-    return this.shared.conversionPolicy;
-  }
-  get qualityOptions() {
-    return this.shared.qualityOptions;
-  }
-  get cacheBudget() {
-    return this.shared.cacheBudget;
   }
   get allowedItems() {
     return this.access.allowedItems;
@@ -228,6 +214,9 @@ class Plex {
   selectAudioForTranscode(media, choices) {
     return this.transcode.selectAudioForTranscode(media, choices);
   }
+  videoConversionDisabled() {
+    return this.transcode.videoConversionDisabled();
+  }
   usableOutputs(localCodecs) {
     return this.transcode.usableOutputs(localCodecs);
   }
@@ -266,8 +255,7 @@ class Plex {
       }
       artSources.clear();
     }
-    this.cacheBudget.clear();
-    return Promise.all([this.hlsPool.close(), this.av1.close()]);
+    return this.shared.ownsPipeline ? this.pipeline.close() : Promise.resolve();
   }
 }
 

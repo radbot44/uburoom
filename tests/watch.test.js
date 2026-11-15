@@ -673,20 +673,20 @@ test(
     room.mediaVersion = randomUUID();
     room.position = 0;
     room.state.paused = true;
-    app.watch.plex.av1.ffmpeg = 'fixture-only';
+    app.watch.pipeline.av1.ffmpeg = 'fixture-only';
     const av1 = {
       kind: 'plex',
       format: 'av1',
       videoCodec: 'av1',
       duration: 180,
-      av1Lease: app.watch.plex.av1.acquire({ id: '123', duration: 180 }, 'direct'),
+      av1Lease: app.watch.pipeline.av1.acquire({ id: '123', duration: 180 }, 'direct'),
     };
     room.media = { ...room.media, duration: 180 };
     local.media = av1;
     local.mediaVersion = room.mediaVersion;
     local.streamVersion = randomUUID();
     let chunks = 0;
-    app.watch.plex.av1.chunk = async () => {
+    app.watch.pipeline.av1.chunk = async () => {
       chunks++;
       return { video: Buffer.from('private fixture webm'), audio: Buffer.from('opus') };
     };
@@ -696,13 +696,13 @@ test(
       ...av1,
       quality: '720p2',
       selection: {},
-      av1Lease: app.watch.plex.av1.acquire({ id: '123', duration: 180 }, '720p2'),
+      av1Lease: app.watch.pipeline.av1.acquire({ id: '123', duration: 180 }, '720p2'),
     };
     room.fallbackStream = {
       media: fallbackMedia,
       reconcile() {},
       close() {
-        app.watch.plex.av1.release(fallbackMedia.av1Lease);
+        app.watch.pipeline.av1.release(fallbackMedia.av1Lease);
       },
     };
     // The fixture has no real Plex server; viewers' Plex scope allows the title.

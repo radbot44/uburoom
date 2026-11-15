@@ -53,7 +53,7 @@ async function readText(response, signal) {
   }
   return Buffer.concat(chunks).toString('utf8');
 }
-async function load(plex, media, signal) {
+async function load(media, signal) {
   const track = media.selection?.subtitle;
   if (!track?.available || track.delivery !== 'text')
     throw new PlaybackError(track?.reason || 'No external text subtitle is selected.');
@@ -70,11 +70,11 @@ async function load(plex, media, signal) {
   const resource = /\.[a-z0-9]+$/.test(source.key)
     ? source.key
     : source.key + '.' + ({ subrip: 'srt', webvtt: 'vtt' }[track.codec] || track.codec);
-  const url = plex.url(resource);
+  const url = media.provider.url(resource);
   url.searchParams.set('format', 'webvtt');
   url.searchParams.set('encoding', 'utf-8');
   const text = await readText(
-    await plex.request(url.href, { signal: abort, headers: { Accept: 'text/vtt,text/plain' } }),
+    await media.provider.request(url.href, { signal: abort, headers: { Accept: 'text/vtt,text/plain' } }),
     abort,
   );
   if (abort.aborted) throw new PlaybackError('Subtitle loading was cancelled.');

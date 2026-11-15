@@ -193,7 +193,7 @@ test('configured account fallback resolves its own PMS token and keeps discovery
       kind: 'plex',
       format: 'file',
       start: 'http://plex-fixture.invalid:32400/library/parts/1/file.mp4',
-      plexContext: scope,
+      provider: scope,
     },
     { identity: {}, actor: {} },
     async () => true,
@@ -1037,7 +1037,7 @@ test(
     assert.notEqual(left.directHls.token, right.directHls.token);
     assert.equal(starts.length, 1);
     assert.equal(segments, 0);
-    assert.equal(f.app.watch.plex.hlsPool.bytes, 0);
+    assert.equal(f.app.watch.pipeline.hlsPool.bytes, 0);
     const master = await alice.request(left.mediaUrl);
     assert.equal(master.status, 200);
     const child = new URL(master.body.split('\n').find(line => line.startsWith('https://')));
@@ -1131,7 +1131,7 @@ test('direct fallback requires verified non-ownership and never delegates config
     kind: 'plex',
     format: 'file',
     start: 'http://plex.invalid:32400/library/parts/1/file.mp4',
-    plexContext: scope,
+    provider: scope,
   });
   const delivery = () => new PlexDelivery(config, plex, auth, async () => scope);
   assert.match(await delivery().file(media(), context, async () => true), /transient-fallback/);
@@ -1655,10 +1655,10 @@ test(
       ),
     );
     await f.app.watch.plex.stop(hls);
-    f.app.watch.plex.av1.ffmpeg = 'fixture-only';
+    f.app.watch.pipeline.av1.ffmpeg = 'fixture-only';
     const av1 = await scoped.prepare('123', 'direct', true, undefined, 'av1');
     assert.equal(
-      av1.av1Lease.group.source.plexContext.token,
+      av1.av1Lease.group.source.provider.token,
       'fixture-server-102',
       'shared encoder input uses an authorized user context',
     );

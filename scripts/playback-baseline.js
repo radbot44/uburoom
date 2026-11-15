@@ -516,9 +516,9 @@ async function main() {
     },
   });
   // Substitute the encoder only in this fixture's instance. Production policy stays intact.
-  const originalAV1 = app.watch.plex.av1;
+  const originalAV1 = app.watch.pipeline.av1;
   let encoded = 0;
-  app.watch.plex.av1 = new AV1(
+  app.watch.pipeline.av1 = new AV1(
     app.watch.plex,
     { ffmpegPath: ffmpeg, ffprobePath: ffprobe, transcoding: { encoder: 'software' } },
     async (binary, parameters, signal) => {

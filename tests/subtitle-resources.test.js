@@ -105,7 +105,7 @@ test('pipe streams PGS chunks progressively with a 300s idle timeout and caches 
     on() {},
     off() {},
   };
-  await pipe(plex, media, { method: 'GET' }, res, new AbortController().signal);
+  await pipe(plex.av1, media, { method: 'GET' }, res, new AbortController().signal);
   assert.equal(statusCode, 200);
   assert.equal(Buffer.concat(written).toString('utf8'), 'PG-CHUNK-1PG-CHUNK-2');
   assert.equal(streamedOptions.length, 1);
@@ -143,7 +143,7 @@ test('pipe streams PGS chunks progressively with a 300s idle timeout and caches 
     on() {},
     off() {},
   };
-  await pipe(plex, replacement, { method: 'GET' }, cachedRes, new AbortController().signal);
+  await pipe(plex.av1, replacement, { method: 'GET' }, cachedRes, new AbortController().signal);
   assert.equal(Buffer.concat(cachedWritten).toString('utf8'), 'PG-CHUNK-1PG-CHUNK-2');
   assert.equal(streamedOptions.length, 1);
   clear(replacement);
@@ -180,7 +180,7 @@ test('pipe streams PGS chunks progressively with a 300s idle timeout and caches 
       signal.addEventListener('abort', () => reject(signal.reason), { once: true }),
     );
   };
-  const slow = pipe(plex, slowMedia, { method: 'GET' }, slowResponse, new AbortController().signal);
+  const slow = pipe(plex.av1, slowMedia, { method: 'GET' }, slowResponse, new AbortController().signal);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(writes, 1, 'slow response waits for drain');
   const job = slowMedia.subtitleJob;
@@ -246,7 +246,7 @@ test('window retrieves bounded subtitle intervals, counts cues, and caches resul
   };
 
   // 1. Initial window request at 10s (atMs: 10000, beforeMs: 5000, afterMs: 20000)
-  const result = await window(plex, media, { atMs: 10000, beforeMs: 5000, afterMs: 20000 });
+  const result = await window(plex.av1, media, { atMs: 10000, beforeMs: 5000, afterMs: 20000 });
   assert.equal(result.format, 'pgs');
   assert.equal(result.startMs, 5000); // 10s - 5s
   assert.equal(result.endMs, 30000); // 5s + (5s + 20s)
@@ -264,19 +264,19 @@ test('window retrieves bounded subtitle intervals, counts cues, and caches resul
   assert.equal(result.data.readUInt32BE(2), 90000 * 10);
 
   // 2. Repeat request within the same interval uses windowCache without running FFmpeg
-  const cachedResult = await window(plex, media, { atMs: 10000, beforeMs: 5000, afterMs: 20000 });
+  const cachedResult = await window(plex.av1, media, { atMs: 10000, beforeMs: 5000, afterMs: 20000 });
   assert.equal(cachedResult.data, result.data);
   assert.equal(ffmpegRuns.length, 1); // No new run!
 
   // 3. Request contained inside existing coverage also uses windowCache with superset bounds
-  const innerResult = await window(plex, media, { atMs: 12000, beforeMs: 2000, afterMs: 5000 });
+  const innerResult = await window(plex.av1, media, { atMs: 12000, beforeMs: 2000, afterMs: 5000 });
   assert.equal(innerResult.data, result.data);
   assert.equal(innerResult.startMs, 5000); // returns superset startMs
   assert.equal(innerResult.endMs, 30000); // returns superset endMs
   assert.equal(ffmpegRuns.length, 1); // Still 1
 
   // 3b. Request with explicit beforeMs: 0 is honored and not coerced to 15000
-  const zeroBefore = await window(plex, media, { atMs: 40000, beforeMs: 0, afterMs: 20000 });
+  const zeroBefore = await window(plex.av1, media, { atMs: 40000, beforeMs: 0, afterMs: 20000 });
   assert.equal(zeroBefore.startMs, 40000);
   assert.equal(zeroBefore.endMs, 60000);
   assert.equal(ffmpegRuns.length, 2);
@@ -328,7 +328,7 @@ test('window retrieves bounded subtitle intervals, counts cues, and caches resul
     ffmpegRuns.push(args);
     return mockAssData;
   };
-  const assResult = await window(plex, assMedia, { atMs: 10000, beforeMs: 5000, afterMs: 20000 });
+  const assResult = await window(plex.av1, assMedia, { atMs: 10000, beforeMs: 5000, afterMs: 20000 });
   assert.equal(assResult.format, 'ass');
   assert.equal(assResult.cues, 2);
   const assRunArgs = ffmpegRuns[ffmpegRuns.length - 1];
@@ -350,7 +350,7 @@ test('window retrieves bounded subtitle intervals, counts cues, and caches resul
     ffmpegRuns.push(args);
     return mockVobsubData;
   };
-  const vobsubResult = await window(plex, vobsubMedia, { atMs: 10000, beforeMs: 5000, afterMs: 20000 });
+  const vobsubResult = await window(plex.av1, vobsubMedia, { atMs: 10000, beforeMs: 5000, afterMs: 20000 });
   assert.equal(vobsubResult.format, 'vobsub');
   assert.equal(vobsubResult.cues, 1);
   const vobsubRunArgs = ffmpegRuns[ffmpegRuns.length - 1];
@@ -785,12 +785,12 @@ test('shared window jobs isolate caller cancellation, reject obsolete selection,
     on() {},
     off() {},
   };
-  await SubtitleResources.pipe(plex, media, { method: 'GET' }, response, new AbortController().signal);
+  await SubtitleResources.pipe(plex.av1, media, { method: 'GET' }, response, new AbortController().signal);
   const a = new AbortController(),
     b = new AbortController();
   try {
-    const first = SubtitleResources.window(plex, media, { signal: a.signal });
-    const second = SubtitleResources.window(plex, media, { signal: b.signal });
+    const first = SubtitleResources.window(plex.av1, media, { signal: a.signal });
+    const second = SubtitleResources.window(plex.av1, media, { signal: b.signal });
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(runs, 1);
     for (let i = 0; i < 8; i++) {
@@ -798,8 +798,9 @@ test('shared window jobs isolate caller cancellation, reject obsolete selection,
       asset.selection.subtitle.delivery = 'ass';
       asset.selection.subtitle.external = true;
       asset.source.Media[0].Part[0].Stream[0].key = '/library/streams/23.ass';
+      asset.provider = plex;
       assets.push(asset);
-      await SubtitleResources.load(plex, asset, new AbortController().signal);
+      await SubtitleResources.load(plex.av1, asset, new AbortController().signal);
     }
     assert.equal(media.subtitleAssets, undefined, 'cache pressure evicts the old completed resource');
     assert.equal(jobSignal.aborted, false, 'evicting cache must not invalidate coalesced authorized work');
@@ -810,14 +811,14 @@ test('shared window jobs isolate caller cancellation, reject obsolete selection,
     const result = await second;
     assert.equal(result.cues, 2);
     const c = new AbortController(),
-      cancelled = SubtitleResources.window(plex, media, { atMs: 100000, signal: c.signal });
+      cancelled = SubtitleResources.window(plex.av1, media, { atMs: 100000, signal: c.signal });
     await new Promise(resolve => setImmediate(resolve));
     c.abort();
     await assert.rejects(cancelled);
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(jobSignal.aborted, true);
     assert.equal(media.windowJobs.size, 0);
-    const stale = SubtitleResources.window(plex, media, { atMs: 200000 });
+    const stale = SubtitleResources.window(plex.av1, media, { atMs: 200000 });
     await new Promise(resolve => setImmediate(resolve));
     media.captionVersion = 'version-b';
     release(pgsAt());
@@ -825,7 +826,7 @@ test('shared window jobs isolate caller cancellation, reject obsolete selection,
     plex.av1.run = async () => {
       throw new Error('demux failed');
     };
-    await assert.rejects(SubtitleResources.window(plex, media), /failed/);
+    await assert.rejects(SubtitleResources.window(plex.av1, media), /failed/);
     assert.equal(media.windowJobs.size, 0);
     plex.av1.run = async () =>
       Buffer.from(
@@ -834,7 +835,7 @@ test('shared window jobs isolate caller cancellation, reject obsolete selection,
           packets: [{ stream_index: 0, pts_time: '0', size: '100' }],
         }),
       );
-    assert.equal((await SubtitleResources.window(plex, media)).cues, 0);
+    assert.equal((await SubtitleResources.window(plex.av1, media)).cues, 0);
     assert.equal(media.windowJobs.size, 0);
   } finally {
     SubtitleResources.clear(media);
@@ -910,8 +911,9 @@ test(
     });
     await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
     const plex = { request: (url, options) => fetch(url, options) };
-    const av1 = (plex.av1 = new AV1(plex, { ffmpegPath: 'ffmpeg' }));
+    const av1 = (plex.av1 = new AV1({ ffmpegPath: 'ffmpeg' }));
     const media = windowMedia();
+    media.provider = plex;
     media.selection.subtitle.index = 2;
     media.sourceStart = 'http://127.0.0.1:' + upstream.address().port + '/generated.mkv';
     try {
@@ -977,7 +979,7 @@ test(
           requests = [];
           delivered = 0;
           const started = performance.now(),
-            result = await SubtitleResources.window(plex, media, { atMs });
+            result = await SubtitleResources.window(plex.av1, media, { atMs });
           const pts = [];
           for (let offset = 0; offset < result.data.length; offset += 13 + result.data.readUInt16BE(offset + 11))
             if (result.data[offset + 10] === 0x16) pts.push(Math.round(result.data.readUInt32BE(offset + 2) / 90));
@@ -1007,14 +1009,14 @@ test(
       }
       SubtitleResources.clear(media);
       ignoreRanges = true;
-      await assert.rejects(SubtitleResources.window(plex, media, { atMs: 3600000 }), /failed/);
+      await assert.rejects(SubtitleResources.window(plex.av1, media, { atMs: 3600000 }), /failed/);
       assert.equal(av1.inputs.size, 0);
       assert.equal(av1.jobs.size, 0);
       ignoreRanges = false;
       stall = true;
       const controller = new AbortController(),
         waiting = new Promise(resolve => (requested = resolve));
-      const pending = SubtitleResources.window(plex, media, { atMs: 3600000, signal: controller.signal });
+      const pending = SubtitleResources.window(plex.av1, media, { atMs: 3600000, signal: controller.signal });
       await waiting;
       controller.abort();
       await assert.rejects(pending);
@@ -1060,10 +1062,10 @@ test('empty successful FFmpeg output cannot verify quiet coverage when packet in
     },
   };
   try {
-    await assert.rejects(SubtitleResources.window(plex, media), /did not match|no usable data/);
+    await assert.rejects(SubtitleResources.window(plex.av1, media), /did not match|no usable data/);
     assert.equal(media.windowCache.size, 0, 'empty demux output must not poison cache with successful coverage');
     emptyInspection = true;
-    const quiet = await SubtitleResources.window(plex, media);
+    const quiet = await SubtitleResources.window(plex.av1, media);
     assert.equal(quiet.cues, 0);
     assert.equal(quiet.data.length, 0);
     assert.equal(media.windowCache.size, 1);
@@ -1125,15 +1127,16 @@ test('retained window buffers participate in aggregate server cache eviction', a
   asset.selection.subtitle.delivery = 'ass';
   asset.selection.subtitle.external = true;
   asset.source.Media[0].Part[0].Stream[0].key = '/library/streams/23';
+  asset.provider = plex;
   try {
     for (let i = 0; i < 6; i++) {
       const item = windowMedia();
       item.selection.subtitle.delivery = 'ass';
       media.push(item);
-      await SubtitleResources.window(plex, item);
+      await SubtitleResources.window(plex.av1, item);
     }
     assert.equal(media[0].windowCache.size, 1);
-    await SubtitleResources.load(plex, asset, new AbortController().signal);
+    await SubtitleResources.load(plex.av1, asset, new AbortController().signal);
     assert.equal(
       media[0].windowCache.size,
       0,

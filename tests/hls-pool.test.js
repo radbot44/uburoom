@@ -149,9 +149,9 @@ test('two matching accounts share one Plex conversion; another bitrate stays sep
     assert.equal(f.state.starts.length, 2);
     assert.equal(a.transcodeId, b.transcodeId);
     assert.notEqual(a.transcodeId, phone.transcodeId);
-    assert.equal(a.plexContext, f.a);
-    assert.equal(b.plexContext, f.b);
-    assert.equal(b.hlsContext, f.a);
+    assert.equal(a.provider, f.a);
+    assert.equal(b.provider, f.b);
+    assert.equal(b.hlsProvider, f.a);
     assert.notEqual(a, b);
     assert.notEqual(a.resources, b.resources);
     assert.notEqual(a.subtitleAbort, b.subtitleAbort);
@@ -165,16 +165,19 @@ test('two matching accounts share one Plex conversion; another bitrate stays sep
     assert.equal(f.state.stops.length, 0);
     const anchor = b.hlsLease.group.anchor,
       reads = f.state.requests.length;
-    assert.deepEqual(Buffer.from(await f.plex.hlsPool.response(b.hlsLease, anchor.url, 'GET').arrayBuffer()), f.bytes);
-    const range = f.plex.hlsPool.response(b.hlsLease, anchor.url, 'GET', 'bytes=188-375');
+    assert.deepEqual(
+      Buffer.from(await f.plex.pipeline.hlsPool.response(b.hlsLease, anchor.url, 'GET').arrayBuffer()),
+      f.bytes,
+    );
+    const range = f.plex.pipeline.hlsPool.response(b.hlsLease, anchor.url, 'GET', 'bytes=188-375');
     assert.equal(range.status, 206);
     assert.equal((await range.arrayBuffer()).byteLength, 188);
     assert.equal(f.state.requests.length, reads, 'cached anchor never rewinds the producer for another viewer');
     await f.plex.stop(b);
     assert.deepEqual(f.state.stops, [a.transcodeId]);
     await f.plex.stop(phone);
-    assert.equal(f.plex.hlsPool.bytes, 0);
-    assert.equal(f.plex.hlsPool.live.size, 0);
+    assert.equal(f.plex.pipeline.hlsPool.bytes, 0);
+    assert.equal(f.plex.pipeline.hlsPool.live.size, 0);
   } finally {
     await f.plex.close();
   }
@@ -198,7 +201,7 @@ test('direct HLS shares without any server segment fetch, isolates viewer tokens
       false,
       'preparation must not fetch even one video segment',
     );
-    assert.equal(f.plex.hlsPool.bytes, 0);
+    assert.equal(f.plex.pipeline.hlsPool.bytes, 0);
     assert.equal(a.hlsLease.group.anchor, undefined);
     assert.equal(a.directHls.token, 'transient-alice');
     assert.equal(b.directHls.token, 'transient-bob');
@@ -250,7 +253,7 @@ test('direct HLS shares without any server segment fetch, isolates viewer tokens
 test('browser captions share video but burned subtitle IDs, audio, room and media generation change the output key', async () => {
   const f = fixture(),
     media = [];
-  f.plex.av1.ffmpeg = 'fixture';
+  f.plex.pipeline.av1.ffmpeg = 'fixture';
   try {
     const off = await f.prepare(f.a),
       text = await f.prepare(f.b, '1080p20', { subtitleId: '21' }),
@@ -268,7 +271,7 @@ test('browser captions share video but burned subtitle IDs, audio, room and medi
     assert.equal(browserAss.selection.subtitle.delivery, 'ass');
     assert.equal(browserPgs.transcodeId, off.transcodeId);
     assert.equal(browserAss.transcodeId, off.transcodeId);
-    assert.notEqual(browserPgs.plexContext, browserAss.plexContext);
+    assert.notEqual(browserPgs.provider, browserAss.provider);
     assert.notEqual(browserPgs.captionVersion, browserAss.captionVersion);
     const burn = await f.prepare(f.a, '1080p20', { subtitleId: '22' }),
       sameBurn = await f.prepare(f.b, '1080p20', { subtitleId: '22' }),
@@ -371,15 +374,15 @@ test('an expired producer cannot use another consumer permission to prepare its 
 
 test('aggregate anchor memory and pooled group counts are bounded without preventing private playback', async () => {
   const boundedAnchor = fixture();
-  boundedAnchor.plex.hlsPool.anchorBytes = 100;
+  boundedAnchor.plex.pipeline.hlsPool.anchorBytes = 100;
   try {
     const [a, b] = await Promise.all([boundedAnchor.prepare(boundedAnchor.a), boundedAnchor.prepare(boundedAnchor.b)]);
     assert.notEqual(a.transcodeId, b.transcodeId);
     assert.equal(a.hlsLease, undefined);
     assert.equal(b.hlsLease, undefined);
     assert.equal(boundedAnchor.state.stops.length, 0);
-    assert.equal(boundedAnchor.plex.hlsPool.bytes, 0);
-    assert.equal(boundedAnchor.plex.hlsPool.pendingBytes, 0);
+    assert.equal(boundedAnchor.plex.pipeline.hlsPool.bytes, 0);
+    assert.equal(boundedAnchor.plex.pipeline.hlsPool.pendingBytes, 0);
     await boundedAnchor.plex.stop(a);
     await boundedAnchor.plex.stop(b);
     assert.equal(boundedAnchor.state.stops.length, 2);
@@ -389,20 +392,20 @@ test('aggregate anchor memory and pooled group counts are bounded without preven
 
   for (const limit of ['bytes', 'groups']) {
     const f = fixture();
-    if (limit === 'bytes') f.plex.hlsPool.maxBytes = f.bytes.length;
-    else f.plex.hlsPool.maxGroups = 1;
+    if (limit === 'bytes') f.plex.pipeline.hlsPool.maxBytes = f.bytes.length;
+    else f.plex.pipeline.hlsPool.maxGroups = 1;
     try {
       const a = await f.prepare(f.a),
         b = await f.prepare(f.b, '720p4');
       assert.ok(a.hlsLease);
       assert.equal(b.hlsLease, undefined);
-      assert.equal(f.plex.hlsPool.groups.size, 1);
-      assert.equal(f.plex.hlsPool.bytes, f.bytes.length);
-      assert.equal(f.plex.hlsPool.pendingBytes, 0);
+      assert.equal(f.plex.pipeline.hlsPool.groups.size, 1);
+      assert.equal(f.plex.pipeline.hlsPool.bytes, f.bytes.length);
+      assert.equal(f.plex.pipeline.hlsPool.pendingBytes, 0);
       await f.plex.stop(b);
-      assert.equal(f.plex.hlsPool.bytes, f.bytes.length);
+      assert.equal(f.plex.pipeline.hlsPool.bytes, f.bytes.length);
       await f.plex.stop(a);
-      assert.equal(f.plex.hlsPool.bytes, 0);
+      assert.equal(f.plex.pipeline.hlsPool.bytes, 0);
     } finally {
       await f.plex.close();
     }
@@ -542,7 +545,7 @@ test('direct-HLS joining protects the group across delayed liveness, prevents ad
 
 test('AV1 preparation pools by room across accounts, preserves independent text captions and separates burned subtitles', async () => {
   const f = fixture();
-  f.plex.av1.ffmpeg = 'fixture';
+  f.plex.pipeline.av1.ffmpeg = 'fixture';
   const prepare = (scope, choices = {}) =>
     scope.prepare('1', '720p4', false, undefined, 'av1', {
       shareKey: ['room', 'generation'],
@@ -564,7 +567,7 @@ test('AV1 preparation pools by room across accounts, preserves independent text 
     assert.equal(b.av1Lease.group.refs, 1);
     await f.plex.stop(b);
     await f.plex.stop(otherRoom);
-    assert.equal(f.plex.av1.groups.size, 0);
+    assert.equal(f.plex.pipeline.av1.groups.size, 0);
   } finally {
     await f.plex.close();
   }
@@ -711,7 +714,7 @@ test('shared HTTP delivery retains viewer grants and own-scope access checks, an
     assert.notEqual(next.mediaUrl, bState.mediaUrl);
     assert.equal((await request(bAnchor, b)).status, 403);
     app.watch.remove(id);
-    assert.equal(root.hlsPool.bytes, 0);
+    assert.equal(root.pipeline.hlsPool.bytes, 0);
   } finally {
     await app.close();
     await f.plex.close();
@@ -730,7 +733,7 @@ test('a slow first segment keeps a lone viewer playing and never multiplies enco
     return {
       start: 'http://fixture/start',
       initialManifest: '#EXTM3U\n#EXTINF:4,\n0.ts\n',
-      plexContext: {
+      provider: {
         url: value => new URL(value),
         request: async (_, options) =>
           new Promise((resolve, reject) =>

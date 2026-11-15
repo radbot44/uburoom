@@ -2,7 +2,7 @@
 const Subtitles = require('./subtitles');
 const { runOperation } = require('./operation');
 // Original subtitle assets only. Rendering stays in the browser; extraction never
-// re-encodes video or receives a Plex credential in process arguments.
+// re-encodes video or receives a provider credential in process arguments.
 const fs = require('node:fs/promises'),
   os = require('node:os'),
   path = require('node:path');
@@ -142,7 +142,7 @@ function source(media) {
   if (!row) throw new PlaybackError('Subtitle selection no longer belongs to this file.');
   return { track, row };
 }
-function startPgsJob(plex, media) {
+function startPgsJob(av1, media) {
   const { track } = source(media),
     version = media.captionVersion;
   if (active >= 2) throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
@@ -152,10 +152,9 @@ function startPgsJob(plex, media) {
   active++;
   job.promise = runOperation(abort, async () => {
     try {
-      const av1 = plex.av1;
       if (!av1?.ffmpeg || !Number.isSafeInteger(track.index))
         throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
-      await av1.input({ ...media, start: media.sourceStart, plexContext: plex }, abort, async url => {
+      await av1.input({ ...media, start: media.sourceStart }, abort, async url => {
         const { index } = await fileTrack(av1, media, track, url, abort);
         // Flush each packet so viewers receive cues as soon as demuxing reaches
         // them, instead of waiting for FFmpeg's pipe buffer to fill.
@@ -232,7 +231,7 @@ function startPgsJob(plex, media) {
   media.subtitleJob = job;
   return job;
 }
-async function pipe(plex, media, req, res, signal) {
+async function pipe(av1, media, req, res, signal) {
   const version = media.captionVersion,
     previous = cache.get(media);
   if (previous?.version === version && previous.assets?.has('data')) {
@@ -251,7 +250,7 @@ async function pipe(plex, media, req, res, signal) {
     return;
   }
   let job = media.subtitleJob;
-  if (!job || job.version !== version) job = startPgsJob(plex, media);
+  if (!job || job.version !== version) job = startPgsJob(av1, media);
   let wake,
     closed = false,
     sent = 0,
@@ -339,13 +338,12 @@ function awaitJob(promise, signal) {
     );
   });
 }
-async function extract(plex, media, track, signal) {
-  const av1 = plex.av1;
+async function extract(av1, media, track, signal) {
   if (!av1?.ffmpeg || !Number.isSafeInteger(track.index))
     throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
   let directory;
   try {
-    return await av1.input({ ...media, start: media.sourceStart, plexContext: plex }, signal, async url => {
+    return await av1.input({ ...media, start: media.sourceStart }, signal, async url => {
       const { index } = await fileTrack(av1, media, track, url, signal);
       const fonts = [];
       if (track.delivery === 'ass') {
@@ -467,7 +465,7 @@ async function extract(plex, media, track, signal) {
     }
   }
 }
-async function load(plex, media, signal) {
+async function load(av1, media, signal) {
   const { track, row } = source(media),
     version = media.captionVersion;
   const previous = cache.get(media);
@@ -492,7 +490,7 @@ async function load(plex, media, signal) {
           ? row.key
           : row.key.replace(/\.[a-z0-9]+$/, '') + '.' + ext;
       const data = await read(
-        await plex.request(key, { signal: abort, headers: { Accept: '*/*' } }),
+        await media.provider.request(key, { signal: abort, headers: { Accept: '*/*' } }),
         abort,
         track.delivery === 'ass' ? 4 * 1024 * 1024 : LIMIT,
       );
@@ -501,12 +499,12 @@ async function load(plex, media, signal) {
         result.assets.set(
           'index',
           await read(
-            await plex.request(key.replace(/\.sub$/, '.idx'), { signal: abort, headers: { Accept: '*/*' } }),
+            await media.provider.request(key.replace(/\.sub$/, '.idx'), { signal: abort, headers: { Accept: '*/*' } }),
             abort,
             1024 * 1024,
           ),
         );
-    } else result = await extract(plex, media, track, abort);
+    } else result = await extract(av1, media, track, abort);
     const target = job.media;
     abort.throwIfAborted();
     if (target.captionVersion !== version) throw new PlaybackError('Subtitle selection changed.');
@@ -570,7 +568,7 @@ function waitWindow(job, signal) {
     );
   });
 }
-async function window(plex, media, { atMs = 0, beforeMs = 15000, afterMs = 60000, signal } = {}) {
+async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000, signal } = {}) {
   const { track } = source(media),
     version = media.captionVersion;
   signal?.throwIfAborted();
@@ -604,7 +602,6 @@ async function window(plex, media, { atMs = 0, beforeMs = 15000, afterMs = 60000
   if (job?.controller.signal.aborted) job = undefined;
   if (job) return waitWindow(job, signal);
   if (active >= 2) throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
-  const av1 = plex.av1;
   if (!av1?.ffmpeg || !Number.isSafeInteger(track.index))
     throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
   const controller = new AbortController();
@@ -629,7 +626,6 @@ async function window(plex, media, { atMs = 0, beforeMs = 15000, afterMs = 60000
           {
             ...media,
             start: media.sourceStart,
-            plexContext: plex,
             subtitleWindow: ['pgs', 'cues'].includes(track.delivery),
           },
           abort,

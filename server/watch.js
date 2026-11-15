@@ -42,13 +42,15 @@ for (const part of parts)
     Object.defineProperty(WatchParts.prototype, name, { ...descriptor, enumerable: false });
 
 class Watch extends WatchParts {
-  constructor(hub, plex, demoMedia, registry, plexAuth) {
+  constructor(hub, plex, demoMedia, registry, plexAuth, pipeline = plex?.pipeline) {
     super();
     // Room timelines and every in-memory deadline read this clock, never Date.now() (stored and external times excepted).
     this.clock = hub?.clock || createServerClock();
     this.tracking = new PlaybackTracking(registry);
     this.hub = hub;
     this.plex = plex;
+    /** @type {InstanceType<typeof import('./media-pipeline').MediaPipeline> | undefined} Conversion and pooling shared by every provider. */
+    this.pipeline = pipeline;
     this.demoMedia = demoMedia;
     // The one room registry. Presence, readiness, the automatic start and every room
     // lifecycle deadline are events in each room's mailbox (shared/sync/room-authority.mjs).
@@ -107,7 +109,7 @@ class Watch extends WatchParts {
     this.providerRecoveredAt = 0;
     /** @type {any} Plex transcode sessions as last reconciled (reconcilePlexSessions). */
     this.plexSessions = undefined;
-    this.mediaChecks = new MediaChecks({ plex, config: hub?.config || {}, sessions: () => this.plexSessions });
+    this.mediaChecks = new MediaChecks({ plex, pipeline, config: hub?.config || {}, sessions: () => this.plexSessions });
     /** @type {InstanceType<typeof import('./plex-delivery').PlexDelivery> | undefined} Attached by server/watch-http.js. */
     this.delivery = undefined;
   }
@@ -320,7 +322,9 @@ class Watch extends WatchParts {
       }
       results.push(
         ...(await Promise.allSettled(
-          [() => this.plex.close?.(), () => this.reporting?.close()].map(action => Promise.resolve().then(action)),
+          [() => this.plex.close?.(), () => this.pipeline?.close(), () => this.reporting?.close()].map(action =>
+            Promise.resolve().then(action),
+          ),
         )),
       );
       const failure = results.find(result => result.status === 'rejected');
@@ -363,13 +367,13 @@ function roomPorts(rooms) {
 
 /**
  * A hub and the rooms it serves, wired to each other. `ports` are the hub's other collaborators.
- * @param {{config: any, ports?: object, plex: any, demoMedia?: any, registry?: any, plexAuth?: any}} options
+ * @param {{config: any, ports?: object, plex: any, pipeline?: any, demoMedia?: any, registry?: any, plexAuth?: any}} options
  */
-function createRooms({ config, ports = {}, plex, demoMedia, registry, plexAuth }) {
+function createRooms({ config, ports = {}, plex, pipeline, demoMedia, registry, plexAuth }) {
   /** @type {Watch} */
   let watch;
   const hub = new Hub(config, { plexFor: async () => plex, ...roomPorts(() => watch), ...ports });
-  watch = new Watch(hub, plex, demoMedia, registry, plexAuth);
+  watch = new Watch(hub, plex, demoMedia, registry, plexAuth, pipeline);
   return { hub, watch };
 }
 module.exports = { Watch, createRooms, roomPorts, syncQualityParticipants, REJOIN };

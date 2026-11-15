@@ -173,7 +173,7 @@ module.exports = {
       const settings = this.hub.config.transcoding;
       if (settings?.fallback?.enabled && settings.uburoom && source.tracks) {
         preload.fallbackStream = new FallbackStream({
-          av1: this.plex.av1,
+          av1: this.pipeline.av1,
           settings,
           source,
           shareKey: [room.roomId, 'next', preload.countdown],
@@ -340,7 +340,7 @@ module.exports = {
       for (const viewer of room.viewers.values()) add(viewer.media);
       for (const viewer of room.disconnectedViewers.values()) add(viewer.media);
     }
-    for (const group of this.plex.hlsPool?.groups?.values() || []) add(group.media);
+    for (const group of this.pipeline?.hlsPool.groups.values() || []) add(group.media);
     return ids;
   },
   async reconcilePlexSessions() {

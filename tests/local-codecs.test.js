@@ -34,7 +34,6 @@ test('local codec configuration and fallback commands are ordered, bounded allow
 test('encoder probes are isolated by codec and unsupported NVENC obeys CPU fallback', async () => {
   const calls = [],
     manager = new AV1(
-      {},
       { ffmpegPath: 'fixture', transcoding: { encoder: 'nvenc', cpuFallback: true } },
       async (_file, args) => {
         calls.push(args[args.indexOf('-c:v') + 1]);
@@ -50,13 +49,9 @@ test('encoder probes are isolated by codec and unsupported NVENC obeys CPU fallb
   } finally {
     await manager.close();
   }
-  const strict = new AV1(
-    {},
-    { ffmpegPath: 'fixture', transcoding: { encoder: 'nvenc', cpuFallback: false } },
-    async () => {
-      throw new Error('Must not invoke unsupported encoder');
-    },
-  );
+  const strict = new AV1({ ffmpegPath: 'fixture', transcoding: { encoder: 'nvenc', cpuFallback: false } }, async () => {
+    throw new Error('Must not invoke unsupported encoder');
+  });
   try {
     await assert.rejects(strict.selectEncoder('vp9'), /NVENC/);
     await assert.rejects(strict.selectEncoder('vp8'), /NVENC/);
@@ -67,8 +62,8 @@ test('encoder probes are isolated by codec and unsupported NVENC obeys CPU fallb
 
 test('VP8 and VP9 chunks share only identical codec/source/quality/audio and preserve global accounting', async () => {
   const encodes = [],
-    policy = new ConversionPolicy({ policy: 'override', uburoom: true, formats: ['vp8', 'vp9'], maxJobs: 1 }, {});
-  const manager = new AV1({}, { ffmpegPath: 'fixture', transcoding: { encoder: 'software' } }, async (_file, args) => {
+    policy = new ConversionPolicy({ policy: 'override', uburoom: true, formats: ['vp8', 'vp9'], maxJobs: 1 });
+  const manager = new AV1({ ffmpegPath: 'fixture', transcoding: { encoder: 'software' } }, async (_file, args) => {
     if (args.includes('-show_entries'))
       return Buffer.from(
         JSON.stringify({
@@ -127,9 +122,8 @@ test('simultaneous VP8 and VP9 requests cannot bypass the shared conversion limi
       started = resolve;
     }),
     encodes = [];
-  const policy = new ConversionPolicy({ policy: 'override', uburoom: true, formats: ['vp8', 'vp9'], maxJobs: 1 }, {});
+  const policy = new ConversionPolicy({ policy: 'override', uburoom: true, formats: ['vp8', 'vp9'], maxJobs: 1 });
   const manager = new AV1(
-    {},
     { ffmpegPath: 'fixture', transcoding: { encoder: 'software', maxJobs: 2 } },
     async (_file, args) => {
       if (args.includes('-show_entries'))
@@ -199,16 +193,14 @@ test('local VP8/VP9 preparation enforces allowed formats, Plex policy and subtit
     }
     await assert.rejects(plex.prepare('1', 'direct', true, undefined, 'av1'), /not offered/);
     settings.policy = 'follow_plex';
-    plex.conversionPolicy.plex = {
-      json: async () => ({ Setting: [{ id: 'TranscoderCanOnlyRemuxVideo', value: '1' }] }),
-    };
+    plex.transcode.videoConversionDisabled = async () => true;
     await assert.rejects(plex.prepare('1', 'direct', true, undefined, 'vp9'), /Plex disables/);
     settings.policy = 'override';
     const burned = await plex.prepare('1', 'direct', true, undefined, 'vp8', { subtitleId: '42' });
     assert.equal(burned.av1Lease.group.source.burn.id, '42');
     await plex.stop(burned);
     // With no fallback, the first output this viewer can decode wins.
-    plex.av1.selectEncoder = async () => 'qsv';
+    plex.pipeline.av1.selectEncoder = async () => 'qsv';
     const first = await plex.prepare('1', '720p4', false, undefined, undefined, { localCodecs: ['vp8'] });
     assert.equal(first.format, 'vp8');
     await plex.stop(first);

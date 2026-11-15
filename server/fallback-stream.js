@@ -42,7 +42,7 @@ class FallbackStream {
     if (!current() || !(await this.authorized())) return;
     if (!this.media) {
       const format = this.settings.formats[0];
-      await this.av1.conversionPolicy?.video('uburoom', format);
+      await this.av1.conversionPolicy?.video('uburoom', format, this.source.provider);
       if (!current()) return;
       const selection = Tracks.select(this.source.tracks, { audioId: 'auto', subtitleId: 'off' }),
         audio = selection.audio;

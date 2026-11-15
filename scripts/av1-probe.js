@@ -30,7 +30,7 @@ async function main() {
     throw new Error('Choose --encoder=auto, qsv, nvenc or software');
   const version = await diagnosticRun(ffmpeg, ['-version']);
   console.log(version.toString().split(/\r?\n/)[0]);
-  const manager = new AV1({}, { ffmpegPath: ffmpeg, transcoding: { encoder, cpuFallback: true } }, diagnosticRun);
+  const manager = new AV1({ ffmpegPath: ffmpeg, transcoding: { encoder, cpuFallback: true } }, diagnosticRun);
   let selected, bytes;
   try {
     selected = await manager.selectEncoder(codec);

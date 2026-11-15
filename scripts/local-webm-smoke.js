@@ -55,7 +55,7 @@ async function main() {
     validVoiceChannel: () => true,
     options: () => ({ available: true }),
   });
-  const manager = app.watch.plex.av1,
+  const manager = app.watch.pipeline.av1,
     run = manager.run;
   let chunks = 0;
   manager.run = (binary, args, ...rest) => {
@@ -143,7 +143,7 @@ async function main() {
     );
     app.watch.remove(room);
     assert.equal(manager.groups.size, 0);
-    assert.equal(app.watch.plex.conversionPolicy.jobs.size, 0);
+    assert.equal(app.watch.pipeline.conversionPolicy.jobs.size, 0);
     const report = {
       passed: true,
       browser: name,

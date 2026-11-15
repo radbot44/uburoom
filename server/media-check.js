@@ -22,9 +22,10 @@ const LEVELS = ['problem', 'warning', 'info', 'ok'];
  * kept; disk space and Plex sessions are read fresh each time. Nothing here changes playback.
  */
 class MediaChecks {
-  /** @param {{plex:any, config:any, sessions?:() => any}} options */
-  constructor({ plex, config, sessions }) {
+  /** @param {{plex:any, pipeline:any, config:any, sessions?:() => any}} options */
+  constructor({ plex, pipeline, config, sessions }) {
     this.plex = plex;
+    this.pipeline = pipeline;
     this.config = config;
     this.sessions = sessions;
     /** @type {Map<string,{promise:Promise<CheckItem[]>, items?:CheckItem[], checkedAt?:number}>} */
@@ -81,7 +82,7 @@ class MediaChecks {
     };
   }
   probe(media, args) {
-    const av1 = this.plex.av1;
+    const av1 = this.pipeline?.av1;
     if (!av1?.ffprobe) throw new Error('FFprobe is not configured.');
     const signal = AbortSignal.timeout(120000);
     return av1.input({ ...media, start: media.sourceStart }, signal, url =>

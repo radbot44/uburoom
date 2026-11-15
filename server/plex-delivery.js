@@ -389,7 +389,7 @@ class PlexDelivery {
     try {
       const scope = await this.resolve(auth.actor);
       // The unscoped configured token is never a direct-play credential.
-      if (!scope || scope === this.plex || scope !== media.plexContext) return;
+      if (!scope || scope === this.plex || scope !== media.provider) return;
       if (scope.clientId === 'configured-fallback' && !(await this.fallbackAllowed(scope))) return;
       if (!(await valid())) return;
       const origin = await this.originFor(scope, remoteAddress);

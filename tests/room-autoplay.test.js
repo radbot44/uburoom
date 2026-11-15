@@ -80,15 +80,14 @@ async function fixture(t, { fallback = false } = {}) {
     },
   };
   if (fallback) {
-    const { AV1 } = require('../server/av1');
-    plex.av1 = new AV1(plex, { ffmpegPath: 'fixture' }, async (_binary, args) =>
+    const { MediaPipeline } = require('../server/media-pipeline');
+    const execute = async (_binary, args) =>
       args.includes('-show_entries')
         ? Buffer.from(JSON.stringify({ streams: [{ codec_type: 'video', width: 640, height: 360 }] }))
         : args.includes('pipe:3')
           ? { video: Buffer.alloc(200), audio: Buffer.alloc(100) }
-          : Buffer.alloc(200),
-    );
-    plex.close = () => plex.av1.close();
+          : Buffer.alloc(200);
+    plex.pipeline = new MediaPipeline({ ffmpegPath: 'fixture' }, { execute });
   }
   const watch = wireRooms(hub, plex, new Watch(hub, plex, undefined, registry));
   watch.autoplayDelayMs = 30;

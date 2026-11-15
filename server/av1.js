@@ -654,8 +654,7 @@ function decodeRoute(spec, encoder, platform = process.platform, gpuTonemap = tr
 const { SharedTask, runOperation } = require('./operation');
 
 class AV1 {
-  constructor(plex, config, execute = run, logger = silentLogger) {
-    this.plex = plex;
+  constructor(config = {}, execute = run, logger = silentLogger) {
     this.ffmpeg = config.ffmpegPath;
     this.jobs = new Set();
     this.encoder = config.transcoding?.encoder || 'auto';
@@ -821,7 +820,7 @@ class AV1 {
         entry.signal.addEventListener('abort', cancel, { once: true });
         const timer = setTimeout(cancel, 30000);
         try {
-          const response = await (entry.source.plexContext || this.plex).request(entry.source.start, {
+          const response = await entry.source.provider.request(entry.source.start, {
             method: req.method,
             signal: abort.signal,
             streaming: true,
@@ -874,7 +873,7 @@ class AV1 {
     const port = await this.bridge(),
       key = '/' + randomBytes(24).toString('hex');
     // A short-lived loopback capability is visible in the process arguments;
-    // the Plex URL/token is never passed to FFmpeg or FFprobe.
+    // the provider's URL and credential are never passed to FFmpeg or FFprobe.
     this.inputs.set(key, { source, signal });
     try {
       return await action(`http://127.0.0.1:${port}${key}`);
@@ -896,7 +895,7 @@ class AV1 {
       const key = /\.[a-z0-9]+$/.test(track.key)
         ? track.key
         : track.key + '.' + ({ subrip: 'srt', webvtt: 'vtt' }[track.codec] || track.codec);
-      const response = await (source.plexContext || this.plex).request(key, { signal, headers: { Accept: '*/*' } });
+      const response = await source.provider.request(key, { signal, headers: { Accept: '*/*' } });
       if (!response.ok) throw new PlaybackError('The subtitle file is unavailable.');
       data = Buffer.from(await response.arrayBuffer());
     } else {
@@ -1011,7 +1010,7 @@ class AV1 {
               throw new PlaybackError('Encoded video memory is busy; retry shortly.');
             this.pendingBytes += this.jobBytes;
             entry.reserved = true;
-            await this.conversionPolicy?.video('uburoom', group.codec);
+            await this.conversionPolicy?.video('uburoom', group.codec, source.provider);
             const releaseConversion = await this.conversionPolicy?.wait({
               signal: controller.signal,
               background: entry.priority.background,

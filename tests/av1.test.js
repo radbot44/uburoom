@@ -24,7 +24,7 @@ test('AV1 derives a bounded source frame clock for CFR film and high frame rate 
 
 test('a failed speculative AV1 chunk stays bounded without poisoning other chunks', async () => {
   const calls = new Map();
-  const manager = new AV1({}, { ffmpegPath: 'fixture' }, async (binary, args) => {
+  const manager = new AV1({ ffmpegPath: 'fixture' }, async (binary, args) => {
     if (args.includes('-show_entries'))
       return Buffer.from(
         JSON.stringify({
@@ -58,7 +58,6 @@ test('AV1 retries an isolated failed chunk after cooldown without losing good ca
     encodes = 0,
     probes = 0;
   const manager = new AV1(
-    {},
     { ffmpegPath: 'fixture', transcoding: { encoder: 'qsv', cpuFallback: false } },
     async (_binary, args) => {
       if (args.includes('testsrc2=size=320x180:rate=30')) {
@@ -110,7 +109,6 @@ test('hardware decode falls back to the CPU for the stream only when the CPU pro
   const warnings = [],
     tonemapped = [];
   const manager = new AV1(
-    {},
     {
       ffmpegPath: 'fixture',
       transcoding: { encoder: 'nvenc', cpuFallback: false },
@@ -296,7 +294,6 @@ test('quality tiers respect source bitrate/resolution; AV1 clamps Original to th
   // DV Profile 5 steps down from hardware decode + libplacebo to software decode + libplacebo, never raw CPU zscale
   const filters = [];
   const p5Manager = new AV1(
-    {},
     { ffmpegPath: 'fixture', transcoding: { encoder: 'nvenc', cpuFallback: false } },
     async (binary, args) => {
       if (args.includes('testsrc2=size=320x180:rate=30')) return Buffer.alloc(200, 1);
@@ -339,7 +336,7 @@ test('quality tiers respect source bitrate/resolution; AV1 clamps Original to th
 test('AV1 shares one encode per source/tier/chunk and releases/cancels its last viewer', async () => {
   let encodes = 0,
     url;
-  const manager = new AV1({}, { ffmpegPath: 'fixture' }, async (binary, args) => {
+  const manager = new AV1({ ffmpegPath: 'fixture' }, async (binary, args) => {
     if (args.includes('-show_entries'))
       return Buffer.from(
         JSON.stringify({ streams: [{ codec_type: 'video', width: 640, height: 360 }, { codec_type: 'audio' }] }),
@@ -382,7 +379,7 @@ test('AV1 shares one encode per source/tier/chunk and releases/cancels its last 
 
 test('AV1 isolates source audio and Plex scopes, maps the exact stream and refuses a missing choice', async () => {
   const maps = [];
-  const manager = new AV1({}, { ffmpegPath: 'fixture' }, async (_binary, args) => {
+  const manager = new AV1({ ffmpegPath: 'fixture' }, async (_binary, args) => {
     if (args.includes('-show_entries'))
       return Buffer.from(
         JSON.stringify({
@@ -426,7 +423,7 @@ test('AV1 isolates source audio and Plex scopes, maps the exact stream and refus
 test('AV1 room outputs share across principals and each new chunk uses its requesting lease source', async () => {
   let encodes = 0;
   const inputs = [];
-  const manager = new AV1({}, { ffmpegPath: 'fixture' }, async (_binary, args) => {
+  const manager = new AV1({ ffmpegPath: 'fixture' }, async (_binary, args) => {
     if (args.includes('-show_entries'))
       return Buffer.from(
         JSON.stringify({
@@ -481,16 +478,12 @@ test('AV1 room outputs share across principals and each new chunk uses its reque
 });
 
 test('AV1 fails closed on encoder errors, bounds chunk offsets, and cancels disconnected work', async () => {
-  assert.throws(() => new AV1({}, {}).acquire({ id: '1' }, 'direct'), /tools.ffmpeg/);
+  assert.throws(() => new AV1({}).acquire({ id: '1' }, 'direct'), /tools.ffmpeg/);
   let calls = 0;
-  const manager = new AV1(
-    {},
-    { ffmpegPath: 'fixture', transcoding: { encoder: 'qsv', cpuFallback: false } },
-    async () => {
-      calls++;
-      throw new PlaybackError('Hardware unavailable');
-    },
-  );
+  const manager = new AV1({ ffmpegPath: 'fixture', transcoding: { encoder: 'qsv', cpuFallback: false } }, async () => {
+    calls++;
+    throw new PlaybackError('Hardware unavailable');
+  });
   const lease = manager.acquire({ id: '1', duration: 60 }, '720p4'),
     signal = new AbortController().signal;
   await assert.rejects(manager.chunk(lease, 0, signal), /Hardware unavailable/);
@@ -499,7 +492,7 @@ test('AV1 fails closed on encoder errors, bounds chunk offsets, and cancels disc
   await assert.rejects(manager.chunk(lease, 100, signal), /Invalid/);
   manager.close();
   let aborted = false;
-  const waiting = new AV1({}, { ffmpegPath: 'fixture' }, async (binary, args, signal) => {
+  const waiting = new AV1({ ffmpegPath: 'fixture' }, async (binary, args, signal) => {
     if (!args.includes('-ss'))
       return args.includes('-show_entries')
         ? Buffer.from('{"streams":[{"codec_type":"video","width":640,"height":360}]}')
@@ -532,7 +525,7 @@ test('a fresh AV1 request can replace a cancelled chunk before its encoder settl
     started,
     settleFirst;
   const firstStarted = new Promise(resolve => (started = resolve));
-  const manager = new AV1({}, { ffmpegPath: 'fixture' }, async (_binary, args, signal) => {
+  const manager = new AV1({ ffmpegPath: 'fixture' }, async (_binary, args, signal) => {
     if (args.includes('-show_entries'))
       return Buffer.from(
         JSON.stringify({ streams: [{ codec_type: 'video', width: 640, height: 360 }, { codec_type: 'audio' }] }),
@@ -607,7 +600,7 @@ test('run does not fail or kill on process exit race during memoryCheck', async 
 });
 
 test('AV1 resets rejected bridgePromise so subsequent attempts can retry', async () => {
-  const manager = new AV1({}, { ffmpegPath: 'fixture' });
+  const manager = new AV1({ ffmpegPath: 'fixture' });
   const http = require('node:http');
   const originalCreateServer = http.createServer;
   let attempts = 0;
@@ -644,7 +637,6 @@ test('shared probe survives one cancelled chunk and source fallback is learned a
     hardware = 0,
     software = 0;
   const manager = new AV1(
-    {},
     { ffmpegPath: 'fixture', transcoding: { encoder: 'qsv', cpuFallback: true, maxJobs: 2 } },
     async (_, args, signal) => {
       if (args.includes('-show_entries')) {

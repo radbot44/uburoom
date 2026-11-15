@@ -4,6 +4,7 @@ const path = require('node:path');
 const { hash } = require('./core');
 const { loginStore } = require('./storage');
 const { Plex } = require('./plex');
+const { MediaPipeline } = require('./media-pipeline');
 const { createRooms } = require('./watch');
 const { watchHttp } = require('./watch-http');
 const { watchSockets } = require('./watch-socket');
@@ -88,7 +89,8 @@ function createApp(config, options = {}) {
     const opened = openAccounts(config);
     const { accounts } = opened;
     registry = opened.registry;
-    const plex = new Plex(config, plexFetch, { logger });
+    const pipeline = new MediaPipeline(config, { logger });
+    const plex = new Plex(config, plexFetch, { logger, pipeline });
     const plexAuth = new PlexAuth(config, registry, plex, plexFetch);
     if (config.demo) plexAuth.demo = plexDemo;
     // Who may enter. The rooms and routes are built last, so earlier services find them when called.
@@ -111,7 +113,7 @@ function createApp(config, options = {}) {
       ...{ config, logger, registry, accounts, access, plexAuth, entryPolicy, guests, sessions },
       ...{ discord: { client: undefined }, hub: () => hub, rooms },
     });
-    ({ hub, watch } = createRooms({ config, ports, plex, demoMedia: demoMedia(), registry, plexAuth }));
+    ({ hub, watch } = createRooms({ config, ports, plex, pipeline, demoMedia: demoMedia(), registry, plexAuth }));
     // Kept diagnostics: server log lines and viewer uploads share one daily timeline.
     const diagnosticLog = config.diagnostics?.enabled
       ? new DiagnosticLog({ ...config.diagnostics, logger })
