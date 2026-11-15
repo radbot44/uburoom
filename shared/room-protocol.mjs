@@ -59,6 +59,8 @@ function senderName(value, fallback = 'Discord user') {
   return syncSenderName(value, fallback);
 }
 const VERSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// A track choice: 'auto', 'off', or a track id, which only the media's provider interprets.
+const TRACK = /^[A-Za-z0-9_-]{1,64}$/;
 const ENTRY = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const none = () => ({});
 function versions(a, message) {
@@ -267,13 +269,12 @@ const COMMANDS = Object.freeze({
     args(a) {
       const args = versions(a, 'Track selection expired.');
       if (a.audioId !== undefined) {
-        if (typeof a.audioId !== 'string' || !/^(?:auto|\d{1,20})$/.test(a.audioId))
+        if (typeof a.audioId !== 'string' || !TRACK.test(a.audioId) || a.audioId === 'off')
           throw new Error('Choose an audio track.');
         args.audioId = a.audioId;
       }
       if (a.subtitleId !== undefined) {
-        if (typeof a.subtitleId !== 'string' || !/^(?:auto|off|\d{1,20})$/.test(a.subtitleId))
-          throw new Error('Choose subtitles or Off.');
+        if (typeof a.subtitleId !== 'string' || !TRACK.test(a.subtitleId)) throw new Error('Choose subtitles or Off.');
         args.subtitleId = a.subtitleId;
       }
       if (a.subtitleOffset !== undefined) args.subtitleOffset = numeric(a.subtitleOffset, -30, 30);

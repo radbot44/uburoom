@@ -175,13 +175,27 @@ module.exports = {
       room.queueEntriesRevision = queueRevision;
     }
     const entries = [...(room.queueEntries || [])];
+    const current = fromProvider(room.media) ? room.media.roomServerId : undefined;
     if (room.media && !entries.some(item => item.mediaId === room.media.id))
-      entries.unshift({ id: room.media.id, mediaId: room.media.id, title: room.media.title });
-    let availability;
-    if (plex.availability) {
+      entries.unshift({ id: room.media.id, mediaId: room.media.id, title: room.media.title, serverId: current });
+    // Each entry is checked by the provider it is recorded under: the room's video through
+    // the scope this viewer watches it with, the rest of the queue through their own.
+    const recorded = new Map();
+    for (const item of entries) {
+      const serverId = item.serverId ?? current;
+      if (!recorded.has(serverId)) recorded.set(serverId, []);
+      recorded.get(serverId).push(item.mediaId);
+    }
+    // An empty queue is an answer too: nothing is unavailable any more.
+    let availability = !entries.length && plex.availability ? new Map() : undefined;
+    for (const [serverId, ids] of recorded) {
       try {
-        availability = await plex.availability(entries.map(item => item.mediaId));
-        if (entries.length) this.providerResponded();
+        const scope = serverId === current ? plex : await this.hub.mediaFor(actor, serverId);
+        if (!scope.availability) continue;
+        const status = await scope.availability(ids);
+        availability ||= new Map();
+        for (const [id, available] of status) availability.set(id, available);
+        this.providerResponded();
       } catch (error) {
         if (!this.providerFailed(error)) throw error;
       }
