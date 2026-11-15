@@ -78,6 +78,16 @@ function queueItem(a) {
   if (!a.item || typeof a.item !== 'object' || Array.isArray(a.item)) throw new Error('Choose a queue item');
   return { item: a.item };
 }
+function suggestItem(a) {
+  const { item } = queueItem(a);
+  const id = item.mediaId || item.id;
+  if (typeof id !== 'string' || !mediaIdentity(id)) throw new Error('Choose a library item');
+  return { item };
+}
+function suggestion(a) {
+  if (typeof a.suggestionId !== 'string' || !ENTRY.test(a.suggestionId)) throw new Error('Choose a suggestion');
+  return { suggestionId: a.suggestionId };
+}
 function event(a, action) {
   const args = {};
   if (action !== 'room.event.create') {
@@ -141,11 +151,12 @@ function event(a, action) {
  * - `persists`: moves the shared timeline, so it cancels autoplay and saves the room.
  * - `roomLocal`: wakes only the room's subscribers, never the lobby.
  * - `refillsAutoQueue`: changes the queue, so an active auto-queue is regenerated afterwards.
+ * - `liveOnly`: requires an open live room (never runs against a closed saved room).
  * @typedef {{args?: (a: any, action: string) => Record<string, any>, scope: 'room'|'personal',
  *   capability: string|null, host?: boolean, idle?: string, also?: string, hostless?: boolean,
  *   prepares?: true|'personal'|'idle', preparesSaved?: boolean, service?: 'publish'|'unpublish'|'event',
  *   handler?: 'quality'|'tracks'|'stream'|'player'|'reporting', persists?: boolean, roomLocal?: boolean,
- *   refillsAutoQueue?: boolean}} Command
+ *   refillsAutoQueue?: boolean, liveOnly?: boolean}} Command
  */
 /** @type {Readonly<Record<string, Command>>} */
 const COMMANDS = Object.freeze({
@@ -180,6 +191,9 @@ const COMMANDS = Object.freeze({
   'media.ready.start': { scope: 'room', capability: 'chooseMedia', hostless: true, roomLocal: true },
   'media.ready.wait': { scope: 'room', capability: 'chooseMedia', roomLocal: true },
   'media.ready.cancel': { scope: 'room', capability: 'chooseMedia', roomLocal: true },
+  'check.ask': { scope: 'room', capability: 'playPause', roomLocal: true, liveOnly: true },
+  'check.clear': { scope: 'room', capability: 'playPause', roomLocal: true, liveOnly: true },
+  'check.reply': { scope: 'room', capability: null, roomLocal: true, liveOnly: true },
   'media.autoplay.set': { scope: 'room', capability: 'autoplay', roomLocal: true },
   'media.autoplay.cancel': { scope: 'room', capability: 'autoplay', roomLocal: true },
   'media.load': {
@@ -304,6 +318,34 @@ const COMMANDS = Object.freeze({
     capability: 'addQueue',
     preparesSaved: true,
     args: queueItem,
+  },
+  'queue.suggest': {
+    scope: 'room',
+    capability: 'suggestMedia',
+    roomLocal: true,
+    liveOnly: true,
+    args: suggestItem,
+  },
+  'queue.suggestion.accept': {
+    scope: 'room',
+    refillsAutoQueue: true,
+    capability: 'addQueue',
+    liveOnly: true,
+    args: suggestion,
+  },
+  'queue.suggestion.dismiss': {
+    scope: 'room',
+    capability: 'addQueue',
+    roomLocal: true,
+    liveOnly: true,
+    args: suggestion,
+  },
+  'queue.suggestion.withdraw': {
+    scope: 'room',
+    capability: 'suggestMedia',
+    roomLocal: true,
+    liveOnly: true,
+    args: suggestion,
   },
   'queue.playNow': {
     refillsAutoQueue: true,

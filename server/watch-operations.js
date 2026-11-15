@@ -68,6 +68,10 @@ function applyRoomProgress(watch, roomId, items = []) {
 
 const QUEUE_ACTIONS = [
   'add',
+  'suggest',
+  'suggestion.accept',
+  'suggestion.dismiss',
+  'suggestion.withdraw',
   'move',
   'remove',
   'clear',

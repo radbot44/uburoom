@@ -42,6 +42,7 @@ export function mount(host, deps) {
     else store.room.pending = true;
     deps.fail('');
     deps.renderTransport();
+    deps.renderHumanCheckPrompt?.();
     if (
       command.action.startsWith('media.seek') ||
       ['media.load', 'media.next', 'media.previous', 'queue.history.replay', 'queue.playNow'].includes(command.action)
@@ -71,7 +72,8 @@ export function mount(host, deps) {
             'queue.auto.skip',
             'queue.auto.pin',
           ].includes(command.action) ||
-            (!store.room.state?.mediaUrl && ['media.play', 'media.toggle', 'queue.add'].includes(command.action))));
+            (!store.room.state?.mediaUrl &&
+              ['media.play', 'media.toggle', 'queue.add', 'queue.suggestion.accept'].includes(command.action))));
       const result = await deps.roomLink.command(
         id,
         { viewerId: store.identity.viewerId, epoch, expiresAt: timing.serverTime + 2500, command },
@@ -95,7 +97,8 @@ export function mount(host, deps) {
       return result;
     } catch (error) {
       deps.diagnostics.record('command-failed', { action: command.action });
-      if (qualityChange && store.room.selected === id) await deps.refreshState();
+      if ((qualityChange || command.action.startsWith('check.')) && store.room.selected === id)
+        await deps.refreshState();
       throw error;
     } finally {
       if (qualityChange) {

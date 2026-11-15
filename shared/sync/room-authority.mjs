@@ -16,6 +16,7 @@ export const MAX_CONTROL_LEAD_MS = 1000;
 export const READINESS_WAIT_MS = 10000;
 export const READINESS_EXTEND_MS = 15000;
 export const READINESS_BLOCKER_REVEAL_MS = 3000;
+export const HUMAN_CHECK_TTL_MS = 120000;
 export const IDLE_ROOM_TIMEOUT_MS = 30000;
 export const MAX_DISCONNECTED_VIEWERS = 128;
 export { PRESENCE_TIMEOUT_MS, RECONNECT_GRACE_MS, COMMAND_TTL_MS };
@@ -95,6 +96,140 @@ export function settle(room, now = Date.now(), monoNow = defaultMonoNow()) {
     room.readinessStartAt = undefined;
     room.revision++;
   }
+  expireHumanCheckIfStale(room, now);
+}
+
+function isHumanCheckStale(room, now = Date.now()) {
+  const check = room.humanCheck;
+  if (!check) return false;
+  return now >= check.expiresAt || check.mediaVersion !== room.mediaVersion || check.hadMedia !== !!room.media;
+}
+
+function expireHumanCheckIfStale(room, now = Date.now()) {
+  if (!isHumanCheckStale(room, now)) return false;
+  room.humanCheck = undefined;
+  room.revision++;
+  return true;
+}
+
+/**
+ * Starts or replaces an ephemeral human readiness check without mutating playback
+ * timeline, manual pause, decoder readiness, or `room.epoch`.
+ * @param {any} room
+ * @param {{userId?: string, name?: string}} [actor]
+ * @param {{now?: number, createId?: () => string}} [options]
+ */
+export function beginHumanCheck(room, actor = undefined, options = {}) {
+  const now = options.now ?? Date.now();
+  const createId = options.createId || defaultCreateId;
+  const askedBy = actor?.userId || room.hostId;
+  const viewerName = askedBy && [...room.viewers.values()].find(viewer => viewer.userId === askedBy)?.name;
+  const askedByName = senderName(actor?.name || viewerName || (askedBy === room.hostId ? room.hostName : ''), 'Host');
+  const answers = new Map();
+  if (askedBy) answers.set(askedBy, 'ready');
+  room.humanCheck = {
+    id: createId(),
+    askedBy,
+    askedByName,
+    askedAt: now,
+    expiresAt: now + HUMAN_CHECK_TTL_MS,
+    mediaVersion: room.mediaVersion,
+    hadMedia: !!room.media,
+    answers,
+  };
+  return room.humanCheck;
+}
+
+/**
+ * Records a viewer's `'ready'` or `'hold'` response on the active human readiness check.
+ * @param {any} room
+ * @param {{userId?: string, status?: 'ready'|'hold', checkId?: string}} reply
+ * @param {{now?: number}} [options]
+ * @returns {{status: 'applied'|'expired'|'unavailable', message: string, changed?: boolean}}
+ */
+export function recordHumanCheckReply(room, { userId, status, checkId = undefined }, options = {}) {
+  const now = options.now ?? Date.now();
+  expireHumanCheckIfStale(room, now);
+  if (!room.humanCheck) return { status: 'expired', message: 'Readiness check expired.' };
+  if (checkId !== undefined && checkId !== room.humanCheck.id) {
+    return { status: 'expired', message: 'Readiness check expired.' };
+  }
+  if (typeof userId !== 'string' || ![...room.viewers.values()].some(viewer => viewer.userId === userId)) {
+    return { status: 'unavailable', message: 'Join the room first.' };
+  }
+  if (status !== 'ready' && status !== 'hold') {
+    return { status: 'unavailable', message: 'Choose Ready or Need a moment.' };
+  }
+  const previous = room.humanCheck.answers.get(userId);
+  room.humanCheck.answers.set(userId, status);
+  return { status: 'applied', message: 'Readiness reply recorded.', changed: previous !== status };
+}
+
+/**
+ * Clears the active ephemeral human readiness check without affecting playback or decoder readiness.
+ * @param {any} room
+ * @returns {boolean}
+ */
+export function clearHumanCheck(room) {
+  if (!room.humanCheck) return false;
+  room.humanCheck = undefined;
+  return true;
+}
+
+/**
+ * Returns a JSON-safe snapshot of the active human readiness check, or `undefined`.
+ * @param {any} room
+ * @param {number} [now]
+ */
+export function snapshotHumanCheck(room, now = Date.now()) {
+  if (!room.humanCheck || isHumanCheckStale(room, now)) return undefined;
+  const answers = {};
+  for (const [userId, status] of room.humanCheck.answers) {
+    if (userId === '__proto__' || userId === 'constructor' || userId === 'prototype') continue;
+    answers[userId] = status;
+  }
+  return {
+    id: room.humanCheck.id,
+    askedBy: room.humanCheck.askedBy,
+    askedByName: room.humanCheck.askedByName,
+    askedAt: room.humanCheck.askedAt,
+    expiresAt: room.humanCheck.expiresAt,
+    answers,
+  };
+}
+
+/**
+ * Applies `check.ask`, `check.reply`, or `check.clear` to room state.
+ * @param {any} room
+ * @param {{action: string, args?: {status?: 'ready'|'hold', checkId?: string}}} command
+ * @param {{userId?: string, name?: string}} [actor]
+ * @param {{now?: number, createId?: () => string}} [options]
+ * @returns {{status: 'applied'|'expired'|'unavailable'|'unsupported', message: string, changed?: boolean}}
+ */
+export function applyHumanCheckCommand(room, command, actor = undefined, options = {}) {
+  const now = options.now ?? Date.now();
+  const createId = options.createId || defaultCreateId;
+  const { action, args = {} } = command || {};
+  expireHumanCheckIfStale(room, now);
+  if (action === 'check.ask') {
+    if (room.closed || !room.viewers.size) {
+      return { status: 'unavailable', message: 'No viewer is connected.' };
+    }
+    beginHumanCheck(room, actor, { now, createId });
+    return { status: 'applied', message: 'Readiness check started.', changed: true };
+  }
+  if (action === 'check.clear') {
+    if (room.closed) return { status: 'unavailable', message: 'Room unavailable' };
+    const changed = clearHumanCheck(room);
+    return { status: 'applied', message: 'Readiness check cleared.', changed };
+  }
+  if (action === 'check.reply') {
+    if (room.closed || !room.viewers.size) {
+      return { status: 'unavailable', message: 'No viewer is connected.' };
+    }
+    return recordHumanCheckReply(room, { userId: actor?.userId, status: args.status, checkId: args.checkId }, { now });
+  }
+  return { status: 'unsupported', message: 'Unsupported command or value.' };
 }
 
 /**
@@ -186,6 +321,7 @@ export function applyReadinessDecision(room, action, readinessId, options = {}) 
     room.initialGate = false;
     room.readinessTimedOut = false;
     room.readinessStartAt = undefined;
+    clearHumanCheck(room);
     room.changedAt = now;
     setPaused(room, false);
     room.startAt = room.changedAt + controlLead(room, monoNow);
@@ -246,6 +382,7 @@ export function applyTimelineCommand(room, command, options = {}) {
       if (room.position >= duration - 0.1) room.position = 0;
       if (room.manualPaused && room.initialGate) beginReadiness(room, now, READINESS_WAIT_MS, { monoNow, createId });
       room.manualPaused = false;
+      clearHumanCheck(room);
       setPaused(room, room.initialGate);
       if (options.autoplayVersion === room.mediaVersion && !room.initialGate) {
         room.startAt = Math.max(
@@ -262,6 +399,7 @@ export function applyTimelineCommand(room, command, options = {}) {
         setPaused(room, true);
       }
       room.manualPaused = !pausePending && (!getPaused(room) || (room.initialGate && !room.manualPaused));
+      if (!room.manualPaused) clearHumanCheck(room);
       if (room.initialGate) {
         if (room.manualPaused) room.readinessStartAt = undefined;
         else beginReadiness(room, now, READINESS_WAIT_MS, { monoNow, createId });
@@ -339,6 +477,7 @@ export const ROOM_STATE_KEYS = Object.freeze([
   'readinessDeadline',
   'readinessTimedOut',
   'readinessStartAt',
+  'humanCheck',
   'position',
   'changedAt',
   'startAt',
@@ -428,6 +567,7 @@ export function createRoomState({
     kickedViewers: new Map(),
     hadViewers: false,
     lastActivity: now,
+    humanCheck: undefined,
   };
 }
 
@@ -438,6 +578,12 @@ export function createRoomState({
 export function cloneRoomState(room, keys = DEFAULT_KEYS) {
   const draft = pick(room, keys.room);
   draft.state = { ...room.state };
+  if (room.humanCheck) {
+    draft.humanCheck = {
+      ...room.humanCheck,
+      answers: new Map(room.humanCheck.answers),
+    };
+  }
   draft.viewers = new Map();
   for (const [id, viewer] of room.viewers) {
     const copy = pick(viewer, keys.viewer);
@@ -496,6 +642,12 @@ export function policyAuthorize(actor, room, action) {
   if (action === 'room.view' || action === 'room.remain') return view ? ALLOW : NO_ROOM;
   if (!view) return NO_ROOM;
   if (action === 'room.host') return Policy.role(room, actor.userId) !== 'viewer' ? ALLOW : NO_PERMISSION;
+  if (action === 'check.reply') return ALLOW;
+  if (action === 'check.ask' || action === 'check.clear') {
+    return Policy.role(room, actor.userId) !== 'viewer' || Policy.allowed(room, actor.userId, 'playPause')
+      ? ALLOW
+      : NO_PERMISSION;
+  }
   const capability = [...Policy.CAPABILITIES, ...Policy.CREATOR_ONLY].includes(action)
     ? action
     : Policy.commandCapability(action);
@@ -521,7 +673,25 @@ function derive(room, now) {
 function close(room, ctx, save = true) {
   if (room.closed) return;
   room.closed = true;
+  clearHumanCheck(room);
   ctx.emit('remove', { save });
+}
+
+function hasUserPresence(room, userId) {
+  if (!userId) return false;
+  for (const viewer of room.viewers.values()) if (viewer.userId === userId) return true;
+  for (const saved of room.disconnectedViewers.values()) if (saved.userId === userId) return true;
+  return false;
+}
+
+function pruneHumanCheckUsers(room, userIds) {
+  const answers = room.humanCheck?.answers;
+  if (!answers?.size) return false;
+  let removed = false;
+  for (const userId of userIds) {
+    if (userId && !hasUserPresence(room, userId) && answers.delete(userId)) removed = true;
+  }
+  return removed;
 }
 
 function invalidateControls(room, ctx) {
@@ -640,13 +810,16 @@ function review(room, ctx) {
   let pruned = false,
     hostTimedOut = false,
     lastPresence = 0;
+  const removedUsers = new Set();
   for (const [id, saved] of room.disconnectedViewers)
     if (
       saved.expires <= now ||
       saved.mediaVersion !== room.mediaVersion ||
       !allowed(ctx, { userId: saved.userId }, room, 'room.remain')
-    )
+    ) {
       room.disconnectedViewers.delete(id);
+      removedUsers.add(saved.userId);
+    }
   for (const [id, viewer] of room.viewers) {
     const timedOut = now - viewer.at > PRESENCE_TIMEOUT_MS,
       remains = allowed(ctx, viewer.actor, room, 'room.remain');
@@ -655,8 +828,14 @@ function review(room, ctx) {
     if (timedOut && remains) {
       // Only personal playback settings survive, for the same tab's short reconnect.
       room.disconnectedViewers.set(id, disconnectedRecord(room, viewer, ctx));
-      if (room.disconnectedViewers.size > MAX_DISCONNECTED_VIEWERS)
-        room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
+      if (room.disconnectedViewers.size > MAX_DISCONNECTED_VIEWERS) {
+        const oldest = room.disconnectedViewers.keys().next().value;
+        const evicted = room.disconnectedViewers.get(oldest);
+        room.disconnectedViewers.delete(oldest);
+        if (evicted) removedUsers.add(evicted.userId);
+      }
+    } else {
+      removedUsers.add(viewer.userId);
     }
     if (viewer.userId === room.hostId && timedOut) hostTimedOut = true;
     ctx.emit('viewer-removed', {
@@ -668,6 +847,7 @@ function review(room, ctx) {
     room.initialViewers.delete(id);
     pruned = true;
   }
+  if (pruneHumanCheckUsers(room, removedUsers)) room.revision++;
   if (hostTimedOut) invalidateControls(room, ctx);
   if (pruned) settle(room, now, monoNow);
   if (room.recovery && !room.viewers.size) return { elected: false };
@@ -771,20 +951,26 @@ function join(room, event, ctx) {
 
 function leave(room, event, ctx) {
   const { viewerId, actor, reason = 'left' } = event;
+  let removedSaved = false;
   if (room.disconnectedViewers.get(viewerId)?.userId === actor.userId) {
     ctx.emit('reporting-ended', { viewerId, reason });
     room.disconnectedViewers.delete(viewerId);
+    removedSaved = true;
     if (room.frozen && viewerId === room.hostViewerId) {
       close(room, ctx);
       return;
     }
   }
   const viewer = room.viewers.get(viewerId);
-  if (viewer?.userId !== actor.userId) return;
+  if (viewer?.userId !== actor.userId) {
+    if (removedSaved && pruneHumanCheckUsers(room, [actor.userId])) room.revision++;
+    return;
+  }
   const hostLeft = actor.userId === room.hostId;
   ctx.emit('viewer-removed', { viewerId, tracking: reason, reporting: reason, left: true });
   room.viewers.delete(viewerId);
   room.initialViewers.delete(viewerId);
+  pruneHumanCheckUsers(room, [actor.userId]);
   room.revision++;
   if (ctx.extensions.countdownViewer?.(room) === viewerId || !room.viewers.size) ctx.emit('cancel-autoplay');
   settle(room, ctx.now, ctx.monoNow);
@@ -813,12 +999,14 @@ function kick(room, { userId }, ctx) {
     }
   ctx.emit('kicked', { viewerIds: viewers.map(([id]) => id) });
   for (const [id, viewer] of viewers) leave(room, { viewerId: id, actor: viewer.actor, reason: 'kicked' }, ctx);
+  if (pruneHumanCheckUsers(room, [userId])) room.revision++;
   return viewers.length;
 }
 
 // Timeline and readiness commands for standalone hosts. The self-hosted server's
 // commands still run through its own command engine.
-function command(room, { command: input }, ctx) {
+function command(room, event, ctx) {
+  const { command: input, actor } = event;
   const { now, monoNow } = ctx;
   let parsed;
   try {
@@ -835,6 +1023,15 @@ function command(room, { command: input }, ctx) {
       createId: ctx.createId,
     });
     if (outcome.status !== 'applied') return ctx.fail(outcome.message, 409);
+  } else if (parsed.action.startsWith('check.')) {
+    const outcome = applyHumanCheckCommand(room, parsed, actor, { now, createId: ctx.createId });
+    if (outcome.status !== 'applied') return ctx.fail(outcome.message, 409);
+    if (outcome.changed) {
+      room.revision++;
+      room.lastActivity = now;
+    }
+    review(room, ctx);
+    return room.revision;
   } else {
     if (room.readinessTimedOut && ['media.play', 'media.toggle', 'media.pause'].includes(parsed.action))
       return ctx.fail('The host must choose whether to start, wait or cancel.', 409);
@@ -899,7 +1096,9 @@ const EVENTS = {
   kick,
   /** The room's visibility changed: reconnect grace never survives it. */
   visibility(room, _event, ctx) {
+    const removedUsers = [...room.disconnectedViewers.values()].map(saved => saved.userId);
     room.disconnectedViewers.clear();
+    if (pruneHumanCheckUsers(room, removedUsers)) room.revision++;
     review(room, ctx);
   },
   /** A person's display name changed. */
@@ -984,6 +1183,7 @@ export function nextDeadline(room, now, monoNow) {
   if (room.pauseAt) consider(room.pauseAt);
   if (!room.recovery && startPending(room) && Number.isFinite(room.readinessDeadline))
     consider(now + (room.readinessDeadline - monoNow));
+  if (room.humanCheck && Number.isFinite(room.humanCheck.expiresAt)) consider(room.humanCheck.expiresAt);
   for (const viewer of room.viewers.values()) consider(viewer.at + PRESENCE_TIMEOUT_MS + 1);
   for (const saved of room.disconnectedViewers.values()) consider(saved.expires);
   if (!room.hadViewers) consider(room.lastActivity + IDLE_ROOM_TIMEOUT_MS + 1);
@@ -996,6 +1196,13 @@ export function nextDeadline(room, now, monoNow) {
 // ---------------------------------------------------------------------------
 
 const EVENT_ACTIONS = Object.freeze({ join: 'room.view', ready: 'room.view' });
+const humanCheckStamp = check =>
+  check
+    ? `${check.id}:${check.expiresAt}:${[...check.answers.entries()]
+        .map(([userId, status]) => `${userId}=${status}`)
+        .sort()
+        .join(',')}`
+    : '';
 // What a timer's lifecycle review can move that a subscriber would see: the timeline,
 // the readiness gate, who is in the room and who hosts it.
 const visibleStamp = room =>
@@ -1015,6 +1222,7 @@ const visibleStamp = room =>
     room.recovery ? 1 : 0,
     room.viewers.size,
     room.disconnectedViewers.size,
+    humanCheckStamp(room.humanCheck),
   ].join('|');
 // The mailbox entry for a host step (see `step` below); never a reducer event.
 const STEP = Symbol('step');

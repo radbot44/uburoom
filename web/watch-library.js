@@ -1,6 +1,7 @@
 import * as uburoomControls from './watch-controls.js';
 import * as uburoomIcons from './icons.js';
 import * as uburoomPopover from './watch-popover.js';
+import { mediaIdentity } from '../shared/room-protocol.mjs';
 
 /* One safe-DOM Plex browser for the website, fullscreen drawer and Activity. */
 function homeCards(items = []) {
@@ -16,8 +17,21 @@ function homeCards(items = []) {
 }
 function mount(
   host,
-  { request, artwork, load, close, getPlayer, addToQueue, addBulkToQueue, autoQueue, initialLibrary },
+  {
+    request,
+    artwork,
+    load,
+    close,
+    getPlayer,
+    addToQueue,
+    addBulkToQueue,
+    autoQueue,
+    suggestMedia,
+    onSuggest,
+    initialLibrary,
+  },
 ) {
+  const submitSuggestion = suggestMedia || onSuggest;
   const doc = host.ownerDocument;
   host.replaceChildren();
   function node(tag, parent, text, className) {
@@ -588,6 +602,12 @@ function mount(
     }
     box.classList.toggle('unavailable', item.available === false);
     node('span', box, 'Unavailable', 'library-unavailable').hidden = item.available !== false;
+    if (playable(item) && item.id !== 'demo') {
+      box.dataset.itemId = item.id;
+      const suggested = isSuggested(item);
+      box.classList.toggle('is-suggested', suggested);
+      node('span', box, 'Suggested', 'library-suggested-badge').hidden = !suggested;
+    }
     return box;
   }
   function signalError(message, action) {
@@ -602,19 +622,64 @@ function mount(
     retry.hidden = true;
     errorAction = undefined;
   }
+  function itemMediaKey(item) {
+    const raw = String(item?.mediaId || item?.id || '');
+    return mediaIdentity(raw)?.id || raw;
+  }
+  function pendingSuggestionIds() {
+    const list = getPlayer?.()?.suggestions || [];
+    return new Set(list.map(entry => itemMediaKey(entry?.item)).filter(Boolean));
+  }
+  function isSuggested(item) {
+    const key = itemMediaKey(item);
+    return !!key && key !== 'demo' && pendingSuggestionIds().has(key);
+  }
   function canAddQueue() {
     const p = getPlayer?.();
     return !!p?.durable && (p?.capabilities ? !!p.capabilities.addQueue : true);
+  }
+  function canSuggest() {
+    const p = getPlayer?.();
+    return !!submitSuggestion && !!p?.durable && !canAddQueue() && !!p?.capabilities?.suggestMedia;
+  }
+  function syncSuggestions() {
+    const root = host.closest('#library-panel') || host;
+    const suggestedIds = pendingSuggestionIds();
+    const addAllowed = canAddQueue();
+    const suggestAllowed = canSuggest();
+    for (const box of root.querySelectorAll('.library-art[data-item-id]')) {
+      const suggested = suggestedIds.has(itemMediaKey({ id: box.dataset.itemId }));
+      box.classList.toggle('is-suggested', suggested);
+      const badge = box.querySelector('.library-suggested-badge');
+      if (badge) badge.hidden = !suggested;
+    }
+    for (const b of root.querySelectorAll('[data-queue-item]')) {
+      b.hidden = suggestAllowed;
+      b.disabled = b.dataset.unavailable === 'true' || busy || !room || !addAllowed;
+    }
+    for (const b of root.querySelectorAll('[data-suggest]')) {
+      const suggested = b.dataset.suggest !== 'demo' && suggestedIds.has(itemMediaKey({ id: b.dataset.suggest }));
+      b.hidden = !suggestAllowed;
+      b.dataset.suggested = String(suggested);
+      b.disabled = b.dataset.unavailable === 'true' || busy || !room || !suggestAllowed || suggested;
+      const itemTitle = b.dataset.identity || 'item';
+      const label = suggested ? 'Already suggested' : 'Suggest ' + itemTitle;
+      b.title = label;
+      b.setAttribute('aria-label', label);
+      const span = b.querySelector('span');
+      if (span) span.textContent = suggested ? 'Suggested' : 'Suggest';
+    }
   }
   function setBusy(value) {
     busy = value;
     const root = host.closest('#library-panel') || host;
     for (const b of root.querySelectorAll('[data-play]'))
       b.disabled = b.dataset.unavailable === 'true' || busy || !!playing || !room;
-    for (const b of root.querySelectorAll('[data-queue]'))
+    for (const b of root.querySelectorAll('[data-queue]:not([data-queue-item])'))
       b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
     for (const b of root.querySelectorAll('[data-auto-queue]'))
       b.disabled = busy || !room || !getPlayer()?.capabilities?.editQueue;
+    syncSuggestions();
   }
   function formatTimestamp(value) {
     const seconds = Math.floor(value || 0),
@@ -681,6 +746,8 @@ function mount(
     );
     b.dataset.unavailable = String(item.available === false);
     b.dataset.queue = item.id;
+    b.dataset.queueItem = 'true';
+    b.hidden = canSuggest();
     b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
     if (large) b.append(node('span', null, 'Add to queue'));
     b.addEventListener('click', async event => {
@@ -699,6 +766,32 @@ function mount(
       } catch (error) {
         uburoomPopover.show(b, { text: error.message, state: 'error' });
         b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
+      }
+    });
+    return b;
+  }
+  function suggestButton(parent, item, large = false) {
+    const suggested = isSuggested(item);
+    const label = suggested ? 'Already suggested' : 'Suggest ' + identity(item);
+    const b = button(parent, label, 'bulb', large ? 'library-suggest library-play-now' : 'library-suggest');
+    b.dataset.unavailable = String(item.available === false);
+    b.dataset.suggest = item.id;
+    b.dataset.identity = identity(item);
+    b.dataset.suggested = String(suggested);
+    b.hidden = !canSuggest();
+    b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canSuggest() || suggested;
+    if (large) b.append(node('span', null, suggested ? 'Suggested' : 'Suggest'));
+    b.addEventListener('click', async event => {
+      event.stopPropagation();
+      if (b.disabled || !submitSuggestion) return;
+      b.disabled = true;
+      try {
+        await submitSuggestion(item, b);
+        uburoomPopover.show(b, { text: 'Suggested', state: 'success' });
+        syncSuggestions();
+      } catch (error) {
+        uburoomPopover.show(b, { text: error.message, state: 'error' });
+        syncSuggestions();
       }
     });
     return b;
@@ -765,9 +858,11 @@ function mount(
         const actions = node('div', card, undefined, 'library-row-actions');
         playButton(actions, item);
         if (addToQueue && getPlayer()?.durable) queueButton(actions, item);
+        if (submitSuggestion && item.id !== 'demo' && getPlayer()?.durable) suggestButton(actions, item);
       } else {
         playButton(picture, item);
         if (addToQueue && getPlayer()?.durable) queueButton(picture, item);
+        if (submitSuggestion && item.id !== 'demo' && getPlayer()?.durable) suggestButton(picture, item);
       }
     } else {
       const target = row ? node('div', card, undefined, 'library-row-actions') : picture;
@@ -797,6 +892,7 @@ function mount(
       playButton(actionRow, item, true);
       if (item.viewOffset > 0) resumeButton(actionRow, item);
       if (addToQueue && getPlayer()?.durable) queueButton(actionRow, item, true);
+      if (submitSuggestion && item.id !== 'demo' && getPlayer()?.durable) suggestButton(actionRow, item, true);
       const warning = node('p', copy, '', 'library-replace');
       warning.textContent = getPlayer()?.mediaId ? 'Replaces the current video for everyone.' : '';
     } else if (getPlayer()?.durable) {
@@ -1058,7 +1154,8 @@ function mount(
     for (const label of root.querySelectorAll('.library-unavailable,.library-availability')) label.hidden = !missing;
     const line = root.querySelector('.library-extras');
     if (line) line.hidden = !missing && !item.contentRating && !item.genres?.length;
-    for (const b of root.querySelectorAll('[data-play],[data-queue]')) b.dataset.unavailable = String(missing);
+    for (const b of root.querySelectorAll('[data-play],[data-queue],[data-suggest]'))
+      b.dataset.unavailable = String(missing);
   }
   async function checkAvailability(items, current) {
     const ids = [...new Set(items.filter(item => ['movie', 'episode'].includes(item.type)).map(item => item.id))];
@@ -1456,6 +1553,7 @@ function mount(
     setBusy,
     openItem,
     reveal: positionLibrary,
+    refreshSuggestions: syncSuggestions,
     refreshAdmin: () => {
       if (screen?.kind === 'home') renderLanding();
     },

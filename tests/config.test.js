@@ -746,3 +746,19 @@ test('server.trusted_proxies and server.trusted_proxy_header validate addresses,
     assert.throws(() => normalizeConfig({ server }));
   }
 });
+
+test('discord.rich_presence validates boolean configuration and defaults enabled in bootstrap', () => {
+  const { pageBootstrap } = require('../server/http/watch/bootstrap');
+  assert.equal(normalizeConfig({}).discordRichPresence, true);
+  assert.equal(normalizeConfig({ discord: { rich_presence: false } }).discordRichPresence, false);
+  assert.throws(() => normalizeConfig({ discord: { rich_presence: 'yes' } }));
+
+  const boot = config =>
+    pageBootstrap({
+      config,
+      watch: { plex: { configured: false }, demoMedia: false },
+      hub: { guestsEnabled: () => false },
+    }).publicConfig();
+  assert.equal(boot(normalizeConfig({})).discordRichPresence, true);
+  assert.equal(boot(normalizeConfig({ discord: { rich_presence: false } })).discordRichPresence, false);
+});

@@ -24,7 +24,10 @@ test('room roles keep creator-only authority independent of full participant per
   for (const capability of Policy.CAPABILITIES) {
     assert.equal(Policy.allowed(room, 'creator', capability), true);
     assert.equal(Policy.allowed(room, 'host', capability), !['deleteRoom', 'addHosts'].includes(capability));
-    assert.equal(Policy.allowed(room, 'viewer', capability), capability === 'playPause');
+    assert.equal(
+      Policy.allowed(room, 'viewer', capability),
+      capability === 'playPause' || capability === 'suggestMedia',
+    );
   }
   room.permissions.viewer = Object.fromEntries(Policy.CAPABILITIES.map(key => [key, true]));
   assert.ok(
@@ -113,8 +116,8 @@ test('role administrators require fresh trusted guild membership and lose author
 test('the three presets grant exact participant controls and keep host deletion off', () => {
   const expected = {
     'host-control': [],
-    'play-pause': ['playPause'],
-    queue: ['playPause', 'seek', 'chooseMedia', 'addQueue', 'editQueue', 'autoplay'],
+    'play-pause': ['playPause', 'suggestMedia'],
+    queue: ['playPause', 'seek', 'chooseMedia', 'addQueue', 'suggestMedia', 'editQueue', 'autoplay'],
   };
   for (const [name, granted] of Object.entries(expected)) {
     const policy = Policy.preset(name);

@@ -10,6 +10,7 @@ function pageBootstrap({ config, watch, hub, registry, entryPolicy, diagnosticLo
     accountDemo: !!config.demo,
     watchUrl: config.publicUrl,
     clientId: config.clientId,
+    discordRichPresence: config.discordRichPresence !== false,
     demo: !!config.demo,
     plexConfigured: watch.plex.configured,
     testVideo: !!watch.demoMedia,

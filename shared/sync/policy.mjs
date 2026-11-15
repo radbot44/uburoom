@@ -8,6 +8,7 @@ export const CAPABILITIES = Object.freeze([
   'seek',
   'chooseMedia',
   'addQueue',
+  'suggestMedia',
   'editQueue',
   'autoplay',
   'roomSettings',
@@ -30,7 +31,9 @@ export const CREATOR_ONLY = Object.freeze(['manageHosts', 'transferCreator', 'ma
 
 export const DEFAULTS = Object.freeze({
   host: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, !['deleteRoom', 'addHosts'].includes(key)]))),
-  viewer: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, key === 'playPause']))),
+  viewer: Object.freeze(
+    Object.fromEntries(CAPABILITIES.map(key => [key, ['playPause', 'suggestMedia'].includes(key)])),
+  ),
 });
 
 // Presets define editable controls; participant room management is always locked off.
@@ -41,8 +44,9 @@ export function preset(name) {
     viewer: Object.fromEntries(
       CAPABILITIES.map(key => [
         key,
-        (name === 'play-pause' && key === 'playPause') ||
-          (name === 'queue' && ['playPause', 'seek', 'chooseMedia', 'addQueue', 'editQueue', 'autoplay'].includes(key)),
+        (name === 'play-pause' && ['playPause', 'suggestMedia'].includes(key)) ||
+          (name === 'queue' &&
+            ['playPause', 'seek', 'chooseMedia', 'addQueue', 'suggestMedia', 'editQueue', 'autoplay'].includes(key)),
       ]),
     ),
     allHosts: false,
@@ -154,6 +158,8 @@ export function allowed(room, userId, capability, { isAdmin = false } = {}) {
 export function commandCapability(action) {
   if (action === 'room.kick') return 'kickParticipants';
   if (action.startsWith('media.autoplay.')) return 'autoplay';
+  if (['queue.suggest', 'queue.suggestion.withdraw'].includes(action)) return 'suggestMedia';
+  if (['queue.suggestion.accept', 'queue.suggestion.dismiss'].includes(action)) return 'addQueue';
   if (['queue.add', 'queue.bulk', 'queue.offer.start', 'queue.auto.pin'].includes(action)) return 'addQueue';
   if (
     [

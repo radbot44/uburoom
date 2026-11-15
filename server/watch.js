@@ -68,6 +68,7 @@ class Watch extends WatchParts {
       onPublish: (room, change) => this.announce(room, change),
       // A room event reaches the lobby too when it changed what the lobby lists.
       onChange: room => {
+        if (this.pruneSuggestions(room)) room.revision++;
         const stamp = this.lobbyStamp(room),
           lobby = stamp !== this.lobbyStamps.get(room);
         this.lobbyStamps.set(room, stamp);
@@ -155,6 +156,8 @@ class Watch extends WatchParts {
       manualPaused: false,
       initialViewers: new Set(),
       hadViewers: false,
+      humanCheck: undefined,
+      suggestions: [],
     };
     room.execute = (command, actor, ticket) => this.execute(room, command, actor, ticket);
     this.roomState.apply(room, saved);
@@ -162,6 +165,23 @@ class Watch extends WatchParts {
     this.hub.rooms.set(id, room);
     this.hub.logger.info('Room', `Room created (${id}) by ${actor.name || actor.userId}`);
     return id;
+  }
+  /** Clears pending suggestions belonging to viewers who have left beyond reconnect grace. @param {any} room */
+  pruneSuggestions(room) {
+    if (!room?.suggestions?.length) return false;
+    const active = new Set();
+    for (const viewer of room.viewers?.values() || []) active.add(viewer.userId);
+    for (const saved of room.disconnectedViewers?.values() || []) active.add(saved.userId);
+    const before = room.suggestions.length;
+    room.suggestions = room.suggestions.filter(
+      entry => entry.status === 'accepting' || entry.requiresPresence === false || active.has(entry.suggestedBy.userId),
+    );
+    return room.suggestions.length !== before;
+  }
+  /** Clears ephemeral suggestions on room reset or close in addition to standard media teardown. @param {any} room */
+  dropMedia(room, reason = 'media-changed') {
+    if (reason === 'room-reset' || reason === 'room-closed') room.suggestions = [];
+    return super.dropMedia(room, reason);
   }
   async leave(room, actor, viewerId, reason = 'left') {
     if (room.transition?.commit) await room.transition?.commit.catch(() => {});
@@ -261,6 +281,7 @@ class Watch extends WatchParts {
     );
     room.state.paused = true;
     room.epoch = randomUUID();
+    room.suggestions = [];
     this.dropMedia(room, 'room-closed');
     this.hub.rooms.delete(id);
     this.coordinator.delete(id);

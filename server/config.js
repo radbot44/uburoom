@@ -32,6 +32,7 @@ const KEYS = [
   'discord.guild_id',
   'discord.command_channel_ids',
   'discord.share_channel_id',
+  'discord.rich_presence',
   'server.host',
   'server.port',
   'server.public_url',
@@ -233,6 +234,7 @@ function normalizeConfig(
     guildId: get('discord.guild_id'),
     channels: list('discord.command_channel_ids') || [],
     shareChannelId: get('discord.share_channel_id'),
+    discordRichPresence: boolean('discord.rich_presence', true),
     ffmpegPath: get('tools.ffmpeg')
       ? resolveFile('tools.ffmpeg')
       : discoverTools

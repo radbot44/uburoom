@@ -42,6 +42,22 @@ export function createProtocolApi() {
     'media.ready.start': { management: true, args: readiness },
     'media.ready.wait': { management: true, args: readiness },
     'media.ready.cancel': { management: true, args: readiness },
+    'check.ask': { args: none },
+    'check.clear': { args: none },
+    'check.reply': {
+      args(a, { readinessIdPattern }) {
+        if (a.status !== 'ready' && a.status !== 'hold') {
+          throw new Error('Choose Ready or Need a moment');
+        }
+        if (a.checkId !== undefined) {
+          if (typeof a.checkId !== 'string' || !readinessIdPattern.test(a.checkId)) {
+            throw new Error('Readiness check expired.');
+          }
+          return { status: a.status, checkId: a.checkId };
+        }
+        return { status: a.status };
+      },
+    },
     'media.autoplay.set': {
       args(a) {
         if (typeof a.enabled !== 'boolean') throw new Error('Choose autoplay on or off');
@@ -64,7 +80,9 @@ export function createProtocolApi() {
   }
 
   function controlFor(command) {
-    if (command.action.startsWith('media.')) return 'playback';
+    if (command.action.startsWith('media.') || command.action === 'check.ask' || command.action === 'check.clear') {
+      return 'playback';
+    }
     return undefined;
   }
 

@@ -1,10 +1,28 @@
 import * as uburoomDialogs from '../watch-dialogs.js';
 import { WatchTransport as uburoomWatchTransport } from '../watch-transport.js';
+import * as discordPresence from './discord-presence.js';
 import { $ } from './page.js';
 import { store } from './store.js';
 
 /* Starting the page: sign-in and entry, the room connection and its messages, browser hand-off from the Discord Activity, and leaving the page. */
 export function mount(host, deps) {
+  const presence = discordPresence.createPresenceController({
+    getSdk: () => store.connection.sdk,
+    isActivity: () => !!deps.activity,
+    isEnabled: () => !!store.preferences.playerPreferences?.discordRichPresence,
+    setEnabled: enabled => {
+      if (store.preferences.playerPreferences) store.preferences.playerPreferences.discordRichPresence = !!enabled;
+    },
+    isServerAllowed: () => store.identity.config?.discordRichPresence !== false,
+    getRoom: () => (store.room.selected ? store.room.state : undefined),
+    ensureScope: () => deps.requestRichPresenceScope?.() ?? Promise.resolve(false),
+    now: () => deps.time.wall(),
+    setTimeoutFn: (fn, ms) => deps.time.setTimeout(fn, ms),
+    clearTimeoutFn: id => deps.time.clearTimeout(id),
+    onAuthDenied: () => {
+      if (store.preferences.playerPreferences) store.preferences.playerPreferences.discordRichPresence = false;
+    },
+  });
   function loadScript(src) {
     return new Promise((resolve, reject) => {
       const script = document.createElement('script');
@@ -160,6 +178,7 @@ export function mount(host, deps) {
       } catch {}
     }
     stopBrowserHandoff(true);
+    void presence.clear();
     store.connection.transport?.close();
   });
   window.addEventListener('pageshow', event => {
@@ -445,6 +464,7 @@ export function mount(host, deps) {
         if (message.type === 'error' && message.code === 'removed' && message.roomId === store.room.selected) {
           store.room.selected = store.connection.roomLanes = undefined;
           store.identity.viewerId = crypto.randomUUID();
+          void presence.clear();
           // A removed guest has nowhere else to go; their sign-in ends with the room.
           if (store.identity.me?.guestRoomId) {
             deps.unavailable('You were removed from the room.', 'kicked');
@@ -462,6 +482,7 @@ export function mount(host, deps) {
           const next = message.roomId === store.room.selected ? deps.receiveLane(message) : undefined;
           if (next) {
             deps.applyState(next);
+            void presence.sync();
             deps.fail(store.player.playbackError);
             void deps.reportReadiness();
           }
@@ -473,7 +494,10 @@ export function mount(host, deps) {
           });
           // The room let this tab go (it went private, or the tab went silent). Leaving it
           // selected would make choosing it again do nothing; the lobby offers it to rejoin.
-          if (message.rejoin) store.room.selected = store.connection.roomLanes = undefined;
+          if (message.rejoin) {
+            store.room.selected = store.connection.roomLanes = undefined;
+            void presence.clear();
+          }
           deps.unavailable(message.message || 'Room unavailable', 'room-poll');
         } else if (message.type === 'error' && message.code === 'protocol') {
           // The server was updated under this page; only a reload brings the matching client.
@@ -535,5 +559,14 @@ export function mount(host, deps) {
     () => void deps.execute({ action: 'media.play' }).catch(error => deps.fail(error.message)),
   );
   $('auth-retry').addEventListener('click', () => location.reload());
-  return { ensureHls, openInBrowser, renderAccount, start, stopBrowserHandoff };
+  return {
+    clearRichPresence: () => presence.clear(),
+    ensureHls,
+    openInBrowser,
+    renderAccount,
+    setRichPresenceEnabled: enabled => presence.setEnabled(enabled),
+    start,
+    stopBrowserHandoff,
+    syncRichPresence: () => presence.sync(),
+  };
 }

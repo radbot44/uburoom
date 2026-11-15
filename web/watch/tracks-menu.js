@@ -1,7 +1,8 @@
 import * as uburoomIcons from '../icons.js';
 import * as uburoomPlayback from '../playback-policy.js';
 import * as uburoomPlayerUI from '../watch-player-ui.js';
-import { uburoomSubtitles } from '../watch-subtitles.js';
+import * as uburoomPopover from '../watch-popover.js';
+import { formatSubtitleOffset, normalizeSubtitleOffset, uburoomSubtitles } from '../watch-subtitles.js';
 import { $ } from './page.js';
 import { store } from './store.js';
 
@@ -10,6 +11,7 @@ export function mount(host, deps) {
   // The server checks each video for hosts. They read it in Player settings and get one
   // toast per video when it finds a problem or warning. Viewers never request it.
   const videoCheck = { media: undefined, report: undefined, toasted: undefined, timer: undefined };
+  let richPresencePending = false;
   const VIDEO_CHECK_ICONS = { problem: 'alert-triangle', warning: 'alert-triangle', info: 'info-circle', ok: 'check' };
   async function loadVideoCheck(refresh = false) {
     deps.time.clearTimeout(videoCheck.timer);
@@ -101,7 +103,8 @@ export function mount(host, deps) {
       }
     }, 250);
   }
-  let lastBurnFallbackKey = '';
+  let lastBurnFallbackKey = '',
+    activeSubtitleKey = '';
   const captions = new uburoomSubtitles(
     deps.video,
     value => {
@@ -239,6 +242,14 @@ export function mount(host, deps) {
       subtitle = tracks?.subtitles.find(row => row.id === tracks.subtitleId),
       delivery = tracks?.subtitleDelivery || subtitle?.delivery,
       burned = delivery === 'burn';
+    const mediaId = store.room.state?.mediaId;
+    const nextSubtitleKey =
+      available && subtitle && mediaId ? `${mediaId}:${subtitle.id}:${burned ? 'burn' : 'live'}` : '';
+    if (nextSubtitleKey !== activeSubtitleKey) {
+      activeSubtitleKey = nextSubtitleKey;
+      const restored = burned || !subtitle || !mediaId ? 0 : deps.getSubtitleOffset?.(mediaId, subtitle) || 0;
+      captions.setOffset(restored);
+    }
     const autoBurned = burned && (tracks?.subtitleMode || 'auto') === 'auto';
     subtitleMode.querySelector('option[value="auto"]').textContent = autoBurned ? 'Automatic (burned in)' : 'Automatic';
     subtitleMode.value = tracks?.subtitleMode || 'auto';
@@ -264,8 +275,14 @@ export function mount(host, deps) {
       $('subtitle-track-name').textContent = 'No subtitles available';
       $('subtitle-track-name').hidden = false;
     }
-    if (document.activeElement !== $('subtitle-offset')) $('subtitle-offset').value = tracks?.subtitleOffset || 0;
-    $('subtitle-offset').disabled = !available || store.room.pending || !subtitle || burned;
+    const offsetValue = burned || !subtitle ? 0 : captions.offset || 0;
+    const offsetInput = $('subtitle-offset');
+    if (document.activeElement !== offsetInput) offsetInput.value = String(offsetValue);
+    const offsetDisabled = !available || !subtitle || burned;
+    offsetInput.disabled = offsetDisabled;
+    if ($('subtitle-offset-back')) $('subtitle-offset-back').disabled = offsetDisabled;
+    if ($('subtitle-offset-forward')) $('subtitle-offset-forward').disabled = offsetDisabled;
+    if ($('subtitle-offset-reset')) $('subtitle-offset-reset').disabled = offsetDisabled || offsetValue === 0;
     $('subtitle-delay-hint').textContent = burned
       ? 'Timing is fixed for subtitles included in the video.'
       : subtitle
@@ -309,7 +326,18 @@ export function mount(host, deps) {
           store.room.pending || !store.room.state.plexReporting.watchStateAllowed;
       }
     }
+    renderRichPresence();
     store.player.playerUI?.render();
+  }
+  function renderRichPresence() {
+    const rpSettings = $('discord-rich-presence-settings');
+    const rpInput = $('discord-rich-presence');
+    if (!rpSettings || !rpInput) return;
+    const allowed = !!deps.activity && store.identity.config?.discordRichPresence !== false;
+    rpSettings.hidden = !allowed;
+    if (!allowed) return;
+    rpInput.checked = !!store.preferences.playerPreferences?.discordRichPresence;
+    rpInput.disabled = richPresencePending;
   }
   async function changeTrack(args, context = store.player.trackContext) {
     if (
@@ -332,10 +360,65 @@ export function mount(host, deps) {
       renderTracks();
     }
   }
+  function activeSubtitleContext() {
+    const state = store.room.state;
+    const tracks = state?.tracks;
+    const subtitle = tracks?.subtitles.find(row => row.id === tracks.subtitleId);
+    const delivery = tracks?.subtitleDelivery || subtitle?.delivery;
+    const burned = delivery === 'burn';
+    return { state, tracks, subtitle, burned };
+  }
+  function applySubtitleOffset(value, { persist = true, announce = false } = {}) {
+    const { state, subtitle, burned } = activeSubtitleContext();
+    if (!state || !subtitle || burned) return false;
+    const next = normalizeSubtitleOffset(value, captions.offset || 0);
+    captions.setOffset(next);
+    if (persist && state.mediaId) deps.setSubtitleOffset?.(state.mediaId, subtitle, next);
+    renderTracks();
+    if (announce) {
+      deps.toasts?.show('subtitle-offset', {
+        title: 'Subtitle sync ' + formatSubtitleOffset(next),
+        hint: next > 0 ? 'Shown later' : next < 0 ? 'Shown earlier' : 'Default timing',
+        symbol: 'subtitles',
+        duration: 2500,
+      });
+    }
+    return true;
+  }
+  function adjustSubtitleOffset({ delta = 0, reset = false, announce = false } = {}) {
+    const { state, subtitle, burned } = activeSubtitleContext();
+    if (!state?.mediaUrl || !subtitle || burned) return false;
+    const target = reset ? 0 : (captions.offset || 0) + delta;
+    return applySubtitleOffset(target, { persist: true, announce });
+  }
   $('audio-track').addEventListener('change', () => void changeTrack({ audioId: $('audio-track').value }));
   $('subtitle-track').addEventListener('change', () => void changeTrack({ subtitleId: $('subtitle-track').value }));
+  $('subtitle-offset').addEventListener('input', () => {
+    const input = $('subtitle-offset');
+    if (input.value.trim() === '') return;
+    const numeric = Number(input.value);
+    if (!Number.isFinite(numeric)) return;
+    applySubtitleOffset(numeric, { persist: true });
+  });
   $('subtitle-offset').addEventListener('change', () => {
-    if ($('subtitle-offset').reportValidity()) void changeTrack({ subtitleOffset: $('subtitle-offset').valueAsNumber });
+    const input = $('subtitle-offset');
+    const { state, subtitle, burned } = activeSubtitleContext();
+    if (!state || !subtitle || burned) return;
+    const raw = input.value.trim();
+    const next = raw === '' ? 0 : normalizeSubtitleOffset(Number(raw), captions.offset || 0);
+    input.value = String(next);
+    applySubtitleOffset(next, { persist: true });
+  });
+  $('subtitle-offset-back')?.addEventListener('click', () => {
+    applySubtitleOffset((captions.offset || 0) - 0.5, { persist: true });
+  });
+  $('subtitle-offset-forward')?.addEventListener('click', () => {
+    applySubtitleOffset((captions.offset || 0) + 0.5, { persist: true });
+  });
+  $('subtitle-offset-reset')?.addEventListener('click', () => {
+    const wasFocused = document.activeElement === $('subtitle-offset-reset');
+    applySubtitleOffset(0, { persist: true });
+    if (wasFocused && $('subtitle-offset-reset')?.disabled) $('subtitle-offset')?.focus();
   });
   $('subtitle-mode').addEventListener('change', () => void changeTrack({ subtitleMode: $('subtitle-mode').value }));
   $('plex-reporting-activity')?.addEventListener('change', () => {
@@ -353,6 +436,54 @@ export function mount(host, deps) {
         deps.fail(error.message);
         renderTracks();
       });
+  });
+  renderRichPresence();
+  $('discord-rich-presence')?.addEventListener('change', async () => {
+    const input = $('discord-rich-presence');
+    if (!input) return;
+    const wanted = !!input.checked;
+    if (!wanted) {
+      deps.savePlayerPreferences?.({ discordRichPresence: false });
+      await deps.setRichPresenceEnabled?.(false);
+      renderRichPresence();
+      return;
+    }
+    if (!deps.activity || store.identity.config?.discordRichPresence === false) {
+      input.checked = false;
+      renderRichPresence();
+      return;
+    }
+    richPresencePending = true;
+    input.disabled = true;
+    const anchor = input.closest?.('.watch-switch-label') || input;
+    try {
+      const granted = await deps.requestRichPresenceScope?.();
+      if (!granted) {
+        input.checked = false;
+        deps.savePlayerPreferences?.({ discordRichPresence: false });
+        await deps.setRichPresenceEnabled?.(false);
+        uburoomPopover.show(anchor, {
+          text: 'Discord permission was not granted.',
+          state: 'error',
+          duration: 3500,
+        });
+        return;
+      }
+      deps.savePlayerPreferences?.({ discordRichPresence: true });
+      await deps.setRichPresenceEnabled?.(true);
+    } catch {
+      input.checked = false;
+      deps.savePlayerPreferences?.({ discordRichPresence: false });
+      await deps.setRichPresenceEnabled?.(false);
+      uburoomPopover.show(anchor, {
+        text: 'Could not enable Discord Rich Presence.',
+        state: 'error',
+        duration: 3500,
+      });
+    } finally {
+      richPresencePending = false;
+      renderRichPresence();
+    }
   });
   $('subtitle-retry').addEventListener('click', () => captions.retry());
   $('subtitle-color-preset')?.addEventListener('change', () => {
@@ -402,5 +533,14 @@ export function mount(host, deps) {
   }
   $('subtitle-brightness')?.addEventListener('input', onSubtitleBrightnessChange);
   $('subtitle-brightness')?.addEventListener('change', onSubtitleBrightnessChange);
-  return { captions, loadVideoCheck, renderMediaInformation, renderTracks, setSubtitleLoading, videoCheck };
+  return {
+    adjustSubtitleOffset,
+    applySubtitleOffset,
+    captions,
+    loadVideoCheck,
+    renderMediaInformation,
+    renderTracks,
+    setSubtitleLoading,
+    videoCheck,
+  };
 }

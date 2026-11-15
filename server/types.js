@@ -112,6 +112,7 @@
  * @property {boolean} [readinessTimedOut] - Latched until an explicit host choice.
  * @property {number} [readinessStartAt] - Earliest release timestamp, counted alongside buffering.
  * @property {string} [readinessVersion] - Shared seek readiness generation.
+ * @property {{id: string, askedBy?: string, askedByName: string, askedAt: number, expiresAt: number, mediaVersion: string, hadMedia: boolean, answers: Map<string, 'ready'|'hold'>}} [humanCheck] - Ephemeral human readiness check.
  * @property {boolean} initialGate - Whether startup or seek readiness is currently held.
  * @property {boolean} manualPaused - Whether playback was paused deliberately by user action.
  * @property {Set<string>} initialViewers - Viewers present when media was loaded.

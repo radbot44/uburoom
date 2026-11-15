@@ -360,6 +360,16 @@ export function mount(host, deps) {
         .catch(error => deps.fail(error.message));
       return;
     }
+    if (event.code === 'KeyG' || event.code === 'KeyH') {
+      const step = event.shiftKey ? 0.1 : 0.5;
+      const delta = event.code === 'KeyG' ? -step : step;
+      if (deps.adjustSubtitleOffset?.({ delta, announce: true })) event.preventDefault();
+      return;
+    }
+    if (event.code === 'Backslash' && !event.shiftKey) {
+      if (deps.adjustSubtitleOffset?.({ reset: true, announce: true })) event.preventDefault();
+      return;
+    }
   });
   deps.every(250, () => {
     const timeline = $('timeline'),

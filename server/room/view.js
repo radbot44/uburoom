@@ -13,6 +13,7 @@ const { isHost, sameVoice, canWatch } = require('../core');
 const Tracks = require('../media-tracks');
 const RoomPolicy = require('../room-policy');
 const {
+  RoomAuthority,
   aggregateParticipantSyncQuality: syncQualityParticipants,
   timelinePosition,
   controlLead,
@@ -418,6 +419,8 @@ module.exports = {
       readinessVersion: room.readinessVersion,
       waitingForReady,
       readiness,
+      humanCheck: RoomAuthority.snapshotHumanCheck(timeline, now) || null,
+      canCheck: this.hub.authorize(actor, room, 'check.ask').ok,
       recovery: this.roomState.recoveryState(room),
       maxMembers: Math.min(room.saved.maxMembers || this.roomState.limits.maxMembers, this.roomState.limits.maxMembers),
       roomName: room.name,
@@ -447,6 +450,14 @@ module.exports = {
       visibility: room.visibility,
       canPlayback: this.hub.authorize(actor, room, 'media.play').ok,
       viewers: new Set([...room.viewers.values()].map(x => x.userId)).size,
+      suggestions: (room.suggestions || [])
+        .filter(entry => entry.status === 'pending' || entry.status === 'accepting')
+        .map(entry => ({
+          id: entry.id,
+          item: { ...entry.item },
+          suggestedBy: { ...entry.suggestedBy },
+          createdAt: entry.createdAt,
+        })),
       feedback: room.feedback,
     };
   },

@@ -18,6 +18,7 @@ export const subtitleRenderers = {
     layer.append(canvas);
     video.parentElement.append(layer);
     let renderer,
+      renderAssFrame,
       disposed = false,
       renderError;
     const currentMediaTime = () =>
@@ -35,8 +36,9 @@ export const subtitleRenderers = {
       if (disposed || !renderer) return;
       const mediaTime = currentMediaTime();
       if (format === 'ass')
-        void renderer
-          .manualRender(
+        void (renderAssFrame || renderer.manualRender)
+          .call(
+            renderer,
             {
               expectedDisplayTime: performance.now(),
               width: video.videoWidth || 1,
@@ -93,6 +95,25 @@ export const subtitleRenderers = {
           libassGlyphLimit: 1000,
           maxRenderHeight: 2160,
         });
+        const rawManualRender = renderer.manualRender.bind(renderer);
+        renderAssFrame = rawManualRender;
+        // _handleRVFC passes raw browser video frame metadata.mediaTime into manualRender;
+        // normalize it through resolveMediaTime just like repaint() does.
+        if (typeof resolveMediaTime === 'function') {
+          renderer.manualRender = (frameInfo, force = false) =>
+            rawManualRender(
+              frameInfo && typeof frameInfo === 'object'
+                ? {
+                    ...frameInfo,
+                    width: frameInfo.width,
+                    height: frameInfo.height,
+                    expectedDisplayTime: frameInfo.expectedDisplayTime,
+                    mediaTime: resolveMediaTime(frameInfo.mediaTime),
+                  }
+                : frameInfo,
+              force,
+            );
+        }
         await wait(renderer.ready);
       } else {
         const { PgsRenderer, VobSubRenderer } = await wait(import('/vendor/subtitles/libbitsub-renderer.js'));

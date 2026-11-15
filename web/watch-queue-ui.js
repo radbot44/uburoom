@@ -27,6 +27,10 @@ function mount(
     artwork,
     openSettings,
     browseMedia,
+    onSuggest,
+    onAcceptSuggestion,
+    onDismissSuggestion,
+    onWithdrawSuggestion,
     getSettingsState = getState,
     saveSettings,
     // The page's scheduler (web/watch/scheduler.js); a plain interval elsewhere.
@@ -66,6 +70,7 @@ function mount(
   let lastAutoplayError = '';
   let lastFetchedRevision = -1;
   let lastFetchedRoomId = null;
+  let lastSuggestionsKey = '';
 
   function node(tag, parent, text, className) {
     const el = doc.createElement(tag);
@@ -103,7 +108,19 @@ function mount(
   symbol.append(uburoomIcons.icon(doc, 'player-track-next'));
   const queueTitle = node('span', heading, 'Queue', 'watch-panel-title');
   queueTitle.id = 'queue-title';
-  const autoOpen = button(header, 'Queue settings', 'settings', () => openSettings(), false, 'icon-button');
+  const headerActions = node('div', header, undefined, 'queue-header-actions watch-control-group');
+  const suggestionsOpen = button(
+    headerActions,
+    'Suggestions',
+    'bulb',
+    () => openSuggestions(),
+    false,
+    'quiet queue-suggestions-open',
+  );
+  suggestionsOpen.id = 'queue-suggestions-open';
+  const suggestionsCountText = node('span', suggestionsOpen, '0', 'queue-suggestions-count');
+  suggestionsOpen.hidden = true;
+  const autoOpen = button(headerActions, 'Queue settings', 'settings', () => openSettings(), false, 'icon-button');
   uburoomControls.content(autoOpen, { label: 'Queue settings', icon: 'settings', iconOnly: true });
   autoOpen.id = 'queue-auto-open';
   autoOpen.classList.add('queue-auto-open');
@@ -322,6 +339,24 @@ function mount(
     popups.open(bulkDialog);
     bulkFilter.focus();
   }
+
+  const suggestionsDialog = node('dialog', doc.body, undefined, 'watch-dialog queue-dialog queue-suggestions-dialog');
+  suggestionsDialog.id = 'queue-suggestions-dialog';
+  suggestionsDialog.setAttribute('aria-labelledby', 'queue-suggestions-title');
+  const suggestionsHeader = node('header', suggestionsDialog);
+  const suggestionsTitle = node('h2', suggestionsHeader, 'Suggestions');
+  suggestionsTitle.id = 'queue-suggestions-title';
+  const suggestionsClose = button(
+    suggestionsHeader,
+    'Close',
+    'close',
+    () => popups.close(suggestionsDialog),
+    false,
+    'icon-button queue-suggestions-close',
+  );
+  suggestionsClose.id = 'queue-suggestions-close';
+  const suggestionsList = node('div', suggestionsDialog, undefined, 'queue-suggestions-list');
+  popups.register(suggestionsDialog);
 
   const autoDialog = node('div', doc.getElementById('room-playback-controls'), undefined, 'queue-settings');
   const settingsAutoplayLabel = node('label', autoDialog, undefined, 'watch-switch-label');
@@ -749,18 +784,21 @@ function mount(
   let artworkGeneration = 0;
   let imageController = new AbortController();
   const observedImages = new Set();
-  const imageObserver = new IntersectionObserver(
-    entries => {
-      for (const entry of entries)
-        if (entry.isIntersecting) {
-          imageObserver.unobserve(entry.target);
-          observedImages.delete(entry.target);
-          artworkQueue.push(entry.target);
-        }
-      pumpArtwork();
-    },
-    { root: layout, rootMargin: '200px' },
-  );
+  const handleArtIntersections = entries => {
+    for (const entry of entries)
+      if (entry.isIntersecting) {
+        imageObserver.unobserve(entry.target);
+        suggestionsImageObserver.unobserve(entry.target);
+        observedImages.delete(entry.target);
+        artworkQueue.push(entry.target);
+      }
+    pumpArtwork();
+  };
+  const imageObserver = new IntersectionObserver(handleArtIntersections, { root: layout, rootMargin: '200px' });
+  const suggestionsImageObserver = new IntersectionObserver(handleArtIntersections, {
+    root: suggestionsDialog,
+    rootMargin: '120px',
+  });
 
   function pumpArtwork() {
     const generation = artworkGeneration;
@@ -784,6 +822,7 @@ function mount(
     artworkActive = 0;
     artworkQueue = [];
     imageObserver.disconnect();
+    suggestionsImageObserver.disconnect();
     observedImages.clear();
     imageRequests.clear();
     for (const url of images.values()) URL.revokeObjectURL(url);
@@ -816,8 +855,8 @@ function mount(
       }
       if (!signal.aborted && img.isConnected && images.has(key)) {
         img.src = images.get(key);
-        img.parentElement.parentElement.querySelector('.queue-row-backdrop').style.backgroundImage =
-          'url(' + images.get(key) + ')';
+        const backdrop = img.parentElement?.parentElement?.querySelector('.queue-row-backdrop');
+        if (backdrop) backdrop.style.backgroundImage = 'url(' + images.get(key) + ')';
       }
     } catch {
       if (!signal.aborted) {
@@ -828,9 +867,9 @@ function mount(
     }
   }
 
-  function art(parent, item) {
-    node('div', parent, undefined, 'queue-row-backdrop').setAttribute('aria-hidden', 'true');
-    const box = node('div', parent, undefined, 'queue-art');
+  function art(parent, item, options = {}) {
+    if (!options.plain) node('div', parent, undefined, 'queue-row-backdrop').setAttribute('aria-hidden', 'true');
+    const box = node('div', parent, undefined, options.plain ? 'queue-art queue-suggestions-art' : 'queue-art');
     box.append(uburoomIcons.icon(doc, item.type === 'episode' ? 'tv' : 'film'));
     if (!artwork || !/^\d{1,20}$/.test(item.mediaId || item.id || '')) return;
     const img = node('img', box);
@@ -841,10 +880,10 @@ function mount(
     const cached = images.get(img.dataset.item + ':' + img.dataset.type);
     if (cached) {
       img.src = cached;
-      parent.querySelector('.queue-row-backdrop').style.backgroundImage = 'url(' + cached + ')';
+      if (!options.plain) parent.querySelector('.queue-row-backdrop').style.backgroundImage = 'url(' + cached + ')';
     } else {
       observedImages.add(img);
-      imageObserver.observe(img);
+      (options.observer || imageObserver).observe(img);
     }
   }
 
@@ -861,6 +900,19 @@ function mount(
       badge.textContent = String(qLen);
       badge.hidden = qLen === 0;
     }
+    const state = getState();
+    const suggestionsCount = state?.suggestions?.length || 0;
+    suggestionsCountText.textContent = String(suggestionsCount);
+    suggestionsOpen.dataset.hasSuggestions = String(suggestionsCount > 0);
+    const label =
+      suggestionsCount === 1
+        ? '1 pending suggestion'
+        : suggestionsCount
+          ? suggestionsCount + ' pending suggestions'
+          : 'Suggestions';
+    suggestionsOpen.setAttribute('aria-label', label);
+    suggestionsOpen.title = label;
+    suggestionsOpen.hidden = !state?.durable;
   }
 
   function title(parent, item, className) {
@@ -896,7 +948,7 @@ function mount(
         currentHistory.items.length
       );
     timeline.hidden = centerButton.hidden = noEntries;
-    toolbar.hidden = autoOpen.hidden = !state;
+    toolbar.hidden = autoOpen.hidden = suggestionsOpen.hidden = !state;
     emptyScreen.hidden = !noEntries;
     host.dataset.view = noEntries ? 'empty' : 'list';
     host.classList.toggle('queue-is-empty', noEntries);
@@ -1535,6 +1587,108 @@ function mount(
     await changed();
   }
 
+  async function suggestionCommand(action, args, extraOptions = {}) {
+    const state = getState();
+    if (!state?.id || !state.durable) throw new Error('Open room required');
+    const result = await request('room.queue.command', { roomId: state.id, args: { action, ...args } }, extraOptions);
+    await changed();
+    return result;
+  }
+
+  async function suggest(item, trigger) {
+    if (onSuggest) return onSuggest(item, trigger);
+    return suggestionCommand('suggest', { item: { id: String(item.mediaId || item.id) } });
+  }
+
+  async function acceptSuggestion(suggestionId, trigger) {
+    if (onAcceptSuggestion) return onAcceptSuggestion(suggestionId, trigger);
+    const result = await suggestionCommand('suggestion.accept', { suggestionId }, { timeoutMs: 35000 });
+    await fetchData(true);
+    return result;
+  }
+
+  async function dismissSuggestion(suggestionId, trigger) {
+    if (onDismissSuggestion) return onDismissSuggestion(suggestionId, trigger);
+    return suggestionCommand('suggestion.dismiss', { suggestionId });
+  }
+
+  async function withdrawSuggestion(suggestionId, trigger) {
+    if (onWithdrawSuggestion) return onWithdrawSuggestion(suggestionId, trigger);
+    return suggestionCommand('suggestion.withdraw', { suggestionId });
+  }
+
+  function suggestionPopoverAnchor(trigger) {
+    if (trigger?.isConnected) return trigger;
+    if (suggestionsDialog.open) return suggestionsTitle;
+    return suggestionsOpen;
+  }
+
+  function renderSuggestions() {
+    suggestionsList.replaceChildren();
+    const state = getState();
+    const me = getMe?.();
+    const suggestions = state?.suggestions || [];
+    const canAccept = !!state?.capabilities?.addQueue;
+    if (!suggestions.length) {
+      node('p', suggestionsList, 'No pending suggestions.', 'hint queue-suggestions-empty');
+      return;
+    }
+    for (const entry of suggestions) {
+      const item = entry.item || {};
+      const row = node('article', suggestionsList, undefined, 'queue-suggestions-row');
+      row.dataset.suggestionId = entry.id;
+      art(row, item, { plain: true, observer: suggestionsImageObserver });
+      const info = node('div', row, undefined, 'queue-suggestions-info');
+      node('strong', info, item.title || 'Unknown title', 'queue-suggestions-item-title');
+      const subtitle = formatSubtitle(item) || (Number.isInteger(item.year) ? String(item.year) : '');
+      if (subtitle) node('p', info, subtitle, 'hint queue-suggestions-item-subtitle');
+      const requesterName = entry.suggestedBy?.name || 'Viewer';
+      node('p', info, 'Suggested by ' + requesterName, 'hint queue-suggestions-requester');
+      const isOwn = !!(me?.userId && entry.suggestedBy?.userId === me.userId);
+      const actions = node('div', row, undefined, 'queue-suggestions-actions');
+      const rowButtons = [];
+      const setRowBusy = value => {
+        for (const control of rowButtons) control.disabled = value;
+      };
+      const addAction = (label, iconName, className, run, successText) => {
+        const control = button(
+          actions,
+          label + ' ' + (item.title || 'suggestion'),
+          iconName,
+          async () => {
+            if (control.disabled) return;
+            setRowBusy(true);
+            try {
+              await run(entry.id, control);
+              uburoomPopover.show(suggestionPopoverAnchor(control), { text: successText, state: 'success' });
+            } catch (error) {
+              setRowBusy(false);
+              uburoomPopover.show(suggestionPopoverAnchor(control), { text: error.message, state: 'error' });
+            }
+          },
+          false,
+          className,
+        );
+        node('span', control, label);
+        rowButtons.push(control);
+      };
+      if (canAccept) {
+        addAction('Accept', 'check', 'primary queue-suggestion-accept', acceptSuggestion, 'Added to queue');
+        addAction('Dismiss', 'close', 'quiet queue-suggestion-dismiss', dismissSuggestion, 'Dismissed');
+      } else if (isOwn) {
+        addAction('Withdraw', 'trash', 'quiet queue-suggestion-withdraw', withdrawSuggestion, 'Withdrawn');
+      }
+      if (!actions.childElementCount) actions.hidden = true;
+    }
+  }
+
+  function openSuggestions(trigger = suggestionsOpen) {
+    if (!getState()?.durable) return;
+    renderSuggestions();
+    popups.open(suggestionsDialog, trigger);
+    suggestionsClose.focus({ preventScroll: true });
+  }
+
   function render(queueSummary) {
     const state = getState();
     const panel = doc.getElementById('queue-panel');
@@ -1549,6 +1703,7 @@ function mount(
         lastFetchedRevision = -1;
       }
       if (bulkDialog.open) bulkDialog.close();
+      if (suggestionsDialog.open) popups.close(suggestionsDialog);
       autoNotice.textContent = '';
       return;
     }
@@ -1558,6 +1713,7 @@ function mount(
         lastFetchedRoomId = null;
         lastFetchedRevision = -1;
       }
+      if (suggestionsDialog.open) popups.close(suggestionsDialog);
       currentQueue = { items: [], total: 0, queueRevision: 0 };
       currentHistory = { items: [], total: 0 };
       renderTab();
@@ -1593,8 +1749,18 @@ function mount(
       capabilityKey = permissions;
       renderTab();
     }
+    const suggestionsKey = JSON.stringify([
+      state.id,
+      state.capabilities?.addQueue,
+      getMe?.()?.userId,
+      state.suggestions || [],
+    ]);
+    if (suggestionsKey !== lastSuggestionsKey) {
+      lastSuggestionsKey = suggestionsKey;
+      if (suggestionsDialog.open) renderSuggestions();
+    }
+    renderHeaderBadge(queueSummary);
     if (queueSummary) {
-      renderHeaderBadge(queueSummary);
       if (queueSummary.queueRevision > lastFetchedRevision || state.id !== lastFetchedRoomId) {
         void fetchData();
       }
@@ -1618,6 +1784,8 @@ function mount(
     render,
     add,
     bulk,
+    suggest,
+    openSuggestions,
     openAuto,
     fetchData,
     get selectedEntryId() {

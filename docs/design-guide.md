@@ -69,7 +69,7 @@ A watch night is a room with a time on it: every event belongs to one saved room
 
 - **Section headings:** each panel heading has a solid primary-accent badge with dark artwork (Room `armchair-2`, Queue `player-track-next`, Media `video`), with the minimize chevron right after the title. When the room name and the header actions do not fit on one line, the actions wrap below and the name keeps the first line, truncating only beyond it.
 - **Room panel:** header actions, the viewer list and the room buttons; no permission controls (those are in Room settings → Permissions only). An action the person cannot use is shown disabled with its reason as tooltip; actions the server does not offer at all stay hidden.
-- **Queue header:** the first row holds the title and Queue settings (in a room only). The second row holds the Auto-play and Auto-queue switch pills, then Center Now Playing. Pill labels are never dropped: pills wrap, and Center Now Playing drops to its icon when the queue is narrow.
+- **Queue header:** the first row holds the title, the Suggestions count badge button and Queue settings (in a room only). The second row holds the Auto-play and Auto-queue switch pills, then Center Now Playing. Pill labels are never dropped: pills wrap, and Center Now Playing drops to its icon when the queue is narrow.
 - **Room URLs:** rooms use path slugs (`/room/<slug>`). The default name "Room <word>" gives a one-word slug; custom names give hyphenated slugs with numeric suffixes for collisions. Single-room mode and the lobby live at the root, and `/watch` redirects there or to the active room. An authorized room link renders straight into the room with no lobby flash; signed-out visits show sign-in and keep the destination; closed event rooms show Waiting for host.
 
 ## 5. States and playback
@@ -93,6 +93,7 @@ A watch night is a room with a time on it: every event belongs to one saved room
 - **Phone transport:** the bar keeps Play, Previous, Next, Subtitles, Volume, Player settings and Fullscreen. Notifications and Picture-in-Picture move into a Player group in Player settings, shown only in the phone layout and mirroring the bar controls. Theater is not offered. In the lobby the bar also shows the settings gear, whose dialog then holds only the Notifications switch.
 - **Phone volume:** the speaker button alone, its icon showing the level. Tapping opens a vertical slider with mute at the bottom, closing after a few seconds idle once keyboard focus leaves it, on outside tap and on Escape. Browsers that ignore page-set volume (iOS Safari) never show a slider; the button mutes directly.
 - **iPhone fullscreen:** uses native video fullscreen with system controls; text subtitles become native captions and other formats need Burn-in.
+- **Discord Rich Presence:** a live Switch in Player settings beside Plex reporting, shown only inside a Discord Activity when enabled by server config, and off by default. Private rooms show generic "Watching in uburoom" without the media title or room name.
 
 ### Quality and delivery
 
@@ -106,6 +107,7 @@ A watch night is a room with a time on it: every event belongs to one saved room
 - **Naming:** the rendering option is **Burn-in**; help and error text never names a provider.
 - **Appearance:** text subtitles draw in their own layer, default to the outline style labelled Shadow, scale with the player (Small, Medium, Large), stay on the visible picture unless set to "On player", remain when controls hide, and lift only when controls would cover them. ASS and bitmap subtitles keep their authored placement. Settings offer colour presets, a hex input, a swatch, a background style selector (Off, Background, Shadow) and a brightness slider.
 - **Audio mode:** Normal, Dialogue or Night, with hints; entirely in the browser, affecting no one else.
+- **Subtitle sync:** Player settings provides `−0.5 s`, a numeric input (`±30 s`, `0.1 s` step), `+0.5 s` and `Reset`, saved client-side per media item and track, with a "Subtitle sync" link from the desktop player settings menu. Keyboard adjustments (`G`, `H`, `\`) show a single coalesced toast; **Burn-in** disables the offset controls while preserving the saved non-burn offset.
 
 ### Picture-in-Picture
 
@@ -123,6 +125,7 @@ A watch night is a room with a time on it: every event belongs to one saved room
 - **Now Playing:** keeps the primary-accent outline rather than a transient selected state.
 - **Auto-queue preview:** at most one preview row at the end of Upcoming, in the secondary accent with an `AUTO` badge and "Auto · Up in …" caption, offering Add to queue, Skip suggestion, Play now and Skip to, with no reorder arrows.
 - **Auto-queue options:** four modes (Off, Continue, In order, Shuffle) and its switches use the secondary accent. In Media views the source action reads "Set as auto-queue" with the `sparkle` icon in the secondary accent.
+- **Media suggestions (queue):** a Queue header badge button shows the pending count (no host toast on incoming suggestions) and opens a Suggestions dialog where hosts and queue-authorized viewers can Accept or Dismiss items.
 
 ### Viewers
 
@@ -131,11 +134,13 @@ A watch night is a room with a time on it: every event belongs to one saved room
 - **Sync spread:** people who can change room settings see the room's viewer spread at the end of the Viewers heading, as "Spread 18 ms · p95 42 ms", once the video has a minute of samples. Its tooltip says it is reported by the players themselves and leaves out screen and speaker delay. Other viewers never see it.
 - **Roles and guests:** the host badge uses ordinary text colour for contrast in both themes; the room leader keeps the accent. Unverified guests show their name in italics with `user-question` and the label "Guest (name not verified)". Guests are never offered Make host, and the Account dialog offers them no Connect buttons.
 - **Account providers:** Connect <Provider> when unlinked, Sign in to <Provider> when awaiting credentials, Reconnect when connected. Unlink is separate and disabled when removing it would leave no usable sign-in.
+- **Human readiness check:** hosts and playback-authorized viewers can start or clear a readiness check from the Room panel, and individual answers appear in the Viewers list. The viewer prompt ("Ready" and "Need a moment") overlays the video stage so it stays visible in fullscreen, auto-expires after 120 s and clears on Play; it never touches decoder readiness or playback consent.
 
 ### Library and ending
 
 - **Watched progress:** cards and details artwork show a primary-accent progress bar along the bottom of the poster when progress is actionable (between 10 seconds and 92%), preferring the room's history over personal Plex progress. In details, Play now stays on top with Resume at MM:SS below it. Editions and versions appear separately labelled, with an Other editions section in details.
 - **Ending interstitial:** when a video ends, the occurrence completes to history and unloads, and the ending screen takes the stage with dimmed artwork, a center play button (with a countdown ring during autoplay), a short summary, Watch again and Browse media. The plain empty stage appears only with no current video, history or upcoming item. Play there selects the queued successor; restart stays a separate action.
+- **Media suggestions (library):** in cards and posters views, viewers who can suggest (and cannot directly add to queue) get a top-left Suggest button using the `bulb` icon with anchored popover confirmation; already-suggested items display a "Suggested" badge.
 
 ## 6. Feedback
 

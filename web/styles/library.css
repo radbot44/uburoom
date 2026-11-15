@@ -69,20 +69,23 @@
   .library-detail-actions .library-play-now {
     margin-top: 0;
   }
-  .library-queue-add.library-play-now {
+  .library-queue-add.library-play-now,
+  .library-suggest.library-play-now {
     background: var(--elevated);
     color: var(--text);
     border: 1px solid var(--border);
     margin-top: 0;
   }
-  .library-queue-add.library-play-now:hover {
+  .library-queue-add.library-play-now:hover,
+  .library-suggest.library-play-now:hover:not(:disabled) {
     background: var(--hover);
   }
   [data-view='cards'] .library-tile:not(.episode) > .library-art > .library-queue-add,
-  [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-queue-add {
+  [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-queue-add,
+  [data-view='cards'] .library-tile:not(.episode) > .library-art > .library-suggest,
+  [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-suggest {
     position: absolute;
-    top: 10px;
-    right: 10px;
+    top: var(--space-10);
     width: var(--watch-control-height);
     height: var(--watch-control-height);
     display: grid;
@@ -100,21 +103,65 @@
       background 0.15s,
       color 0.15s;
   }
+  [data-view='cards'] .library-tile:not(.episode) > .library-art > .library-queue-add,
+  [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-queue-add {
+    right: var(--space-10);
+  }
+  [data-view='cards'] .library-tile:not(.episode) > .library-art > .library-suggest,
+  [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-suggest {
+    left: var(--space-10);
+  }
   [data-view='cards'] .library-tile:not(.episode) > .library-art > .library-queue-add svg,
-  [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-queue-add svg {
-    width: 20px;
-    height: 20px;
+  [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-queue-add svg,
+  [data-view='cards'] .library-tile:not(.episode) > .library-art > .library-suggest svg,
+  [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-suggest svg {
+    width: var(--space-20);
+    height: var(--space-20);
   }
   [data-view='cards'] .library-tile:not(.episode) > .library-art > .library-queue-add:hover,
-  [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-queue-add:hover {
+  [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-queue-add:hover,
+  [data-view='cards'] .library-tile:not(.episode) > .library-art > .library-suggest:hover:not(:disabled),
+  [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-suggest:hover:not(:disabled) {
     background: var(--primary);
     color: var(--on-primary);
     border-color: transparent;
   }
   .library-tile:not(.episode):hover .library-art > .library-queue-add,
   .library-tile:not(.episode):focus-within .library-art > .library-queue-add,
-  .library-tile:not(.episode).revealed .library-art > .library-queue-add {
+  .library-tile:not(.episode).revealed .library-art > .library-queue-add,
+  .library-tile:not(.episode):hover .library-art > .library-suggest,
+  .library-tile:not(.episode):focus-within .library-art > .library-suggest,
+  .library-tile:not(.episode).revealed .library-art > .library-suggest {
     opacity: 1;
+  }
+  .library-suggest[hidden],
+  .library-queue-add[hidden],
+  .library-suggested-badge[hidden] {
+    display: none;
+  }
+  .library-suggested-badge {
+    position: absolute;
+    top: var(--space-10);
+    left: var(--space-10);
+    z-index: var(--z-local-4);
+    pointer-events: none;
+    padding: var(--space-3) var(--space-8);
+    border-radius: var(--radius-pill);
+    background: var(--chrome-background-a85);
+    color: var(--chrome-text);
+    border: 1px solid var(--white-a16);
+    font-size: var(--font-size-12);
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .library-tile:has(> .library-art > .library-suggest:not([hidden])) .library-suggested-badge {
+    left: auto;
+    right: var(--space-10);
+  }
+  .library-row > .library-art > .library-suggested-badge {
+    top: var(--space-6);
+    left: var(--space-6);
+    right: auto;
   }
   .source-row {
     display: flex;
@@ -692,7 +739,8 @@
   .library-tile.episode .library-play,
   .library-row-actions .library-play,
   .library-row-actions .library-browse,
-  .library-row-actions .library-queue-add {
+  .library-row-actions .library-queue-add,
+  .library-row-actions .library-suggest {
     position: static;
     opacity: 1;
     margin: 0;
@@ -717,7 +765,8 @@
   .library-tile.episode .library-play:hover,
   .library-row-actions .library-play:hover,
   .library-row-actions .library-browse:hover,
-  .library-row-actions .library-queue-add:hover {
+  .library-row-actions .library-queue-add:hover,
+  .library-row-actions .library-suggest:hover:not(:disabled) {
     background: var(--hover);
     color: var(--text);
   }

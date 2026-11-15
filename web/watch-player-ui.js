@@ -1,6 +1,7 @@
 import * as uburoomDialogs from './watch-dialogs.js';
 import * as uburoomIcons from './icons.js';
 import * as uburoomPlayback from './playback-policy.js';
+import { formatSubtitleOffset } from './watch-subtitles.js';
 
 /* Player menus and pointer interaction; playback still uses the shared command engine. */
 function trackLabel(track) {
@@ -121,13 +122,24 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     row.onclick = () => openChoices(id);
     rows.push({ id, row, value });
   }
+  const subtitleSync = button(mainMenu, 'Subtitle sync');
+  subtitleSync.id = 'settings-subtitle-sync';
+  subtitleSync.setAttribute('role', 'menuitem');
+  subtitleSync.setAttribute('aria-haspopup', 'dialog');
+  subtitleSync.setAttribute('aria-controls', dialog.id);
+  const subtitleSyncValue = document.createElement('span');
+  subtitleSyncValue.className = 'settings-value';
+  subtitleSync.append(subtitleSyncValue, uburoomIcons.icon(document, 'right'));
+  subtitleSync.onclick = () => {
+    if (!subtitleSync.disabled) openDialog('subtitle-offset');
+  };
   const more = button(mainMenu, 'More settings');
   more.id = 'settings-more';
   more.setAttribute('role', 'menuitem');
   more.setAttribute('aria-haspopup', 'dialog');
   more.setAttribute('aria-controls', dialog.id);
   more.append(uburoomIcons.icon(document, 'settings'));
-  more.onclick = openDialog;
+  more.onclick = () => openDialog();
   const back = button(submenu, 'Back');
   back.id = 'settings-back';
   back.classList.add('settings-back');
@@ -168,22 +180,26 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     if (focus) cog.focus();
     layoutCaptions();
   }
-  function openDialog() {
+  function openDialog(focusId) {
     closeSettings();
     beforeSettings();
     uburoomDialogs.open(dialog, cog);
     stage.classList.add('settings-open');
     cog.setAttribute('aria-expanded', 'true');
+    const requested = typeof focusId === 'string' ? $(focusId) : undefined;
     // Outside a room only the Notifications switch is shown.
     const focusTarget = document.body.classList.contains('outside-room')
       ? $('player-extras-notifications')
-      : !$('quality').disabled
-        ? $('quality')
-        : !$('sync-correction').disabled
-          ? $('sync-correction')
-          : $('tracks-close');
+      : requested && !requested.disabled
+        ? requested
+        : !$('quality').disabled
+          ? $('quality')
+          : !$('sync-correction').disabled
+            ? $('sync-correction')
+            : $('tracks-close');
     focusTarget?.focus({ preventScroll: true });
-    dialog.scrollTop = 0;
+    if (requested && focusTarget === requested) focusTarget.scrollIntoView?.({ block: 'nearest' });
+    else dialog.scrollTop = 0;
     showChrome();
   }
   function openSettings() {
@@ -394,6 +410,17 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
       }
       value.title = value.textContent;
     }
+    const subtitleTrack = tracks?.subtitles.find(track => track.id === tracks?.subtitleId);
+    const burned = (tracks?.subtitleDelivery || subtitleTrack?.delivery) === 'burn';
+    subtitleSync.disabled = !available || !subtitleTrack || burned;
+    subtitleSyncValue.textContent = !available
+      ? 'No subtitles available'
+      : !subtitleTrack
+        ? 'Off'
+        : burned
+          ? 'Fixed'
+          : formatSubtitleOffset(captions?.offset || 0);
+    subtitleSyncValue.title = subtitleSyncValue.textContent;
     if (opened) {
       renderChoices();
       placeMenu();

@@ -230,8 +230,27 @@
     font-size: var(--font-size-14);
     padding: var(--space-10);
   }
+  .subtitle-offset-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-8);
+    margin-top: var(--space-6);
+  }
   .tracks-dialog .subtitle-offset {
-    width: 100%;
+    flex: 1 1 calc(var(--space-72) + var(--space-16));
+    width: auto;
+    min-width: var(--space-72);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+  .subtitle-offset-nudge,
+  .subtitle-offset-reset {
+    min-width: var(--watch-control-height);
+    min-height: var(--watch-control-height);
+    padding: var(--space-8) var(--space-10);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
   .tracks-dialog .track-status:empty {
     display: none;

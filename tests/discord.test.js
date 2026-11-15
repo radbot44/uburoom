@@ -274,3 +274,368 @@ test('admission survives a provider that gives no answer, but not its denial', a
   answer = undefined;
   assert.equal(await policy.admit('viewer'), false, 'and nothing is left to keep');
 });
+
+test('Discord Rich Presence formatter redacts private rooms, gates timestamps on live playback, and omits unsafe fields', () => {
+  const { buildPresenceActivity, equivalentPresence } = require('../web/watch/discord-presence.js');
+  const nowMs = 1_700_000_100_000;
+  const publicRoom = {
+    visibility: 'public',
+    roomName: 'Friday Screening',
+    mediaId: 'movie-1',
+    title: 'Spirited Away',
+    subtitle: '2001 · 125m',
+    serverNow: nowMs,
+    state: { paused: false, waitingForReady: false, position: 100, duration: 1000 },
+  };
+
+  assert.equal(buildPresenceActivity({ enabled: false, activity: true, room: publicRoom, nowMs }), null);
+  assert.equal(buildPresenceActivity({ enabled: true, activity: false, room: publicRoom, nowMs }), null);
+  assert.equal(
+    buildPresenceActivity({ enabled: true, serverAllowed: false, activity: true, room: publicRoom, nowMs }),
+    null,
+  );
+  assert.equal(buildPresenceActivity({ enabled: true, activity: true, room: undefined, nowMs }), null);
+
+  const privatePresence = buildPresenceActivity({
+    enabled: true,
+    activity: true,
+    room: { ...publicRoom, visibility: 'private' },
+    nowMs,
+  });
+  assert.deepEqual(privatePresence, { type: 3, details: 'Watching in uburoom' });
+
+  const playingPresence = buildPresenceActivity({ enabled: true, activity: true, room: publicRoom, nowMs });
+  assert.equal(playingPresence.type, 3);
+  assert.equal(playingPresence.details, 'Spirited Away');
+  assert.equal(playingPresence.state, '2001 · 125m · Friday Screening');
+  assert.deepEqual(playingPresence.timestamps, { start: 1_700_000_000, end: 1_700_001_000 });
+  assert.equal(playingPresence.assets, undefined);
+  assert.equal(playingPresence.secrets, undefined);
+  assert.equal(playingPresence.party, undefined);
+
+  // Continuous playback 10s later yields identical timestamps; small 1s clock jitter stays equivalent.
+  const tenSecondsLater = buildPresenceActivity({
+    enabled: true,
+    activity: true,
+    room: { ...publicRoom, serverNow: nowMs + 10_000, state: { ...publicRoom.state, position: 110 } },
+    nowMs: nowMs + 10_000,
+  });
+  assert.deepEqual(tenSecondsLater.timestamps, playingPresence.timestamps);
+  assert.equal(
+    equivalentPresence(playingPresence, {
+      ...playingPresence,
+      timestamps: { start: playingPresence.timestamps.start + 1, end: playingPresence.timestamps.end + 1 },
+    }),
+    true,
+  );
+
+  // Pausing or waiting for readiness clears timestamps.
+  const paused = buildPresenceActivity({
+    enabled: true,
+    activity: true,
+    room: { ...publicRoom, state: { ...publicRoom.state, paused: true } },
+    nowMs,
+  });
+  assert.equal(paused.timestamps, undefined);
+  assert.match(paused.state, /^Paused · /);
+
+  const waiting = buildPresenceActivity({
+    enabled: true,
+    activity: true,
+    room: { ...publicRoom, state: { ...publicRoom.state, waitingForReady: true } },
+    nowMs,
+  });
+  assert.equal(waiting.timestamps, undefined);
+});
+
+test('Discord Rich Presence controller debounces, suppresses drift, handles consent denial, and clears on leave', async () => {
+  const { createPresenceController } = require('../web/watch/discord-presence.js');
+  let wallMs = 1_700_000_100_000;
+  let enabled = true;
+  let allowScope = true;
+  let deniedCount = 0;
+  let nextTimerId = 1;
+  const timers = new Map();
+  const sent = [];
+  let room = {
+    visibility: 'public',
+    roomName: 'Main Room',
+    mediaId: 'ep-1',
+    title: 'Show Episode',
+    subtitle: 'S1 · E1',
+    serverNow: wallMs,
+    state: { paused: false, waitingForReady: false, position: 50, duration: 500 },
+  };
+
+  const controller = createPresenceController({
+    getSdk: () => ({
+      commands: {
+        setActivity: async arg => {
+          sent.push(arg);
+        },
+      },
+    }),
+    isActivity: () => true,
+    isEnabled: () => enabled,
+    setEnabled: next => {
+      enabled = next;
+    },
+    isServerAllowed: () => true,
+    getRoom: () => room,
+    ensureScope: async () => allowScope,
+    now: () => wallMs,
+    debounceMs: 100,
+    minIntervalMs: 1000,
+    setTimeoutFn: (fn, ms) => {
+      const id = nextTimerId++;
+      timers.set(id, { fn, at: wallMs + ms });
+      return id;
+    },
+    clearTimeoutFn: id => timers.delete(id),
+    onAuthDenied: () => {
+      deniedCount++;
+      enabled = false;
+    },
+  });
+
+  await controller.sync();
+  assert.equal(timers.size, 1);
+  wallMs += 100;
+  for (const [id, entry] of [...timers]) {
+    timers.delete(id);
+    await entry.fn();
+  }
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].activity.details, 'Show Episode');
+
+  // Minor 1s drift update does not schedule another setActivity IPC call.
+  wallMs += 5000;
+  room = { ...room, serverNow: wallMs, state: { ...room.state, position: 56 } };
+  await controller.sync();
+  assert.equal(timers.size, 0);
+
+  // Room leave clears presence immediately without waiting on debounce.
+  room = undefined;
+  await controller.clear();
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].activity, null);
+
+  // Denying OAuth consent flips enabled back off cleanly and prevents retry spam.
+  allowScope = false;
+  room = {
+    visibility: 'private',
+    roomName: 'Secret',
+    mediaId: 'x',
+    title: 'Hidden',
+    serverNow: wallMs,
+    state: { paused: true, waitingForReady: false, position: 0, duration: 100 },
+  };
+  await controller.setEnabled(true);
+  wallMs += 1000;
+  for (const [id, entry] of [...timers]) {
+    timers.delete(id);
+    await entry.fn();
+  }
+  assert.equal(deniedCount, 1);
+  assert.equal(enabled, false);
+  await controller.sync();
+  assert.equal(timers.size, 0);
+});
+
+test('Activity connection keeps baseline login prompt=none identify-only and requests rpc.activities.write incrementally', async t => {
+  const { mountModule } = require('./helpers/watch-module');
+  const connection = require('../web/watch/connection.js');
+
+  const authorizeCalls = [];
+  const authenticateCalls = [];
+  let denyRpc = false;
+  let rejectRpcRenewal = false;
+
+  const mounted = mountModule(connection, {
+    activity: true,
+    config: { clientId: 'client-1', discordRichPresence: true },
+    token: 'initial-token',
+    diagnostics: { record() {} },
+    sdk: {
+      commands: {
+        authorize: async args => {
+          authorizeCalls.push(args);
+          if (denyRpc && args.scope.includes('rpc.activities.write')) throw new Error('User denied scope');
+          if (rejectRpcRenewal && args.prompt === 'none' && args.scope.includes('rpc.activities.write'))
+            throw new Error('Consent revoked');
+          return { code: 'oauth-code-' + authorizeCalls.length };
+        },
+        authenticate: async args => {
+          authenticateCalls.push(args);
+          return true;
+        },
+      },
+    },
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        token: 'jwt-' + authorizeCalls.length,
+        accessToken: 'discord-access-' + authorizeCalls.length,
+        expiresAt: Date.now() + 3600_000,
+      }),
+    }),
+  });
+  t.after(mounted.restore);
+
+  await mounted.api.activityIdentity();
+  assert.deepEqual(authorizeCalls[0].scope, ['identify']);
+  assert.equal(authorizeCalls[0].prompt, 'none');
+  assert.equal(mounted.api.hasRichPresenceScope(), false);
+
+  // Declining incremental RPC consent returns false and keeps existing viewing sign-in intact.
+  denyRpc = true;
+  assert.equal(await mounted.api.requestRichPresenceScope(), false);
+  assert.equal(mounted.view.token, 'initial-token');
+  assert.equal(mounted.api.hasRichPresenceScope(), false);
+  assert.equal('prompt' in authorizeCalls[1], false);
+  assert.deepEqual(authorizeCalls[1].scope, ['identify', 'rpc.activities.write']);
+
+  // Granting incremental consent authenticates SDK and preserves both scopes across renewals,
+  // falling back to ['identify'] if RPC consent is later revoked.
+  denyRpc = false;
+  assert.equal(await mounted.api.requestRichPresenceScope(), true);
+  assert.equal(mounted.api.hasRichPresenceScope(), true);
+  assert.equal(authenticateCalls.at(-1).access_token, 'discord-access-3');
+
+  mounted.view.identityRenewAt = 0;
+  mounted.view.identityExpiresAt = Date.now() + 60_000;
+  rejectRpcRenewal = true;
+  await mounted.api.renewIdentity();
+  assert.equal(mounted.api.hasRichPresenceScope(), false);
+  assert.deepEqual(authorizeCalls.at(-1).scope, ['identify']);
+  assert.equal(authorizeCalls.at(-1).prompt, 'none');
+});
+
+test('Discord Rich Presence UI switch stays hidden outside Activity or when server-disabled and reverts cleanly on scope denial', async t => {
+  const { mountModule, element } = require('./helpers/watch-module');
+  const preferences = require('../web/watch/preferences.js');
+  const tracksMenu = require('../web/watch/tracks-menu.js');
+  const prevResizeObserver = globalThis.ResizeObserver;
+  const prevMutationObserver = globalThis.MutationObserver;
+  const prevMatchMedia = globalThis.matchMedia;
+  globalThis.ResizeObserver = class {
+    observe() {}
+    disconnect() {}
+  };
+  globalThis.MutationObserver = class {
+    observe() {}
+    disconnect() {}
+  };
+  globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  t.after(() => {
+    if (prevResizeObserver === undefined) delete globalThis.ResizeObserver;
+    else globalThis.ResizeObserver = prevResizeObserver;
+    if (prevMutationObserver === undefined) delete globalThis.MutationObserver;
+    else globalThis.MutationObserver = prevMutationObserver;
+    if (prevMatchMedia === undefined) delete globalThis.matchMedia;
+    else globalThis.matchMedia = prevMatchMedia;
+  });
+
+  const docOverrides = () => {
+    const byId = new Map();
+    return {
+      getElementById: id => {
+        if (id.endsWith('-group')) return null;
+        if (!byId.has(id)) {
+          const el = element();
+          el.options = [];
+          el.isConnected = false;
+          if (id === 'player-mute') el.closest = () => element('div');
+          byId.set(id, el);
+        }
+        return byId.get(id);
+      },
+    };
+  };
+
+  const fakeVideo = () => {
+    const v = element('video');
+    v.parentElement = element('div');
+    v.textTracks = { length: 0, addEventListener() {} };
+    v.addTextTrack = () => ({ mode: 'hidden', cues: [], addCue() {}, removeCue() {} });
+    return v;
+  };
+
+  const storageData = new Map();
+  const fakeStorage = {
+    getItem: key => (storageData.has(key) ? storageData.get(key) : null),
+    setItem: (key, val) => storageData.set(key, val),
+  };
+
+  // Non-Activity browser hides the Rich Presence switch even if server allows it.
+  const browserPref = mountModule(preferences, {
+    activity: false,
+    document: docOverrides(),
+    localStorage: fakeStorage,
+    subtitleLayout: () => {},
+  });
+  assert.equal(browserPref.view.playerPreferences.discordRichPresence, false);
+  const browserTracks = mountModule(tracksMenu, {
+    activity: false,
+    document: docOverrides(),
+    video: fakeVideo(),
+    config: { discordRichPresence: true },
+    playerPreferences: browserPref.view.playerPreferences,
+  });
+  assert.equal(browserTracks.view.document.getElementById('discord-rich-presence-settings').hidden, true);
+  browserTracks.restore();
+  browserPref.restore();
+
+  // Server-disabled discordRichPresence hides the switch even inside Discord Activity.
+  const disabledTracks = mountModule(tracksMenu, {
+    activity: true,
+    document: docOverrides(),
+    video: fakeVideo(),
+    config: { discordRichPresence: false },
+    playerPreferences: { discordRichPresence: false },
+  });
+  assert.equal(disabledTracks.view.document.getElementById('discord-rich-presence-settings').hidden, true);
+  disabledTracks.restore();
+
+  // Inside Discord Activity when server allows: defaults off, reverts on consent denial, persists on grant.
+  let allowGrant = false;
+  const enabledCalls = [];
+  const pref = mountModule(preferences, {
+    activity: true,
+    document: docOverrides(),
+    localStorage: fakeStorage,
+    subtitleLayout: () => {},
+  });
+  t.after(pref.restore);
+  const tracks = mountModule(tracksMenu, {
+    activity: true,
+    document: docOverrides(),
+    video: fakeVideo(),
+    config: { discordRichPresence: true },
+    playerPreferences: pref.view.playerPreferences,
+    savePlayerPreferences: pref.api.savePlayerPreferences,
+    requestRichPresenceScope: async () => allowGrant,
+    setRichPresenceEnabled: async value => enabledCalls.push(value),
+  });
+  t.after(tracks.restore);
+
+  const rpSettings = tracks.view.document.getElementById('discord-rich-presence-settings');
+  const rpInput = tracks.view.document.getElementById('discord-rich-presence');
+  assert.equal(rpSettings.hidden, false);
+  assert.equal(rpInput.checked, false);
+
+  rpInput.checked = true;
+  await rpInput.listeners.change();
+  assert.equal(rpInput.checked, false);
+  assert.equal(pref.view.playerPreferences.discordRichPresence, false);
+  assert.deepEqual(enabledCalls, [false]);
+
+  allowGrant = true;
+  rpInput.checked = true;
+  await rpInput.listeners.change();
+  assert.equal(rpInput.checked, true);
+  assert.equal(pref.view.playerPreferences.discordRichPresence, true);
+  assert.equal(JSON.parse(storageData.get('uburoom.player')).discordRichPresence, true);
+  assert.deepEqual(enabledCalls, [false, true]);
+});

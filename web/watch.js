@@ -221,6 +221,9 @@ const roomUI = uburoomRoomUI.mount({
   getMe: () => store.identity.me,
   execute: (...args) => deps.execute(...args),
   share: (invite, name, id) => roomShare.open(id || store.room.selected),
+  onAskHumanCheck: () => deps.askHumanCheck(),
+  onClearHumanCheck: checkId => deps.clearHumanCheck(checkId),
+  onReplyHumanCheck: (status, checkId) => deps.replyHumanCheck(status, checkId),
   join: async id => {
     await deps.selectRoom(id);
     if (!store.room.state) throw new Error('Room unavailable');
@@ -265,6 +268,14 @@ const queueUI = uburoomQueueUI.mount($('queue-content'), {
     return library?.openItem(item);
   },
   artwork: fetchArtwork,
+  onSuggest: item => deps.execute({ action: 'queue.suggest', args: { item: { id: String(item.mediaId || item.id) } } }),
+  onAcceptSuggestion: async suggestionId => {
+    const result = await deps.execute({ action: 'queue.suggestion.accept', args: { suggestionId } });
+    await queueUI.fetchData(true);
+    return result;
+  },
+  onDismissSuggestion: suggestionId => deps.execute({ action: 'queue.suggestion.dismiss', args: { suggestionId } }),
+  onWithdrawSuggestion: suggestionId => deps.execute({ action: 'queue.suggestion.withdraw', args: { suggestionId } }),
   changed: async () => {
     if (store.room.selected) await deps.refreshState();
   },
@@ -281,6 +292,10 @@ const library = uburoomLibrary.mount($('library-content'), {
   addToQueue: async (item, trigger) => {
     if (!store.room.selected || !store.room.state?.durable) return;
     await queueUI.add(item, trigger);
+  },
+  suggestMedia: (item, trigger) => {
+    if (!store.room.selected || !store.room.state?.durable) return;
+    return queueUI.suggest(item, trigger);
   },
   addBulkToQueue: (item, trigger) => queueUI.bulk(item, trigger),
   autoQueue: source => queueUI.openAuto(source),

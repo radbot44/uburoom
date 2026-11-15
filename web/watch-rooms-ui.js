@@ -10,6 +10,7 @@ const labels = {
   seek: 'Seek',
   chooseMedia: 'Skip / replay',
   addQueue: 'Add to queue',
+  suggestMedia: 'Suggest media',
   editQueue: 'Edit queue',
   autoplay: 'Manage auto-play',
   roomSettings: 'Room settings',
@@ -24,6 +25,7 @@ const descriptions = {
   seek: 'Change the playback position for everyone.',
   chooseMedia: 'Skip to another video in the queue or replay a video from history.',
   addQueue: 'Add videos to the room queue.',
+  suggestMedia: 'Suggest videos for a host or queue editor to add.',
   editQueue: 'Reorder or remove queued videos.',
   autoplay: 'Change automatic playback and queue generation.',
   roomSettings: 'Edit the room’s name, visibility and capacity.',
@@ -41,8 +43,9 @@ function presetPolicy(name) {
     viewer: Object.fromEntries(
       Object.keys(labels).map(key => [
         key,
-        (name === 'play-pause' && key === 'playPause') ||
-          (name === 'queue' && ['playPause', 'seek', 'chooseMedia', 'addQueue', 'editQueue', 'autoplay'].includes(key)),
+        (name === 'play-pause' && ['playPause', 'suggestMedia'].includes(key)) ||
+          (name === 'queue' &&
+            ['playPause', 'seek', 'chooseMedia', 'addQueue', 'suggestMedia', 'editQueue', 'autoplay'].includes(key)),
       ]),
     ),
     allHosts: false,
@@ -81,6 +84,9 @@ function mount({
   draftChanged,
   execute,
   share,
+  onAskHumanCheck,
+  onClearHumanCheck,
+  onReplyHumanCheck,
 }) {
   const $ = id => document.getElementById(id),
     dialog = $('room-settings-dialog');
@@ -398,9 +404,17 @@ function mount({
     return control;
   }
   let rosterBusy = false,
+    humanCheckBusy = false,
     rosterRoom;
   const expand = $('room-participants-expand'),
     rosterFrame = $('room-roster-frame');
+  const humanCheckContainer = $('room-human-check') || document.createElement('div');
+  if (!humanCheckContainer.parentElement) {
+    humanCheckContainer.id = 'room-human-check';
+    $('room-participants').before(humanCheckContainer);
+  }
+  humanCheckContainer.className = 'room-human-check';
+  humanCheckContainer.hidden = true;
   controls.content(expand, { icon: 'chevron', label: 'Expand viewers', iconOnly: true });
   const settingsRoster = $('room-current-people'),
     settingsFrame = document.createElement('div');
@@ -530,6 +544,108 @@ function mount({
       }
     }
   }
+  function humanCheckSummary(check, participants) {
+    const admitted = (participants || []).filter(person => person.present && !person.pending);
+    const answers = check?.answers && typeof check.answers === 'object' ? check.answers : {};
+    let readyCount = 0;
+    let holdCount = 0;
+    for (const person of admitted) {
+      if (answers[person.id] === 'ready') readyCount += 1;
+      else if (answers[person.id] === 'hold') holdCount += 1;
+    }
+    return { admitted, answers, readyCount, holdCount };
+  }
+  function humanCheckStatusBadge(doc, status) {
+    const badge = doc.createElement('span');
+    badge.className = 'room-check-status';
+    badge.dataset.checkStatus = status;
+    if (status === 'ready') {
+      const glyph = uburoomIcons.icon(doc, 'check');
+      glyph.setAttribute('aria-hidden', 'true');
+      badge.append(glyph, 'Ready');
+    } else if (status === 'hold') {
+      const glyph = uburoomIcons.icon(doc, 'clock');
+      glyph.setAttribute('aria-hidden', 'true');
+      badge.append(glyph, 'Need a moment');
+    } else {
+      badge.textContent = 'Waiting';
+    }
+    return badge;
+  }
+  async function runHumanCheckAction(action) {
+    if (humanCheckBusy || typeof action !== 'function') return;
+    humanCheckBusy = true;
+    renderHumanCheckBar();
+    renderLivePeople();
+    try {
+      await action();
+    } finally {
+      humanCheckBusy = false;
+      renderHumanCheckBar();
+      renderLivePeople();
+    }
+  }
+  function renderHumanCheckBar() {
+    const state = getState();
+    const check = state?.humanCheck || null;
+    const canCheck = !!state?.canCheck;
+    if (!state || (!check && !canCheck)) {
+      humanCheckContainer.dataset.signature = '';
+      humanCheckContainer.hidden = true;
+      humanCheckContainer.replaceChildren();
+      return;
+    }
+    const { admitted, readyCount, holdCount } = humanCheckSummary(check, state.participants);
+    const signature = JSON.stringify([
+      !!check,
+      check?.id || null,
+      check?.askedByName || null,
+      readyCount,
+      holdCount,
+      admitted.length,
+      canCheck,
+      humanCheckBusy,
+    ]);
+    if (humanCheckContainer.dataset.signature === signature) return;
+    humanCheckContainer.dataset.signature = signature;
+    const focusId = humanCheckContainer.contains(document.activeElement) ? document.activeElement.id : undefined;
+    humanCheckContainer.hidden = false;
+    humanCheckContainer.replaceChildren();
+    const bar = node(
+      'div',
+      humanCheckContainer,
+      undefined,
+      check ? 'room-human-check-row is-active' : 'room-human-check-row',
+    );
+    if (!check) {
+      const askButton = controls.button(document, {
+        label: 'Ready check',
+        icon: 'help',
+        disabled: humanCheckBusy || !admitted.length,
+        action: () => void runHumanCheckAction(() => onAskHumanCheck?.()),
+      });
+      askButton.id = 'room-human-check-ask';
+      askButton.classList.remove('watch-control-responsive');
+      bar.append(askButton);
+    } else {
+      const summaryText =
+        readyCount + ' of ' + admitted.length + ' ready' + (holdCount ? ' · ' + holdCount + ' need a moment' : '');
+      const summary = node('span', bar, summaryText, 'room-human-check-summary');
+      if (check.askedByName) summary.title = 'Started by ' + check.askedByName;
+      if (canCheck) {
+        const clearButton = controls.button(document, {
+          label: 'Clear ready check',
+          disabled: humanCheckBusy,
+          action: () => void runHumanCheckAction(() => onClearHumanCheck?.(check.id)),
+        });
+        clearButton.id = 'room-human-check-clear';
+        const label = clearButton.querySelector('.watch-control-label');
+        if (label) label.textContent = 'Clear';
+        bar.append(clearButton);
+      }
+    }
+    if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
+  }
   function renderPeople(roster, people, value, inSettings = false) {
     const self = value.actorId || getMe()?.account?.id,
       caps = value.capabilities || {};
@@ -571,7 +687,17 @@ function mount({
           : null,
       ];
     });
-    const signature = JSON.stringify([peopleView, self, caps, rosterBusy, inSettings && busy, canKickHosts]);
+    const humanCheck = !inSettings ? value.humanCheck || null : null;
+    const checkAnswers = humanCheck?.answers && typeof humanCheck.answers === 'object' ? humanCheck.answers : null;
+    const signature = JSON.stringify([
+      peopleView,
+      self,
+      caps,
+      rosterBusy,
+      inSettings && busy,
+      canKickHosts,
+      humanCheck ? [humanCheck.id, checkAnswers, humanCheckBusy] : null,
+    ]);
     if (roster.dataset.signature === signature) return;
     roster.dataset.signature = signature;
     const focusId = roster.contains(document.activeElement) ? document.activeElement.id : undefined;
@@ -579,6 +705,7 @@ function mount({
     roster.classList.add('room-roster');
     roster.classList.toggle('can-host', canHost);
     roster.classList.toggle('can-kick', canKick);
+    roster.classList.toggle('has-human-check', !!humanCheck);
     for (const person of sortPeople(people, self)) {
       const row = node('div', roster, undefined, 'room-person');
       row.dataset.personId = person.id;
@@ -710,6 +837,37 @@ function mount({
         action.id = (inSettings ? 'room-settings-kick-' : 'room-kick-') + person.id;
         cell.append(action);
       }
+      if (humanCheck && person.present && !person.pending) {
+        row.classList.add('has-check');
+        const answer = checkAnswers?.[person.id];
+        const checkStatus = answer === 'ready' || answer === 'hold' ? answer : 'pending';
+        const checkRow = node('div', row, undefined, 'room-check-row');
+        if (person.id === self) {
+          row.classList.add('is-self-check');
+          const replyGroup = node('div', checkRow, undefined, 'room-check-reply');
+          replyGroup.setAttribute('role', 'group');
+          replyGroup.setAttribute('aria-label', 'Your readiness');
+          for (const choice of [
+            { status: 'ready', label: 'Ready', icon: 'check', id: 'room-check-reply-ready' },
+            { status: 'hold', label: 'Need a moment', icon: 'clock', id: 'room-check-reply-hold' },
+          ]) {
+            const replyButton = controls.button(document, {
+              label: choice.label,
+              icon: choice.icon,
+              disabled: humanCheckBusy,
+              action: () => void runHumanCheckAction(() => onReplyHumanCheck?.(choice.status, humanCheck.id)),
+            });
+            replyButton.id = choice.id;
+            replyButton.classList.remove('watch-control-responsive');
+            replyButton.classList.add('room-check-choice');
+            replyButton.dataset.checkChoice = choice.status;
+            replyButton.setAttribute('aria-pressed', checkStatus === choice.status ? 'true' : 'false');
+            replyGroup.append(replyButton);
+          }
+        } else {
+          checkRow.append(humanCheckStatusBadge(document, checkStatus));
+        }
+      }
     }
     if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
   }
@@ -719,6 +877,7 @@ function mount({
       rosterRoom = state?.id;
       rosterFrame.classList.remove('expanded');
     }
+    renderHumanCheckBar();
     renderPeople($('room-participants'), state?.participants || [], state || {});
     renderSyncSpread(state?.syncSpread);
     updateRosterSize();
@@ -1209,7 +1368,7 @@ function mount({
     }
     for (const [group, keys] of Object.entries({
       Playback: ['playPause', 'seek', 'chooseMedia'],
-      Queue: ['addQueue', 'editQueue', 'autoplay'],
+      Queue: ['addQueue', 'suggestMedia', 'editQueue', 'autoplay'],
       'Room management': ['roomSettings', 'closeRoom', 'deleteRoom', 'addHosts', 'kickParticipants', 'allHosts'],
       Continuity: ['continueWithoutHost'],
     })) {

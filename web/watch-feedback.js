@@ -49,6 +49,9 @@ function badgeDetails(command, state = {}) {
       label = 'Next video';
       break;
     case 'media.quality.set':
+    case 'check.ask':
+    case 'check.reply':
+    case 'check.clear':
       return;
     case 'media.seek.start':
       symbol = 'start';

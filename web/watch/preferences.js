@@ -2,8 +2,78 @@ import * as uburoom from '../../shared/engine.mjs';
 import * as uburoomControls from '../watch-controls.js';
 import * as uburoomPlayback from '../playback-policy.js';
 import { subtitleRenderers } from '../subtitle-renderers.js';
+import { normalizeSubtitleOffset } from '../watch-subtitles.js';
 import { $ } from './page.js';
 import { store } from './store.js';
+
+const SUBTITLE_OFFSETS_KEY = 'uburoom.subtitleOffsets';
+const MAX_SUBTITLE_OFFSETS = 100;
+
+export function subtitleOffsetKey(mediaId, track) {
+  const trackId = typeof track === 'string' || typeof track === 'number' ? String(track) : track?.id;
+  if (!mediaId || !trackId || trackId === 'off' || trackId === 'auto') return '';
+  return String(mediaId) + ':' + String(trackId);
+}
+
+export function createSubtitleOffsetStore(
+  storage = typeof localStorage !== 'undefined' ? localStorage : undefined,
+  limit = MAX_SUBTITLE_OFFSETS,
+) {
+  function load() {
+    const map = new Map();
+    try {
+      const parsed = JSON.parse(storage?.getItem?.(SUBTITLE_OFFSETS_KEY) || 'null');
+      if (!Array.isArray(parsed)) return map;
+      for (const entry of parsed) {
+        if (!Array.isArray(entry) || entry.length < 2) continue;
+        const [key, raw] = entry;
+        if (typeof key !== 'string' || !key) continue;
+        const normalized = normalizeSubtitleOffset(raw, 0);
+        if (normalized === 0) continue;
+        map.delete(key);
+        map.set(key, normalized);
+      }
+      while (map.size > limit) map.delete(map.keys().next().value);
+    } catch {}
+    return map;
+  }
+  function persist(map) {
+    try {
+      storage?.setItem?.(SUBTITLE_OFFSETS_KEY, JSON.stringify([...map.entries()]));
+    } catch {}
+  }
+  return {
+    get(mediaId, track) {
+      const key = subtitleOffsetKey(mediaId, track);
+      if (!key) return 0;
+      const map = load();
+      if (!map.has(key)) return 0;
+      const value = map.get(key);
+      // Promote actively restored tracks in the LRU without rewriting when already newest.
+      if ([...map.keys()].at(-1) !== key) {
+        map.delete(key);
+        map.set(key, value);
+        persist(map);
+      }
+      return value;
+    },
+    set(mediaId, track, offset) {
+      const key = subtitleOffsetKey(mediaId, track);
+      if (!key) return 0;
+      const normalized = normalizeSubtitleOffset(offset, 0);
+      const map = load();
+      if (normalized === 0) {
+        if (map.delete(key)) persist(map);
+        return 0;
+      }
+      map.delete(key);
+      map.set(key, normalized);
+      while (map.size > limit) map.delete(map.keys().next().value);
+      persist(map);
+      return normalized;
+    },
+  };
+}
 
 /* Saved viewer preferences: volume, quality, subtitles and audio language, subtitle appearance, audio mode and the sync correction mode; what this tab says about itself when it joins. */
 export function mount(host, deps) {
@@ -19,6 +89,7 @@ export function mount(host, deps) {
     subtitleBrightness: 100,
     plexReporting: true,
     plexWatchState: false,
+    discordRichPresence: false,
     audioMode: 'normal',
   };
   try {
@@ -31,6 +102,8 @@ export function mount(host, deps) {
         store.preferences.playerPreferences.plexReporting = saved.plexReporting;
       if (typeof saved.plexWatchState === 'boolean')
         store.preferences.playerPreferences.plexWatchState = saved.plexWatchState;
+      if (typeof saved.discordRichPresence === 'boolean')
+        store.preferences.playerPreferences.discordRichPresence = saved.discordRichPresence;
       if (['normal', 'dialogue', 'night'].includes(saved.audioMode))
         store.preferences.playerPreferences.audioMode = saved.audioMode;
       if (uburoom.validQuality(saved.quality))
@@ -329,13 +402,22 @@ export function mount(host, deps) {
     savePlayerPreferences({ audioMode: next });
     applyAudioMode(next);
   });
+  const subtitleOffsets = createSubtitleOffsetStore();
+  function getSubtitleOffset(mediaId, track) {
+    return subtitleOffsets.get(mediaId, track);
+  }
+  function setSubtitleOffset(mediaId, track, offset) {
+    return subtitleOffsets.set(mediaId, track, offset);
+  }
   return {
     applySubtitleAppearance,
+    getSubtitleOffset,
     loadSyncPreference,
     rememberPlayerSubtitles,
     restorePlayerSubtitles,
     resumeAudioContext,
     savePlayerPreferences,
+    setSubtitleOffset,
     viewerPreferences,
   };
 }

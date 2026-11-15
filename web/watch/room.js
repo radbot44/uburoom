@@ -55,7 +55,9 @@ export function mount(host, deps) {
       );
     }
     deps.roomUI.render();
+    renderHumanCheckPrompt();
     deps.queueUI.render(store.room.state?.queueSummary);
+    deps.library?.refreshSuggestions?.();
     for (const id of ['options-panel', 'queue-panel', 'library-panel']) $(id).inert = !store.identity.me;
     $('options-panel').hidden = !store.identity.me && $('auth-overlay').hidden;
     if ($('watch-settings')) {
@@ -66,6 +68,7 @@ export function mount(host, deps) {
     $('admin-end-room').hidden = true;
     deps.updateSectionTabs();
     checkBufferingViewers();
+    if (!store.room.selected || !store.room.state) void deps.clearRichPresence?.();
   }
   function checkBufferingViewers() {
     if (!store.room.state?.mediaUrl || !store.room.state?.canPlayback) {
@@ -588,7 +591,82 @@ export function mount(host, deps) {
       }
     }
     store.player.observing = !!next.mediaUrl;
+    void deps.syncRichPresence?.();
     void store.player.sync.synchronize();
   }
-  return { applyState, renderVisibility, shareInvite, unavailableToasts };
+  function sendHumanCheck(action, args = {}) {
+    return deps.execute({ action, args }).catch(error => {
+      deps.fail(error.message);
+    });
+  }
+  function askHumanCheck() {
+    return sendHumanCheck('check.ask');
+  }
+  function clearHumanCheck(checkId = store.room.state?.humanCheck?.id) {
+    return sendHumanCheck('check.clear', checkId ? { checkId } : {});
+  }
+  function replyHumanCheck(status, checkId = store.room.state?.humanCheck?.id) {
+    return sendHumanCheck('check.reply', checkId ? { status, checkId } : { status });
+  }
+  function renderHumanCheckPrompt() {
+    const prompt = $('human-check-prompt');
+    if (!prompt) return;
+    const readyButton = $('human-check-ready');
+    const holdButton = $('human-check-hold');
+    const clearButton = $('human-check-clear');
+    if (!readyButton.firstElementChild) {
+      uburoomControls.content(readyButton, { icon: 'check', label: 'Ready' });
+      readyButton.classList.remove('watch-control-responsive');
+    }
+    if (!holdButton.firstElementChild) {
+      uburoomControls.content(holdButton, { icon: 'clock', label: 'Need a moment' });
+      holdButton.classList.remove('watch-control-responsive');
+    }
+    const state = store.room.state;
+    const check = state?.humanCheck || null;
+    if (!state || !check || $('stage').classList.contains('ending-active')) {
+      prompt.hidden = true;
+      return;
+    }
+    const selfId = state.actorId || store.identity.me?.account?.id || store.identity.me?.userId;
+    const participants = Array.isArray(state.participants) ? state.participants : [];
+    const admitted = participants.filter(person => person.present && !person.pending);
+    const answers = check.answers && typeof check.answers === 'object' ? check.answers : {};
+    let readyCount = 0;
+    let holdCount = 0;
+    for (const person of admitted) {
+      if (answers[person.id] === 'ready') readyCount += 1;
+      else if (answers[person.id] === 'hold') holdCount += 1;
+    }
+    const selfAdmitted = admitted.some(person => person.id === selfId);
+    const myAnswer = selfId ? answers[selfId] : undefined;
+    const busy = !!store.room.pending;
+    $('human-check-prompt-title').textContent = check.askedByName
+      ? check.askedByName + ': Ready to play?'
+      : 'Ready to play?';
+    $('human-check-prompt-meta').textContent =
+      readyCount + ' of ' + admitted.length + ' ready' + (holdCount ? ' · ' + holdCount + ' need a moment' : '');
+    readyButton.hidden = !selfAdmitted;
+    holdButton.hidden = !selfAdmitted;
+    readyButton.disabled = busy;
+    holdButton.disabled = busy;
+    readyButton.setAttribute('aria-pressed', myAnswer === 'ready' ? 'true' : 'false');
+    holdButton.setAttribute('aria-pressed', myAnswer === 'hold' ? 'true' : 'false');
+    clearButton.hidden = !state.canCheck;
+    clearButton.disabled = busy;
+    prompt.hidden = false;
+  }
+  $('human-check-ready')?.addEventListener('click', () => void replyHumanCheck('ready'));
+  $('human-check-hold')?.addEventListener('click', () => void replyHumanCheck('hold'));
+  $('human-check-clear')?.addEventListener('click', () => void clearHumanCheck());
+  return {
+    applyState,
+    askHumanCheck,
+    clearHumanCheck,
+    renderHumanCheckPrompt,
+    renderVisibility,
+    replyHumanCheck,
+    shareInvite,
+    unavailableToasts,
+  };
 }

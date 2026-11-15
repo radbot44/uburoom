@@ -12,6 +12,7 @@ const { FallbackStream } = require('../fallback-stream');
 const { runOperation, waitFor, createDeadline } = require('../operation');
 const { isProviderOutage } = require('../resilience');
 const { clearPlaybackEnd } = require('../playback-end');
+const { RoomAuthority } = require('../../shared/sync');
 const Engine = require('../../shared/engine.mjs');
 
 /**
@@ -68,6 +69,7 @@ module.exports = {
     room.fallbackStream = undefined;
     this.cancelAutoplay(room);
     clearPlaybackEnd(room);
+    RoomAuthority.clearHumanCheck(room);
     room.disconnectedViewers.clear();
     for (const viewer of room.viewers.values()) {
       viewer.preparing?.abort();

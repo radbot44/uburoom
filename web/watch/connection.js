@@ -4,6 +4,8 @@ import { store } from './store.js';
 
 /* HTTP and room-connection requests (api, call, roomLink) with failure diagnostics, and renewal of the viewing sign-in. */
 export function mount(host, deps) {
+  let richPresenceAuthorized = false;
+  let richPresenceRequest;
   // Records a failed request for the diagnostics export, then rethrows it.
   async function tracked(kind, work) {
     const started = deps.time.mono(),
@@ -111,7 +113,10 @@ export function mount(host, deps) {
         return { ...uburoomWire.mergeView(joined.room.state, joined.viewer.state), timing: joined.timing };
       });
     },
-    leave: (id, options) => tracked('other', () => connected().leave(id, store.identity.viewerId, options)),
+    leave: (id, options) => {
+      if (id && id === store.room.selected) deps.clearRichPresence?.();
+      return tracked('other', () => connected().leave(id, store.identity.viewerId, options));
+    },
     command: (id, envelope, options) => tracked('command', () => connected().command(id, envelope, options)),
     ready: (id, report) => tracked('ready', () => connected().reportReady(id, store.identity.viewerId, report)),
     observe: (id, observation) =>
@@ -149,18 +154,50 @@ export function mount(host, deps) {
     deps.diagnostics.record('identity-renewed', { identity: store.identity.identityGeneration });
     store.connection.transport?.reauthenticate();
   }
-  async function activityIdentity() {
-    const { code } = await store.connection.sdk.commands.authorize({
+  async function activityIdentity(options = {}) {
+    const scope =
+      Array.isArray(options.scopes) && options.scopes.length
+        ? options.scopes
+        : richPresenceAuthorized
+          ? ['identify', 'rpc.activities.write']
+          : ['identify'];
+    const authorizeArgs = {
       client_id: store.identity.config.clientId,
       response_type: 'code',
       state: crypto.randomUUID(),
-      prompt: 'none',
-      scope: ['identify'],
-    });
+      scope,
+    };
+    if (options.prompt !== null) authorizeArgs.prompt = options.prompt ?? 'none';
+    const { code } = await store.connection.sdk.commands.authorize(authorizeArgs);
     const auth = await api('/api/watch/activity-login', { code });
     if (!(await store.connection.sdk.commands.authenticate({ access_token: auth.accessToken })))
       throw new Error('Discord Activity authentication failed');
+    if (scope.includes('rpc.activities.write')) richPresenceAuthorized = true;
     return auth;
+  }
+  async function requestRichPresenceScope() {
+    if (!deps.activity || !store.connection.sdk || !store.identity.config?.clientId) return false;
+    if (store.identity.config.discordRichPresence === false) return false;
+    if (richPresenceAuthorized) return true;
+    if (richPresenceRequest) return richPresenceRequest;
+    richPresenceRequest = (async () => {
+      try {
+        const auth = await activityIdentity({
+          scopes: ['identify', 'rpc.activities.write'],
+          prompt: null,
+        });
+        acceptIdentity(auth);
+        return true;
+      } catch (error) {
+        deps.diagnostics.record('rich-presence-scope-denied', {
+          message: error?.message || 'Discord Rich Presence authorization declined',
+        });
+        return false;
+      } finally {
+        richPresenceRequest = undefined;
+      }
+    })();
+    return richPresenceRequest;
   }
   async function renewIdentity() {
     if (!store.identity.token || deps.time.wall() < store.identity.identityRenewAt) return;
@@ -174,7 +211,11 @@ export function mount(host, deps) {
       const auth =
         store.identity.config.demo && ['host', 'guest', 'guest2'].includes(deps.params.get('demo'))
           ? await api('/api/watch/demo-login', { persona: deps.params.get('demo'), activity: deps.activity })
-          : await activityIdentity();
+          : await activityIdentity().catch(error => {
+              if (!richPresenceAuthorized) throw error;
+              richPresenceAuthorized = false;
+              return activityIdentity({ scopes: ['identify'], prompt: 'none' });
+            });
       acceptIdentity(auth);
     })()
       .catch(error => {
@@ -187,5 +228,17 @@ export function mount(host, deps) {
       });
     return store.identity.identityRenewal;
   }
-  return { acceptIdentity, activityIdentity, api, call, connected, receiveLane, renewIdentity, roomLink, tracked };
+  return {
+    acceptIdentity,
+    activityIdentity,
+    api,
+    call,
+    connected,
+    hasRichPresenceScope: () => richPresenceAuthorized,
+    receiveLane,
+    renewIdentity,
+    requestRichPresenceScope,
+    roomLink,
+    tracked,
+  };
 }

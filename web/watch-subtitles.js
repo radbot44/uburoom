@@ -494,12 +494,28 @@ function appendCueText(parent, text) {
       );
   }
 }
+const SUBTITLE_OFFSET_MIN = -30;
+const SUBTITLE_OFFSET_MAX = 30;
+function normalizeSubtitleOffset(value, fallback = 0) {
+  if (value === '' || value === null || value === undefined) return fallback;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const clamped = Math.max(SUBTITLE_OFFSET_MIN, Math.min(SUBTITLE_OFFSET_MAX, numeric));
+  const rounded = Math.round(clamped * 10) / 10;
+  return rounded === 0 ? 0 : rounded;
+}
+function formatSubtitleOffset(value) {
+  const normalized = normalizeSubtitleOffset(value, 0);
+  return (normalized > 0 ? '+' : normalized < 0 ? '−' : '') + Math.abs(normalized).toFixed(1) + ' s';
+}
 class uburoomSubtitles {
   constructor(video, status, resolveMediaTime) {
     this.video = video;
     this.status = status;
     this.resolveMediaTime = resolveMediaTime;
     this.cues = [];
+    this.offset = 0;
+    this.serverOffset = 0;
     this.generation = 0;
     this.key = '';
     this.track = video.addTextTrack('subtitles', 'uburoom subtitles');
@@ -591,6 +607,17 @@ class uburoomSubtitles {
     this.track.mode = 'disabled';
     this.status({ message: '', error: false, loading: false });
   }
+  setOffset(value) {
+    const next = normalizeSubtitleOffset(value, this.offset || 0);
+    if (this.offset === next) return next;
+    this.offset = next;
+    this.rebuild();
+    this.renderer?.offset(next);
+    this.windowScheduler?.check(this.mediaTime() - next);
+    this.textWindows?.check(this.mediaTime() - next);
+    this.syncStatus();
+    return next;
+  }
   update(state) {
     const key = state.subtitleUrl?.replace(/^\/api\/watch\/media\/[a-f0-9]+\//, '') || '';
     if (key !== this.key) {
@@ -598,13 +625,13 @@ class uburoomSubtitles {
       this.key = key;
     }
     this.url = state.subtitleUrl;
-    const offset = state.tracks?.subtitleOffset || 0;
-    if (this.offset !== offset) {
-      this.offset = offset;
-      this.rebuild();
-      this.renderer?.offset(offset);
-      this.windowScheduler?.check(this.mediaTime() - offset);
-      this.textWindows?.check(this.mediaTime() - offset);
+    const serverOffset = state.tracks?.subtitleOffset;
+    if (serverOffset !== undefined) {
+      const normalizedServer = normalizeSubtitleOffset(serverOffset, this.serverOffset);
+      if (normalizedServer !== this.serverOffset) {
+        this.serverOffset = normalizedServer;
+        this.setOffset(normalizedServer);
+      }
     }
     if (!this.url) {
       this.status({ message: state.tracks?.subtitleError || '', error: !!state.tracks?.subtitleError, loading: false });
@@ -617,6 +644,7 @@ class uburoomSubtitles {
   rebuild() {
     this.clearCues();
     for (const item of this.cues) this.addCue(item);
+    this.paint();
   }
   addCue(item) {
     const start = Math.max(0, item.start + (this.offset || 0)),
@@ -965,4 +993,12 @@ class uburoomSubtitles {
     this.reset();
   }
 }
-export { uburoomSubtitleWindows, uburoomSubtitles, pgsWindowBytes };
+export {
+  SUBTITLE_OFFSET_MAX,
+  SUBTITLE_OFFSET_MIN,
+  formatSubtitleOffset,
+  normalizeSubtitleOffset,
+  pgsWindowBytes,
+  uburoomSubtitleWindows,
+  uburoomSubtitles,
+};

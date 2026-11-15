@@ -9,6 +9,8 @@ const DEFAULTS = Object.freeze({
   recoverySeconds: 60,
   maxQueue: 50,
   maxHistory: 150,
+  maxSuggestions: 25,
+  maxSuggestionsPerViewer: 3,
 });
 const SETTINGS = Object.freeze({
   max_saved: 'maxSaved',

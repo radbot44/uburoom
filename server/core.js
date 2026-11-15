@@ -213,6 +213,9 @@ class Hub {
     if (!isHost(room, actor) && !admin && !watching(room, actor, this.clock.now())) return NO_ROOM;
     if (command.host) return this.authorize(actor, room, 'room.host').ok ? ALLOW : NO_PERMISSION;
     const can = capability => this.authorize(actor, room, capability).ok;
+    if (action === 'check.reply') return ALLOW;
+    if (action === 'check.ask' || action === 'check.clear')
+      return can('room.host') || can('playPause') ? ALLOW : NO_PERMISSION;
     if (
       !command.capability ||
       !(can(command.capability) || (command.idle && this.watchIdle(room.roomId) && can(command.idle))) ||
@@ -337,6 +340,15 @@ class Hub {
           httpStatus: error.status || 503,
         };
       }
+    }
+    if (declared.liveOnly && !this.rooms.has(input.roomId)) {
+      return {
+        status: 'unavailable',
+        message: command.action.startsWith('queue.suggest')
+          ? 'Suggestions require an open room.'
+          : 'Open a room first.',
+        httpStatus: 409,
+      };
     }
     if (command.action.startsWith('queue.') && !this.rooms.has(input.roomId)) {
       const acceptedAt = this.clock.now();

@@ -839,6 +839,18 @@ async function checkProviderConnectivity(config) {
     }
   }
 
+  checks.push({
+    category: 'Providers',
+    name: 'Discord Rich Presence',
+    status: 'pass',
+    message:
+      config.discordRichPresence === false
+        ? 'Disabled by configuration (discord.rich_presence: false).'
+        : config.clientId
+          ? 'Allowed for opted-in Discord Activity viewers.'
+          : 'Enabled in configuration (inactive until discord.client_id is configured).',
+  });
+
   return checks;
 }
 

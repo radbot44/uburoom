@@ -12,7 +12,7 @@ const { randomUUID } = require('node:crypto');
 const Engine = require('../../shared/engine.mjs');
 const RoomPolicy = require('../room-policy');
 const { clearPlaybackEnd } = require('../playback-end');
-const { applyReadinessDecision, applyTimelineCommand } = require('../../shared/sync');
+const { RoomAuthority, applyReadinessDecision, applyTimelineCommand } = require('../../shared/sync');
 const { expired, later } = require('./common');
 
 /**
@@ -251,12 +251,32 @@ module.exports = {
   /** Applies an admitted timeline or room command to the live room, inside its mailbox. */
   applyCommand(room, command, actor) {
     const { action, args } = command;
+    const now = this.clock.now();
+    if (action.startsWith('check.')) {
+      const outcome = RoomAuthority.applyHumanCheckCommand(room, command, actor, { now });
+      if (outcome.status !== 'applied') {
+        if (outcome.status === 'expired') this.review(room);
+        return {
+          status: outcome.status === 'expired' ? 'unavailable' : outcome.status,
+          message: outcome.message,
+        };
+      }
+      if (outcome.changed) {
+        room.revision++;
+        room.lastActivity = now;
+        this.review(room);
+      }
+      return {
+        status: 'applied',
+        changed: outcome.changed,
+        feedback: outcome.changed ? { action, args, sender: Engine.senderName(actor.name), at: now } : undefined,
+      };
+    }
     if (
       room.recovery &&
       (['media.pause', 'media.play', 'media.toggle'].includes(action) || action.startsWith('media.seek.'))
     )
       this.roomState.finishRecovery(room);
-    const now = this.clock.now();
     if (!applyTimelineCommand(room, command, { now, autoplayVersion: actor.watchAutoplayVersion })) {
       room.position = this.position(room, now);
       room.changedAt = now;
@@ -273,8 +293,8 @@ module.exports = {
    * table marks `persists`, acknowledges only after the room's save is confirmed.
    */
   async acknowledge(room, declared, reply) {
-    if (reply.status !== 'applied' || !reply.feedback) return reply;
-    room.feedback = { revision: room.revision, ...reply.feedback };
+    if (reply.status !== 'applied') return reply;
+    if (reply.feedback) room.feedback = { revision: room.revision, ...reply.feedback };
     if (declared.persists) await this.roomState.save(room);
     return { status: 'applied', message: 'Viewing room updated.', state: Engine.snapshot(room.state) };
   },

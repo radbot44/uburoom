@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2p
+# Config schema v2q
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -53,6 +53,7 @@ discord:
   guild_id: ''
   command_channel_ids: [] # e.g. ['123456789012345678']
   share_channel_id: '' # One text channel for explicit room publication; blank disables it.
+  rich_presence: true # Allow opted-in Discord Activity viewers to publish personal Rich Presence.
 
 storage:
   data_directory: 'data' # Persist this directory across container replacements.
@@ -134,13 +135,13 @@ rooms:
   max_history: 150 # Oldest history is removed first; 0 keeps no history.
 
   # Set initial room permissions.
-  # Leave blank for defaults: hosts all except deletion/addHosts; viewers only playPause.
+  # Leave blank for defaults: hosts all except deletion/addHosts; viewers playPause and suggestMedia.
   # [] or 'none' grants none; 'all' grants all eligible rights.
   # Creators have all perms; hosts inherit from viewers; viewers can't get management perms.
-  # Names: playPause, seek, chooseMedia, addQueue, editQueue, autoplay,
+  # Names: playPause, seek, chooseMedia, addQueue, suggestMedia, editQueue, autoplay,
   # roomSettings, closeRoom, deleteRoom, continueWithoutHost, addHosts, kickParticipants
-  host_permissions: [playPause, seek, chooseMedia, addQueue, editQueue, autoplay, roomSettings, closeRoom, continueWithoutHost, kickParticipants]
-  viewer_permissions: [playPause]
+  host_permissions: [playPause, seek, chooseMedia, addQueue, suggestMedia, editQueue, autoplay, roomSettings, closeRoom, continueWithoutHost, kickParticipants]
+  viewer_permissions: [playPause, suggestMedia]
 
   # Exact provider IDs / guild role IDs; admins can toggle Admin mode.
   # Admin mode grants full permissions in every room.
