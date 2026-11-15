@@ -16,6 +16,7 @@ const qualityId = id => ({ '720p': '720p4', '1080p': '1080p8' })[id] || id;
 // A media selector: "<item>" or "<item>:<version>", and a selector retains its explicit
 // version. The parts are opaque here; each provider checks its own form before using
 // them, and equality of items alone never establishes timeline identity.
+const ITEM = /^[A-Za-z0-9_-]{1,64}$/;
 function mediaIdentity(value) {
   if (value === 'demo') return { id: value, demo: true };
   const match = typeof value === 'string' && /^([A-Za-z0-9_-]{1,64})(?::([A-Za-z0-9_-]{1,64}))?$/.exec(value);
@@ -373,9 +374,9 @@ const COMMANDS = Object.freeze({
     args(a) {
       if (
         typeof a.mediaId !== 'string' ||
-        !/^\d{1,20}$/.test(a.mediaId) ||
+        !ITEM.test(a.mediaId) ||
         typeof a.showId !== 'string' ||
-        !/^\d{1,20}$/.test(a.showId)
+        !ITEM.test(a.showId)
       )
         throw new Error('Choose an offer item');
       return withServer({ mediaId: a.mediaId, showId: a.showId }, a);
@@ -391,7 +392,7 @@ const COMMANDS = Object.freeze({
       if (
         !['show', 'season'].includes(a.type) ||
         typeof a.mediaId !== 'string' ||
-        !/^\d{1,20}$/.test(a.mediaId) ||
+        !ITEM.test(a.mediaId) ||
         typeof a.unfinished !== 'boolean' ||
         typeof a.includeSpecials !== 'boolean'
       )
@@ -417,7 +418,7 @@ const COMMANDS = Object.freeze({
           !a.scope ||
           !['show', 'library', 'collection'].includes(a.scope.type) ||
           (a.mode === 'following' && a.scope.type !== 'show') ||
-          (a.scope.id !== undefined && (typeof a.scope.id !== 'string' || !/^\d{1,20}$/.test(a.scope.id)))
+          (a.scope.id !== undefined && (typeof a.scope.id !== 'string' || !ITEM.test(a.scope.id)))
         )
           throw new Error('Choose an auto-queue source');
         args.scope = withServer({ type: a.scope.type, ...(a.scope.id ? { id: a.scope.id } : {}) }, a.scope);

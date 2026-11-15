@@ -45,7 +45,8 @@ function validateSuggestionItem(item) {
   const title = textField(item.title, 200, 'title', true);
   const parentTitle = textField(item.parentTitle, 200, 'parent title');
   const grandparentTitle = textField(item.grandparentTitle, 200, 'series title');
-  const thumb = textField(item.thumb, 500, 'artwork path');
+  // 'none' records that the provider has no picture for this item.
+  const thumb = textField(item.thumb ?? (item.hasPoster === false ? 'none' : undefined), 500, 'artwork path');
   const duration = item.duration;
   if (typeof duration !== 'number' || !Number.isFinite(duration) || duration < 0.001 || duration > 1e9) {
     throw Object.assign(new Error('Invalid media duration'), { status: 400 });

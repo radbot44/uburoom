@@ -906,7 +906,11 @@ function mount(
       const actionRow = node('div', copy, undefined, 'library-detail-actions');
       if (addBulkToQueue && ['show', 'season'].includes(item.type)) bulkButton(actionRow, item);
       if (autoQueue && ['show', 'collection'].includes(item.type))
-        autoButton(actionRow, { type: item.type, id: item.id }, item.title);
+        autoButton(
+          actionRow,
+          { type: item.type, id: item.id, ...(item.serverId ? { serverId: item.serverId } : {}) },
+          item.title,
+        );
     }
     const body = node('div', copy, undefined, 'library-detail-body');
     if (item.summary) node('p', body, item.summary, 'library-summary');
@@ -1022,7 +1026,12 @@ function mount(
       screen.tab !== 'library' ||
       section?.mediaType !== 'movie' ||
       section.autoQueue === false;
-    if (!scopeActions.hidden) autoButton(scopeActions, { type: 'library', id: section.id }, section.title);
+    if (!scopeActions.hidden)
+      autoButton(
+        scopeActions,
+        { type: 'library', id: section.id, ...(section.serverId ? { serverId: section.serverId } : {}) },
+        section.title,
+      );
     tools.hidden = details || atHome;
     row.hidden = details || atHome;
     chips.hidden = details || atHome;

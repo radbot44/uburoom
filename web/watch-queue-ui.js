@@ -318,6 +318,7 @@ function mount(
         const result = await mutate('bulk', {
           type: item.type,
           mediaId: item.id,
+          ...(item.serverId ? { serverId: item.serverId } : {}),
           unfinished: bulkFilter.value === 'unfinished',
           includeSpecials: bulkSpecials.checked,
         });
@@ -835,7 +836,12 @@ function mount(
     try {
       if (!images.has(key)) {
         if (!imageRequests.has(key)) {
-          const params = new URLSearchParams({ item: img.dataset.item, kind: 'poster', type: img.dataset.type });
+          const params = new URLSearchParams({
+            item: img.dataset.item,
+            kind: 'poster',
+            type: img.dataset.type,
+            ...(img.dataset.server ? { server: img.dataset.server } : {}),
+          });
           imageRequests.set(
             key,
             artwork('/api/watch/library/art?' + params, signal).then(blob => {
@@ -871,12 +877,18 @@ function mount(
     if (!options.plain) node('div', parent, undefined, 'queue-row-backdrop').setAttribute('aria-hidden', 'true');
     const box = node('div', parent, undefined, options.plain ? 'queue-art queue-suggestions-art' : 'queue-art');
     box.append(uburoomIcons.icon(doc, item.type === 'episode' ? 'tv' : 'film'));
-    if (!artwork || !/^\d{1,20}$/.test(item.mediaId || item.id || '')) return;
+    if (
+      !artwork ||
+      item.thumb === 'none' ||
+      !/^[A-Za-z0-9_-]{1,64}(?::[A-Za-z0-9_-]{1,64})?$/.test(item.mediaId || item.id || '')
+    )
+      return;
     const img = node('img', box);
     img.alt = '';
     img.decoding = 'async';
     img.dataset.item = item.mediaId || item.id;
     img.dataset.type = item.type || 'movie';
+    if (item.serverId) img.dataset.server = item.serverId;
     const cached = images.get(img.dataset.item + ':' + img.dataset.type);
     if (cached) {
       img.src = cached;

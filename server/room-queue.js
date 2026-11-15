@@ -119,7 +119,7 @@ function validateAuto(config) {
       !['show', 'library', 'collection'].includes(selected.type) ||
       (config.mode === 'following' && selected.type !== 'show') ||
       typeof selected.id !== 'string' ||
-      !/^\d{1,20}$/.test(selected.id)
+      !/^[A-Za-z0-9_-]{1,64}$/.test(selected.id)
     )
       throw error('Invalid auto-queue scope');
     scope = {

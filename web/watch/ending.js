@@ -167,7 +167,12 @@ export function mount(host, deps) {
     const artItem = ending.next || ending.completed;
     const artMediaId = artItem?.mediaId;
     const artType = artItem?.type || 'movie';
-    const artKey = artMediaId && /^\d{1,20}$/.test(String(artMediaId)) ? artMediaId + ':' + artType : '';
+    const artKey =
+      artMediaId &&
+      artItem.thumb !== 'none' &&
+      /^[A-Za-z0-9_-]{1,64}(?::[A-Za-z0-9_-]{1,64})?$/.test(String(artMediaId))
+        ? artMediaId + ':' + artType
+        : '';
     const backdrop = $('ending-backdrop');
     if (backdrop && backdrop.dataset.artKey !== artKey) {
       backdrop.dataset.artKey = artKey;
@@ -180,7 +185,12 @@ export function mount(host, deps) {
         endingArtController?.abort();
         const controller = new AbortController();
         endingArtController = controller;
-        const params = new URLSearchParams({ item: String(artMediaId), kind: 'poster', type: artType });
+        const params = new URLSearchParams({
+          item: String(artMediaId),
+          kind: 'poster',
+          type: artType,
+          ...(artItem.serverId ? { server: artItem.serverId } : {}),
+        });
         deps
           .fetchArtwork('/api/watch/library/art?' + params, controller.signal)
           .then(blob => {
