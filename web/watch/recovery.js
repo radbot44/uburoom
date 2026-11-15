@@ -312,8 +312,8 @@ export function mount(host, deps) {
       store.stream.providerNoticeShown = true;
       deps.toasts.show('provider-problem', {
         type: 'error',
-        title: 'Plex connection problem',
-        hint: 'Playback should resume once Plex recovers.',
+        title: 'Media server connection problem',
+        hint: 'Playback should resume once the media server recovers.',
         symbol: 'refresh',
         persistent: true,
       });

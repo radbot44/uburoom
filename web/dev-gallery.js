@@ -295,7 +295,7 @@ import * as uburoomToasts from '/watch-toasts.js';
       { title: 'Switched to fallback to keep playing.', hint: 'Using default audio.', symbol: 'info-circle' },
     ],
     ['Loading', { title: 'Reconnecting…', symbol: 'loader-4', loading: true }],
-    ['Error', { type: 'error', title: 'Plex connection problem', symbol: 'alert-triangle' }],
+    ['Error', { type: 'error', title: 'Media server connection problem', symbol: 'alert-triangle' }],
     [
       'Two-line action',
       { title: 'Demo guest is buffering', symbol: 'alert-triangle', action: { label: 'Pause to wait', run: () => {} } },

@@ -172,7 +172,7 @@ Loading and catch-up show a delayed spinner over the subtitle button, without a 
 
 - **Buffering notice:** buffering never pauses healthy viewers. After a few seconds of a remote viewer's sustained buffering, people who may manage playback get a toast with Pause to wait, and later one with Resume playback when that viewer is ready. Dismissal suppresses repeats for that viewer until they recover.
 - **Degradation warnings:** the choppy playback toast with Lower quality fires once per episode and rearms only after healthy playback. Dismissal lasts for the viewing session and survives stream replacement, resetting on new media, room or exit.
-- **Outages:** a Plex outage stays silent while buffered playback covers it. If anyone is affected, everyone sees one shared "Plex connection problem" toast after a short delay, clearing once nobody is. Never say "room ended" for a server or provider outage.
+- **Outages:** a media server outage (Plex, Jellyfin or another provider) stays silent while buffered playback covers it. If anyone is affected, everyone sees one shared "Media server connection problem" toast after a short delay, clearing once nobody is. Never say "room ended" for a server or provider outage.
 
 ### Video check and diagnostics
 

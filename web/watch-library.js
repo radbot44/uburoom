@@ -1055,7 +1055,7 @@ function mount(
           ? 'Search collections'
           : 'Search this library';
     sort.replaceChildren();
-    if (screen.parent || screen.collection) option(sort, 'default', 'Plex order');
+    if (screen.parent || screen.collection) option(sort, 'default', 'Default order');
     option(sort, 'title', screen.sort === 'title' && screen.order === 'desc' ? 'Title Z–A' : 'Title A–Z');
     if (!collectionIndex) {
       option(sort, 'added', screen.sort === 'added' && screen.order === 'asc' ? 'Oldest added' : 'Recently added');
@@ -1076,7 +1076,7 @@ function mount(
         : screen.order === 'asc'
           ? 'Ascending: switch to descending'
           : 'Descending: switch to ascending';
-    if (direction.disabled) direction.title = 'Plex order cannot be reversed.';
+    if (direction.disabled) direction.title = 'Default order cannot be reversed.';
     direction.replaceChildren(uburoomIcons.icon(doc, screen.sort === 'random' ? 'refresh' : 'sort'));
     direction.dataset.order = screen.sort === 'random' ? '' : screen.order;
     genre.value = screen.genre;
