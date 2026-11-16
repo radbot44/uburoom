@@ -5,7 +5,14 @@ const { plexIdentity } = require('./identity');
 const { SharedTask } = require('../operation');
 
 /** Requested picture sizes (width, height); a backdrop is large enough to sit behind a details page. */
-const ART_SIZES = { poster: ['300', '450'], landscape: ['400', '225'], backdrop: ['1280', '720'] };
+const ART_SIZES = {
+  poster: ['300', '450'],
+  landscape: ['400', '225'],
+  backdrop: ['1280', '720'],
+  logo: ['800', '310'],
+};
+/** A title logo (Plex "clearLogo") of the item itself; only movies and shows are titled by one. */
+const LOGO = /^\/library\/metadata\/\d{1,20}\/clearLogo(\/\d+)?$/;
 
 // Catalog browsing: library, search, details, artwork, queue expansion and file
 // availability, with small short-lived caches. Playback decisions never use these caches.
@@ -577,6 +584,8 @@ class PlexCatalog {
       const query = new URLSearchParams({
         width: ART_SIZES[kind][0],
         height: ART_SIZES[kind][1],
+        // A logo keeps its transparency.
+        ...(kind === 'logo' ? { format: 'png' } : {}),
         minSize: '1',
         upscale: '0',
         url: resource,
@@ -616,10 +625,12 @@ class PlexCatalog {
       .flatMap(x => {
         const poster = thumb(x.type === 'episode' ? x.grandparentThumb || x.thumb : x.thumb),
           landscape = thumb(x.thumb || x.art),
-          backdrop = thumb(x.art || x.grandparentArt);
+          backdrop = thumb(x.art || x.grandparentArt),
+          logoPath = Array.isArray(x.Image) ? x.Image.find(image => image?.type === 'clearLogo')?.url : undefined,
+          logo = ['movie', 'show'].includes(x.type) && LOGO.test(logoPath) ? logoPath : undefined;
         const id = String(x.ratingKey);
         this.artSources.delete(id);
-        this.artSources.set(id, { poster, landscape, backdrop });
+        this.artSources.set(id, { poster, landscape, backdrop, logo });
         while (this.artSources.size > 1200) this.artSources.delete(this.artSources.keys().next().value);
         const viewOffsetSec = Number(x.viewOffset || 0) > 0 ? Math.round(Number(x.viewOffset) / 1000) : undefined;
         const durSec = Number(x.duration || 0) / 1000;
@@ -653,6 +664,7 @@ class PlexCatalog {
           hasPoster: !!poster,
           hasLandscape: !!landscape,
           hasBackdrop: !!backdrop,
+          hasLogo: !!logo,
           ...(['movie', 'episode'].includes(x.type) ? { summary: String(x.summary || '').slice(0, 500) } : {}),
           ...(hasValidProgress ? { viewOffset: viewOffsetSec } : {}),
         };

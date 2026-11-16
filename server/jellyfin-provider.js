@@ -66,7 +66,7 @@ class Jellyfin {
     // A server may live under a path, so resources resolve inside it, never beside it.
     this.base = settings.url ? new URL(settings.url.replace(/\/+$/, '') + '/') : undefined;
     this.device = 'uburoom-' + createHash('sha256').update(String(settings.url)).digest('hex').slice(0, 16);
-    /** @type {Map<string,{poster?: {id: string, type: string}, landscape?: {id: string, type: string}, backdrop?: {id: string, type: string}}>} */
+    /** @type {Map<string,{poster?: {id: string, type: string}, landscape?: {id: string, type: string}, backdrop?: {id: string, type: string}, logo?: {id: string, type: string}}>} */
     this.art = new Map();
     /** @type {Map<string,{at: number, ok: boolean}>} */
     this.seen = new Map();
@@ -234,9 +234,11 @@ class Jellyfin {
             ? { id: x.ParentBackdropItemId, type: 'Backdrop' }
             : undefined;
         const poster = type === 'episode' ? series || own : own,
-          landscape = type === 'episode' ? own || backdrop : backdrop || own;
+          landscape = type === 'episode' ? own || backdrop : backdrop || own,
+          // A title logo of the item itself; only movies and shows are titled by one.
+          logo = ['movie', 'show'].includes(type) && x.ImageTags?.Logo ? { id, type: 'Logo' } : undefined;
         this.art.delete(id);
-        this.art.set(id, { poster, landscape, backdrop });
+        this.art.set(id, { poster, landscape, backdrop, logo });
         while (this.art.size > 1200) this.art.delete(this.art.keys().next().value);
         this.remember(id, true);
         const playable = ['movie', 'episode'].includes(type);
@@ -269,6 +271,7 @@ class Jellyfin {
           hasPoster: !!poster,
           hasLandscape: !!landscape,
           hasBackdrop: !!backdrop,
+          hasLogo: !!logo,
           ...(playable ? { summary: text(x.Overview, 500) } : {}),
         };
       });
@@ -524,7 +527,7 @@ class Jellyfin {
     };
   }
   async artwork(id, kind = 'poster') {
-    const widths = { poster: 300, landscape: 400, backdrop: 1280 };
+    const widths = { poster: 300, landscape: 400, backdrop: 1280, logo: 800 };
     if (!Object.hasOwn(widths, kind)) throw failure('Invalid artwork', 400);
     const key = jellyfinIdentity(id).itemId;
     if (!this.art.has(key)) this.items([await this.one(key, 'Path')]);

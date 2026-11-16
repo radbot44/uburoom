@@ -770,6 +770,7 @@ function mount(
     if (img.src) box.classList.toggle('loaded', img.complete && img.naturalWidth > 0);
     else if (images.has(key)) img.src = images.get(key);
     else imageObserver.observe(img);
+    return img;
   }
   function art(parent, item, landscape = false) {
     const box = node('div', parent, undefined, 'library-art' + (landscape ? ' landscape' : ''));
@@ -1076,7 +1077,10 @@ function mount(
     const pictures = node('div', top, undefined, 'library-detail-art');
     art(pictures, item, episode);
     const copy = node('div', top, undefined, 'library-detail-copy');
-    node('h3', copy, item.title);
+    const heading = node('h3', copy);
+    // A movie or show with a title logo shows it in place of the text once it loads; the logo carries the title.
+    if (item.hasLogo) picture(node('span', heading, undefined, 'library-detail-logo'), item, 'logo').alt = item.title;
+    node('span', heading, item.title, 'library-detail-title');
     node('p', copy, metadata(item), 'library-meta');
     extras(copy, item, true);
     if (playable(item)) {

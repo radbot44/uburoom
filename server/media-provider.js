@@ -38,8 +38,8 @@
  *   Whether each item's file can be read now. An item the provider cannot answer for is left out.
  * @property {(scope: {type: string, id: string, includeSpecials?: boolean}) => Promise<CatalogItem[]>} queueItems
  *   Every playable item of a show, season, library or collection, in playing order.
- * @property {(id: string, kind?: 'poster'|'landscape'|'backdrop', type?: string) => Promise<{type: string, bytes: Buffer}>} artwork
- *   An item's picture, already bounded in size. A backdrop is the wide background art behind a details page.
+ * @property {(id: string, kind?: 'poster'|'landscape'|'backdrop'|'logo', type?: string) => Promise<{type: string, bytes: Buffer}>} artwork
+ *   An item's picture, already bounded in size. A backdrop is the wide background art behind a details page; a logo is the transparent title image a movie or show may have.
  * @property {(id: string) => Promise<boolean>} allows - Whether this scope may watch an item.
  * @property {(id: string, type?: string) => Promise<boolean>} visible - Whether this scope may see an item at all.
  * @property {(mediaId: string) => Promise<any>} [nextEpisodeOffer]
@@ -90,6 +90,7 @@
  * @property {boolean} [hasPoster]
  * @property {boolean} [hasLandscape]
  * @property {boolean} [hasBackdrop]
+ * @property {boolean} [hasLogo]
  * @property {string} [parentId] - The season an episode belongs to.
  * @property {string} [showId] - The show an episode or season belongs to.
  * @property {number} [index] - Episode or season number.

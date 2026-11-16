@@ -44,7 +44,7 @@ test('Jellyfin requests stay on the configured server, carry the key only as a h
   }
 });
 
-test('Jellyfin backdrops use the item or parent backdrop at backdrop size, and other kinds are refused first', async () => {
+test('Jellyfin backdrops and title logos use the right images at their sizes, and other kinds are refused first', async () => {
   const user = 'a'.repeat(32),
     movie = 'b'.repeat(32),
     show = 'c'.repeat(32),
@@ -66,18 +66,30 @@ test('Jellyfin backdrops use the item or parent backdrop at backdrop size, and o
     },
   );
   const [film, part] = jellyfin.items([
-    { Id: movie, Type: 'Movie', Name: 'Film', BackdropImageTags: ['x'], ImageTags: { Primary: 'p' } },
-    { Id: episode, Type: 'Episode', Name: 'Part', ParentBackdropImageTags: ['y'], ParentBackdropItemId: show },
+    { Id: movie, Type: 'Movie', Name: 'Film', BackdropImageTags: ['x'], ImageTags: { Primary: 'p', Logo: 'l' } },
+    {
+      Id: episode,
+      Type: 'Episode',
+      Name: 'Part',
+      ParentBackdropImageTags: ['y'],
+      ParentBackdropItemId: show,
+      ImageTags: { Logo: 'l' },
+    },
   ]);
   assert.equal(film.hasBackdrop, true);
   assert.equal(part.hasBackdrop, true);
+  assert.equal(film.hasLogo, true);
+  assert.equal(part.hasLogo, false, 'an episode page is titled by the episode, not a logo');
   await jellyfin.artwork(movie, 'backdrop');
   await jellyfin.artwork(episode, 'backdrop');
+  await jellyfin.artwork(movie, 'logo');
+  await assert.rejects(jellyfin.artwork(episode, 'logo'), /Artwork unavailable/);
   assert.deepEqual(images, [
     [`/Items/${movie}/Images/Backdrop`, '1280'],
     [`/Items/${show}/Images/Backdrop`, '1280'],
+    [`/Items/${movie}/Images/Logo`, '800'],
   ]);
   for (const kind of ['constructor', '__proto__', 'art'])
     await assert.rejects(jellyfin.artwork(movie, kind), /Invalid artwork/);
-  assert.equal(images.length, 2, 'a refused kind never reaches Jellyfin');
+  assert.equal(images.length, 3, 'a refused kind never reaches Jellyfin');
 });

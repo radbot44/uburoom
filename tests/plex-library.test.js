@@ -226,6 +226,40 @@ test('backdrops come only from the item or show background art, at backdrop size
   assert.equal(requested.length, 2);
 });
 
+test('title logos come only from a movie or show clearLogo path and keep their transparency', async t => {
+  const requested = [];
+  const plex = fixture(async url => {
+    if (url.pathname === '/photo/:/transcode') {
+      requested.push([url.searchParams.get('url'), url.searchParams.get('width'), url.searchParams.get('format')]);
+      return new Response(Buffer.from('fixture logo'), { headers: { 'Content-Type': 'image/png' } });
+    }
+    return json({ Metadata: [] });
+  });
+  t.after(() => plex.close());
+  const logo = id => ({
+    Image: [
+      { type: 'coverPoster', url: `/library/metadata/${id}/thumb/1` },
+      { type: 'clearLogo', url: `/library/metadata/${id}/clearLogo/5` },
+    ],
+  });
+  const [film, show, episode, unsafe, none] = plex.items([
+    movie(8, logo(8)),
+    movie(9, { type: 'show', ...logo(9) }),
+    movie(10, { type: 'episode', ...logo(10) }),
+    movie(11, { Image: [{ type: 'clearLogo', url: 'https://evil.test/logo.png' }] }),
+    movie(12),
+  ]);
+  assert.equal(film.hasLogo, true);
+  assert.equal(show.hasLogo, true);
+  assert.equal(episode.hasLogo, false, 'an episode page is titled by the episode, not a logo');
+  assert.equal(unsafe.hasLogo, false, 'only Plex library logo paths are used');
+  assert.equal(none.hasLogo, false);
+  await plex.artwork('8', 'logo');
+  assert.deepEqual(requested, [['/library/metadata/8/clearLogo/5', '800', 'png']]);
+  await assert.rejects(plex.artwork('10', 'logo'), /Artwork unavailable/);
+  assert.equal(requested.length, 1);
+});
+
 test('show and season queue expansion pages the complete corpus, sorts cross-season episodes and filters Specials', async t => {
   const episodes = Array.from({ length: 245 }, (_, index) =>
     movie(index + 1, {
