@@ -983,25 +983,32 @@
     margin: 0 0 var(--space-8);
     overflow-wrap: anywhere;
   }
-  /* Title logo: a heading that has one reserves the logo's full height from the start, its contents at the
-     bottom, so the text title shows there first and the logo replaces it without moving anything below.
-     The logo box is collapsed (but still on screen for the image queue) until it loads. */
+  /* Title logo: a heading that has one reserves the logo's full height from the start, with the text title
+     and the logo in one cell at its bottom, so the logo crossfades in over the text without moving anything. */
   .library-detail-copy {
     --library-logo-height: 110px;
   }
   .library-detail-copy h3:has(> .library-detail-logo) {
     min-height: var(--library-logo-height);
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
+    display: grid;
+    align-items: end;
     margin-bottom: var(--space-12);
+  }
+  .library-detail-copy h3:has(> .library-detail-logo) > * {
+    grid-area: 1 / 1;
   }
   .library-detail-logo {
     display: block;
+    opacity: 0;
+    transition: opacity 0.25s ease;
   }
-  .library-detail-logo:not(.loaded) {
-    height: 0;
-    overflow: hidden;
+  .library-detail-logo.loaded {
+    opacity: 1;
+  }
+  .library-detail-copy h3:has(> .library-detail-logo) > .library-detail-title {
+    transition:
+      opacity 0.25s ease,
+      visibility 0s 0.25s;
   }
   .library-detail-logo img {
     display: block;
@@ -1018,8 +1025,16 @@
   :root[data-theme='light'] .library-detail-logo img {
     filter: drop-shadow(0 0 1px var(--black-a75)) drop-shadow(0 2px 6px var(--black-a45));
   }
+  /* Once faded out, the text is hidden from assistive technology too: the logo carries the title. */
   .library-detail-copy h3:has(> .library-detail-logo.loaded) > .library-detail-title {
-    display: none;
+    opacity: 0;
+    visibility: hidden;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .library-detail-logo,
+    .library-detail-copy h3:has(> .library-detail-logo) > .library-detail-title {
+      transition: none;
+    }
   }
   .library-detail-body {
     margin-top: var(--space-18);

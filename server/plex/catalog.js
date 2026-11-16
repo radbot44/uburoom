@@ -9,7 +9,7 @@ const ART_SIZES = {
   poster: ['300', '450'],
   landscape: ['400', '225'],
   backdrop: ['1280', '720'],
-  logo: ['800', '310'],
+  logo: ['720', '280'],
 };
 /** A title logo (Plex "clearLogo") of the item itself; only movies and shows are titled by one. */
 const LOGO = /^\/library\/metadata\/\d{1,20}\/clearLogo(\/\d+)?$/;

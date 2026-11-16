@@ -382,6 +382,7 @@ function mount(
     historyMoving = false;
   const homes = new Map(),
     images = new Map(),
+    pendingImages = new Map(),
     availabilityReads = new Set();
   let reusableImages;
   let view = 'cards';
@@ -718,6 +719,7 @@ function mount(
     activeImages = 0;
     for (const value of images.values()) URL.revokeObjectURL(value);
     images.clear();
+    pendingImages.clear();
     imageController = new AbortController();
     imageObserver = new IntersectionObserver(
       entries => {
@@ -731,9 +733,38 @@ function mount(
       { rootMargin: '180px' },
     );
   }
-  function pumpImages() {
+  /**
+   * One provider picture as an object URL, cached and fetched once however many places ask for it at a time.
+   * Resolves to undefined when the room changed meanwhile.
+   */
+  function loadImage(item, kind, type) {
+    const key = item + ':' + kind;
+    if (images.has(key)) return Promise.resolve(images.get(key));
+    if (pendingImages.has(key)) return pendingImages.get(key);
     const version = generation,
       signal = imageController.signal;
+    const promise = artwork(endpoint('/api/watch/library/art', { item, kind, type }), signal)
+      .then(blob => {
+        if (version !== generation || signal.aborted) return undefined;
+        const url = URL.createObjectURL(blob),
+          old = images.get(key);
+        if (old) URL.revokeObjectURL(old);
+        images.set(key, url);
+        while (images.size > 160) {
+          const first = images.keys().next().value;
+          URL.revokeObjectURL(images.get(first));
+          images.delete(first);
+        }
+        return url;
+      })
+      .finally(() => {
+        if (pendingImages.get(key) === promise) pendingImages.delete(key);
+      });
+    pendingImages.set(key, promise);
+    return promise;
+  }
+  function pumpImages() {
+    const version = generation;
     while (activeImages < 4 && imageQueue.length) {
       const img = imageQueue.shift();
       if (!img.isConnected || img.src) continue;
@@ -743,26 +774,9 @@ function mount(
         continue;
       }
       activeImages++;
-      artwork(
-        endpoint('/api/watch/library/art', {
-          item: img.dataset.item,
-          kind: img.dataset.kind,
-          type: img.dataset.type,
-        }),
-        signal,
-      )
-        .then(blob => {
-          if (version !== generation || signal.aborted) return;
-          const url = URL.createObjectURL(blob),
-            old = images.get(key);
-          if (old) URL.revokeObjectURL(old);
-          images.set(key, url);
-          while (images.size > 160) {
-            const first = images.keys().next().value;
-            URL.revokeObjectURL(images.get(first));
-            images.delete(first);
-          }
-          if (img.isConnected) img.src = url;
+      loadImage(img.dataset.item, img.dataset.kind, img.dataset.type)
+        .then(url => {
+          if (url && img.isConnected) img.src = url;
         })
         .catch(() => {})
         .finally(() => {
@@ -772,6 +786,14 @@ function mount(
           }
         });
     }
+  }
+  // A details page's backdrop and title logo: they load at once, ahead of the poster queue.
+  const PRIORITY_ART = ['backdrop', 'logo'];
+  /** Start fetching an item's details pictures before its page needs them (on click, or hover on a mouse). */
+  function prefetchArt(item) {
+    if (!item || item.id === 'demo' || !imageController) return;
+    if (item.hasBackdrop) loadImage(item.id, 'backdrop', item.type).catch(() => {});
+    if (item.hasLogo) loadImage(item.id, 'logo', item.type).catch(() => {});
   }
   /** One provider picture in `box`, loaded through the shared image queue; the box gets `loaded` once shown. */
   function picture(box, item, kind) {
@@ -789,6 +811,12 @@ function mount(
     };
     if (img.src) box.classList.toggle('loaded', img.complete && img.naturalWidth > 0);
     else if (images.has(key)) img.src = images.get(key);
+    else if (PRIORITY_ART.includes(kind))
+      loadImage(item.id, kind, item.type)
+        .then(url => {
+          if (url && img.isConnected && !img.src) img.src = url;
+        })
+        .catch(() => {});
     else imageObserver.observe(img);
     return img;
   }
@@ -1040,6 +1068,20 @@ function mount(
     const card = node('article', results, undefined, 'library-tile' + (episode ? ' episode' : ''));
     card.dataset.item = item.id;
     card.classList.toggle('unavailable', item.available === false);
+    if (item.hasLogo || item.hasBackdrop) {
+      // Resting a mouse pointer (or keyboard focus) on a title starts its details pictures, so they are often
+      // ready by the time it opens; passing over it on the way elsewhere does not.
+      let intent;
+      const start = () => {
+        clearTimeout(intent);
+        intent = setTimeout(() => prefetchArt(item), 150);
+      };
+      const stop = () => clearTimeout(intent);
+      card.addEventListener('pointerenter', event => event.pointerType === 'mouse' && start());
+      card.addEventListener('pointerleave', stop);
+      card.addEventListener('focusin', start);
+      card.addEventListener('focusout', stop);
+    }
     if (row) {
       card.classList.add('library-row');
       card.addEventListener('click', event => {
@@ -1542,6 +1584,7 @@ function mount(
     }
   }
   async function openItem(item) {
+    prefetchArt(item);
     if (!screen) screen = homeContext();
     prepareNavigation();
     screen.focusItem = item.id;

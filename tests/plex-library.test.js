@@ -255,7 +255,7 @@ test('title logos come only from a movie or show clearLogo path and keep their t
   assert.equal(unsafe.hasLogo, false, 'only Plex library logo paths are used');
   assert.equal(none.hasLogo, false);
   await plex.artwork('8', 'logo');
-  assert.deepEqual(requested, [['/library/metadata/8/clearLogo/5', '800', 'png']]);
+  assert.deepEqual(requested, [['/library/metadata/8/clearLogo/5', '720', 'png']]);
   await assert.rejects(plex.artwork('10', 'logo'), /Artwork unavailable/);
   assert.equal(requested.length, 1);
 });

@@ -87,7 +87,7 @@ test('Jellyfin backdrops and title logos use the right images at their sizes, an
   assert.deepEqual(images, [
     [`/Items/${movie}/Images/Backdrop`, '1280'],
     [`/Items/${show}/Images/Backdrop`, '1280'],
-    [`/Items/${movie}/Images/Logo`, '800'],
+    [`/Items/${movie}/Images/Logo`, '720'],
   ]);
   for (const kind of ['constructor', '__proto__', 'art'])
     await assert.rejects(jellyfin.artwork(movie, kind), /Invalid artwork/);

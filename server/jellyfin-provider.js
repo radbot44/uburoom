@@ -527,7 +527,7 @@ class Jellyfin {
     };
   }
   async artwork(id, kind = 'poster') {
-    const widths = { poster: 300, landscape: 400, backdrop: 1280, logo: 800 };
+    const widths = { poster: 300, landscape: 400, backdrop: 1280, logo: 720 };
     if (!Object.hasOwn(widths, kind)) throw failure('Invalid artwork', 400);
     const key = jellyfinIdentity(id).itemId;
     if (!this.art.has(key)) this.items([await this.one(key, 'Path')]);
