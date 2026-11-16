@@ -7,6 +7,21 @@ const assert = require('node:assert/strict');
 const { createApp } = require('../server/app');
 const { accountFixture } = require('./account-fixture');
 const { playbackBrowser, pause } = require('./lib/playback-browser');
+const { openPage, act, dom } = require('./lib/ui-fixture');
+
+// Media tools: browsing down tucks the tool rows up behind the sticky header (its bottom meets the header's)
+// and scrolling up a little returns them below it. `top` is where the header sticks; `extra` adds conditions.
+const mediaPair = (top, tucked, extra = 'true') =>
+  '(()=>{const h=document.getElementById("library-header").getBoundingClientRect(),tools=document.querySelector(".library-tools"),t=tools.getBoundingClientRect();return Math.abs(h.top-(' +
+  top +
+  '))<2 && tools.classList.contains("library-tools-tucked")===' +
+  tucked +
+  ' && Math.abs(' +
+  (tucked ? 't.bottom' : 't.top') +
+  '-h.bottom)<2 && getComputedStyle(document.getElementById("library-panel")).getPropertyValue("--media-header-height").trim()===Math.round(h.height)+"px" && (' +
+  extra +
+  ')})()';
+const TOOLS_SLIDE = 300; // .library-tools transitions transform over 0.2s
 
 async function main() {
   for (const name of ['chrome', 'firefox']) {
@@ -83,49 +98,54 @@ async function main() {
     let browser;
     try {
       browser = await playbackBrowser(name);
-      const page = await browser.page(config.publicUrl + '/watch?demo=host');
+      const page = await openPage(browser, config.publicUrl + '/?demo=host');
       const run = expression => browser.evaluate(page, expression);
       const until = (expression, label) => browser.until(page, expression, label);
       const shot = label =>
         browser.screenshot(page, path.resolve(EVIDENCE, 'media-controls-' + name + '-after-' + label + '.png'));
       await browser.viewport(page, 1440, 1000);
       await until('me?.durableRooms && transport?.ready', 'Login');
-      await run('$("create").click();$("room-create").click()');
+      await run('document.getElementById("create").click();document.getElementById("room-create").click()');
       await until('document.querySelector(".library-home-card")', 'Media home');
       await pause(300);
       await run('document.querySelector(".library-home-card").click()');
       await until('document.querySelector(".library-tile")', 'Media items');
-      await run('$("library-panel").scrollIntoView({block:"start"})');
+      await run('document.getElementById("library-panel").scrollIntoView({block:"start"})');
       await pause(180);
-      assert.equal(await run('getComputedStyle($("library-heading")).fontSize'), '24px');
+      assert.equal(await run('getComputedStyle(document.getElementById("library-heading")).fontSize'), '24px');
       assert.equal(
         await run(
-          '(()=>{const a=$("media-symbol").getBoundingClientRect(),b=$("library-heading").querySelector(".section-toggle>span:last-of-type").getBoundingClientRect();return Math.round(b.left-a.right)})()',
+          '(()=>{const a=document.getElementById("media-symbol").getBoundingClientRect(),b=document.getElementById("library-heading").querySelector(".section-toggle>span:last-of-type").getBoundingClientRect();return Math.round(b.left-a.right)})()',
         ),
         8,
       );
-      assert.equal(await run('$("media-symbol").querySelector("svg").getBoundingClientRect().width'), 24);
+      assert.equal(
+        await run('document.getElementById("media-symbol").querySelector("svg").getBoundingClientRect().width'),
+        24,
+      );
       assert.equal(
         await run(
-          '(()=>{const ids=["library-back","library-forward","library-home","library-direction","library-filters-toggle"];const elevated=getComputedStyle($("switch-room")).backgroundColor;return ids.every(id=>{const e=$(id),r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.height===40 && s.borderRadius==="10px" && s.borderTopWidth==="0px" && s.backgroundColor===elevated})})()',
+          '(()=>{const ids=["library-back","library-forward","library-home","library-direction","library-filters-toggle"];const elevated=getComputedStyle(document.getElementById("switch-room")).backgroundColor;return ids.every(id=>{const e=document.getElementById(id),r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.height===40 && s.borderRadius==="10px" && s.borderTopWidth==="0px" && s.backgroundColor===elevated})})()',
         ),
         true,
         'Media actions use the Room control surface even while disabled',
       );
       assert.equal(
         await run(
-          '["library-back","library-forward","library-home","library-direction"].every(id=>$(id).getBoundingClientRect().width===40)',
+          '["library-back","library-forward","library-home","library-direction"].every(id=>document.getElementById(id).getBoundingClientRect().width===40)',
         ),
         true,
       );
       assert.equal(
         await run(
-          '$("search").getBoundingClientRect().height===40 && $("library-sort").getBoundingClientRect().height===40 && getComputedStyle($("search")).borderTopWidth==="1px" && getComputedStyle($("library-sort")).borderTopWidth==="1px"',
+          'document.getElementById("search").getBoundingClientRect().height===40 && document.getElementById("library-sort").getBoundingClientRect().height===40 && getComputedStyle(document.getElementById("search")).borderTopWidth==="1px" && getComputedStyle(document.getElementById("library-sort")).borderTopWidth==="1px"',
         ),
         true,
       );
       assert.equal(
-        await run('$("library-forward").disabled && $("library-forward").title.includes("No later")'),
+        await run(
+          'document.getElementById("library-forward").disabled && document.getElementById("library-forward").title.includes("No later")',
+        ),
         true,
         'Disabled navigation explains its state',
       );
@@ -136,13 +156,18 @@ async function main() {
         true,
         'Header auto-queue uses shared controls',
       );
-      await run('$("search").focus()');
-      assert.equal(await run('getComputedStyle($("search")).outlineWidth'), '2px');
+      await run('document.getElementById("search").focus()');
+      assert.equal(
+        await run('getComputedStyle(document.getElementById("search")).outlineWidth'),
+        '3px',
+        'Shared focus ring',
+      );
       assert.equal(
         await run(
-          'document.querySelector(".library-views").getBoundingClientRect().height===40 && document.querySelector(".library-choices").getBoundingClientRect().height===40',
+          'document.querySelector(".library-views").getBoundingClientRect().height===46 && [...document.querySelectorAll(".library-views .group-button")].every(b=>b.getBoundingClientRect().height===40) && document.querySelector(".library-choices").getBoundingClientRect().height===40',
         ),
         true,
+        'Shared segmented view switch (40px buttons in a 3px inset) beside 40px library choices',
       );
       assert.equal(
         await run('document.querySelector(".library-views .group-button>svg").getBoundingClientRect().width'),
@@ -163,22 +188,23 @@ async function main() {
       );
       await browser.key(page, 'Enter');
       assert.equal(await run('document.querySelector(".library-views [aria-pressed=true]").dataset.view'), 'list');
-      assert.equal(await run('getComputedStyle(document.activeElement).outlineWidth'), '2px');
+      assert.equal(await run('getComputedStyle(document.activeElement).outlineWidth'), '3px', 'Shared focus ring');
       const libraryChoices = await run(
-        '[...document.querySelectorAll(".library-choices button")].map(b=>[b.dataset.section,b.textContent])',
+        '[...document.querySelectorAll(".library-choices .library-choice:not(.library-more)")].map(b=>[b.dataset.section,b.textContent])',
       );
       assert.equal(libraryChoices.length, 2, 'Fixture has two library choices: ' + JSON.stringify(libraryChoices));
+      // Library buttons are navigation in the history group, each its own Tab stop (not a segmented selector).
       await run('document.querySelector(".library-choices button:first-child").focus()');
-      await browser.key(page, 'ArrowRight');
+      await browser.key(page, 'Tab');
       assert.equal(await run('document.activeElement.dataset.section'), libraryChoices[1][0]);
       assert.equal(
-        await run('document.querySelector(".library-choices [aria-pressed=true]").dataset.section'),
+        await run('document.querySelector(".library-choices [aria-current=page]").dataset.section'),
         libraryChoices[0][0],
-        'Library arrows move focus without navigating',
+        'Moving focus between libraries does not navigate',
       );
       await browser.key(page, 'Enter');
       await until(
-        'document.querySelector(".library-choices button:nth-child(2)[aria-pressed=true]")',
+        'document.querySelector(".library-choices button:nth-child(2)[aria-current=page]")',
         'Choose second library',
       );
       assert.equal(
@@ -188,54 +214,62 @@ async function main() {
       );
       await run('document.querySelector(".library-choices button:first-child").click()');
       await until(
-        'document.querySelector(".library-choices button:first-child[aria-pressed=true]")',
+        'document.querySelector(".library-choices button:first-child[aria-current=page]")',
         'Return to first library',
       );
       await run(
-        'document.querySelector(".library-views [data-view=cards]").click();$("library-panel").scrollIntoView({block:"start"})',
+        'document.querySelector(".library-views [data-view=cards]").click();document.getElementById("library-panel").scrollIntoView({block:"start"})',
       );
-      await run('$("media-collapse").click()');
+      await run('document.getElementById("media-collapse").click()');
       assert.equal(
         await run(
-          '$("library-panel").classList.contains("section-collapsed") && getComputedStyle($("library-content")).display==="none"',
+          'document.getElementById("library-panel").classList.contains("section-collapsed") && getComputedStyle(document.getElementById("library-content")).display==="none"',
         ),
         true,
         'Media collapse preserves panel behavior',
       );
-      await run('$("media-collapse").click()');
-      assert.equal(await run('!$("library-panel").classList.contains("section-collapsed")'), true);
+      await run('document.getElementById("media-collapse").click()');
+      assert.equal(
+        await run('!document.getElementById("library-panel").classList.contains("section-collapsed")'),
+        true,
+      );
       await shot('desktop');
-      await run('$("theme-toggle").click()');
+      await run('document.getElementById("theme-toggle").click()');
       assert.equal(
         await run(
-          'getComputedStyle(document.querySelector(".library-views [aria-pressed=true]")).backgroundColor===getComputedStyle(document.documentElement).getPropertyValue("--primary").trim()',
+          '(()=>{const probe=document.body.appendChild(document.createElement("i"));probe.style.background="var(--primary)";const primary=getComputedStyle(probe).backgroundColor;probe.remove();return getComputedStyle(document.querySelector(".library-views [aria-pressed=true]")).backgroundColor===primary})()',
         ),
         true,
         'Media selected view follows the active theme',
       );
       await shot('light');
-      await run('$("theme-toggle").click()');
+      await run('document.getElementById("theme-toggle").click()');
+      const pageScroll = 'document.getElementById("library-panel").scrollTop===0';
       await run('document.querySelector(".library-tile:last-child").scrollIntoView({block:"end"})');
-      await pause(180);
+      await pause(TOOLS_SLIDE);
       assert.equal(
-        await run(
-          '(()=>{const h=$("library-header").getBoundingClientRect(),t=document.querySelector(".library-tools").getBoundingClientRect();return Math.abs(h.top)<2 && Math.abs(t.top-h.bottom)<2 && $("library-panel").scrollTop===0 && getComputedStyle($("library-panel")).getPropertyValue("--media-header-height").trim()===Math.round(h.height)+"px"})()',
-        ),
+        await run(mediaPair(0, true, pageScroll)),
         true,
-        'Header and tools remain sticky with measured offset and page scrolling',
+        'Browsing down tucks the tools behind the sticky, measured header with page scrolling',
       );
       await shot('scrolled');
-      await run('setTheater(true);document.querySelector(".library-tile:last-child").scrollIntoView({block:"end"})');
-      await pause(180);
+      await run('scrollBy(0,-80)');
+      await pause(TOOLS_SLIDE);
+      assert.equal(await run(mediaPair(0, false, pageScroll)), true, 'Scrolling up returns the tools below the header');
+      await run(
+        act.setTheater(true) + ';document.querySelector(".library-tile:last-child").scrollIntoView({block:"end"})',
+      );
+      await pause(TOOLS_SLIDE);
+      assert.equal(await run(mediaPair(0, true, pageScroll)), true, 'Theater tucks the tools with page scroll');
+      await run('scrollBy(0,-80)');
+      await pause(TOOLS_SLIDE);
       assert.equal(
-        await run(
-          '(()=>{const h=$("library-header").getBoundingClientRect(),t=document.querySelector(".library-tools").getBoundingClientRect();return Math.abs(h.top)<2 && Math.abs(t.top-h.bottom)<2 && $("library-panel").scrollTop===0})()',
-        ),
+        await run(mediaPair(0, false, pageScroll)),
         true,
         'Theater retains the sticky Media pair and page scroll',
       );
       assert.equal(
-        await run('$("library-top").getBoundingClientRect().height===40'),
+        await run('document.getElementById("library-top").getBoundingClientRect().height===40'),
         true,
         'Back to top uses shared 40px control',
       );
@@ -245,24 +279,30 @@ async function main() {
       await until('immersive && document.fullscreenElement', 'Fullscreen');
       await browser.click(page, 'drawer-open');
       await until('!drawer.hidden', 'Fullscreen Menu');
+      const drawerTop = 'drawer.getBoundingClientRect().top';
       await run('drawer.scrollTop=1200');
-      await pause(180);
+      await pause(TOOLS_SLIDE);
+      assert.equal(await run(mediaPair(drawerTop, true)), true, 'Menu tucks the tools behind its sticky header');
+      await run('drawer.scrollTop-=80');
+      await pause(TOOLS_SLIDE);
       assert.equal(
-        await run(
-          '(()=>{const d=drawer.getBoundingClientRect(),h=$("library-header").getBoundingClientRect(),t=document.querySelector(".library-tools").getBoundingClientRect();return Math.abs(h.top-d.top)<2 && Math.abs(t.top-h.bottom)<2 && getComputedStyle($("library-panel")).getPropertyValue("--media-header-height").trim()===Math.round(h.height)+"px"})()',
-        ),
+        await run(mediaPair(drawerTop, false)),
         true,
         'Menu keeps the measured sticky Media header and toolbar',
       );
       await shot('drawer');
       if (name === 'chrome') {
         await browser.viewport(page, 390, 844);
-        await run('selectSection("media");drawer.scrollTop=1200');
-        await pause(180);
+        const wrapped = 'h.height>40 && t.height>0';
+        await run(act.selectSection('media') + ';drawer.scrollTop=0');
+        await pause(TOOLS_SLIDE);
+        await run('drawer.scrollTop=1200');
+        await pause(TOOLS_SLIDE);
+        assert.equal(await run(mediaPair(drawerTop, true, wrapped)), true, 'Phone Menu tucks the tools');
+        await run('drawer.scrollTop-=80');
+        await pause(TOOLS_SLIDE);
         assert.equal(
-          await run(
-            '(()=>{const d=drawer.getBoundingClientRect(),h=$("library-header").getBoundingClientRect(),t=document.querySelector(".library-tools").getBoundingClientRect();return h.height>40 && t.height>0 && Math.abs(h.top-d.top)<2 && Math.abs(t.top-h.bottom)<2 && getComputedStyle($("library-panel")).getPropertyValue("--media-header-height").trim()===Math.round(h.height)+"px"})()',
-          ),
+          await run(mediaPair(drawerTop, false, wrapped)),
           true,
           'Phone Menu follows the visible wrapped Media header height',
         );
@@ -272,31 +312,52 @@ async function main() {
       await until('drawer.hidden', 'Close Menu');
       await browser.click(page, 'fullscreen');
       await until('!immersive', 'Exit fullscreen');
-      await run('setTheater(false)');
+      await run(act.setTheater(false));
       await browser.viewport(page, 390, 844);
-      await run('$("section-tab-media").click();$("library-panel").scrollIntoView({block:"start"})');
+      await run(
+        'document.getElementById("section-tab-media").click();document.getElementById("library-panel").scrollIntoView({block:"start"})',
+      );
       await pause(180);
+      // Phone Media header: the heading on its own row, then one row of Back, Forward, Home and library
+      // buttons that keep their names; Back to top joins the end of that row only once Media has scrolled.
+      const headerRow =
+        '(()=>{const top=e=>e.getBoundingClientRect().top,h=top(document.getElementById("library-heading")),n=top(document.querySelector(".library-navigation-history")),c=[...document.querySelectorAll(".library-choices .library-choice")].filter(b=>!b.hidden);return c.length>0 && n>h && c.map(top).every(y=>Math.abs(y-n)<2)})()';
+      assert.equal(await run(dom.hidden('#library-top')), true, 'Back to top waits until Media has scrolled');
+      assert.equal(await run(headerRow), true, 'Navigation and libraries share the row under the phone heading');
       assert.equal(
         await run(
-          '(()=>{const h=$("library-heading").getBoundingClientRect(),n=document.querySelector(".library-navigation-history").getBoundingClientRect(),a=document.querySelector(".library-scope-actions .watch-control").getBoundingClientRect(),t=$("library-top").getBoundingClientRect();return Math.abs(h.top-n.top)<2 && Math.abs(h.top-a.top)<2 && Math.abs(h.top-t.top)<2 && t.width===40})()',
+          '[...document.querySelectorAll(".library-choices .library-choice")].filter(b=>!b.hidden).every(b=>getComputedStyle(b.querySelector(".watch-control-label")).display!=="none")',
         ),
         true,
-        'Media, navigation, auto-queue and Back to top share the phone header row',
+        'Phone library buttons keep their names instead of shrinking to icons',
       );
       assert.equal(
         await run(
-          '$("library-top").querySelector("svg").getAttribute("data-tabler-icon")==="arrow-bar-to-up" && getComputedStyle($("library-top").querySelector(".watch-control-label")).display==="none" && $("library-top").getAttribute("aria-label")==="Back to top"',
+          'document.querySelector(".library-choices [aria-current=page]:not([hidden]), .library-choices .library-more[data-current]:not([hidden])")!==null && !document.getElementById("library-home").disabled',
+        ),
+        true,
+        'Phone keeps the current library and Libraries home on the header row',
+      );
+      await run('scrollBy(0,120)');
+      await pause(TOOLS_SLIDE);
+      assert.equal(
+        await run(
+          'document.getElementById("library-panel").classList.contains("library-scrolled") && ' +
+            dom.shown('#library-top') +
+            ' && (()=>{const n=document.querySelector(".library-navigation-history").getBoundingClientRect(),t=document.getElementById("library-top").getBoundingClientRect();return Math.abs(n.top-t.top)<2 && t.width===40})()',
+        ),
+        true,
+        'Back to top joins the phone navigation row once Media has scrolled',
+      );
+      assert.equal(
+        await run(
+          'document.getElementById("library-top").querySelector("svg").getAttribute("data-tabler-icon")==="arrow-bar-to-up" && getComputedStyle(document.getElementById("library-top").querySelector(".watch-control-label")).display==="none" && document.getElementById("library-top").getAttribute("aria-label")==="Back to top"',
         ),
         true,
         'Back to top has the requested icon and accessible compact label',
       );
-      assert.equal(
-        await run(
-          'getComputedStyle(document.querySelector(".library-choices")).display==="none" && !$("library-home").disabled',
-        ),
-        true,
-        'Phone hides the switcher but keeps Libraries home navigation',
-      );
+      await run('document.getElementById("library-panel").scrollIntoView({block:"start"})');
+      await pause(TOOLS_SLIDE);
       assert.equal(
         await run('getComputedStyle(document.querySelector(".library-views .group-button span")).display'),
         'none',
@@ -316,12 +377,12 @@ async function main() {
       );
       assert.equal(
         await run(
-          'Math.abs($("library-sort").getBoundingClientRect().top-document.querySelector(".library-views").getBoundingClientRect().top)<2',
+          '(()=>{const middle=e=>{const r=e.getBoundingClientRect();return r.top+r.height/2};return Math.abs(middle(document.getElementById("library-sort"))-middle(document.querySelector(".library-views")))<2})()',
         ),
         true,
         'Phone view selector shares the sort row',
       );
-      await run('$("library-filters-toggle").click()');
+      await run('document.getElementById("library-filters-toggle").click()');
       assert.equal(
         await run(
           '(()=>{const s=[...document.querySelectorAll(".library-filters select")],status=document.querySelector(".library-filters>.hint");return s.length===2 && Math.abs(s[0].getBoundingClientRect().top-s[1].getBoundingClientRect().top)<2 && s.every(x=>x.getBoundingClientRect().width>70) && (getComputedStyle(status).display==="none" || status.getBoundingClientRect().top>=s[0].getBoundingClientRect().bottom)})()',
@@ -330,7 +391,7 @@ async function main() {
         'Usable Genre and Year dropdowns share one row with status below',
       );
       await shot('phone-filters');
-      await run('$("library-filters-toggle").click()');
+      await run('document.getElementById("library-filters-toggle").click()');
       await shot('phone');
       if (name === 'chrome') {
         await browser.mobileViewport(page, 390, 844);
@@ -350,7 +411,7 @@ async function main() {
           'Cards poster opens Play details',
         );
         await shot('phone-touch-detail');
-        await run('$("library-back").click()');
+        await run('document.getElementById("library-back").click()');
         await until(
           '!!document.querySelector(".library-tile") && document.querySelector(".library-overview").hidden',
           'Return to Cards',

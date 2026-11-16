@@ -8,22 +8,28 @@ const fs = require('node:fs'),
 const { spawn } = require('node:child_process'),
   { once } = require('node:events'),
   { WebSocket } = require('ws'),
-  { createApp } = require('../server/app');
+  { createApp } = require('../server/app'),
+  { accountFixture } = require('./account-fixture'),
+  { act } = require('./lib/ui-fixture');
 const root = path.resolve(__dirname, '..'),
   pause = ms => new Promise(r => setTimeout(r, ms));
+const TOOLS_SLIDE = 300; // .library-tools transitions transform over 0.2s
 async function main() {
+  // The isolated account demo: fixture Discord and Plex accounts, never private configuration.
+  const fixture = accountFixture();
   const config = {
     cert: fs.readFileSync(path.join(root, 'certs/server-cert.pem')),
     key: fs.readFileSync(path.join(root, 'certs/server-key.pem')),
     publicUrl: 'https://localhost:6768',
-    ownerId: 'demo-host',
+    ownerId: fixture.subjects.host,
     guildId: 'demo-guild',
     channels: ['demo-commands'],
     demo: true,
+    unifiedAccounts: true,
+    demoSubjects: fixture.subjects,
     plexUrl: 'http://127.0.0.1:32400',
     plexToken: 'synthetic-fixture-only',
   };
-  const app = createApp(config);
   let failNext = false;
   const artworkReads = [];
   const movies = Array.from({ length: 250 }, (_, i) => ({
@@ -141,9 +147,15 @@ async function main() {
     grandparentThumb: solo.thumb,
   }));
   const all = [...movies, show, solo, ...seasons, ...episodes, soloSeason, ...soloEpisodes, collection];
-  app.watch.providers.primary.root.fetch = async url => {
-    const p = url.pathname,
+  // The fake Plex server, injected the supported way: the Plex client wraps it like real fetch.
+  const plexFetch = async (input, options) => {
+    const url = new URL(input),
+      p = url.pathname,
       query = url.searchParams;
+    // plex.tv sign-in and account checks belong to the account fixture; the library is this server.
+    if (url.origin !== new URL(config.plexUrl).origin) return fixture.fetch(input, options);
+    // The server root names the machine; the server pins it as this provider's identity.
+    if (p === '/') return new Response(JSON.stringify({ MediaContainer: { machineIdentifier: 'library-fixture' } }));
     if (failNext && p.endsWith('/all')) {
       failNext = false;
       return new Response('fixture failure', { status: 503 });
@@ -208,6 +220,7 @@ async function main() {
     }
     return new Response(JSON.stringify({ MediaContainer: data }));
   };
+  const app = createApp(config, { plexFetch, oauthFetch: fixture.discordFetch, plexDemo: fixture });
   app.watch.providers.primary.root.prepare = async id => ({
     ...app.watch.demoMedia,
     id,
@@ -282,19 +295,28 @@ async function main() {
     await command('browsingContext.setViewport', { context, viewport: { width: 1360, height: 1200 } });
     await command('browsingContext.navigate', {
       context,
-      url: config.publicUrl + '/watch?demo=host',
+      url: config.publicUrl + '/?demo=host',
       wait: 'complete',
     });
     await until(context, '!!me', 'demo login');
     await evaluate(context, 'document.getElementById("create").click();document.getElementById("room-create").click()');
     await until(context, 'document.querySelectorAll(".library-home-card").length===5', 'Libraries home');
+    // Phone layouts show one section at a time (Room first in a saved room); these checks browse Media.
+    await evaluate(context, act.selectSection('media'));
     assert.equal(await evaluate(context, '!!document.getElementById("library-select")'), false);
+    await until(context, 'location.pathname.startsWith("/room/")', 'room address');
+    const roomPath = await evaluate(context, 'location.pathname');
     await evaluate(context, 'history.back()');
     await pause(200);
     assert.equal(
-      await evaluate(context, 'location.pathname==="/watch" && !document.querySelector(".library-landing").hidden'),
+      await evaluate(
+        context,
+        'location.pathname===' +
+          JSON.stringify(roomPath) +
+          ' && !!selected && !document.querySelector(".library-landing").hidden',
+      ),
       true,
-      'Browser Back at Home stays on watch',
+      'Browser Back at Home stays on the room page',
     );
     await evaluate(context, 'document.querySelector(".library-home-card[data-tab=library]:first-child").click()');
     await until(context, 'document.querySelectorAll(".library-tile").length===48', 'first library page');
@@ -366,16 +388,18 @@ async function main() {
     );
     await evaluate(
       context,
-      `globalThis.fixtureAnchor=()=>{const top=document.querySelector('.library-tools').getBoundingClientRect().bottom;const tile=[...document.querySelectorAll('.library-tile')].find(n=>n.getBoundingClientRect().bottom>top);return {id:tile.dataset.item,offset:tile.getBoundingClientRect().top-top};};const tile=document.querySelectorAll('.library-tile')[220];document.getElementById('library-panel').scrollBy(0,tile.getBoundingClientRect().top-document.querySelector('.library-tools').getBoundingClientRect().bottom-12);`,
+      `globalThis.fixtureAnchor=()=>{const top=document.querySelector('.library-tools').getBoundingClientRect().bottom;const tile=[...document.querySelectorAll('.library-tile')].find(n=>n.getBoundingClientRect().bottom>top);return {id:tile.dataset.item,offset:tile.getBoundingClientRect().top-top,edge:top};};const tile=document.querySelectorAll('.library-tile')[220];document.getElementById('library-panel').scrollBy(0,tile.getBoundingClientRect().top-document.querySelector('.library-tools').getBoundingClientRect().bottom-12);`,
     );
-    await pause(100);
+    // The tool rows may tuck behind the header as the view restores its scroll position, so wait for them
+    // to settle and keep the item where it was on screen, measured from the edge it was anchored below.
+    await pause(TOOLS_SLIDE);
     for (const view of ['list', 'posters', 'cards']) {
       const anchor = JSON.parse(await evaluate(context, 'JSON.stringify(fixtureAnchor())'));
       await evaluate(context, `document.querySelector('.library-views [data-view="${view}"]').click()`);
-      await pause(100);
+      await pause(TOOLS_SLIDE);
       const offset = await evaluate(
         context,
-        `document.querySelector('[data-item="${anchor.id}"]').getBoundingClientRect().top-document.querySelector('.library-tools').getBoundingClientRect().bottom`,
+        `document.querySelector('[data-item="${anchor.id}"]').getBoundingClientRect().top-${anchor.edge}`,
       );
       const height = await evaluate(
         context,
@@ -390,28 +414,29 @@ async function main() {
     const anchor = JSON.parse(await evaluate(context, 'JSON.stringify(fixtureAnchor())'));
     await evaluate(context, `document.querySelector('[data-item="${anchor.id}"] .library-open').click()`);
     await until(context, 'document.querySelector(".library-summary")', 'deep item details');
+    // Details have no tool rows: they sit directly below the pinned Media header.
     assert.ok(
       await evaluate(
         context,
-        'document.querySelector(".library-overview").getBoundingClientRect().top-document.querySelector(".library-tools").getBoundingClientRect().bottom<50',
+        '(()=>{const h=document.querySelector("#library-panel>.library-header").getBoundingClientRect(),o=document.querySelector(".library-overview").getBoundingClientRect().top;return document.querySelector(".library-tools").hidden && o>=h.bottom-1 && o-h.bottom<50})()',
       ),
-      'Details appear directly below toolbar',
+      'Details appear directly below the header',
     );
     assert.ok(
       await evaluate(
         context,
-        'Math.abs(document.querySelector(".library-tools").getBoundingClientRect().top-document.querySelector("#library-panel>.library-header").getBoundingClientRect().bottom)<2',
+        'Math.abs(document.querySelector("#library-panel>.library-header").getBoundingClientRect().top-Math.max(0,document.getElementById("library-panel").getBoundingClientRect().top))<2',
       ),
       'Details remain below the pinned library heading',
     );
     await evaluate(context, 'history.back()');
     await until(context, '!document.querySelector(".library").hidden', 'Browser Back from deep details');
-    await pause(100);
+    await pause(TOOLS_SLIDE);
     assert.ok(
       Math.abs(
         (await evaluate(
           context,
-          `document.querySelector('[data-item="${anchor.id}"]').getBoundingClientRect().top-document.querySelector('.library-tools').getBoundingClientRect().bottom`,
+          `document.querySelector('[data-item="${anchor.id}"]').getBoundingClientRect().top-${anchor.edge}`,
         )) - anchor.offset,
       ) < 2,
       'Back restores deep item position',
@@ -448,7 +473,7 @@ async function main() {
       await command('browsingContext.setViewport', { context, viewport: { width, height } });
       await evaluate(
         context,
-        `setTheater(${theater});document.querySelector('.library-views [data-view=cards]').click();`,
+        `${act.setTheater(theater)};document.querySelector('.library-views [data-view=cards]').click();`,
       );
       await pause(120);
       const posterWidth = await evaluate(
@@ -514,7 +539,10 @@ async function main() {
         Buffer.from(listShot.data, 'base64'),
       );
     }
-    await evaluate(context, 'setTheater(false);document.querySelector(".library-views [data-view=cards]").click()');
+    await evaluate(
+      context,
+      act.setTheater(false) + ';document.querySelector(".library-views [data-view=cards]").click()',
+    );
     await command('browsingContext.setViewport', { context, viewport: { width: 1360, height: 1200 } });
 
     await evaluate(
@@ -633,7 +661,10 @@ async function main() {
       ['phone', 390, 1100, true],
     ]) {
       await command('browsingContext.setViewport', { context, viewport: { width, height } });
-      await evaluate(context, `setTheater(${theater});document.getElementById("library-content").scrollIntoView();`);
+      await evaluate(
+        context,
+        `${act.setTheater(theater)};document.getElementById("library-content").scrollIntoView();`,
+      );
       await pause(150);
       await evaluate(
         context,
@@ -682,11 +713,11 @@ async function main() {
         Buffer.from(shot.data, 'base64'),
       );
     }
-    await evaluate(context, 'setTheater(false)');
+    await evaluate(context, act.setTheater(false));
     await command('browsingContext.setViewport', { context, viewport: { width: 1360, height: 1200 } });
 
     await command('browsingContext.setViewport', { context, viewport: { width: 390, height: 1100 } });
-    await evaluate(context, 'setTheater(true);toggleDrawer(true)');
+    await evaluate(context, act.setTheater(true) + ';' + act.openDrawer());
     assert.ok(
       await evaluate(
         context,
@@ -696,7 +727,7 @@ async function main() {
     );
     const crumbsShot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
     fs.writeFileSync(path.join(EVIDENCE, 'plex-library-crumbs-phone-qa.png'), Buffer.from(crumbsShot.data, 'base64'));
-    await evaluate(context, 'setTheater(false)');
+    await evaluate(context, act.setTheater(false));
     await command('browsingContext.setViewport', { context, viewport: { width: 1360, height: 1200 } });
     await evaluate(
       context,
@@ -874,7 +905,7 @@ async function main() {
       ['phone', 390, 1100, true],
     ]) {
       await command('browsingContext.setViewport', { context, viewport: { width, height } });
-      await evaluate(context, `setTheater(${theater});document.getElementById("library-panel").scrollIntoView();`);
+      await evaluate(context, `${act.setTheater(theater)};document.getElementById("library-panel").scrollIntoView();`);
       await pause(200);
       const report = JSON.parse(
         await evaluate(
@@ -900,13 +931,24 @@ async function main() {
         await until(context, '!document.querySelector(".library").hidden', 'Phone library restored');
       }
       if (theater && width > 700) {
+        // Browsing down tucks the tool rows behind the sticky header; scrolling up a little returns them.
+        const pinned = tucked =>
+          '(()=>{const header=document.querySelector("#library-panel>.library-header"),h=header.getBoundingClientRect(),tools=document.querySelector(".library-tools"),t=tools.getBoundingClientRect();return document.getElementById("library-panel").scrollTop===0&&getComputedStyle(header).position==="sticky"&&Math.abs(h.top)<2&&tools.classList.contains("library-tools-tucked")===' +
+          tucked +
+          '&&Math.abs(' +
+          (tucked ? 't.bottom' : 't.top') +
+          '-h.bottom)<2})()';
         await evaluate(context, 'document.getElementById("library-content").scrollIntoView();window.scrollBy(0,600)');
-        await pause(100);
+        await pause(TOOLS_SLIDE);
         assert.equal(
-          await evaluate(
-            context,
-            'document.getElementById("library-panel").scrollTop===0&&getComputedStyle(document.querySelector("#library-panel>.library-header")).position==="sticky"&&Math.abs(document.querySelector("#library-panel>.library-header").getBoundingClientRect().top)<2&&Math.abs(document.querySelector(".library-tools").getBoundingClientRect().top-document.querySelector("#library-panel>.library-header").getBoundingClientRect().bottom)<2',
-          ),
+          await evaluate(context, pinned(true)),
+          true,
+          'Theater library scrolls with page, tucking the tools beneath sticky navigation',
+        );
+        await evaluate(context, 'window.scrollBy(0,-80)');
+        await pause(TOOLS_SLIDE);
+        assert.equal(
+          await evaluate(context, pinned(false)),
           true,
           'Theater library scrolls with page beneath sticky navigation',
         );
@@ -937,7 +979,7 @@ async function main() {
     await command('browsingContext.setViewport', { context: activity, viewport: { width: 1920, height: 1080 } });
     await command('browsingContext.navigate', {
       context: activity,
-      url: config.publicUrl + '/watch?demo=host&frame_id=fixture',
+      url: config.publicUrl + '/?demo=host&frame_id=fixture',
       wait: 'complete',
     });
     await until(activity, 'document.querySelector("#rooms button")', 'Activity rooms');
@@ -945,7 +987,7 @@ async function main() {
     await until(activity, 'document.querySelectorAll(".library-home-card").length===5', 'Activity home');
     await evaluate(activity, 'document.querySelector(".library-home-card[data-tab=library]:first-child").click()');
     await until(activity, 'document.querySelectorAll(".library-tile").length===48', 'Activity library');
-    await evaluate(activity, 'toggleDrawer(true);document.getElementById("options-collapse").click()');
+    await evaluate(activity, act.openDrawer() + ';document.getElementById("options-collapse").click()');
     assert.equal(
       await evaluate(
         activity,
@@ -955,9 +997,13 @@ async function main() {
     );
     const activityShot = await command('browsingContext.captureScreenshot', { context: activity, origin: 'viewport' });
     fs.writeFileSync(path.join(EVIDENCE, 'plex-library-activity-qa.png'), Buffer.from(activityShot.data, 'base64'));
-    await evaluate(activity, 'updateActivityLayout({layout_mode:1})');
+    // Without the Discord SDK, an Activity frame this small is picture-in-picture.
+    await command('browsingContext.setViewport', { context: activity, viewport: { width: 480, height: 300 } });
+    await until(activity, 'document.body.classList.contains("activity-pip")', 'Activity PIP');
     assert.equal(await evaluate(activity, 'getComputedStyle(drawer).display'), 'none', 'PIP stays video-only');
-    await evaluate(activity, 'updateActivityLayout({layout_mode:0});document.getElementById("close-room").click()');
+    await command('browsingContext.setViewport', { context: activity, viewport: { width: 1920, height: 1080 } });
+    await until(activity, '!document.body.classList.contains("activity-pip")', 'Activity leaves PIP');
+    await evaluate(activity, 'document.getElementById("close-room").click()');
     await until(
       activity,
       '!selected && !document.getElementById("library-panel").hidden && document.querySelectorAll(".library-home-card").length===5',
@@ -968,7 +1014,7 @@ async function main() {
     assert.equal(
       await evaluate(
         activity,
-        'location.pathname==="/watch" && document.querySelectorAll(".library-tile").length===0 && !document.querySelector(".library-landing").hidden',
+        'location.pathname==="/" && document.querySelectorAll(".library-tile").length===0 && !document.querySelector(".library-landing").hidden',
       ),
       true,
       'Browser history cannot restore the previous room catalog',

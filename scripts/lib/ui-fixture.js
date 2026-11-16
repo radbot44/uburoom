@@ -143,10 +143,23 @@ const attr = (selector, name) => '(' + q(selector) + '?.getAttribute(' + JSON.st
 const isOpen = selector => '!!' + q(selector) + '?.open';
 const count = selector => 'document.querySelectorAll(' + JSON.stringify(selector) + ').length';
 
+// Page-side actions through the controls a person uses: the client's own functions are module-private,
+// and only its harness state (me, transport, theater, immersive...) is reachable as globals.
+const byId = id => 'document.getElementById(' + JSON.stringify(id) + ')';
+const setTheater = on =>
+  '(()=>{const b=' +
+  byId('theater') +
+  ';if((b.getAttribute("aria-pressed")==="true")!==' +
+  !!on +
+  ')b.click();return true;})()';
+const openDrawer = () => '(()=>{if(' + byId('drawer') + '.hidden)' + byId('drawer-open') + '.click();return true;})()';
+const selectSection = key => '(' + byId('section-tab-' + key) + '.click(),true)';
+
 module.exports = {
   fixtureLibrary,
   startFixtureServer,
   openPage,
   navigatePage,
   dom: { q, shown, hidden: hiddenEl, text, hasText, enabled, attr, isOpen, count },
+  act: { setTheater, openDrawer, selectSection },
 };
