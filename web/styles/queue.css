@@ -391,11 +391,13 @@
     max-width: 200px;
     font-size: var(--font-size-12);
   }
-  /* The floating scroll buttons sit over the timeline box; its bottom strip holds the "N queued" button
-   below the list and, when history exists, a top strip holds "N past", so neither covers a row. */
+  /* The floating scroll buttons sit over the timeline box; when something is queued a bottom strip holds
+   the "N queued" button below the list and, when history exists, a top strip holds "N past", so neither covers a row. */
   .queue-timeline {
     position: relative;
     min-width: 0;
+  }
+  .queue-timeline.queue-has-upcoming {
     padding-bottom: var(--space-44);
   }
   .queue-timeline.queue-has-history {

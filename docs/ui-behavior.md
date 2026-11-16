@@ -39,7 +39,7 @@ A watch night is a room with a time on it: every event belongs to one saved room
 - **Outside a room:** the Queue panel stays, reading "The queue lives in a room" with one line of explanation and Browse media, and no room buttons. Inside a room an empty queue reads "The queue is empty" with Browse media.
 - **One layout:** a single scrolling list of history, Now Playing and Upcoming; no card view or layout selector.
 - **Rows:** in the dark theme rows sit on a darkened blur of their artwork; in the light theme they use ordinary surfaces with the Now Playing tint and no artwork.
-- **Scroll buttons:** "N past" and "N queued" float in strips above and below the list so neither covers a row; "N past" and its strip exist only with history.
+- **Scroll buttons:** "N past" and "N queued" float in strips above and below the list so neither covers a row; "N past" and its strip exist only with history, and "N queued" and its strip only while something is queued.
 - **No history or nothing queued:** no placeholder text; Now Playing starts at the top, and with nothing queued nothing follows it (the empty-queue screen covers a queue with no entries at all).
 - **Now Playing:** keeps the primary-accent outline rather than a transient selected state.
 - **Auto-queue preview:** at most one preview row at the end of Upcoming, in the secondary accent with an `AUTO` badge and "Auto · Up in …" caption, offering Add to queue, Skip suggestion, Play now and Skip to, with no reorder arrows.

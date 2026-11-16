@@ -888,6 +888,9 @@ function mount(
     previousButton.classList.toggle('queue-navigation-idle', !hLen);
     timeline.classList.toggle('queue-has-history', hLen > 0);
     nextCount.textContent = qLen ? qLen + ' queued' : '';
+    // Nothing queued leaves nothing below to scroll to.
+    nextButton.classList.toggle('queue-navigation-idle', !qLen);
+    timeline.classList.toggle('queue-has-upcoming', qLen > 0);
     const badge = doc.getElementById('queue-count-badge');
     if (badge) {
       badge.textContent = String(qLen);
