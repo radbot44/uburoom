@@ -294,7 +294,7 @@ async function main() {
         'Unfinished season includes Specials',
       );
       await run(
-        '[...document.querySelectorAll(".library-crumb")].find(item=>item.textContent==="Queue fixture show").click()',
+        '[...document.querySelectorAll(".library-detail-parent-link")].find(item=>item.textContent==="Queue fixture show").click()',
       );
       await until(shown('.library-detail-actions [data-auto-queue]'), 'Show random source restored');
       const upcomingIds =

@@ -319,52 +319,30 @@
   .library-panel .library-choice[aria-current='page'] {
     color: var(--accent-text);
   }
-  .library-crumbs {
+  .library-detail-parent {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-6);
+    margin: 0 0 var(--space-4);
     font-size: var(--font-size-14);
-    margin: 0 0 0 var(--space-6);
-    min-width: 0;
-    min-height: var(--watch-control-height);
     color: var(--muted);
-    flex: 1 1 0;
-    overflow: hidden;
   }
-  .library-crumbs > * {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    min-width: 0;
-  }
-  .library-crumbs > [aria-current] {
-    color: var(--text);
-    font-weight: 600;
-    min-width: 0;
-    flex: 1 1 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .library-crumb {
+  .library-detail-parent-link {
     background: none;
     border: 0;
-    min-height: var(--watch-control-height);
-    display: inline-flex;
-    align-items: center;
-    padding: var(--space-2) 0;
-    color: var(--muted);
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
     text-align: left;
     overflow-wrap: anywhere;
-    font-size: var(--font-size-14);
     cursor: pointer;
   }
-  .library-crumb:hover {
+  .library-detail-parent-link:hover {
     color: var(--text);
     text-decoration: underline;
     text-underline-offset: 3px;
-  }
-  .library-crumb-divider {
-    color: var(--border);
   }
   .library-scope-actions {
     display: flex;
@@ -1306,11 +1284,6 @@
       order: 2;
       margin-left: auto;
     }
-    .library-crumbs {
-      order: 3;
-      flex-basis: 100%;
-      margin-left: 0;
-    }
   }
   @container plex-library (max-width:440px) {
     .tool-controls {
@@ -1387,7 +1360,6 @@
   }
   @media (pointer: coarse) {
     .library-key:not(.icon-group *):not(.library-choices *):not(.library-views *),
-    .library-crumb,
     .library-filter-chip {
       min-height: 44px;
     }
@@ -1406,23 +1378,6 @@
   }
   body.theater:not(.immersive) .library-navigation {
     flex-wrap: nowrap;
-  }
-  body.theater:not(.immersive) .library-crumbs {
-    flex-wrap: nowrap;
-    overflow: hidden;
-    flex-basis: 0;
-  }
-  body.theater:not(.immersive) .library-crumbs > * {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    min-width: 0;
-  }
-  body.theater:not(.immersive) .library-crumbs > [aria-current] {
-    flex: 1 1 0;
-  }
-  body.theater:not(.immersive) .library-crumb-divider {
-    flex: none;
   }
   .library-tile.unavailable {
     opacity: 0.4;

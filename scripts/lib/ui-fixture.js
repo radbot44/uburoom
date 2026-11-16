@@ -16,6 +16,7 @@ function fixtureLibrary() {
     title: index ? 'Season 1' : 'Specials',
     index,
     parentRatingKey: '100',
+    parentTitle: show.title,
     leafCount: index ? 2 : 1,
   }));
   const episodes = [0, 1, 2].map(index => ({
@@ -25,6 +26,7 @@ function fixtureLibrary() {
     index: index || 1,
     parentIndex: index ? 1 : 0,
     parentRatingKey: index ? '111' : '110',
+    parentTitle: index ? 'Season 1' : 'Specials',
     grandparentRatingKey: '100',
     grandparentTitle: show.title,
     duration: 60000,

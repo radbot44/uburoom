@@ -217,8 +217,6 @@ function mount(
     overflowSections = sections.filter(section => items.some(b => b.hidden && b.dataset.section === section.id));
     if (choiceMore.hidden && choiceMenu.matches(':popover-open')) choiceMenu.hidePopover();
   }
-  const crumbs = node('nav', navParent, undefined, 'library-crumbs');
-  crumbs.setAttribute('aria-label', 'Library location');
   const tools = node('div', host, undefined, 'library-tools');
   const row = node('div', tools, undefined, 'library-toolbar watch-toolbar');
   const searchField = node('label', row, undefined, 'search-field');
@@ -306,7 +304,6 @@ function mount(
   count.hidden = true;
   results.hidden = true;
   choices.hidden = true;
-  crumbs.hidden = true;
   const navigationControls = [home, search, sort, filterButton, ...viewButtons];
   // Scrolling: Back to top appears once Media has scrolled past its top, and while browsing the catalog
   // the search and sort/filter rows slide up behind the header on the way down and return on the way up.
@@ -672,8 +669,9 @@ function mount(
   // names the server of the library on screen. The front page names none: it lists
   // every server's libraries.
   const roomScope = () => (room === 'lobby' ? {} : { room });
+  // A page opened from outside a library (an episode from the queue, then its show) names its item's server.
   const scoped = (query = {}) => {
-    const server = sections.find(item => item.id === screen?.section)?.serverId;
+    const server = sections.find(item => item.id === screen?.section)?.serverId ?? screen?.server;
     return { ...roomScope(), ...(server ? { server } : {}), ...query };
   };
   function endpoint(path, query = {}) {
@@ -1143,6 +1141,7 @@ function mount(
     const pictures = node('div', top, undefined, 'library-detail-art');
     art(pictures, item, episode);
     const copy = node('div', top, undefined, 'library-detail-copy');
+    parentLine(copy, item);
     const heading = node('h3', copy);
     // A movie or show with a title logo shows it in place of the text once it loads; the logo carries the title.
     if (item.hasLogo) picture(node('span', heading, undefined, 'library-detail-logo'), item, 'logo').alt = item.title;
@@ -1247,33 +1246,6 @@ function mount(
     fitChoices();
     if (focusedSection)
       [...choices.querySelectorAll('button')].find(b => b.dataset.section === focusedSection)?.focus();
-    crumbs.replaceChildren();
-    const path = [{ title: 'Libraries', action: goHome }];
-    if (screen.section)
-      path.push({
-        title: sections.find(x => x.id === screen.section)?.title || screen.title,
-        action: () => void chooseLibrary(screen.section, screen.tab),
-      });
-    if (screen.tab === 'collections')
-      path.push({ title: 'Collections', action: () => void chooseLibrary(screen.section, 'collections') });
-    const all = [...trail, screen].filter(x => !['library', 'home'].includes(x.kind));
-    all.forEach((entry, index) => {
-      path.push({ title: entry.title, action: () => navigateCrumb(entry) });
-      if (entry.onlySeason && index < all.length - 1)
-        path.push({ title: entry.onlySeason.title, action: () => navigateCrumb(entry) });
-    });
-    path.forEach((entry, index) => {
-      if (index) node('span', crumbs, '›', 'library-crumb-divider');
-      if (index === path.length - 1) {
-        const n = node('span', crumbs, entry.title);
-        n.setAttribute('aria-current', 'page');
-      } else {
-        const b = button(crumbs, entry.title, undefined, 'library-crumb');
-        b.textContent = entry.title;
-        b.onclick = entry.action;
-      }
-    });
-    crumbs.hidden = path.length <= 2;
     const details = screen.kind === 'details',
       atHome = screen.kind === 'home',
       collectionIndex = screen.kind === 'library' && screen.tab === 'collections';
@@ -1515,7 +1487,7 @@ function mount(
       if (current.parent) query.parent = current.parent;
       if (current.collection) query.collection = current.collection;
       let data;
-      if (!current.section)
+      if (!current.section && !current.parent && !current.collection)
         data = {
           items: [demoItem].filter(x => x.title.toLowerCase().includes(current.q.toLowerCase())),
           total: 1,
@@ -1593,13 +1565,15 @@ function mount(
     prepareNavigation();
     screen.focusItem = item.id;
     trail.push(screen);
+    const from = screen;
     screen = {
-      ...context(screen.section, screen.tab),
+      ...context(from.section, from.tab),
       title: item.title,
       kind: playable(item) ? 'details' : item.type,
       detail: item,
       sort: 'default',
     };
+    if (!from.section && (item.serverId || from.server)) screen.server = item.serverId || from.server;
     if (item.type === 'collection') screen.collection = item.id;
     else if (!playable(item)) screen.parent = item.id;
     pushVisit();
@@ -1607,6 +1581,39 @@ function mount(
     positionLibrary();
     void getDetails(item, screen);
     if (!playable(item)) await loadPage();
+  }
+  // An episode names its show and season above its title, and a season its show, each a link there.
+  function parentLine(parent, item) {
+    const links =
+      item.type === 'episode'
+        ? [
+            { id: item.showId, type: 'show', title: item.showTitle },
+            { id: item.parentId, type: 'season', title: item.parentTitle },
+          ]
+        : item.type === 'season'
+          ? [{ id: item.parentId, type: 'show', title: item.parentTitle }]
+          : [];
+    const targets = links.filter(link => link.id && link.title);
+    if (!targets.length) return;
+    const line = node('p', parent, undefined, 'library-detail-parent');
+    targets.forEach((target, index) => {
+      if (index) node('span', line, '·', 'library-detail-parent-divider');
+      const link = node('button', line, target.title, 'library-detail-parent-link');
+      link.type = 'button';
+      link.onclick = () => openParent({ ...target, ...(item.serverId ? { serverId: item.serverId } : {}) });
+    });
+  }
+  // Going back to a show or season already on the way here restores it as it was left.
+  function openParent(target) {
+    const entry = [...trail]
+      .reverse()
+      .find(
+        entry =>
+          (entry.kind === target.type && entry.detail?.id === target.id) ||
+          (target.type === 'season' && entry.onlySeason?.id === target.id),
+      );
+    if (entry) navigateCrumb(entry);
+    else void openItem(target);
   }
   function navigateCrumb(entry) {
     const index = trail.indexOf(entry);
@@ -1786,8 +1793,6 @@ function mount(
     choices.replaceChildren();
     choices.hidden = true;
     choiceMore = null;
-    crumbs.replaceChildren();
-    crumbs.hidden = true;
     chips.replaceChildren();
     chips.hidden = true;
     row.hidden = true;

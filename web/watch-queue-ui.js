@@ -910,7 +910,12 @@ function mount(
       target.type = 'button';
       target.title = 'View in library: ' + item.title;
       target.addEventListener('click', () =>
-        openLibraryItem({ id: targetId, type: item.type || 'movie', title: item.title }),
+        openLibraryItem({
+          id: targetId,
+          type: item.type || 'movie',
+          title: item.title,
+          ...(item.serverId ? { serverId: item.serverId } : {}),
+        }),
       );
     }
     const subtitle = formatSubtitle(item);

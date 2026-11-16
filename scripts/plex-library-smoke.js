@@ -69,6 +69,7 @@ async function main() {
     index: i,
     leafCount: 2,
     parentRatingKey: '10000',
+    parentTitle: show.title,
     thumb: `/library/metadata/${10000 + i}/thumb/123`,
   }));
   const episodes = [1, 2].map(i => ({
@@ -78,6 +79,7 @@ async function main() {
     index: i,
     parentIndex: 1,
     parentRatingKey: '10001',
+    parentTitle: 'Season 1',
     grandparentRatingKey: '10000',
     grandparentTitle: show.title,
     year: 2020,
@@ -136,6 +138,7 @@ async function main() {
     ...seasons[0],
     ratingKey: '11001',
     parentRatingKey: '11000',
+    parentTitle: solo.title,
     thumb: '/library/metadata/11001/thumb/123',
   };
   const soloEpisodes = episodes.map((x, i) => ({
@@ -368,10 +371,8 @@ async function main() {
     );
     await evaluate(context, 'document.querySelector(".library-open").click()');
     await until(context, 'document.querySelector(".library-summary")', 'title details');
-    await evaluate(
-      context,
-      '[...document.querySelectorAll(".library-crumb")].find(n=>n.textContent==="Movies").click()',
-    );
+    await evaluate(context, 'history.back()');
+    await until(context, 'document.querySelector(".library").hidden===false', 'back to the search results');
     assert.equal(await evaluate(context, 'search.value'), 'Needle');
     assert.equal(await evaluate(context, 'document.querySelectorAll(".library-tile").length'), 1);
     await evaluate(context, 'search.value="";search.dispatchEvent(new Event("input"))');
@@ -605,9 +606,9 @@ async function main() {
     assert.equal(
       await evaluate(
         context,
-        '[...document.querySelectorAll(".library-crumbs button,.library-crumbs [aria-current]")].map(n=>n.textContent).join("|")',
+        '[...document.querySelectorAll(".library-detail-parent-link")].map(n=>n.textContent).join("|")',
       ),
-      'Libraries|TV Shows|A Sample Show|Season 1|Episode title 1',
+      'A Sample Show|Season 1',
     );
     await until(
       context,
@@ -668,7 +669,7 @@ async function main() {
       await pause(150);
       await evaluate(
         context,
-        '[...document.querySelectorAll(".library-crumb")].find(n=>n.textContent==="Season 1").click()',
+        '[...document.querySelectorAll(".library-detail-parent-link")].find(n=>n.textContent==="Season 1").click()',
       );
       await until(
         context,
@@ -723,26 +724,29 @@ async function main() {
         context,
         'document.getElementById("library-content").scrollWidth<=document.getElementById("library-content").clientWidth+1',
       ),
-      'Phone episode breadcrumbs fit',
+      'Phone episode details fit',
     );
-    const crumbsShot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
-    fs.writeFileSync(path.join(EVIDENCE, 'plex-library-crumbs-phone-qa.png'), Buffer.from(crumbsShot.data, 'base64'));
+    const parentShot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
+    fs.writeFileSync(
+      path.join(EVIDENCE, 'plex-library-episode-parent-phone-qa.png'),
+      Buffer.from(parentShot.data, 'base64'),
+    );
     await evaluate(context, act.setTheater(false));
     await command('browsingContext.setViewport', { context, viewport: { width: 1360, height: 1200 } });
     await evaluate(
       context,
-      '[...document.querySelectorAll(".library-crumb")].find(n=>n.textContent==="A Sample Show").click()',
+      '[...document.querySelectorAll(".library-detail-parent-link")].find(n=>n.textContent==="A Sample Show").click()',
     );
     await until(
       context,
       'document.querySelectorAll(".library-tile").length===2 && !document.querySelector(".library").hidden',
-      'Show breadcrumb restores seasons',
+      'Show link restores seasons',
     );
     await evaluate(context, 'history.back()');
     await until(
       context,
       'document.querySelector(".library-summary")?.textContent==="Episode description, kept short enough to scan in a compact row." && document.querySelector(".library-overview h3").textContent==="Episode title 1"',
-      'Back follows breadcrumb visit history',
+      'Back follows show link visit history',
     );
     await evaluate(context, 'document.querySelector(".library-choices .library-choice:nth-child(2)").click()');
     await until(
@@ -779,9 +783,9 @@ async function main() {
     assert.equal(
       await evaluate(
         context,
-        '[...document.querySelectorAll(".library-crumbs button,.library-crumbs [aria-current]")].map(n=>n.textContent).join("|")',
+        '[...document.querySelectorAll(".library-detail-parent-link")].map(n=>n.textContent).join("|")',
       ),
-      'Libraries|TV Shows|B Single Season Show|Season 1|Episode title 2',
+      'B Single Season Show|Season 1',
     );
     await evaluate(context, 'history.back()');
     await until(
@@ -797,12 +801,12 @@ async function main() {
     );
     await evaluate(
       context,
-      '[...document.querySelectorAll(".library-crumb")].find(n=>n.textContent==="Season 1").click()',
+      '[...document.querySelectorAll(".library-detail-parent-link")].find(n=>n.textContent==="Season 1").click()',
     );
     await until(
       context,
       '!document.querySelector(".library").hidden && document.querySelectorAll(".library-tile.episode").length===1',
-      'Season breadcrumb returns to direct episode list',
+      'Season link returns to direct episode list',
     );
     await evaluate(context, 'document.querySelector(".library-choices .library-choice:first-child").click()');
     await until(context, 'document.querySelectorAll(".library-tile").length>=48', 'library restored');
@@ -1020,7 +1024,7 @@ async function main() {
       'Browser history cannot restore the previous room catalog',
     );
     console.log(
-      '[Plex library Firefox] PASS: Home cards, navigation arrows/browser history, separate library switcher, explicit Libraries breadcrumbs, single-season episodes/search/history, centered navigation, scene-only episode art, grid-sized movie posters, whole-row details and larger/evenly spaced Play controls, all detail fields at four viewport sizes, diagnostic navigation absence, room history isolation; authenticated artwork, complete search, infinite scroll, stable Random pages/shuffle, deep view/detail/back scroll anchors, theater toolbar coverage, editions, collections/order, seasons/episodes, filters and responsive layouts.',
+      '[Plex library Firefox] PASS: Home cards, navigation arrows/browser history, separate library switcher, episode show and season links, single-season episodes/search/history, centered navigation, scene-only episode art, grid-sized movie posters, whole-row details and larger/evenly spaced Play controls, all detail fields at four viewport sizes, diagnostic navigation absence, room history isolation; authenticated artwork, complete search, infinite scroll, stable Random pages/shuffle, deep view/detail/back scroll anchors, theater toolbar coverage, editions, collections/order, seasons/episodes, filters and responsive layouts.',
     );
   } finally {
     driver?.close();
