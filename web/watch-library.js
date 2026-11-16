@@ -2,6 +2,9 @@ import * as uburoomControls from './watch-controls.js';
 import * as uburoomIcons from './icons.js';
 import * as uburoomPopover from './watch-popover.js';
 import { mediaIdentity } from '../shared/room-protocol.mjs';
+import { pictureLoader } from './watch-library-pictures.js';
+import { libraryChoices } from './watch-library-choices.js';
+import { libraryScroll } from './watch-library-scroll.js';
 
 /* One safe-DOM library browser for the website, fullscreen drawer and Activity. */
 function homeCards(items = []) {
@@ -91,132 +94,16 @@ function mount(
     controls.content(control, { label, icon, iconOnly: true });
     control.classList.add('watch-control-solid-disabled');
   }
-  const choices = node('div', historyGroup, undefined, 'library-choices watch-control-group watch-header-actions');
-  choices.setAttribute('role', 'group');
-  choices.setAttribute('aria-label', 'Libraries');
-  // Libraries that do not fit beside the navigation go into one menu at the end of the row. The current
-  // library always stays visible; when even it and the menu button do not fit, the button alone names it.
-  const choiceMenu = node('div', header || host, undefined, 'library-choice-menu');
-  choiceMenu.id = 'library-choice-menu';
-  choiceMenu.popover = 'auto';
-  choiceMenu.setAttribute('role', 'menu');
-  choiceMenu.setAttribute('aria-label', 'Libraries');
-  const choiceFilter = node('input', choiceMenu, undefined, 'library-choice-filter');
-  choiceFilter.type = 'search';
-  choiceFilter.placeholder = 'Find a library';
-  choiceFilter.setAttribute('aria-label', 'Find a library');
-  const choiceList = node('div', choiceMenu, undefined, 'library-choice-list');
-  let choiceMore = null,
-    overflowSections = [];
-  const MENU_FILTER_AT = 10;
-  function menuItems() {
-    return [...choiceList.querySelectorAll('button:not([hidden])')];
-  }
-  function renderChoiceMenu() {
-    choiceList.replaceChildren();
-    const term = choiceFilter.value.trim().toLowerCase();
-    for (const section of overflowSections) {
-      const b = button(choiceList, section.title, undefined, 'library-choice-item');
-      b.setAttribute('role', 'menuitem');
-      controls.content(b, { label: section.title, icon: section.mediaType === 'show' ? 'tv' : 'film' });
-      b.dataset.section = section.id;
-      if (section.id === screen?.section) b.setAttribute('aria-current', 'page');
-      b.hidden = !!term && !section.title.toLowerCase().includes(term);
-      b.onclick = () => {
-        choiceMenu.hidePopover();
-        void chooseLibrary(section.id, screen?.tab);
-      };
-    }
-  }
-  choiceMenu.addEventListener('beforetoggle', event => {
-    if (event.newState !== 'open' || !choiceMore) return;
-    choiceFilter.value = '';
-    choiceFilter.hidden = sections.length <= MENU_FILTER_AT;
-    renderChoiceMenu();
-    placeChoiceMenu();
+  const choices = libraryChoices({
+    doc,
+    parent: historyGroup,
+    menuParent: header || host,
+    header,
+    headerRight,
+    node,
+    button,
+    onChoose: id => void chooseLibrary(id, screen?.tab),
   });
-  choiceMenu.addEventListener('toggle', event => {
-    choiceMore?.setAttribute('aria-expanded', String(event.newState === 'open'));
-    if (event.newState !== 'open') return;
-    (choiceFilter.hidden
-      ? menuItems().find(b => b.hasAttribute('aria-current')) || menuItems()[0]
-      : choiceFilter
-    )?.focus();
-  });
-  choiceFilter.addEventListener('input', renderChoiceMenu);
-  choiceMenu.addEventListener('keydown', event => {
-    const items = menuItems();
-    if (!items.length || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-    event.preventDefault();
-    const index = items.indexOf(doc.activeElement);
-    const nextIndex =
-      event.key === 'Home'
-        ? 0
-        : event.key === 'End'
-          ? items.length - 1
-          : event.key === 'ArrowDown'
-            ? (index + 1) % items.length
-            : index <= 0
-              ? items.length - 1
-              : index - 1;
-    items[nextIndex].focus();
-  });
-  // Position goes to the stylesheet as --x and --y; the menu keeps a fixed width there.
-  function placeChoiceMenu() {
-    if (!choiceMore) return;
-    const anchor = choiceMore.getBoundingClientRect(),
-      width = parseFloat(getComputedStyle(choiceMenu).width) || 260;
-    choiceMenu.style.setProperty('--x', Math.max(8, Math.min(innerWidth - width - 8, anchor.left)) + 'px');
-    choiceMenu.style.setProperty('--y', anchor.bottom + 6 + 'px');
-  }
-  doc.addEventListener('scroll', () => choiceMenu.matches(':popover-open') && placeChoiceMenu(), {
-    capture: true,
-    passive: true,
-  });
-  addEventListener('resize', () => choiceMenu.matches(':popover-open') && choiceMenu.hidePopover());
-  /** Show as many library buttons as fit before the header's right-hand controls; the rest go to the menu. */
-  function fitChoices() {
-    if (!choiceMore || choices.hidden || !header || !choices.getClientRects().length) return;
-    const items = [...choices.querySelectorAll('.library-choice:not(.library-more)')];
-    const current = items.find(b => b.getAttribute('aria-current') === 'page');
-    const gap = parseFloat(getComputedStyle(header).columnGap) || 0;
-    const fits = () =>
-      [...choices.children]
-        .filter(b => !b.hidden)
-        .pop()
-        .getBoundingClientRect().right <=
-      (headerRight ? headerRight.getBoundingClientRect().left - gap : header.getBoundingClientRect().right) + 0.5;
-    const label = compact => {
-      const section = compact && sections.find(item => item.id === screen?.section);
-      const text = section ? section.title : 'More';
-      controls.content(choiceMore, {
-        label: text,
-        icon: section ? (section.mediaType === 'show' ? 'tv' : 'film') : undefined,
-      });
-      // It keeps its name at every width (truncating when it must) rather than collapsing to an icon.
-      choiceMore.classList.remove('watch-control-responsive');
-      choiceMore.append(uburoomIcons.icon(doc, 'chevron'));
-      choiceMore.setAttribute('aria-label', section ? 'Library: ' + section.title : 'More libraries');
-      choiceMore.title = section ? 'Choose a library' : 'More libraries';
-      choiceMore.toggleAttribute('data-current', !!section);
-    };
-    items.forEach(b => (b.hidden = false));
-    choiceMore.hidden = true;
-    if (!fits()) {
-      label(false);
-      choiceMore.hidden = false;
-      for (const b of items.filter(b => b !== current).reverse()) {
-        b.hidden = true;
-        if (fits()) break;
-      }
-      if (!fits()) {
-        items.forEach(b => (b.hidden = true));
-        label(true);
-      }
-    }
-    overflowSections = sections.filter(section => items.some(b => b.hidden && b.dataset.section === section.id));
-    if (choiceMore.hidden && choiceMenu.matches(':popover-open')) choiceMenu.hidePopover();
-  }
   const tools = node('div', host, undefined, 'library-tools');
   const row = node('div', tools, undefined, 'library-toolbar watch-toolbar');
   const searchField = node('label', row, undefined, 'search-field');
@@ -303,65 +190,24 @@ function mount(
   chips.hidden = true;
   count.hidden = true;
   results.hidden = true;
-  choices.hidden = true;
   const navigationControls = [home, search, sort, filterButton, ...viewButtons];
-  // Scrolling: Back to top appears once Media has scrolled past its top, and while browsing the catalog
-  // the search and sort/filter rows slide up behind the header on the way down and return on the way up.
-  const TUCK_DISTANCE = 24;
-  let scrollFrame = 0,
-    turnY = 0,
-    tucked = false,
-    toolsScreen;
-  function tuckTools(value) {
-    if (tucked === value) return;
-    tucked = value;
-    tools.classList.toggle('library-tools-tucked', value);
-  }
-  function toolsStuck(headerBottom) {
-    let after = tools.nextElementSibling;
-    while (after && (after.hidden || !after.getClientRects().length)) after = after.nextElementSibling;
-    return !!after && after.getBoundingClientRect().top - tools.offsetHeight < headerBottom - 4;
-  }
-  function followScroll() {
-    scrollFrame = 0;
-    const panel = host.closest('#library-panel');
-    if (!panel || !header) return;
-    const root = scrollElement(),
-      box = viewport(root),
-      y = root.scrollTop;
-    const scrolled = panel.getBoundingClientRect().top < box.top - 1;
-    if (panel.classList.contains('library-scrolled') !== scrolled) {
-      panel.classList.toggle('library-scrolled', scrolled);
-      fitChoices();
-    }
-    const inUse = tools.contains(doc.activeElement) || !filters.hidden;
-    if (!scrolled || tools.hidden || inUse || !toolsStuck(header.getBoundingClientRect().bottom)) {
-      tuckTools(false);
-      turnY = y;
-      return;
-    }
-    if (tucked ? y > turnY : y < turnY) turnY = y;
-    else if (Math.abs(y - turnY) > TUCK_DISTANCE) {
-      tuckTools(!tucked);
-      turnY = y;
-    }
-  }
-  doc.addEventListener(
-    'scroll',
-    () => {
-      if (!scrollFrame) scrollFrame = requestAnimationFrame(followScroll);
-    },
-    { capture: true, passive: true },
-  );
-  tools.addEventListener('focusin', () => tuckTools(false));
+  const scroll = libraryScroll({
+    doc,
+    host,
+    header,
+    tools,
+    filters,
+    results,
+    ends: [footer, landing, sentinel],
+    onScrolledChange: () => choices.fit(),
+  });
+  let toolsScreen;
   let room,
     generation = 0,
     controller,
     detailController,
-    imageController,
-    imageObserver,
-    activeImages = 0,
-    imageQueue = [],
+    // Reads that belong to the room being browsed; a room change aborts them.
+    roomController,
     timer,
     busy = false,
     playing;
@@ -378,10 +224,7 @@ function mount(
     historyEpoch,
     historyMoving = false;
   const homes = new Map(),
-    images = new Map(),
-    pendingImages = new Map(),
     availabilityReads = new Set();
-  let reusableImages;
   let view = 'cards';
   try {
     const saved = localStorage.getItem('uburoom-library-view');
@@ -410,7 +253,6 @@ function mount(
       total: null,
       nextOffset: null,
       scroll: 0,
-      minHeight: 0,
     };
   }
   function homeContext() {
@@ -462,7 +304,7 @@ function mount(
     saveVisit();
     saveHome();
     cancelReads();
-    reserveHeight();
+    scroll.reserveHeight();
   }
   function goHistory(delta) {
     if (historyMoving || !room || visitIndex + delta < 0 || visitIndex + delta >= visits.length) return;
@@ -499,7 +341,7 @@ function mount(
     trail = [];
     pushVisit();
     renderResults();
-    positionLibrary();
+    scroll.position();
   }
   function newSeed() {
     return crypto.randomUUID().replace(/-/g, '');
@@ -523,127 +365,25 @@ function mount(
     // Batch writes after measurements so loaded rows do not each force layout.
     for (const [target, property, value] of updates)
       if (target.style.getPropertyValue(property) !== value) target.style.setProperty(property, value);
-    if (entries.some(entry => entry.target === header)) scheduleFit();
+    if (entries.some(entry => entry.target === header)) choices.scheduleFit();
   });
-  let fitFrame = 0;
-  function scheduleFit() {
-    if (!fitFrame)
-      fitFrame = requestAnimationFrame(() => {
-        fitFrame = 0;
-        fitChoices();
-      });
-  }
-  void doc.fonts?.ready.then(scheduleFit);
   layoutObserver.observe(host);
   if (header) layoutObserver.observe(header);
   function measureHeader() {
     if (header) header.parentElement.style.setProperty('--media-header-height', header.offsetHeight + 'px');
   }
-  function scrollElement() {
-    const drawer = host.closest('#drawer');
-    if (drawer) return drawer;
-    const panel = host.closest('#library-panel');
-    return panel && getComputedStyle(panel).overflowY === 'auto' ? panel : document.scrollingElement;
-  }
-  function viewport(root = scrollElement()) {
-    const top = root === document.scrollingElement ? 0 : root.getBoundingClientRect().top + root.clientTop;
-    return { top, bottom: top + root.clientHeight };
-  }
-  /**
-   * Where the tool rows end once settled (shown, or tucked up behind the header), whatever their slide is
-   * doing now: the edge the visible list starts below, which scroll positions are kept relative to.
-   */
-  function toolsEdge(tuckedState = tucked) {
-    const transform = getComputedStyle(tools).transform;
-    const shift = transform && transform !== 'none' ? new DOMMatrixReadOnly(transform).m42 : 0;
-    return tools.getBoundingClientRect().bottom - shift - (tuckedState ? tools.offsetHeight : 0);
-  }
-  function captureAnchor() {
-    const root = scrollElement(),
-      box = viewport(root),
-      top = Math.max(box.top, toolsEdge());
-    const item = [...results.querySelectorAll('.library-tile')].find(n => {
-      const b = n.getBoundingClientRect();
-      return b.bottom > top && b.top < box.bottom;
-    });
-    return {
-      id: item?.dataset.item,
-      offset: item ? item.getBoundingClientRect().top - top : 0,
-      scroll: root.scrollTop,
-      tucked,
-    };
-  }
   function rememberScroll() {
     if (screen) {
-      screen.scroll = scrollElement().scrollTop;
-      screen.anchor = captureAnchor();
+      screen.scroll = scroll.scrollElement().scrollTop;
+      screen.anchor = scroll.captureAnchor();
     }
-  }
-  function reserveHeight() {
-    host.style.minHeight = Math.max(host.getBoundingClientRect().height, scrollElement().clientHeight) + 'px';
-  }
-  function roomForScroll(desired) {
-    const root = scrollElement(),
-      box = viewport(root),
-      rect = host.getBoundingClientRect(),
-      hostTop = root.scrollTop + rect.top - box.top;
-    const end = Math.max(
-      footer.getBoundingClientRect().bottom,
-      landing.hidden ? 0 : landing.getBoundingClientRect().bottom,
-      sentinel.hidden ? 0 : sentinel.getBoundingClientRect().bottom,
-    );
-    screen.minHeight = Math.ceil(Math.max(0, end - rect.top + 8, desired + root.clientHeight - hostTop));
-    host.style.minHeight = screen.minHeight + 'px';
-  }
-  // Returning to a list puts it back as it was left: the same tile at the same place, with the tool rows
-  // tucked or shown as they were.
-  function restoreAnchor(anchor) {
-    const root = scrollElement(),
-      item = anchor.id && [...results.querySelectorAll('.library-tile')].find(n => n.dataset.item === anchor.id);
-    tuckTools(!!anchor.tucked && !tools.hidden);
-    let desired = anchor.scroll;
-    if (item) {
-      const b = item.getBoundingClientRect(),
-        top = Math.max(viewport(root).top, toolsEdge());
-      const offset = Math.max(anchor.offset, -Math.max(0, b.height - 44));
-      desired = Math.max(0, root.scrollTop + b.top - top - offset);
-    }
-    roomForScroll(desired);
-    root.scrollTop = desired;
-    // This scroll is the restore itself, not someone browsing: it neither tucks nor shows the tools.
-    turnY = root.scrollTop;
   }
   function restoreScroll(value) {
     const current = screen,
       version = generation;
     requestAnimationFrame(() => {
-      if (room && screen === current && generation === version) scrollElement().scrollTop = value;
+      if (room && screen === current && generation === version) scroll.scrollElement().scrollTop = value;
     });
-  }
-  function positionLibrary(behavior = 'instant') {
-    const root = scrollElement(),
-      box = viewport(root),
-      rect = host.getBoundingClientRect();
-    const contentTop = Math.max(
-      box.top,
-      header?.getBoundingClientRect().bottom || box.top,
-      tools.hidden ? box.top : toolsEdge(),
-    );
-    const visible = [...host.querySelectorAll('.library-tile,.library-home-card,.library-overview')].some(item => {
-      const bounds = item.getBoundingClientRect();
-      return bounds.width > 0 && bounds.height > 0 && bounds.bottom > contentTop && bounds.top < box.bottom;
-    });
-    if (visible || (rect.top >= box.top && rect.top < box.bottom)) {
-      // Nothing to scroll to: keep only the height the current scroll position needs.
-      roomForScroll(root.scrollTop);
-      return;
-    }
-    // The content host starts after the header. Aligning it to the viewport
-    // would put the first row underneath that sticky header.
-    const panel = host.closest('#library-panel') || host;
-    const desired = Math.max(0, root.scrollTop + panel.getBoundingClientRect().top - box.top);
-    roomForScroll(desired);
-    root.scrollTo({ top: desired, behavior });
   }
   const pageObserver = new IntersectionObserver(
     entries => {
@@ -710,118 +450,11 @@ function mount(
       .filter(Boolean)
       .join(' · ');
   }
-  function clearImages() {
-    imageController?.abort();
-    imageObserver?.disconnect();
-    imageQueue = [];
-    activeImages = 0;
-    for (const value of images.values()) URL.revokeObjectURL(value);
-    images.clear();
-    pendingImages.clear();
-    imageController = new AbortController();
-    imageObserver = new IntersectionObserver(
-      entries => {
-        for (const entry of entries)
-          if (entry.isIntersecting) {
-            imageObserver.unobserve(entry.target);
-            imageQueue.push(entry.target);
-          }
-        pumpImages();
-      },
-      { rootMargin: '180px' },
-    );
-  }
-  /**
-   * One provider picture as an object URL, cached and fetched once however many places ask for it at a time.
-   * Resolves to undefined when the room changed meanwhile.
-   */
-  function loadImage(item, kind, type) {
-    const key = item + ':' + kind;
-    if (images.has(key)) return Promise.resolve(images.get(key));
-    if (pendingImages.has(key)) return pendingImages.get(key);
-    const version = generation,
-      signal = imageController.signal;
-    const promise = artwork(endpoint('/api/watch/library/art', { item, kind, type }), signal)
-      .then(blob => {
-        if (version !== generation || signal.aborted) return undefined;
-        const url = URL.createObjectURL(blob),
-          old = images.get(key);
-        if (old) URL.revokeObjectURL(old);
-        images.set(key, url);
-        while (images.size > 160) {
-          const first = images.keys().next().value;
-          URL.revokeObjectURL(images.get(first));
-          images.delete(first);
-        }
-        return url;
-      })
-      .finally(() => {
-        if (pendingImages.get(key) === promise) pendingImages.delete(key);
-      });
-    pendingImages.set(key, promise);
-    return promise;
-  }
-  function pumpImages() {
-    const version = generation;
-    while (activeImages < 4 && imageQueue.length) {
-      const img = imageQueue.shift();
-      if (!img.isConnected || img.src) continue;
-      const key = img.dataset.item + ':' + img.dataset.kind;
-      if (images.has(key)) {
-        img.src = images.get(key);
-        continue;
-      }
-      activeImages++;
-      loadImage(img.dataset.item, img.dataset.kind, img.dataset.type)
-        .then(url => {
-          if (url && img.isConnected) img.src = url;
-        })
-        .catch(() => {})
-        .finally(() => {
-          if (version === generation) {
-            activeImages--;
-            pumpImages();
-          }
-        });
-    }
-  }
-  // A details page's backdrop and title logo: they load at once, ahead of the poster queue.
-  const PRIORITY_ART = ['backdrop', 'logo'];
-  /** Start fetching an item's details pictures before its page needs them (on click, or hover on a mouse). */
-  function prefetchArt(item) {
-    if (!item || item.id === 'demo' || !imageController) return;
-    if (item.hasBackdrop) loadImage(item.id, 'backdrop', item.type).catch(() => {});
-    if (item.hasLogo) loadImage(item.id, 'logo', item.type).catch(() => {});
-  }
-  /** One provider picture in `box`, loaded through the shared image queue; the box gets `loaded` once shown. */
-  function picture(box, item, kind) {
-    const key = item.id + ':' + kind;
-    const img = reusableImages?.get(key) || doc.createElement('img');
-    reusableImages?.delete(key);
-    box.append(img);
-    img.alt = '';
-    img.decoding = 'async';
-    img.dataset.item = item.id;
-    img.dataset.kind = kind;
-    img.dataset.type = item.type;
-    img.onload = () => {
-      img.parentElement?.classList.add('loaded');
-    };
-    if (img.src) box.classList.toggle('loaded', img.complete && img.naturalWidth > 0);
-    else if (images.has(key)) {
-      img.src = images.get(key);
-      // A details picture already fetched (a prefetch, or the page's first render) shows at once: no text
-      // title first and no fade. Only one that arrives while the page is open fades in.
-      if (PRIORITY_ART.includes(kind)) box.classList.add('loaded', 'instant');
-    } else if (PRIORITY_ART.includes(kind))
-      loadImage(item.id, kind, item.type)
-        .then(url => {
-          if (url && img.isConnected && !img.src) img.src = url;
-        })
-        .catch(() => {});
-    else imageObserver.observe(img);
-    return img;
-  }
+  const pictures = pictureLoader({
+    doc,
+    fetchArt: (item, kind, type, signal) => artwork(endpoint('/api/watch/library/art', { item, kind, type }), signal),
+  });
+  const { prefetch: prefetchArt, picture } = pictures;
   function art(parent, item, landscape = false) {
     const box = node('div', parent, undefined, 'library-art' + (landscape ? ' landscape' : ''));
     const fallback = node('span', box, undefined, 'library-art-fallback');
@@ -1227,30 +860,10 @@ function mount(
     previous.title = previous.disabled ? 'No earlier Media page.' : 'Back';
     next.title = next.disabled ? 'No later Media page.' : 'Forward';
     home.title = home.disabled ? 'Already at Libraries home.' : 'Libraries home';
-    const focusedSection = choices.contains(doc.activeElement) ? doc.activeElement.dataset.section : null;
-    choices.replaceChildren();
-    choices.hidden = screen.kind === 'home';
-    sections.forEach(section => {
-      const b = button(choices, section.title, undefined, 'library-key library-choice');
-      controls.content(b, { label: section.title, icon: section.mediaType === 'show' ? 'tv' : 'film' });
-      // Library buttons keep their names at every width: what does not fit goes into the More menu.
-      b.classList.remove('watch-control-responsive');
-      b.dataset.section = section.id;
-      if (section.id === screen.section) b.setAttribute('aria-current', 'page');
-      b.onclick = () => void chooseLibrary(section.id, screen.tab);
-    });
-    choiceMore = button(choices, 'More libraries', undefined, 'library-key library-choice library-more');
-    choiceMore.setAttribute('aria-haspopup', 'menu');
-    choiceMore.setAttribute('aria-expanded', 'false');
-    choiceMore.popoverTargetElement = choiceMenu;
-    choiceMore.hidden = true;
-    fitChoices();
-    if (focusedSection)
-      [...choices.querySelectorAll('button')].find(b => b.dataset.section === focusedSection)?.focus();
+    choices.render(sections, screen.section, screen.kind !== 'home');
     const details = screen.kind === 'details',
       atHome = screen.kind === 'home',
       collectionIndex = screen.kind === 'library' && screen.tab === 'collections';
-    choices.hidden = atHome;
     scopeActions.replaceChildren();
     const section = sections.find(item => item.id === screen.section);
     scopeActions.hidden =
@@ -1269,7 +882,7 @@ function mount(
     tools.hidden = details || atHome;
     if (toolsScreen !== screen) {
       toolsScreen = screen;
-      tuckTools(false);
+      scroll.tuck(false);
     }
     row.hidden = details || atHome;
     chips.hidden = details || atHome;
@@ -1371,14 +984,7 @@ function mount(
     }
   }
   function renderResults(reuseImages = false) {
-    reusableImages = reuseImages
-      ? new Map(
-          [...host.querySelectorAll('.library-art img, .library-detail-backdrop img')].map(img => [
-            img.dataset.item + ':' + img.dataset.kind,
-            img,
-          ]),
-        )
-      : undefined;
+    if (reuseImages) pictures.reuse(host.querySelectorAll('.library-art img, .library-detail-backdrop img'));
     renderTools();
     clearResults();
     if (screen.kind === 'home') renderLanding();
@@ -1404,7 +1010,7 @@ function mount(
     // A page opened from the queue knows only a title until its details arrive; it shows nothing until then
     // rather than a bare placeholder that is replaced a moment later.
     summary(screen.outside && !screen.detailsLoaded ? undefined : screen.detail);
-    reusableImages = undefined;
+    pictures.endReuse();
     watchNextPage();
     setBusy(busy);
   }
@@ -1595,7 +1201,7 @@ function mount(
     else if (!playable(item)) screen.parent = item.id;
     pushVisit();
     renderResults();
-    positionLibrary();
+    scroll.position();
     void getDetails(item, screen);
     if (!playable(item)) await loadPage();
   }
@@ -1642,13 +1248,13 @@ function mount(
     restoreScreen(true);
   }
   function restoreScreen(reveal = false) {
-    reserveHeight();
+    scroll.reserveHeight();
     screen.loading = false;
     renderResults();
-    if (reveal) positionLibrary();
-    else if (screen.anchor?.id) restoreAnchor(screen.anchor);
+    if (reveal) scroll.position();
+    else if (screen.anchor?.id) scroll.restoreAnchor(screen.anchor);
     else {
-      roomForScroll(screen.scroll);
+      scroll.roomForScroll(screen.scroll);
       restoreScroll(screen.scroll);
     }
     const current = screen;
@@ -1684,7 +1290,7 @@ function mount(
     }
     const version = generation;
     try {
-      const value = await request('library.filters', scoped({ section }), imageController.signal);
+      const value = await request('library.filters', scoped({ section }), roomController.signal);
       if (version !== generation || section !== filterSection) return;
       for (const [control, values] of [
         [genre, value.genres],
@@ -1713,7 +1319,7 @@ function mount(
     if (saved) restoreScreen(true);
     else {
       renderResults();
-      positionLibrary();
+      scroll.position();
       void loadPage();
     }
     if (filterSection !== section) void fetchFacets(section);
@@ -1723,9 +1329,9 @@ function mount(
     screen.dirty = false;
     screen.items = [];
     screen.nextOffset = null;
-    reserveHeight();
+    scroll.reserveHeight();
     const promise = loadPage();
-    positionLibrary();
+    scroll.position();
     await promise;
   }
   previous.onclick = () => goHistory(-1);
@@ -1766,14 +1372,14 @@ function mount(
     b =>
       (b.onclick = () => {
         if (view === b.dataset.view) return;
-        const anchor = captureAnchor();
-        reserveHeight();
+        const anchor = scroll.captureAnchor();
+        scroll.reserveHeight();
         view = b.dataset.view;
         try {
           localStorage.setItem('uburoom-library-view', view);
         } catch {}
         renderResults(true);
-        restoreAnchor(anchor);
+        scroll.restoreAnchor(anchor);
       }),
   );
   retry.onclick = () => errorAction?.();
@@ -1790,7 +1396,9 @@ function mount(
     controller?.abort();
     detailController?.abort();
     clearTimeout(timer);
-    clearImages();
+    roomController?.abort();
+    roomController = new AbortController();
+    pictures.reset();
     homes.clear();
     sections = [];
     trail = [];
@@ -1807,9 +1415,7 @@ function mount(
     landing.hidden = true;
     overview.replaceChildren();
     overview.hidden = true;
-    choices.replaceChildren();
-    choices.hidden = true;
-    choiceMore = null;
+    choices.clear();
     chips.replaceChildren();
     chips.hidden = true;
     row.hidden = true;
@@ -1845,7 +1451,7 @@ function mount(
     const version = generation;
     async function start() {
       try {
-        const data = await request('library.browse', roomScope(), imageController.signal);
+        const data = await request('library.browse', roomScope(), roomController.signal);
         if (version !== generation) return;
         sections = data.items;
         testVideo = !!data.testVideo;
@@ -1862,7 +1468,7 @@ function mount(
     setRoom,
     setBusy,
     openItem,
-    reveal: positionLibrary,
+    reveal: behavior => scroll.position(behavior),
     refreshSuggestions: syncSuggestions,
     refreshAdmin: () => {
       if (screen?.kind === 'home') renderLanding();
