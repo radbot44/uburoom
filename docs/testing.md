@@ -26,13 +26,14 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 | Installation diagnostics / doctor | `npm run doctor` (`node scripts/doctor.js`) |
 | Clock and drift-controller simulation | `npm run sync:bench` (also runs in `npm test` as `tests/sync-bench.test.js`) |
 | Decoded video/audio baseline | `npm run test:playback` (`node scripts/playback-baseline.js`) |
+| UI smoke before a deploy (all four runners below, Chrome and Firefox) | `npm run smoke` (`node scripts/smoke.js`, optional `-- --browsers=chrome`) |
 | Room lifecycle / permissions | `node scripts/room-ui-smoke.js --browsers=chrome,firefox` |
 | Queue / Media controls | `node scripts/queue-controls-smoke.js` / `node scripts/media-controls-smoke.js` |
-| Library browsing | `node scripts/plex-library-smoke.js` |
+| Library browsing | `node scripts/plex-library-smoke.js` (Chrome and Firefox; `--browsers=` to choose) |
 | Scheduled controls | `node scripts/sync-controls-smoke.js --browser=chrome` |
 | Local WebM | `node scripts/local-webm-smoke.js --browser=chrome --codec=vp9` |
 
-Use both Chrome and Firefox for relevant browser checks. TLS, browser binaries, and FFmpeg/FFprobe may be required. Missing prerequisites or unexpected skips are not a clean pass. Fixtures establish isolated behavior, not real Plex/Activity/device support.
+`npm run smoke` takes about four minutes and is the browser check before a deploy that changes `web/`, `server/` or `shared/`. Use both Chrome and Firefox for relevant browser checks. TLS, browser binaries, and FFmpeg/FFprobe may be required. Missing prerequisites or unexpected skips are not a clean pass. Fixtures establish isolated behavior, not real Plex/Activity/device support.
 
 ---
 

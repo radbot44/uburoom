@@ -24,7 +24,8 @@ const mediaPair = (top, tucked, extra = 'true') =>
 const TOOLS_SLIDE = 300; // .library-tools transitions transform over 0.2s
 
 async function main() {
-  for (const name of ['chrome', 'firefox']) {
+  const browsers = (process.argv.find(arg => arg.startsWith('--browsers='))?.slice(11) || 'chrome,firefox').split(',');
+  for (const name of browsers) {
     const fixture = accountFixture();
     const config = {
       cert: fs.readFileSync('certs/server-cert.pem'),

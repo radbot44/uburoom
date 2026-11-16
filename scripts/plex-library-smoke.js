@@ -1,20 +1,17 @@
-/* Firefox library UX against synthetic Plex data; no private media or accounts. */
+/* Library UX against synthetic Plex data in Chrome and Firefox (--browsers=chrome,firefox); no private media or accounts. */
 'use strict';
 const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs'),
   path = require('node:path'),
-  os = require('node:os'),
   assert = require('node:assert/strict');
-const { spawn } = require('node:child_process'),
-  { once } = require('node:events'),
-  { WebSocket } = require('ws'),
-  { createApp } = require('../server/app'),
+const { createApp } = require('../server/app'),
   { accountFixture } = require('./account-fixture'),
-  { act } = require('./lib/ui-fixture');
+  { act } = require('./lib/ui-fixture'),
+  { playbackBrowser } = require('./lib/playback-browser');
 const root = path.resolve(__dirname, '..'),
   pause = ms => new Promise(r => setTimeout(r, ms));
 const TOOLS_SLIDE = 300; // .library-tools transitions transform over 0.2s
-async function main() {
+async function main(name) {
   // The isolated account demo: fixture Discord and Plex accounts, never private configuration.
   const fixture = accountFixture();
   const config = {
@@ -240,69 +237,17 @@ async function main() {
   });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   config.publicUrl = `https://localhost:${app.server.address().port}`;
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-library-firefox-'));
-  let firefox, driver;
+  let browser;
   try {
-    firefox = spawn(
-      process.env.FIREFOX_BINARY || 'C:/Program Files/Mozilla Firefox/firefox.exe',
-      ['--headless', '--no-remote', '--profile', profile, '--remote-debugging-port', '0'],
-      { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-    const address = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(Error('Firefox startup timeout')), 20000);
-      const read = b => {
-        const m = /WebDriver BiDi listening on (ws:\/\/127\.0\.0\.1:\d+)/.exec(b.toString());
-        if (m) {
-          clearTimeout(timer);
-          resolve(m[1] + '/session');
-        }
-      };
-      firefox.stdout.on('data', read);
-      firefox.stderr.on('data', read);
-    });
-    driver = new WebSocket(address);
-    await once(driver, 'open');
-    let seq = 0;
-    const pending = new Map();
-    driver.on('message', raw => {
-      const m = JSON.parse(raw),
-        p = pending.get(m.id);
-      if (p) {
-        pending.delete(m.id);
-        clearTimeout(p.timer);
-        m.type === 'error' ? p.reject(Error(m.error + ': ' + m.message)) : p.resolve(m.result);
-      }
-    });
-    const command = (method, params = {}) =>
-      new Promise((resolve, reject) => {
-        const id = ++seq,
-          timer = setTimeout(() => reject(Error(method + ' timeout')), 20000);
-        pending.set(id, { resolve, reject, timer });
-        driver.send(JSON.stringify({ id, method, params }));
-      });
-    const evaluate = async (context, expression) => {
-      const r = await command('script.evaluate', { target: { context }, expression, awaitPromise: true });
-      if (r.type === 'exception') throw Error(JSON.stringify(r.exceptionDetails));
-      return r.result.value;
-    };
-    const until = async (context, expression, label) => {
-      const end = Date.now() + 15000;
-      while (Date.now() < end) {
-        if (await evaluate(context, expression)) return;
-        await pause(100);
-      }
-      throw Error('Timeout: ' + label);
-    };
-    await command('session.new', { capabilities: { alwaysMatch: { acceptInsecureCerts: true } } });
-    const { context } = await command('browsingContext.create', { type: 'tab' });
-    await command('browsingContext.setViewport', { context, viewport: { width: 1360, height: 1200 } });
-    await command('browsingContext.navigate', {
-      context,
-      url: config.publicUrl + '/?demo=host',
-      wait: 'complete',
-    });
+    browser = await playbackBrowser(name);
+    const evaluate = (page, expression) => browser.evaluate(page, expression);
+    const until = (page, expression, label) => browser.until(page, expression, label, 15000);
+    const context = await browser.page(config.publicUrl + '/?demo=host');
+    await browser.viewport(context, 1360, 1200);
     await until(context, '!!me', 'demo login');
-    await evaluate(context, 'document.getElementById("create").click();document.getElementById("room-create").click()');
+    await evaluate(context, 'document.getElementById("create").click()');
+    await until(context, 'document.getElementById("room-dialog").open', 'room chooser');
+    await evaluate(context, 'document.getElementById("room-create").click()');
     await until(context, 'document.querySelectorAll(".library-home-card").length===5', 'Libraries home');
     // Phone layouts show one section at a time (Room first in a saved room); these checks browse Media.
     await evaluate(context, act.selectSection('media'));
@@ -471,7 +416,7 @@ async function main() {
       ['activity-size', 1920, 1080, true],
       ['phone', 390, 1100, true],
     ]) {
-      await command('browsingContext.setViewport', { context, viewport: { width, height } });
+      await browser.viewport(context, width, height);
       await evaluate(
         context,
         `${act.setTheater(theater)};document.querySelector('.library-views [data-view=cards]').click();`,
@@ -514,11 +459,7 @@ async function main() {
         ),
         'Movie details fit ' + name,
       );
-      const movieShot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
-      fs.writeFileSync(
-        path.join(EVIDENCE, 'plex-library-movie-details-' + name + '-qa.png'),
-        Buffer.from(movieShot.data, 'base64'),
-      );
+      await browser.screenshot(context, path.join(EVIDENCE, name + '-plex-library-movie-details-' + name + '-qa.png'));
       await evaluate(context, 'history.back()');
       await until(context, '!document.querySelector(".library").hidden', 'Back to grid at ' + name);
       await evaluate(context, 'document.querySelector(".library-views [data-view=list]").click()');
@@ -534,17 +475,13 @@ async function main() {
           row.size === 55 && Math.abs(row.top - row.bottom) < 1 && Math.abs(row.right - rows[0].right) < 1,
           'Play is larger with consistent edge spacing at ' + name + ': ' + JSON.stringify(row),
         );
-      const listShot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
-      fs.writeFileSync(
-        path.join(EVIDENCE, 'plex-library-list-' + name + '-qa.png'),
-        Buffer.from(listShot.data, 'base64'),
-      );
+      await browser.screenshot(context, path.join(EVIDENCE, name + '-plex-library-list-' + name + '-qa.png'));
     }
     await evaluate(
       context,
       act.setTheater(false) + ';document.querySelector(".library-views [data-view=cards]").click()',
     );
-    await command('browsingContext.setViewport', { context, viewport: { width: 1360, height: 1200 } });
+    await browser.viewport(context, 1360, 1200);
 
     await evaluate(
       context,
@@ -661,7 +598,7 @@ async function main() {
       ['activity-size', 1920, 1080, true],
       ['phone', 390, 1100, true],
     ]) {
-      await command('browsingContext.setViewport', { context, viewport: { width, height } });
+      await browser.viewport(context, width, height);
       await evaluate(
         context,
         `${act.setTheater(theater)};document.getElementById("library-content").scrollIntoView();`,
@@ -708,16 +645,15 @@ async function main() {
           ),
           'Navigation buttons are centered at ' + name,
         );
-      const shot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
-      fs.writeFileSync(
-        path.join(EVIDENCE, 'plex-library-episode-details-' + name + '-qa.png'),
-        Buffer.from(shot.data, 'base64'),
+      await browser.screenshot(
+        context,
+        path.join(EVIDENCE, name + '-plex-library-episode-details-' + name + '-qa.png'),
       );
     }
     await evaluate(context, act.setTheater(false));
-    await command('browsingContext.setViewport', { context, viewport: { width: 1360, height: 1200 } });
+    await browser.viewport(context, 1360, 1200);
 
-    await command('browsingContext.setViewport', { context, viewport: { width: 390, height: 1100 } });
+    await browser.viewport(context, 390, 1100);
     await evaluate(context, act.setTheater(true) + ';' + act.openDrawer());
     assert.ok(
       await evaluate(
@@ -726,13 +662,9 @@ async function main() {
       ),
       'Phone episode details fit',
     );
-    const parentShot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
-    fs.writeFileSync(
-      path.join(EVIDENCE, 'plex-library-episode-parent-phone-qa.png'),
-      Buffer.from(parentShot.data, 'base64'),
-    );
+    await browser.screenshot(context, path.join(EVIDENCE, name + '-plex-library-episode-parent-phone-qa.png'));
     await evaluate(context, act.setTheater(false));
-    await command('browsingContext.setViewport', { context, viewport: { width: 1360, height: 1200 } });
+    await browser.viewport(context, 1360, 1200);
     await evaluate(
       context,
       '[...document.querySelectorAll(".library-detail-parent-link")].find(n=>n.textContent==="A Sample Show").click()',
@@ -885,8 +817,7 @@ async function main() {
       ),
       false,
     );
-    const homeShot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
-    fs.writeFileSync(path.join(EVIDENCE, 'plex-library-home-qa.png'), Buffer.from(homeShot.data, 'base64'));
+    await browser.screenshot(context, path.join(EVIDENCE, name + '-plex-library-home-qa.png'));
     assert.ok(
       await evaluate(
         context,
@@ -908,7 +839,7 @@ async function main() {
       ['activity-size', 1920, 1080, true],
       ['phone', 390, 1100, true],
     ]) {
-      await command('browsingContext.setViewport', { context, viewport: { width, height } });
+      await browser.viewport(context, width, height);
       await evaluate(context, `${act.setTheater(theater)};document.getElementById("library-panel").scrollIntoView();`);
       await pause(200);
       const report = JSON.parse(
@@ -918,8 +849,7 @@ async function main() {
         ),
       );
       assert.deepEqual(report.overflow, [], JSON.stringify(report));
-      const shot = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
-      fs.writeFileSync(path.join(EVIDENCE, 'plex-library-' + name + '-qa.png'), Buffer.from(shot.data, 'base64'));
+      await browser.screenshot(context, path.join(EVIDENCE, name + '-plex-library-' + name + '-qa.png'));
       if (width === 390) {
         await evaluate(context, 'document.getElementById("library-home").click()');
         assert.ok(
@@ -929,8 +859,7 @@ async function main() {
           ),
           'Phone Home cards fit',
         );
-        const homePhone = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
-        fs.writeFileSync(path.join(EVIDENCE, 'plex-library-home-phone-qa.png'), Buffer.from(homePhone.data, 'base64'));
+        await browser.screenshot(context, path.join(EVIDENCE, name + '-plex-library-home-phone-qa.png'));
         await evaluate(context, 'document.querySelector(".library-home-card[data-tab=library]:first-child").click()');
         await until(context, '!document.querySelector(".library").hidden', 'Phone library restored');
       }
@@ -956,11 +885,7 @@ async function main() {
           true,
           'Theater library scrolls with page beneath sticky navigation',
         );
-        const scrolled = await command('browsingContext.captureScreenshot', { context, origin: 'viewport' });
-        fs.writeFileSync(
-          path.join(EVIDENCE, 'plex-library-' + name + '-scrolled-qa.png'),
-          Buffer.from(scrolled.data, 'base64'),
-        );
+        await browser.screenshot(context, path.join(EVIDENCE, name + '-plex-library-' + name + '-scrolled-qa.png'));
       }
     }
     await evaluate(
@@ -979,13 +904,8 @@ async function main() {
       true,
       'List Play does not also open details',
     );
-    const { context: activity } = await command('browsingContext.create', { type: 'tab' });
-    await command('browsingContext.setViewport', { context: activity, viewport: { width: 1920, height: 1080 } });
-    await command('browsingContext.navigate', {
-      context: activity,
-      url: config.publicUrl + '/?demo=host&frame_id=fixture',
-      wait: 'complete',
-    });
+    const activity = await browser.page(config.publicUrl + '/?demo=host&frame_id=fixture');
+    await browser.viewport(activity, 1920, 1080);
     await until(activity, 'document.querySelector("#rooms button")', 'Activity rooms');
     await evaluate(activity, 'document.querySelector("#rooms button").click()');
     await until(activity, 'document.querySelectorAll(".library-home-card").length===5', 'Activity home');
@@ -999,13 +919,12 @@ async function main() {
       ),
       true,
     );
-    const activityShot = await command('browsingContext.captureScreenshot', { context: activity, origin: 'viewport' });
-    fs.writeFileSync(path.join(EVIDENCE, 'plex-library-activity-qa.png'), Buffer.from(activityShot.data, 'base64'));
+    await browser.screenshot(activity, path.join(EVIDENCE, name + '-plex-library-activity-qa.png'));
     // Without the Discord SDK, an Activity frame this small is picture-in-picture.
-    await command('browsingContext.setViewport', { context: activity, viewport: { width: 480, height: 300 } });
+    await browser.viewport(activity, 480, 300);
     await until(activity, 'document.body.classList.contains("activity-pip")', 'Activity PIP');
     assert.equal(await evaluate(activity, 'getComputedStyle(drawer).display'), 'none', 'PIP stays video-only');
-    await command('browsingContext.setViewport', { context: activity, viewport: { width: 1920, height: 1080 } });
+    await browser.viewport(activity, 1920, 1080);
     await until(activity, '!document.body.classList.contains("activity-pip")', 'Activity leaves PIP');
     await evaluate(activity, 'document.getElementById("close-room").click()');
     await until(
@@ -1024,15 +943,19 @@ async function main() {
       'Browser history cannot restore the previous room catalog',
     );
     console.log(
-      '[Plex library Firefox] PASS: Home cards, navigation arrows/browser history, separate library switcher, episode show and season links, single-season episodes/search/history, centered navigation, scene-only episode art, grid-sized movie posters, whole-row details and larger/evenly spaced Play controls, all detail fields at four viewport sizes, diagnostic navigation absence, room history isolation; authenticated artwork, complete search, infinite scroll, stable Random pages/shuffle, deep view/detail/back scroll anchors, theater toolbar coverage, editions, collections/order, seasons/episodes, filters and responsive layouts.',
+      '[Plex library ' +
+        name +
+        '] PASS: Home cards, navigation arrows/browser history, separate library switcher, episode show and season links, single-season episodes/search/history, centered navigation, scene-only episode art, grid-sized movie posters, whole-row details and larger/evenly spaced Play controls, all detail fields at four viewport sizes, diagnostic navigation absence, room history isolation; authenticated artwork, complete search, infinite scroll, stable Random pages/shuffle, deep view/detail/back scroll anchors, theater toolbar coverage, editions, collections/order, seasons/episodes, filters and responsive layouts.',
     );
   } finally {
-    driver?.close();
-    firefox?.kill();
+    await browser?.close();
     await app.close();
   }
 }
-main().catch(error => {
+(async () => {
+  const browsers = (process.argv.find(arg => arg.startsWith('--browsers='))?.slice(11) || 'chrome,firefox').split(',');
+  for (const name of browsers) await main(name);
+})().catch(error => {
   console.error(error);
   process.exitCode = 1;
 });

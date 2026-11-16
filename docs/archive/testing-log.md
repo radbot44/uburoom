@@ -132,3 +132,10 @@ Checks:
 - `node scripts/room-ui-smoke.js --browsers=chrome,firefox`, `node scripts/media-controls-smoke.js` (Chrome, Firefox) and `node scripts/plex-library-smoke.js` (Firefox): passed. The two Media runners were repaired for the current client in `14bb5e1`.
 - Owner check on Vigrid (D, partial): title logos load ahead on hover-then-open against the real Plex. Not covered: Jellyfin artwork against a real server, and a hidden "N queued" button with nothing queued was not separately rendered.
 
+## 2026-11-16 — One smoke command (B, on main after `ca08105`)
+
+- `npm run smoke` (`scripts/smoke.js`) runs `room-ui-smoke.js`, `queue-controls-smoke.js`, `media-controls-smoke.js` and `plex-library-smoke.js` one after another and prints a pass/fail summary; `--browsers=` passes through to each (media-controls gained the option).
+- `plex-library-smoke.js` moved from its own Firefox WebDriver BiDi client to the shared `scripts/lib/playback-browser.js`, so it now runs in Chrome and Firefox; evidence files are prefixed with the browser. The port exposed a race the old timing hid: the runner clicked Create and the chooser's Create together, before the chooser had loaded rooms; it now waits for the chooser.
+- `npm run smoke`: all four pass in Chrome and Firefox (room UI 120 s, queue controls 23 s, Media controls 17 s, Plex library 71 s).
+- Unit overlap review: no unit test duplicates what the smokes check. The unit suite covers server state, permissions, protocol and playback policy, which the fixture-driven smokes never reach. `node --test tests/*.test.js` takes about 32 s; its slowest tests wait real time (WebSocket pong presence 12 s, two conversion-capacity tests 8 s each).
+

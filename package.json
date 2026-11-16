@@ -14,6 +14,7 @@
     "test": "node --test --test-reporter=dot tests/*.test.js",
     "test:full": "node --test tests/*.test.js",
     "test:playback": "node scripts/playback-baseline.js",
+    "smoke": "node scripts/smoke.js",
     "sync:bench": "node scripts/sync-bench.js",
     "demo": "node scripts/watch-demo.js",
     "traces:record": "node scripts/record-room-traces.js",

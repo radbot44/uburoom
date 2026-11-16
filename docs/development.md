@@ -36,9 +36,10 @@ Follow the [lean testing rules](../AGENTS.md#testing). Extend existing meaningfu
 | Full pass/fail/skip output | `npm run test:full` |
 | Re-record room scenario traces after an intended room behaviour change (review the diff) | `npm run traces:record` (`-- <name> --runs=10`, or `--check` to compare only) |
 | Decoded video/audio baseline | `npm run test:playback` |
+| UI smoke before a deploy (all four runners below, Chrome and Firefox) | `npm run smoke` (`node scripts/smoke.js`, optional `-- --browsers=chrome`) |
 | Room lifecycle/permissions | `node scripts/room-ui-smoke.js --browsers=chrome,firefox` |
 | Queue / Media controls | `node scripts/queue-controls-smoke.js` / `node scripts/media-controls-smoke.js` |
-| Library browsing | `node scripts/plex-library-smoke.js` |
+| Library browsing | `node scripts/plex-library-smoke.js` (Chrome and Firefox; `--browsers=` to choose) |
 | Scheduled controls | `node scripts/sync-controls-smoke.js --browser=chrome` |
 | Local WebM | `node scripts/local-webm-smoke.js --browser=chrome --codec=vp9` |
 
