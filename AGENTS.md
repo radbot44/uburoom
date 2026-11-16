@@ -1,56 +1,37 @@
 # Working on uburoom
 
-## Scope and authority
+Follow the owner's current task and the repo's approved boundaries. [README.md](README.md) covers the product, [SPEC.md](SPEC.md) the product contract, and [ROADMAP.md](ROADMAP.md) priorities and open gates. Planned work is not permission to implement unrelated features. Keep this file for durable agent rules, not status, handoffs or work diaries.
 
-- Follow the owner's current task. Read [ROADMAP.md](ROADMAP.md) before planning features; update affected status after material work. Plans do not authorize unrelated implementation or deployment.
-- Develop on local disk with isolated fixture accounts/media. Never run a second instance against production credentials or data.
-- Production restarts/configuration, DNS/Cloudflare, provider registration, signing, public push and publication require explicit owner approval. Public repository creation waits for the brand transition.
+## Authority and workflow
 
-## UI and design
+- Use isolated local fixtures and media for development. Never start another process against production credentials or data. Production restarts/configuration, DNS/Cloudflare changes, provider registration, signing, publication and public push require explicit owner authorization. Do not run migrations or live-provider/device experiments without permission.
+- **For UI work**, consult the relevant [design principles](docs/design-guide.md), [approved screen behavior](docs/ui-behavior.md), actual code/styles and rendered evidence. Read the entire guide only for a broad design-system change, not a targeted bug investigation.
+- Preserve established, owner-approved UI decisions. Within an authorized task, **routine fixes that restore existing behavior** may be implemented and verified without asking the owner to re-approve every step. Before changing visual direction, interaction semantics, component boundaries or an unresolved product choice, present the concrete issue, relevant alternatives and a recommendation, and obtain approval. Explicit discretion in the current task counts; silence and agent suggestions do not.
+- For material new UI decisions, record the approved rule in its owning design document. Inspect affected rendered surfaces before/after where practical; do not equate fixture screenshots with human acceptance. UI approval does not grant deployment permission.
 
-- Before any UI/design investigation, planning or change, read [docs/design-guide.md](docs/design-guide.md) in full, then inspect relevant code, styles, icons and evidence.
-- The owner controls UI, styling, interactions, component boundaries, exceptions, sequencing, tests and implementation choices, including fixes and cleanup. Existing code, agent recommendations and silence are not approval; approval for one surface does not cover another.
-- Before implementation, present concrete issues/code locations, alternatives, a staged plan and numbered questions for unresolved choices. Wait for explicit answers and implementation authorization; honor choices or discretion already explicitly granted. Ask again when new unresolved choices arise.
-- Record approved decisions in the design guide before changing affected code. Inspect rendered surfaces before and after; preserve unmodified approved behavior. Design review does not authorize merging or deployment.
-- Use repository-owned assets and safe DOM creation (`createElement` / `textContent`); never use `innerHTML`, `outerHTML` or `insertAdjacentHTML`.
+## Architecture and code
 
-## Architecture
+- One Node server process, with bounded media child processes and worker threads where needed. Keep SQLite writes short and measured; no unbounded database work or heavy crypto on the playback/tick loop.
+- Plain JavaScript: server CommonJS, browser native modules/scripts; 2 spaces, semicolons, single quotes. Use JSDoc and `// @ts-check` for complex contracts. No runtime framework, compiled TypeScript, JSX, transpilation or minification. `tsc --noEmit` is checking; Prettier/ESLint are development tools; esbuild is for vendor bundles.
+- Use Node's built-in SQLite with one direct connection to the existing database; no ORM or second database. Preserve published schema migration discipline, without reviving private pre-release import/compatibility paths.
+- Minimize dependencies and abstraction. Keep the reusable timeline, clock, readiness, drift, room-role, envelope and publication core in `shared/sync/` independent of Plex, Discord, FFmpeg, TLS, YAML and SQLite; see [sync core](docs/sync-core.md). Optional Cephalopod integration is documented separately and is not a self-hosted release requirement.
 
-- One Node server process; no clustering. Bounded media child processes and built-in worker threads are allowed. Storage writes are short, measured transactions; keep long or unbounded SQLite work and heavy crypto off the playback/tick loop.
-- Plain JavaScript: server CommonJS, browser native modules/scripts; 2 spaces, semicolons, single quotes. Use JSDoc and `// @ts-check` for complex contracts. No framework, compiled TypeScript output, JSX, transpilation or minification; `tsc --noEmit` is for type checking only, Prettier and ESLint are dev tooling, and esbuild is only for vendor bundles.
-- Use built-in SQLite with one direct connection to the existing database. No ORM, external or secondary database. Preserve schema versioning for published upgrades; do not restore private pre-release import/compatibility paths.
-- Minimize dependencies; justify additions and prefer Node built-ins. Tests use `node:test` and `node:assert/strict`. Runtime requirements and dependencies belong in `package.json`.
-- Keep reusable timeline, clock, readiness, drift, generic room-role, envelope and room-scoped publication logic in `shared/sync/` free of Plex, Discord, FFmpeg, TLS, YAML configuration and SQLite dependencies; see [sync core](docs/sync-core.md).
+## Configuration, identity and access
 
-## State, configuration and access
+- Private `config.yaml` is the sole configuration authority; `--config` selects another file and relative paths resolve beside it. No `.env` or application environment overrides. Validate before opening state/providers. Keep `config.example.yaml`, `server/config.js` and `scripts/doctor.js` in sync when settings change; run `npm run doctor`.
+- Preserve canonical account UUIDs and the **original credential encryption key**. Never regenerate the key for an existing database. Store keys and data outside replaceable code/container storage; see [upgrading](docs/upgrading.md). Private pre-release migrations stay in ignored `personal/migrations/`, run only when authorized and never at startup.
+- Keep identity, room admission, personal Plex entitlement, sponsored access, room roles and server administration separate. Authorization is checked per operation and again after awaited provider work. Required personal Plex access cannot be bypassed by fallback; Activity identity exceptions must be server-verified and do not transfer to browser handoffs. Delegated direct fallback needs an explicitly opted-in non-owner account.
+- Enforce revocation and item restrictions; provider failure is not a grant or a denial of an admitted viewer's existing place. New admissions fail closed during an outage. Preserve fixed-owner/single-room reset rules and explicit Admin mode. Details: [accounts and access](docs/accounts-and-access.md), [rooms and queues](docs/rooms-and-queues.md), [self-hosting](docs/self-hosting.md).
 
-- Private `config.yaml` is the sole configuration authority; `--config` selects another file and relative paths resolve beside it. No `.env` loading or application environment overrides. Validate before opening state/contacting providers; distribute only `config.example.yaml`. When adding or modifying configuration settings, keep `config.example.yaml`, schema validation in `server/config.js`, and installation diagnostics in `scripts/doctor.js` synchronized; verify changes with `npm run doctor`.
-- Preserve canonical account UUIDs and the exact original credential-encryption key. Never generate a replacement key for an existing database. Keys must remain outside the project; see [upgrading](docs/upgrading.md). In container deployments, persist data and the encryption key via external host directory mounts outside replaceable container storage; bind `server.host: '0.0.0.0'`.
-- Until final release preparation, keep private config/data migration scripts in ignored `personal/migrations/`. Run only explicitly authorized migrations, never automatically at startup/deployment; preserve original key and state paths.
-- Separate sign-in, admission, personal Plex entitlement, sponsored media, room roles and server administration. Shared passwords supplement provider rules. Configured sponsorship is enabled by default, but expired/revoked credentials, provider failures and item restrictions must fail closed. A provider outage is not a denial: admitted viewers keep their place until the provider answers, while new admission still fails closed.
-- Required personal Plex access cannot be bypassed by fallback. Its Activity exception requires server-verified Activity identity and never transfers to browser handoffs. Direct fallback delegation requires explicit opt-in and a dedicated non-owner account.
-- Preserve single-room fixed ownership/reset rules and explicit Admin mode; ordinary hosts cannot edit management permissions. Detailed policy lives in [accounts/access](docs/accounts-and-access.md), [rooms/queues](docs/rooms-and-queues.md) and [self-hosting](docs/self-hosting.md).
+## Rooms and playback
 
-## Room and playback invariants
+- Use **uburoom** and **room** for the product; reserve “session” for technical contexts. Do not restore retired room aliases.
+- Use the one validated command engine for every room/playback mutation: check actor, room, permissions, generation and expiry. Hide inaccessible rooms; use room IDs; do not replay stale commands or restore consent from disk.
+- The server owns the shared timeline, while viewers own quality, audio, subtitles and volume. Recovery and buffering are per-viewer and must not pause healthy viewers. Preserve per-viewer access and selected tracks across preparation, conversion and recovery; count jobs against shared capacity.
+- Errors must be truthful. A command ack or codec hint is not proof of decoded playback. Do not add production mock/demo fallbacks. Consult [playback reliability](docs/playback-reliability.md), [wire protocol](docs/wire-protocol.md) and [sync core](docs/sync-core.md) for changes touching those boundaries.
 
-- Use **uburoom** and **room** throughout. Reserve “session” for technical connections/auth/media contexts; do not restore legacy room aliases.
-- Every control surface uses the shared validated command engine. Never bypass it with direct mutations or a parallel control path. Authorize actor, room eligibility and current permissions on every operation.
-- Hide inaccessible rooms, address rooms by ID only and expire pending commands; never replay stale commands or restore viewer consent from durable room state.
-- The server owns the shared timeline; viewers own quality, audio, subtitles and volume. Keep ongoing buffering/recovery independent so a struggling viewer does not pause healthy viewers.
-- Preserve per-viewer authorization and track choices through preparation, shared conversion and recovery. Count Plex/local conversion jobs under the shared capacity policy; server-offered quality choices remain authoritative.
-- Use bounded recovery and truthful errors, never production mock/demo fallbacks. Command acknowledgements and codec hints do not prove decoded playback. Detailed delivery/sync behavior belongs in [playback reliability](docs/playback-reliability.md).
+## Verification and repository hygiene
 
-## Testing
-
-- **Default: do not add a test.** Retain tests for costly authorization, consent, credential/data, persistence, protocol and actual playback/sync failures. Prefer extending an existing meaningful scenario; consolidate or delete redundant tests.
-- No tests for markup/class spelling, icon geometry, trivial labels/defaults/wrappers, source-text matching or mocks that restate themselves. No coverage quotas, exhaustive permutation matrices or brittle visual snapshots. Do not resurrect retired suites from historical references.
-- New permanent smoke runners require a distinct high-risk boundary and explicit owner approval. Prefer existing playback checks for decoded picture/audio.
-- Run focused tests for affected risky logic; run the full suite before broad regression/release claims. Avoid full sweeps for documentation/style edits. Treat Chrome and Firefox equally when browser verification is warranted.
-- Report actual commands, failures and skips. Distinguish A source review, B isolated execution, C real integration and D human acceptance. C requires explicit permission; fixtures cannot establish live support and tests cannot replace design/release acceptance.
-- Put material results and open gates in [testing](docs/testing.md), with date/revision, scope and limitations. Keep detailed historical evidence in linked archives/artifacts, not AGENTS or ROADMAP.
-
-## Repository hygiene
-
-- Keep commits focused and public docs generic. Never stage, commit, package or publish `personal/`, private configuration, credentials, personal paths or private evidence.
-- First-party code is GPL-3.0-only. Include LICENSE in distributions and preserve third-party notices/source obligations; maintain provenance and attribution in [docs/third-party.md](docs/third-party.md).
-- Use [development](docs/development.md) for setup, commands and diagnostics. Keep this file limited to durable agent rules; do not append feature status, implementation inventories or work diaries.
+- Write or extend **focused regression tests when a meaningful failure could recur**, especially authorization, consent, credentials, durability, protocol, playback and synchronization. Avoid tests for trivial markup, label/class spelling, mock self-confirmation, source-text matching and brittle visual snapshots. No coverage quotas or exhaustive matrices. New permanent smoke runners need a distinct high-risk boundary and owner approval.
+- Run focused checks for affected behavior; full suite for broad regression/release claims, not documentation-only changes. Use Chrome and Firefox when rendered/browser checks matter. Report exact commands and failures/skips, distinguishing source review (A), isolated execution (B), real integration (C) and human acceptance (D). Live C requires permission. Keep current evidence and open gates in [testing](docs/testing.md); archive historical evidence.
+- Do not stage, commit or publish `personal/`, secrets, config, private state, credentials or evidence. First-party code is GPL-3.0-only; preserve license, provenance and third-party notices ([third-party](docs/third-party.md)). Commands and diagnostics belong in [development](docs/development.md).
