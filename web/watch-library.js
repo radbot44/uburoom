@@ -28,11 +28,10 @@ function mount(
     addBulkToQueue,
     autoQueue,
     suggestMedia,
-    onSuggest,
+    agreeSuggestion,
     initialLibrary,
   },
 ) {
-  const submitSuggestion = suggestMedia || onSuggest;
   const doc = host.ownerDocument;
   host.replaceChildren();
   function node(tag, parent, text, className) {
@@ -609,12 +608,6 @@ function mount(
     }
     box.classList.toggle('unavailable', item.available === false);
     node('span', box, 'Unavailable', 'library-unavailable').hidden = item.available !== false;
-    if (playable(item) && item.id !== 'demo') {
-      box.dataset.itemId = item.id;
-      const suggested = isSuggested(item);
-      box.classList.toggle('is-suggested', suggested);
-      node('span', box, 'Suggested', 'library-suggested-badge').hidden = !suggested;
-    }
     return box;
   }
   function signalError(message, action) {
@@ -633,13 +626,11 @@ function mount(
     const raw = String(item?.mediaId || item?.id || '');
     return mediaIdentity(raw)?.id || raw;
   }
-  function pendingSuggestionIds() {
-    const list = getPlayer?.()?.suggestions || [];
-    return new Set(list.map(entry => itemMediaKey(entry?.item)).filter(Boolean));
-  }
-  function isSuggested(item) {
+  // The room's pending suggestion of this video, if any.
+  function suggestionFor(item) {
     const key = itemMediaKey(item);
-    return !!key && key !== 'demo' && pendingSuggestionIds().has(key);
+    if (!key || key === 'demo') return undefined;
+    return (getPlayer?.()?.suggestions || []).find(entry => itemMediaKey(entry?.item) === key);
   }
   function canAddQueue() {
     const p = getPlayer?.();
@@ -647,35 +638,38 @@ function mount(
   }
   function canSuggest() {
     const p = getPlayer?.();
-    return !!submitSuggestion && !!p?.durable && !canAddQueue() && !!p?.capabilities?.suggestMedia;
+    return !!suggestMedia && !!p?.durable && !!p?.capabilities?.suggestMedia;
+  }
+  // A suggested video's bulb stays lit, shows how many agree once more than one does, and toggles your agreement.
+  function syncSuggestButton(b) {
+    const entry = suggestionFor({ id: b.dataset.suggest });
+    const count = entry?.supporters.length || 0;
+    const itemTitle = b.dataset.identity || 'item';
+    const label = !entry
+      ? 'Suggest ' + itemTitle
+      : entry.agreed
+        ? (count === 1 ? 'Withdraw suggestion of ' : 'Stop agreeing with ') + itemTitle
+        : 'Agree with suggesting ' + itemTitle;
+    b.hidden = !canSuggest();
+    b.dataset.suggested = String(!!entry);
+    b.setAttribute('aria-pressed', String(!!entry?.agreed));
+    b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canSuggest();
+    b.title = label + (count ? ' (' + count + (count === 1 ? ' agrees)' : ' agree)') : '');
+    b.setAttribute('aria-label', b.title);
+    const text = b.querySelector('.library-suggest-label');
+    if (text) text.textContent = entry ? 'Suggested' : 'Suggest';
+    const counter = b.querySelector('.library-suggest-count');
+    counter.textContent = String(count);
+    counter.hidden = count < 2;
   }
   function syncSuggestions() {
     const root = host.closest('#library-panel') || host;
-    const suggestedIds = pendingSuggestionIds();
     const addAllowed = canAddQueue();
-    const suggestAllowed = canSuggest();
-    for (const box of root.querySelectorAll('.library-art[data-item-id]')) {
-      const suggested = suggestedIds.has(itemMediaKey({ id: box.dataset.itemId }));
-      box.classList.toggle('is-suggested', suggested);
-      const badge = box.querySelector('.library-suggested-badge');
-      if (badge) badge.hidden = !suggested;
-    }
     for (const b of root.querySelectorAll('[data-queue-item]')) {
-      b.hidden = suggestAllowed;
+      b.hidden = !addAllowed;
       b.disabled = b.dataset.unavailable === 'true' || busy || !room || !addAllowed;
     }
-    for (const b of root.querySelectorAll('[data-suggest]')) {
-      const suggested = b.dataset.suggest !== 'demo' && suggestedIds.has(itemMediaKey({ id: b.dataset.suggest }));
-      b.hidden = !suggestAllowed;
-      b.dataset.suggested = String(suggested);
-      b.disabled = b.dataset.unavailable === 'true' || busy || !room || !suggestAllowed || suggested;
-      const itemTitle = b.dataset.identity || 'item';
-      const label = suggested ? 'Already suggested' : 'Suggest ' + itemTitle;
-      b.title = label;
-      b.setAttribute('aria-label', label);
-      const span = b.querySelector('span');
-      if (span) span.textContent = suggested ? 'Suggested' : 'Suggest';
-    }
+    for (const b of root.querySelectorAll('[data-suggest]')) syncSuggestButton(b);
   }
   function setBusy(value) {
     busy = value;
@@ -754,7 +748,7 @@ function mount(
     b.dataset.unavailable = String(item.available === false);
     b.dataset.queue = item.id;
     b.dataset.queueItem = 'true';
-    b.hidden = canSuggest();
+    b.hidden = !canAddQueue();
     b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
     if (large) b.append(node('span', null, 'Add to queue'));
     b.addEventListener('click', async event => {
@@ -778,27 +772,38 @@ function mount(
     return b;
   }
   function suggestButton(parent, item, large = false) {
-    const suggested = isSuggested(item);
-    const label = suggested ? 'Already suggested' : 'Suggest ' + identity(item);
-    const b = button(parent, label, 'bulb', large ? 'library-suggest library-play-now' : 'library-suggest');
+    const b = button(
+      parent,
+      'Suggest ' + identity(item),
+      'bulb',
+      large ? 'library-suggest library-play-now' : 'library-suggest',
+    );
     b.dataset.unavailable = String(item.available === false);
     b.dataset.suggest = item.id;
     b.dataset.identity = identity(item);
-    b.dataset.suggested = String(suggested);
-    b.hidden = !canSuggest();
-    b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canSuggest() || suggested;
-    if (large) b.append(node('span', null, suggested ? 'Suggested' : 'Suggest'));
+    if (large) b.append(node('span', null, 'Suggest', 'library-suggest-label'));
+    node('span', b, '', 'library-suggest-count');
+    syncSuggestButton(b);
     b.addEventListener('click', async event => {
       event.stopPropagation();
-      if (b.disabled || !submitSuggestion) return;
+      if (b.disabled) return;
+      const entry = suggestionFor(item);
       b.disabled = true;
       try {
-        await submitSuggestion(item, b);
-        uburoomPopover.show(b, { text: 'Suggested', state: 'success' });
-        syncSuggestions();
+        if (!entry) await suggestMedia(item);
+        else await agreeSuggestion(entry.id, !entry.agreed);
+        const text = !entry
+          ? 'Suggested'
+          : entry.agreed
+            ? entry.supporters.length === 1
+              ? 'Suggestion withdrawn'
+              : 'No longer agreeing'
+            : 'Agreed';
+        uburoomPopover.show(b, { text, state: 'success' });
       } catch (error) {
         uburoomPopover.show(b, { text: error.message, state: 'error' });
-        syncSuggestions();
+      } finally {
+        syncSuggestButton(b);
       }
     });
     return b;
@@ -865,11 +870,11 @@ function mount(
         const actions = node('div', card, undefined, 'library-row-actions');
         playButton(actions, item);
         if (addToQueue && getPlayer()?.durable) queueButton(actions, item);
-        if (submitSuggestion && item.id !== 'demo' && getPlayer()?.durable) suggestButton(actions, item);
+        if (suggestMedia && item.id !== 'demo' && getPlayer()?.durable) suggestButton(actions, item);
       } else {
         playButton(picture, item);
         if (addToQueue && getPlayer()?.durable) queueButton(picture, item);
-        if (submitSuggestion && item.id !== 'demo' && getPlayer()?.durable) suggestButton(picture, item);
+        if (suggestMedia && item.id !== 'demo' && getPlayer()?.durable) suggestButton(picture, item);
       }
     } else {
       const target = row ? node('div', card, undefined, 'library-row-actions') : picture;
@@ -899,7 +904,7 @@ function mount(
       playButton(actionRow, item, true);
       if (item.viewOffset > 0) resumeButton(actionRow, item);
       if (addToQueue && getPlayer()?.durable) queueButton(actionRow, item, true);
-      if (submitSuggestion && item.id !== 'demo' && getPlayer()?.durable) suggestButton(actionRow, item, true);
+      if (suggestMedia && item.id !== 'demo' && getPlayer()?.durable) suggestButton(actionRow, item, true);
       const warning = node('p', copy, '', 'library-replace');
       warning.textContent = getPlayer()?.mediaId ? 'Replaces the current video for everyone.' : '';
     } else if (getPlayer()?.durable) {

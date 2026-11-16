@@ -193,15 +193,9 @@ const lobbyEvents = uburoomLobbyEvents.mount({
   },
 });
 deps.lobbyEvents = lobbyEvents;
-// The room header calendar button needs both hosting and the server's scheduling tier.
+// The room header calendar button appears only for people who can schedule here: hosts on a scheduling tier.
 function renderScheduleButton() {
-  // Shown to everyone the server lets schedule; disabled with its reason for people who are not hosts here.
-  const button = $('room-schedule'),
-    usable = !!store.room.state?.canManage;
-  button.hidden = !store.room.state?.durable || !lobbyEvents.canSchedule();
-  // aria-disabled keeps it focusable so the reason is reachable by keyboard and tooltip.
-  button.setAttribute('aria-disabled', String(!usable));
-  button.title = usable ? 'Schedule event' : 'Only hosts can schedule events';
+  $('room-schedule').hidden = !store.room.state?.durable || !store.room.state?.canManage || !lobbyEvents.canSchedule();
 }
 const roomShare = uburoomShare.mount({
   request: (...args) => deps.call(...args),
@@ -223,7 +217,6 @@ const roomUI = uburoomRoomUI.mount({
   share: (invite, name, id) => roomShare.open(id || store.room.selected),
   onAskHumanCheck: () => deps.askHumanCheck(),
   onClearHumanCheck: checkId => deps.clearHumanCheck(checkId),
-  onReplyHumanCheck: (status, checkId) => deps.replyHumanCheck(status, checkId),
   join: async id => {
     await deps.selectRoom(id);
     if (!store.room.state) throw new Error('Room unavailable');
@@ -268,18 +261,6 @@ const queueUI = uburoomQueueUI.mount($('queue-content'), {
     return library?.openItem(item);
   },
   artwork: fetchArtwork,
-  onSuggest: item =>
-    deps.execute({
-      action: 'queue.suggest',
-      args: { item: { id: String(item.mediaId || item.id), ...(item.serverId ? { serverId: item.serverId } : {}) } },
-    }),
-  onAcceptSuggestion: async suggestionId => {
-    const result = await deps.execute({ action: 'queue.suggestion.accept', args: { suggestionId } });
-    await queueUI.fetchData(true);
-    return result;
-  },
-  onDismissSuggestion: suggestionId => deps.execute({ action: 'queue.suggestion.dismiss', args: { suggestionId } }),
-  onWithdrawSuggestion: suggestionId => deps.execute({ action: 'queue.suggestion.withdraw', args: { suggestionId } }),
   changed: async () => {
     if (store.room.selected) await deps.refreshState();
   },
@@ -297,10 +278,13 @@ const library = uburoomLibrary.mount($('library-content'), {
     if (!store.room.selected || !store.room.state?.durable) return;
     await queueUI.add(item, trigger);
   },
-  suggestMedia: (item, trigger) => {
-    if (!store.room.selected || !store.room.state?.durable) return;
-    return queueUI.suggest(item, trigger);
-  },
+  suggestMedia: item =>
+    deps.execute({
+      action: 'queue.suggest',
+      args: { item: { id: String(item.mediaId || item.id), ...(item.serverId ? { serverId: item.serverId } : {}) } },
+    }),
+  agreeSuggestion: (suggestionId, agree) =>
+    deps.execute({ action: 'queue.suggestion.agree', args: { suggestionId, agree } }),
   addBulkToQueue: (item, trigger) => queueUI.bulk(item, trigger),
   autoQueue: source => queueUI.openAuto(source),
   close: (...args) => deps.returnToVideo(...args),

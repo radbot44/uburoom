@@ -454,14 +454,9 @@ async function main() {
       );
       assert.equal(await browser.evaluate(guest, byId('next') + '.disabled'), true);
       assert.equal(
-        await browser.evaluate(
-          guest,
-          '(e=>e.hidden || (e.getAttribute("aria-disabled")==="true" && e.title==="Only hosts can schedule events"))(' +
-            byId('room-schedule') +
-            ')',
-        ),
+        await browser.evaluate(guest, byId('room-schedule') + '.hidden'),
         true,
-        'a viewer sees Schedule disabled with its reason, or not at all where the server limits scheduling',
+        'a viewer who cannot schedule does not see Schedule',
       );
       assert.equal(
         await browser.evaluate(

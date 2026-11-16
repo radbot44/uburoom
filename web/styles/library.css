@@ -136,32 +136,49 @@
   }
   .library-suggest[hidden],
   .library-queue-add[hidden],
-  .library-suggested-badge[hidden] {
+  .library-suggest-count[hidden] {
     display: none;
   }
-  .library-suggested-badge {
-    position: absolute;
-    top: var(--space-10);
-    left: var(--space-10);
-    z-index: var(--z-local-4);
-    pointer-events: none;
-    padding: var(--space-3) var(--space-8);
-    border-radius: var(--radius-pill);
-    background: var(--chrome-background-a85);
-    color: var(--chrome-text);
-    border: 1px solid var(--white-a16);
-    font-size: var(--font-size-12);
-    font-weight: 600;
-    line-height: 1.4;
+  /* A suggested video's bulb stays lit without hovering; past one supporter it shows how many agree. */
+  .library-tile:not(.episode) .library-art > .library-suggest[data-suggested='true'] {
+    opacity: 1;
   }
-  .library-tile:has(> .library-art > .library-suggest:not([hidden])) .library-suggested-badge {
-    left: auto;
-    right: var(--space-10);
+  .library-suggest[data-suggested='true'],
+  [data-view='cards'] .library-tile:not(.episode) > .library-art > .library-suggest[data-suggested='true'],
+  [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-suggest[data-suggested='true'],
+  .library-row-actions .library-suggest[data-suggested='true'] {
+    background: var(--primary);
+    color: var(--on-primary);
+    border-color: transparent;
   }
-  .library-row > .library-art > .library-suggested-badge {
-    top: var(--space-6);
-    left: var(--space-6);
-    right: auto;
+  .library-suggest[data-suggested='true']:hover:not(:disabled),
+  .library-row-actions .library-suggest[data-suggested='true']:hover:not(:disabled) {
+    background: var(--primary-hover);
+    color: var(--on-primary);
+  }
+  .library-suggest:has(> .library-suggest-count:not([hidden])) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-4);
+  }
+  [data-view='cards']
+    .library-tile:not(.episode)
+    > .library-art
+    > .library-suggest:has(> .library-suggest-count:not([hidden])),
+  [data-view='posters']
+    .library-tile:not(.episode)
+    > .library-art
+    > .library-suggest:has(> .library-suggest-count:not([hidden])) {
+    display: inline-flex;
+    width: auto;
+    min-width: var(--watch-control-height);
+    padding-inline: var(--space-10);
+  }
+  .library-suggest-count {
+    font-size: var(--font-size-14);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
   }
   .source-row {
     display: flex;

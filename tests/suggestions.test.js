@@ -107,12 +107,14 @@ test('viewers and guests can suggest on live rooms, projecting onto the v2 room 
   assert.equal(guestRes.status, 'applied', guestRes.message);
   assert.equal(guestRes.suggestion.item.title, 'Movie 101');
   assert.equal('note' in guestRes.suggestion.item, false);
-  assert.equal(guestRes.suggestion.suggestedBy.userId, f.guest.userId);
+  assert.deepEqual(guestRes.suggestion.supporters, ['Guest']);
+  assert.equal(guestRes.suggestion.agreed, true);
 
   const hostView = f.watch.view(f.room, f.host, f.host.watchViewerId);
   const { room: roomLane, viewer: viewerLane } = splitView(hostView);
   assert.equal(roomLane.suggestions.length, 1);
   assert.equal(roomLane.suggestions[0].id, guestRes.suggestion.id);
+  assert.equal(roomLane.suggestions[0].agreed, false);
   assert.equal(viewerLane.suggestions, undefined);
   assert.equal(f.watch.roomState.queue.pending(f.roomId).length, 0);
 
@@ -126,7 +128,7 @@ test('viewers and guests can suggest on live rooms, projecting onto the v2 room 
   assert.equal(closedRes.status, 'unavailable');
 });
 
-test('permissions, duplicates, serverId spoofing, per-viewer/room bounds, dismiss, and withdraw are enforced', async t => {
+test('permissions, duplicates, serverId spoofing, per-viewer/room bounds, dismiss, and agreement are enforced', async t => {
   const f = await fixture(t, { config: { roomLimits: { maxSuggestions: 3, maxSuggestionsPerViewer: 2 } } });
   await f.watch.roomState.queue.setAutoplay(f.roomId, f.host.userId, false);
   await f.hub.dispatch(f.host, { roomId: f.roomId, action: 'media.load', args: { mediaId: '100', quality: 'direct' } });
@@ -169,13 +171,16 @@ test('permissions, duplicates, serverId spoofing, per-viewer/room bounds, dismis
   assert.equal(s1.status, 'applied');
   assert.equal(s2.status, 'applied');
 
+  // Suggesting a video already suggested agrees with it, without taking a room or viewer slot.
   const dupSug = await f.hub.dispatch(f.guest, {
     roomId: f.roomId,
     action: 'queue.suggest',
     args: { item: { id: '102' } },
   });
-  assert.equal(dupSug.status, 'failed');
-  assert.match(dupSug.message, /already been suggested/);
+  assert.equal(dupSug.status, 'applied', dupSug.message);
+  assert.equal(dupSug.suggestion.id, s1.suggestion.id);
+  assert.deepEqual(dupSug.suggestion.supporters, ['Viewer', 'Guest']);
+  assert.equal(f.room.suggestions.length, 2);
 
   const overPerViewer = await f.hub.dispatch(f.viewer, {
     roomId: f.roomId,
@@ -201,35 +206,39 @@ test('permissions, duplicates, serverId spoofing, per-viewer/room bounds, dismis
   assert.equal(overRoom.status, 'failed');
   assert.match(overRoom.message, /Suggestion limit reached/);
 
-  // Non-author viewer cannot withdraw another's suggestion; viewer without addQueue cannot dismiss or accept.
-  const badWithdraw = await f.hub.dispatch(f.viewer, {
-    roomId: f.roomId,
-    action: 'queue.suggestion.withdraw',
-    args: { suggestionId: s3.suggestion.id },
-  });
-  assert.equal(badWithdraw.status, 'forbidden');
+  // A viewer without addQueue cannot dismiss or accept; without chooseMedia cannot play a suggestion.
+  for (const action of ['queue.suggestion.dismiss', 'queue.suggestion.accept', 'queue.suggestion.playNow']) {
+    const denied = await f.hub.dispatch(f.viewer, {
+      roomId: f.roomId,
+      action,
+      args: { suggestionId: s3.suggestion.id },
+    });
+    assert.equal(denied.status, 'forbidden', action);
+  }
 
-  const badDismiss = await f.hub.dispatch(f.viewer, {
-    roomId: f.roomId,
-    action: 'queue.suggestion.dismiss',
-    args: { suggestionId: s3.suggestion.id },
-  });
-  assert.equal(badDismiss.status, 'forbidden');
-
-  const badAccept = await f.hub.dispatch(f.viewer, {
-    roomId: f.roomId,
-    action: 'queue.suggestion.accept',
-    args: { suggestionId: s3.suggestion.id },
-  });
-  assert.equal(badAccept.status, 'forbidden');
-
-  // Viewer withdraws own suggestion -> frees slot.
-  const withdrawn = await f.hub.dispatch(f.viewer, {
-    roomId: f.roomId,
-    action: 'queue.suggestion.withdraw',
-    args: { suggestionId: s1.suggestion.id },
-  });
-  assert.equal(withdrawn.status, 'applied');
+  // Agreeing toggles; a suggestion lives while anyone agrees and goes when the last viewer stops.
+  const agree = (actor, suggestionId, value) =>
+    f.hub.dispatch(actor, {
+      roomId: f.roomId,
+      action: 'queue.suggestion.agree',
+      args: { suggestionId, agree: value },
+    });
+  const viewerLeaves = await agree(f.viewer, s1.suggestion.id, false);
+  assert.equal(viewerLeaves.status, 'applied', viewerLeaves.message);
+  assert.deepEqual(viewerLeaves.suggestion.supporters, ['Guest']);
+  assert.equal(viewerLeaves.suggestion.agreed, false);
+  // Disagreeing twice changes nothing.
+  assert.deepEqual((await agree(f.viewer, s1.suggestion.id, false)).suggestion.supporters, ['Guest']);
+  const guestLeaves = await agree(f.guest, s1.suggestion.id, false);
+  assert.equal(guestLeaves.status, 'applied');
+  assert.equal(guestLeaves.suggestion, undefined);
+  assert.deepEqual(
+    f.room.suggestions.map(entry => entry.id),
+    [s2.suggestion.id, s3.suggestion.id],
+  );
+  const otherAgrees = await agree(f.other, s3.suggestion.id, true);
+  assert.deepEqual(otherAgrees.suggestion.supporters, ['Guest', 'Other']);
+  assert.equal(otherAgrees.suggestion.agreed, true);
 
   // Granting addQueue allows a non-host viewer to dismiss.
   const rec = f.watch.roomState.store.get(f.roomId);
@@ -247,6 +256,7 @@ test('permissions, duplicates, serverId spoofing, per-viewer/room bounds, dismis
     args: { item: { id: '105' } },
   });
   assert.equal(deniedSuggest.status, 'forbidden');
+  assert.equal((await agree(f.guest, s3.suggestion.id, false)).status, 'forbidden');
 
   const dismissed = await f.hub.dispatch(f.viewer, {
     roomId: f.roomId,
@@ -255,6 +265,26 @@ test('permissions, duplicates, serverId spoofing, per-viewer/room bounds, dismis
   });
   assert.equal(dismissed.status, 'applied');
   assert.equal(f.room.suggestions.length, 1);
+});
+
+test('playing a suggestion loads it for everyone and settles it', async t => {
+  const f = await fixture(t);
+  await f.watch.roomState.queue.setAutoplay(f.roomId, f.host.userId, false);
+  await f.hub.dispatch(f.host, { roomId: f.roomId, action: 'media.load', args: { mediaId: '100', quality: 'direct' } });
+  const suggested = await f.hub.dispatch(f.viewer, {
+    roomId: f.roomId,
+    action: 'queue.suggest',
+    args: { item: { id: '101' } },
+  });
+  assert.equal(suggested.status, 'applied', suggested.message);
+  const played = await f.hub.dispatch(f.host, {
+    roomId: f.roomId,
+    action: 'queue.suggestion.playNow',
+    args: { suggestionId: suggested.suggestion.id },
+  });
+  assert.equal(played.status, 'applied', played.message);
+  assert.equal(f.room.media.id, '101');
+  assert.equal(f.room.suggestions.length, 0);
 });
 
 test('accepting behaves like queue.add (idle initialAdd and normal append), rechecks media/authority, and prevents double insertion', async t => {
@@ -372,20 +402,36 @@ test('viewer leave, reconnect grace expiry, room reset, and room close clear eph
     action: 'queue.suggest',
     args: { item: { id: '102' } },
   });
+  const sw = await f.hub.dispatch(f.viewer, {
+    roomId: f.roomId,
+    action: 'queue.suggest',
+    args: { item: { id: '103' } },
+  });
   assert.equal(sv.status, 'applied');
   assert.equal(sg.status, 'applied');
+  assert.equal(sw.status, 'applied');
+  // The guest agrees with the viewer's 103, which keeps it alive after the viewer leaves.
+  assert.equal(
+    (await f.hub.dispatch(f.guest, { roomId: f.roomId, action: 'queue.suggest', args: { item: { id: '103' } } }))
+      .status,
+    'applied',
+  );
 
   await f.watch.leave(f.room, f.viewer, f.viewer.watchViewerId);
-  assert.equal(f.room.suggestions.length, 2);
+  assert.equal(f.room.suggestions.length, 3);
   await f.watch.leave(f.room, f.viewer, viewerTab2);
   assert.deepEqual(
     f.room.suggestions.map(s => s.id),
-    [sg.suggestion.id],
+    [sg.suggestion.id, sw.suggestion.id],
+  );
+  assert.deepEqual(
+    f.room.suggestions[1].supporters.map(s => s.name),
+    ['Guest'],
   );
 
   // Reconnect grace retains suggestion until grace expires, then clears it.
   f.watch.coordinator.run(f.room, { type: 'disconnect', viewerId: f.guest.watchViewerId, planned: true });
-  assert.equal(f.room.suggestions.length, 1);
+  assert.equal(f.room.suggestions.length, 2);
   f.clock.advance(RECONNECT_GRACE_MS + 1000);
   f.watch.touch(f.room, f.room.viewers.get(f.host.watchViewerId));
   f.watch.review(f.room);

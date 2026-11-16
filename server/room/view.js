@@ -454,12 +454,7 @@ module.exports = {
       viewers: new Set([...room.viewers.values()].map(x => x.userId)).size,
       suggestions: (room.suggestions || [])
         .filter(entry => entry.status === 'pending' || entry.status === 'accepting')
-        .map(entry => ({
-          id: entry.id,
-          item: { ...entry.item },
-          suggestedBy: { ...entry.suggestedBy },
-          createdAt: entry.createdAt,
-        })),
+        .map(entry => this.suggestionView(entry, this.roomState.queue.account(actor.userId))),
       feedback: room.feedback,
     };
   },

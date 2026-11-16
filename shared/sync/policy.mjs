@@ -158,7 +158,8 @@ export function allowed(room, userId, capability, { isAdmin = false } = {}) {
 export function commandCapability(action) {
   if (action === 'room.kick') return 'kickParticipants';
   if (action.startsWith('media.autoplay.')) return 'autoplay';
-  if (['queue.suggest', 'queue.suggestion.withdraw'].includes(action)) return 'suggestMedia';
+  if (['queue.suggest', 'queue.suggestion.agree'].includes(action)) return 'suggestMedia';
+  if (action === 'queue.suggestion.playNow') return 'chooseMedia';
   if (['queue.suggestion.accept', 'queue.suggestion.dismiss'].includes(action)) return 'addQueue';
   if (['queue.add', 'queue.bulk', 'queue.offer.start', 'queue.auto.pin'].includes(action)) return 'addQueue';
   if (

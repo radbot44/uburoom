@@ -45,7 +45,14 @@ export function mount(host, deps) {
     deps.renderHumanCheckPrompt?.();
     if (
       command.action.startsWith('media.seek') ||
-      ['media.load', 'media.next', 'media.previous', 'queue.history.replay', 'queue.playNow'].includes(command.action)
+      [
+        'media.load',
+        'media.next',
+        'media.previous',
+        'queue.history.replay',
+        'queue.playNow',
+        'queue.suggestion.playNow',
+      ].includes(command.action)
     )
       deps.choppyDetector.interrupt();
     deps.diagnosticSample('command-start', { action: command.action });
@@ -63,6 +70,7 @@ export function mount(host, deps) {
             'queue.history.replay',
             'queue.history.goBack',
             'queue.playNow',
+            'queue.suggestion.playNow',
             'queue.playEntry',
             'queue.skipTo',
             'queue.auto.playNow',

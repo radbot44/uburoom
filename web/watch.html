@@ -643,35 +643,32 @@
               <div id="watch-toasts" class="watch-toast-region" aria-live="polite"></div>
               <section
                 id="human-check-prompt"
-                class="human-check-prompt"
-                role="region"
+                class="readiness-choice human-check-prompt"
                 aria-labelledby="human-check-prompt-title"
+                aria-live="polite"
                 hidden
               >
-                <div class="human-check-prompt-copy">
-                  <p id="human-check-prompt-title" class="human-check-prompt-title">Ready to play?</p>
-                  <p id="human-check-prompt-meta" class="human-check-prompt-meta"></p>
-                </div>
-                <div class="human-check-prompt-actions">
-                  <button
+                <h2 id="human-check-prompt-title">Ready to play?</h2>
+                <p id="human-check-prompt-meta"></p>
+                <div>
+                  <button id="human-check-play" class="primary" type="button" hidden>Play</button
+                  ><button
                     id="human-check-ready"
-                    class="quiet watch-control"
+                    class="quiet human-check-choice"
                     type="button"
                     data-check-choice="ready"
                     aria-pressed="false"
                   >
-                    Ready
-                  </button>
-                  <button
+                    Ready</button
+                  ><button
                     id="human-check-hold"
-                    class="quiet watch-control"
+                    class="quiet human-check-choice"
                     type="button"
                     data-check-choice="hold"
                     aria-pressed="false"
                   >
-                    Need a moment
-                  </button>
-                  <button id="human-check-clear" class="quiet watch-control" type="button" hidden>Clear</button>
+                    Need a moment</button
+                  ><button id="human-check-clear" class="quiet" type="button" hidden>Cancel</button>
                 </div>
               </section>
               <section id="room-recovery" class="readiness-choice" aria-live="polite" hidden>

@@ -164,17 +164,28 @@ class Watch extends WatchParts {
     this.hub.logger.info('Room', `Room created (${id}) by ${actor.name || actor.userId}`);
     return id;
   }
-  /** Clears pending suggestions belonging to viewers who have left beyond reconnect grace. @param {any} room */
+  /**
+   * Withdraws the agreement of viewers who have left beyond reconnect grace, and the suggestions
+   * nobody present agrees with any more. @param {any} room
+   */
   pruneSuggestions(room) {
     if (!room?.suggestions?.length) return false;
     const active = new Set();
     for (const viewer of room.viewers?.values() || []) active.add(viewer.userId);
     for (const saved of room.disconnectedViewers?.values() || []) active.add(saved.userId);
-    const before = room.suggestions.length;
-    room.suggestions = room.suggestions.filter(
-      entry => entry.status === 'accepting' || entry.requiresPresence === false || active.has(entry.suggestedBy.userId),
-    );
-    return room.suggestions.length !== before;
+    let changed = false;
+    room.suggestions = room.suggestions.filter(entry => {
+      if (entry.status === 'accepting') return true;
+      const supporters = entry.supporters.filter(
+        supporter => supporter.requiresPresence === false || active.has(supporter.userId),
+      );
+      if (supporters.length !== entry.supporters.length) {
+        entry.supporters = supporters;
+        changed = true;
+      }
+      return supporters.length > 0;
+    });
+    return changed;
   }
   /** Clears ephemeral suggestions on room reset or close in addition to standard media teardown. @param {any} room */
   dropMedia(room, reason = 'media-changed') {

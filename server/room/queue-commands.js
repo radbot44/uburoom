@@ -188,15 +188,31 @@ module.exports = {
       throw Object.assign(new Error('Media access changed'), { status: 403 });
     return this.queueItem(checked, serverId);
   },
-  /** @param {any} room @param {string} suggestionId */
-  removeSuggestion(room, suggestionId) {
-    if (!room?.suggestions?.length) return false;
-    const index = room.suggestions.findIndex(entry => entry.id === suggestionId);
+  /** Removes a suggestion once it is accepted, played, dismissed or abandoned. @param {any} room @param {string} suggestionId */
+  settleSuggestion(room, suggestionId) {
+    const index = room.suggestions?.findIndex(entry => entry.id === suggestionId) ?? -1;
     if (index === -1) return false;
     room.suggestions.splice(index, 1);
+    room.revision++;
+    room.lastActivity = this.clock.now();
+    this.changed(room);
     return true;
   },
-  /** @param {string} id @param {EngineCommand} command @param {any} actor @param {import('../core').Ticket} ticket */
+  /** One suggestion as a viewer sees it. @param {any} entry @param {string} canonical */
+  suggestionView(entry, canonical) {
+    return {
+      id: entry.id,
+      item: { ...entry.item },
+      supporters: entry.supporters.map(supporter => supporter.name),
+      agreed: entry.supporters.some(supporter => supporter.userId === canonical),
+      createdAt: entry.createdAt,
+    };
+  },
+  /**
+   * Suggesting, agreeing and dismissing. A suggestion lives while at least one viewer agrees with it:
+   * whoever suggested it is its first supporter, and suggesting a video already suggested agrees with it.
+   * @param {string} id @param {EngineCommand} command @param {any} actor @param {import('../core').Ticket} ticket
+   */
   async suggestionCommand(id, command, actor, ticket) {
     if (!this.roomState) throw Object.assign(new Error('Saved rooms are unavailable'), { status: 400 });
     const room = this.rooms.get(id),
@@ -208,6 +224,12 @@ module.exports = {
       this.hub.current(ticket) && (!actor.watchCurrent || (await actor.watchCurrent())) && this.hub.current(ticket);
     await this.roomState.eligible(actor, currentRequest);
     await this.roomState.metadata(id, actor);
+    const permitted = () => {
+      if (!this.hub.authorize(actor, room, action).ok) {
+        throw Object.assign(new Error('Room queue permission required'), { status: 403 });
+      }
+      if (!actor.guestRoomId) queue.assertAllowed(queue.room(id), actor.userId, declared.capability);
+    };
     const check = async () => {
       if (
         !(await currentRequest()) ||
@@ -217,10 +239,29 @@ module.exports = {
       ) {
         throw Object.assign(new Error('Room access changed; retry manually'), { status: 403 });
       }
-      if (!this.hub.authorize(actor, room, action).ok) {
-        throw Object.assign(new Error('Room queue permission required'), { status: 403 });
-      }
-      if (!actor.guestRoomId) queue.assertAllowed(queue.room(id), actor.userId, declared.capability);
+      permitted();
+    };
+    // One change in the room's mailbox, after rechecking that the request is still current and allowed.
+    const change = run =>
+      this.inRoom(room, () => {
+        if (!this.hub.current(ticket)) {
+          throw Object.assign(new Error('Room access changed; retry manually'), { status: 403 });
+        }
+        permitted();
+        this.pruneSuggestions(room);
+        room.suggestions ||= [];
+        return run();
+      });
+    const canonical = queue.account(actor.userId);
+    const supporter = () => ({
+      userId: canonical,
+      name: Engine.senderName(actor.name),
+      requiresPresence: [...room.viewers.values()].some(v => v.userId === canonical),
+    });
+    const touched = () => {
+      room.revision++;
+      room.lastActivity = this.clock.now();
+      this.changed(room);
     };
     await check();
     if (action === 'queue.suggest') {
@@ -228,16 +269,17 @@ module.exports = {
         await this.resolvePlayableQueueItem(actor, args.item, { verifyServer: true }),
       );
       await check();
-      const canonical = queue.account(actor.userId);
       const maxPending = this.roomState.limits?.maxSuggestions ?? 25;
       const maxPerViewer = this.roomState.limits?.maxSuggestionsPerViewer ?? 3;
-      const suggestion = await this.inRoom(room, () => {
-        if (!this.hub.current(ticket) || !this.hub.authorize(actor, room, action).ok) {
-          throw Object.assign(new Error('Room access changed; retry manually'), { status: 403 });
+      const suggestion = await change(() => {
+        const existing = room.suggestions.find(entry => entry.status === 'pending' && sameMedia(entry.item, item));
+        if (existing) {
+          if (!existing.supporters.some(entry => entry.userId === canonical)) {
+            existing.supporters.push(supporter());
+            touched();
+          }
+          return existing;
         }
-        if (!actor.guestRoomId) queue.assertAllowed(queue.room(id), actor.userId, declared.capability);
-        this.pruneSuggestions(room);
-        room.suggestions ||= [];
         const duplicate = duplicateSuggestionReason(queue, id, room, item);
         if (duplicate) throw Object.assign(new Error(duplicate), { status: 409 });
         if (room.suggestions.length >= maxPending) {
@@ -245,8 +287,9 @@ module.exports = {
             status: 409,
           });
         }
-        const viewerCount = room.suggestions.filter(entry => entry.suggestedBy.userId === canonical).length;
-        if (viewerCount >= maxPerViewer) {
+        // Only suggestions a viewer leads count toward their limit; agreeing is free.
+        const led = room.suggestions.filter(entry => entry.supporters[0]?.userId === canonical).length;
+        if (led >= maxPerViewer) {
           throw Object.assign(new Error(`You already have ${maxPerViewer} pending suggestions in this room`), {
             status: 409,
           });
@@ -255,45 +298,38 @@ module.exports = {
           id: randomUUID(),
           status: 'pending',
           item,
-          suggestedBy: { userId: canonical, name: Engine.senderName(actor.name) },
+          supporters: [supporter()],
           createdAt: this.clock.now(),
-          requiresPresence: [...room.viewers.values()].some(v => v.userId === canonical),
         };
         room.suggestions.push(created);
-        room.revision++;
-        room.lastActivity = created.createdAt;
-        this.changed(room);
-        return {
-          id: created.id,
-          item: { ...created.item },
-          suggestedBy: { ...created.suggestedBy },
-          createdAt: created.createdAt,
-        };
+        touched();
+        return created;
       });
-      return { status: 'applied', suggestion };
+      return { status: 'applied', suggestion: this.suggestionView(suggestion, canonical) };
     }
-    const canonical = queue.account(actor.userId);
-    await this.inRoom(room, () => {
-      if (!this.hub.current(ticket) || !this.hub.authorize(actor, room, action).ok) {
-        throw Object.assign(new Error('Room access changed; retry manually'), { status: 403 });
-      }
-      if (!actor.guestRoomId) queue.assertAllowed(queue.room(id), actor.userId, declared.capability);
-      const list = room.suggestions || [];
-      const index = list.findIndex(entry => entry.id === args.suggestionId);
-      if (index === -1) throw Object.assign(new Error('Suggestion not found'), { status: 404 });
-      const target = list[index];
+    const suggestion = await change(() => {
+      const target = room.suggestions.find(entry => entry.id === args.suggestionId);
+      if (!target) throw Object.assign(new Error('Suggestion not found'), { status: 404 });
       if (target.status !== 'pending') {
         throw Object.assign(new Error('Suggestion is already being accepted'), { status: 409 });
       }
-      if (action === 'queue.suggestion.withdraw' && target.suggestedBy.userId !== canonical) {
-        throw Object.assign(new Error('Only the viewer who suggested this item can withdraw it'), { status: 403 });
+      if (action === 'queue.suggestion.dismiss') {
+        this.settleSuggestion(room, target.id);
+        return undefined;
       }
-      list.splice(index, 1);
-      room.revision++;
-      room.lastActivity = this.clock.now();
-      this.changed(room);
+      const index = target.supporters.findIndex(entry => entry.userId === canonical);
+      if (args.agree && index === -1) target.supporters.push(supporter());
+      else if (!args.agree && index !== -1) target.supporters.splice(index, 1);
+      else return target;
+      // The last viewer to stop agreeing takes the suggestion away.
+      if (!target.supporters.length) {
+        this.settleSuggestion(room, target.id);
+        return undefined;
+      }
+      touched();
+      return target;
     });
-    return { status: 'applied' };
+    return { status: 'applied', ...(suggestion ? { suggestion: this.suggestionView(suggestion, canonical) } : {}) };
   },
   async queueCommand(id, command, actor, ticket) {
     if (!this.roomState) throw Object.assign(new Error('Saved rooms are unavailable'), { status: 400 });
@@ -301,10 +337,11 @@ module.exports = {
       { action, args } = command,
       declared = /** @type {NonNullable<ReturnType<typeof Engine.command>>} */ (Engine.command(action)),
       queue = this.roomState.queue;
-    if (['queue.suggest', 'queue.suggestion.dismiss', 'queue.suggestion.withdraw'].includes(action)) {
+    if (['queue.suggest', 'queue.suggestion.dismiss', 'queue.suggestion.agree'].includes(action)) {
       return this.suggestionCommand(id, command, actor, ticket);
     }
-    if (action === 'queue.suggestion.accept' && !room) {
+    const accepting = action === 'queue.suggestion.accept' || action === 'queue.suggestion.playNow';
+    if (accepting && !room) {
       throw Object.assign(new Error('Suggestions require an open room'), { status: 409 });
     }
     if (room?.transition) throw Object.assign(new Error('Wait for the current queue operation'), { status: 409 });
@@ -321,7 +358,7 @@ module.exports = {
       ) {
         throw Object.assign(new Error('Room access changed; retry manually'), { status: 403 });
       }
-      if (room && action === 'queue.suggestion.accept' && !this.hub.authorize(actor, room, action).ok) {
+      if (room && accepting && !this.hub.authorize(actor, room, action).ok) {
         throw Object.assign(new Error('Room queue permission required'), { status: 403 });
       }
       if (declared.idle && !room?.media && !queue.current(id)) {
@@ -345,7 +382,7 @@ module.exports = {
       if (revision === undefined) revision = queue.room(id).queueRevision;
       queue.assertRevision(queue.room(id), revision);
       if (room?.transition) throw Object.assign(new Error('Wait for the current queue operation'), { status: 409 });
-      if (room && action === 'queue.suggestion.accept') {
+      if (room && accepting) {
         if (!this.hub.current(ticket) || !this.hub.authorize(actor, room, action).ok) {
           throw Object.assign(new Error('Room queue permission required'), { status: 403 });
         }
@@ -353,13 +390,17 @@ module.exports = {
       const priorCountdown = room?.autoplayCountdown;
       const wasEmptyQueue = !priorCountdown && !queue.current(id) && !queue.pending(id).length;
       let acceptedSuggestion;
-      if (action === 'queue.suggestion.accept') {
+      if (accepting) {
         acceptedSuggestion = (room.suggestions || []).find(entry => entry.id === args.suggestionId);
         if (!acceptedSuggestion) throw Object.assign(new Error('Suggestion not found'), { status: 404 });
         if (acceptedSuggestion.status !== 'pending') {
           throw Object.assign(new Error('Suggestion is already being accepted'), { status: 409 });
         }
-        if (!(!room.media && wasEmptyQueue) && queue.pending(id).length >= queue.maxPending) {
+        if (
+          action === 'queue.suggestion.accept' &&
+          !(!room.media && wasEmptyQueue) &&
+          queue.pending(id).length >= queue.maxPending
+        ) {
           throw Object.assign(new Error('Queue limit reached (maximum ' + queue.maxPending + ' upcoming items)'), {
             status: 400,
           });
@@ -398,54 +439,37 @@ module.exports = {
               discardCurrent: true,
             })
           : await queue.remove(id, actor.userId, args.entryId, revision, { allowCurrent: true });
-      } else if (action === 'queue.add' || action === 'queue.playNow' || action === 'queue.suggestion.accept') {
+      } else if (action === 'queue.add' || action === 'queue.playNow' || accepting) {
         const raw = acceptedSuggestion ? acceptedSuggestion.item : args.item;
         const item = await this.resolvePlayableQueueItem(actor, raw);
         await check();
         queue.assertRevision(queue.room(id), revision);
-        if (action === 'queue.playNow' && room) {
-          if (room.transition?.kind === 'queue') room.transition = undefined;
-          return this.changeQueueMedia(
-            room,
-            { action: 'media.load', args: { mediaId: item.mediaId, serverId: item.serverId } },
-            actor,
-            ticket,
-          );
-        }
-        if ((action === 'queue.add' || action === 'queue.suggestion.accept') && room && !room.media && wasEmptyQueue) {
+        const playNow = action === 'queue.playNow' || action === 'queue.suggestion.playNow';
+        // An accepted suggestion leaves the list once its video has played or joined the queue.
+        const settle = async () => {
+          if (!acceptedSuggestion) return;
+          suggestionSettled = true;
+          await this.inRoom(room, () => this.settleSuggestion(room, acceptedSuggestion.id), undefined);
+        };
+        if (room && (playNow || (!room.media && wasEmptyQueue))) {
           if (room.transition?.kind === 'queue') room.transition = undefined;
           const outcome = await this.changeQueueMedia(
             room,
             { action: 'media.load', args: { mediaId: item.mediaId, serverId: item.serverId } },
             actor,
             ticket,
-            {
-              initialAdd: true,
-              forcePlay: !!room.endedVersion && !!this.roomState.store.get(id).autoplay,
-            },
+            ...(playNow
+              ? []
+              : [{ initialAdd: true, forcePlay: !!room.endedVersion && !!this.roomState.store.get(id).autoplay }]),
           );
-          if (acceptedSuggestion && outcome?.status === 'applied') {
-            suggestionSettled = true;
-            await this.inRoom(
-              room,
-              () => {
-                this.removeSuggestion(room, acceptedSuggestion.id);
-                room.revision++;
-                this.changed(room);
-              },
-              undefined,
-            );
-          }
+          if (outcome?.status === 'applied') await settle();
           return outcome;
         }
         value =
           action === 'queue.playNow'
             ? await queue.playNow(id, actor.userId, item)
             : await queue.add(id, actor.userId, item, { expectedRevision: revision });
-        if (acceptedSuggestion) {
-          suggestionSettled = true;
-          await this.inRoom(room, () => this.removeSuggestion(room, acceptedSuggestion.id), undefined);
-        }
+        await settle();
       } else if (action === 'queue.offer.start') {
         if (!room) throw Object.assign(new Error('Room unavailable'), { status: 404 });
         if (!this.hub.authorize(actor, room, 'addQueue').ok || !this.hub.authorize(actor, room, 'playPause').ok) {

@@ -358,111 +358,27 @@
   .library-detail-art > .landscape {
     aspect-ratio: 16/9;
   }
-  /* Optional human readiness prompt over the stage (visible in normal and fullscreen modes). */
+  /* The ready check shares the readiness-choice card; the room's own readiness choices and endings take precedence. */
   .human-check-prompt[hidden],
-  .stage.ending-active .human-check-prompt {
+  .stage.ending-active .human-check-prompt,
+  .stage:has(> #readiness-choice:not([hidden]), > #room-recovery:not([hidden])) .human-check-prompt {
     display: none;
   }
-  .human-check-prompt {
-    --background: var(--chrome-background);
-    --card: var(--chrome-card);
-    --elevated: var(--chrome-elevated);
-    --border: var(--chrome-border);
-    --text: var(--chrome-text);
-    --muted: var(--chrome-muted);
-    --accent-text: var(--primary);
-    color: var(--chrome-text);
-    color-scheme: dark;
-    position: absolute;
-    z-index: var(--z-local-5);
-    top: clamp(var(--space-60), 10%, var(--space-72));
-    left: 50%;
-    transform: translateX(-50%);
-    width: max-content;
-    max-width: min(calc(var(--space-72) * 7), calc(100% - var(--space-24)));
-    box-sizing: border-box;
-    padding: var(--space-10) var(--space-12);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-14);
-    background: var(--chrome-background-a92);
-    box-shadow: 0 var(--space-8) var(--space-30) var(--black-a60);
-    backdrop-filter: blur(var(--space-8));
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: var(--space-10);
-    pointer-events: auto;
-  }
-  .human-check-prompt-copy {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-  .human-check-prompt-title {
-    margin: 0;
-    font-size: var(--font-size-14);
-    font-weight: 600;
-    color: var(--text);
-  }
-  .human-check-prompt-meta {
-    margin: 0;
-    font-size: var(--font-size-12);
-    color: var(--muted);
-    font-variant-numeric: tabular-nums;
-  }
-  .human-check-prompt-meta:empty {
+  .human-check-prompt > div > button[hidden] {
     display: none;
   }
-  .human-check-prompt-actions {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--space-8);
-  }
-  .human-check-prompt-actions button {
-    min-height: var(--watch-control-height);
-    padding: var(--space-6) var(--space-12);
-  }
-  .human-check-prompt-actions button[data-check-choice='ready'][aria-pressed='true'] {
+  .human-check-choice[data-check-choice='ready'][aria-pressed='true'] {
     border-color: var(--success);
     color: var(--success);
     background: color-mix(in srgb, var(--success) 18%, var(--elevated));
   }
-  .human-check-prompt-actions button[data-check-choice='hold'][aria-pressed='true'] {
+  .human-check-choice[data-check-choice='hold'][aria-pressed='true'] {
     border-color: var(--warning);
     color: var(--warning);
     background: color-mix(in srgb, var(--warning) 18%, var(--elevated));
   }
-  @container (max-width: 500px) {
-    .human-check-prompt {
-      top: var(--space-8);
-      left: var(--space-8);
-      right: var(--space-8);
-      width: auto;
-      max-width: none;
-      transform: none;
-      padding: var(--space-8) var(--space-10);
-      gap: var(--space-8);
-    }
-    .human-check-prompt-title {
-      font-size: var(--font-size-12);
-    }
-    .human-check-prompt-actions {
-      width: 100%;
-    }
-    .human-check-prompt-actions button {
-      flex: 1 1 auto;
-    }
-  }
   @media (forced-colors: active) {
-    .human-check-prompt {
-      border-color: ButtonBorder;
-      background: Canvas;
-      color: CanvasText;
-    }
-    .human-check-prompt-actions button[aria-pressed='true'] {
+    .human-check-choice[aria-pressed='true'] {
       outline: 2px solid Highlight;
       background: Highlight;
       color: HighlightText;

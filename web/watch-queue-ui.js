@@ -27,10 +27,6 @@ function mount(
     artwork,
     openSettings,
     browseMedia,
-    onSuggest,
-    onAcceptSuggestion,
-    onDismissSuggestion,
-    onWithdrawSuggestion,
     getSettingsState = getState,
     saveSettings,
     // The page's scheduler (web/watch/scheduler.js); a plain interval elsewhere.
@@ -71,6 +67,7 @@ function mount(
   let lastFetchedRevision = -1;
   let lastFetchedRoomId = null;
   let lastSuggestionsKey = '';
+  let suggestionsExpanded = false;
 
   function node(tag, parent, text, className) {
     const el = doc.createElement(tag);
@@ -108,22 +105,11 @@ function mount(
   symbol.append(uburoomIcons.icon(doc, 'player-track-next'));
   const queueTitle = node('span', heading, 'Queue', 'watch-panel-title');
   queueTitle.id = 'queue-title';
-  const headerActions = node('div', header, undefined, 'queue-header-actions watch-control-group');
-  const suggestionsOpen = button(
-    headerActions,
-    'Suggestions',
-    'bulb',
-    () => openSuggestions(),
-    false,
-    'quiet queue-suggestions-open',
-  );
-  suggestionsOpen.id = 'queue-suggestions-open';
-  const suggestionsCountText = node('span', suggestionsOpen, '0', 'queue-suggestions-count');
-  suggestionsOpen.hidden = true;
+  const headerActions = node('div', header, undefined, 'queue-header-actions watch-control-group watch-header-actions');
   const autoOpen = button(headerActions, 'Queue settings', 'settings', () => openSettings(), false, 'icon-button');
   uburoomControls.content(autoOpen, { label: 'Queue settings', icon: 'settings', iconOnly: true });
   autoOpen.id = 'queue-auto-open';
-  autoOpen.classList.add('queue-auto-open');
+  autoOpen.classList.add('queue-auto-open', 'watch-header-control');
   const body = node('div', host);
   body.id = 'queue-body';
   // Second header row: the continuation switches, then Center Now Playing.
@@ -159,6 +145,26 @@ function mount(
   historyView.id = 'queue-history-view';
   historyView.setAttribute('aria-label', 'Playback history');
   const nowPlayingBox = node('div', layout, undefined, 'queue-now-playing');
+  // Pending suggestions sit between Now Playing and Upcoming: absent when there are none, one row when collapsed.
+  const suggestionsView = node('section', layout, undefined, 'queue-suggestions');
+  suggestionsView.id = 'queue-suggestions';
+  suggestionsView.setAttribute('aria-label', 'Suggestions');
+  suggestionsView.hidden = true;
+  const suggestionsToggle = button(
+    suggestionsView,
+    'Show suggestions',
+    undefined,
+    () => {
+      suggestionsExpanded = !suggestionsExpanded;
+      renderSuggestions();
+    },
+    false,
+    'quiet queue-suggestions-toggle',
+  );
+  suggestionsToggle.id = 'queue-suggestions-toggle';
+  suggestionsToggle.setAttribute('aria-controls', 'queue-suggestions-list');
+  const suggestionsList = node('div', suggestionsView, undefined, 'queue-list queue-suggestions-list');
+  suggestionsList.id = 'queue-suggestions-list';
   const upcomingView = node('section', layout, undefined, 'queue-view queue-upcoming-view');
   upcomingView.id = 'queue-upcoming-view';
   upcomingView.setAttribute('aria-label', 'Upcoming videos');
@@ -340,24 +346,6 @@ function mount(
     popups.open(bulkDialog);
     bulkFilter.focus();
   }
-
-  const suggestionsDialog = node('dialog', doc.body, undefined, 'watch-dialog queue-dialog queue-suggestions-dialog');
-  suggestionsDialog.id = 'queue-suggestions-dialog';
-  suggestionsDialog.setAttribute('aria-labelledby', 'queue-suggestions-title');
-  const suggestionsHeader = node('header', suggestionsDialog);
-  const suggestionsTitle = node('h2', suggestionsHeader, 'Suggestions');
-  suggestionsTitle.id = 'queue-suggestions-title';
-  const suggestionsClose = button(
-    suggestionsHeader,
-    'Close',
-    'close',
-    () => popups.close(suggestionsDialog),
-    false,
-    'icon-button queue-suggestions-close',
-  );
-  suggestionsClose.id = 'queue-suggestions-close';
-  const suggestionsList = node('div', suggestionsDialog, undefined, 'queue-suggestions-list');
-  popups.register(suggestionsDialog);
 
   const autoDialog = node('div', doc.getElementById('room-playback-controls'), undefined, 'queue-settings');
   const settingsAutoplayLabel = node('label', autoDialog, undefined, 'watch-switch-label');
@@ -789,17 +777,12 @@ function mount(
     for (const entry of entries)
       if (entry.isIntersecting) {
         imageObserver.unobserve(entry.target);
-        suggestionsImageObserver.unobserve(entry.target);
         observedImages.delete(entry.target);
         artworkQueue.push(entry.target);
       }
     pumpArtwork();
   };
   const imageObserver = new IntersectionObserver(handleArtIntersections, { root: layout, rootMargin: '200px' });
-  const suggestionsImageObserver = new IntersectionObserver(handleArtIntersections, {
-    root: suggestionsDialog,
-    rootMargin: '120px',
-  });
 
   function pumpArtwork() {
     const generation = artworkGeneration;
@@ -823,7 +806,6 @@ function mount(
     artworkActive = 0;
     artworkQueue = [];
     imageObserver.disconnect();
-    suggestionsImageObserver.disconnect();
     observedImages.clear();
     imageRequests.clear();
     for (const url of images.values()) URL.revokeObjectURL(url);
@@ -873,9 +855,9 @@ function mount(
     }
   }
 
-  function art(parent, item, options = {}) {
-    if (!options.plain) node('div', parent, undefined, 'queue-row-backdrop').setAttribute('aria-hidden', 'true');
-    const box = node('div', parent, undefined, options.plain ? 'queue-art queue-suggestions-art' : 'queue-art');
+  function art(parent, item) {
+    node('div', parent, undefined, 'queue-row-backdrop').setAttribute('aria-hidden', 'true');
+    const box = node('div', parent, undefined, 'queue-art');
     box.append(uburoomIcons.icon(doc, item.type === 'episode' ? 'tv' : 'film'));
     if (
       !artwork ||
@@ -892,10 +874,10 @@ function mount(
     const cached = images.get(img.dataset.item + ':' + img.dataset.type);
     if (cached) {
       img.src = cached;
-      if (!options.plain) parent.querySelector('.queue-row-backdrop').style.backgroundImage = 'url(' + cached + ')';
+      parent.querySelector('.queue-row-backdrop').style.backgroundImage = 'url(' + cached + ')';
     } else {
       observedImages.add(img);
-      (options.observer || imageObserver).observe(img);
+      imageObserver.observe(img);
     }
   }
 
@@ -912,19 +894,6 @@ function mount(
       badge.textContent = String(qLen);
       badge.hidden = qLen === 0;
     }
-    const state = getState();
-    const suggestionsCount = state?.suggestions?.length || 0;
-    suggestionsCountText.textContent = String(suggestionsCount);
-    suggestionsOpen.dataset.hasSuggestions = String(suggestionsCount > 0);
-    const label =
-      suggestionsCount === 1
-        ? '1 pending suggestion'
-        : suggestionsCount
-          ? suggestionsCount + ' pending suggestions'
-          : 'Suggestions';
-    suggestionsOpen.setAttribute('aria-label', label);
-    suggestionsOpen.title = label;
-    suggestionsOpen.hidden = !state?.durable;
   }
 
   function title(parent, item, className) {
@@ -957,10 +926,11 @@ function mount(
         currentQueue.items.length ||
         state.queueSummary?.autoQueue?.next ||
         state.queueSummary?.historyCount ||
-        currentHistory.items.length
+        currentHistory.items.length ||
+        state.suggestions?.length
       );
     timeline.hidden = centerButton.hidden = noEntries;
-    toolbar.hidden = autoOpen.hidden = suggestionsOpen.hidden = !state;
+    toolbar.hidden = autoOpen.hidden = !state;
     emptyScreen.hidden = !noEntries;
     host.dataset.view = noEntries ? 'empty' : 'list';
     host.classList.toggle('queue-is-empty', noEntries);
@@ -1599,108 +1569,101 @@ function mount(
     await changed();
   }
 
-  async function suggestionCommand(action, args, extraOptions = {}) {
-    const state = getState();
-    if (!state?.id || !state.durable) throw new Error('Open room required');
-    const result = await request('room.queue.command', { roomId: state.id, args: { action, ...args } }, extraOptions);
-    await changed();
+  // Suggestions go through the room's command engine like every other playback change.
+  async function suggestionCommand(action, suggestionId, extra = {}) {
+    const result = await execute({ action: 'queue.suggestion.' + action, args: { suggestionId, ...extra } });
+    if (action === 'accept' || action === 'playNow') await fetchData(true);
     return result;
   }
 
-  async function suggest(item, trigger) {
-    if (onSuggest) return onSuggest(item, trigger);
-    return suggestionCommand('suggest', {
-      item: { id: String(item.mediaId || item.id), ...(item.serverId ? { serverId: item.serverId } : {}) },
-    });
+  // Most agreed first, then oldest first.
+  function rankedSuggestions(state) {
+    return [...(state?.suggestions || [])].sort(
+      (a, b) => b.supporters.length - a.supporters.length || a.createdAt - b.createdAt,
+    );
   }
 
-  async function acceptSuggestion(suggestionId, trigger) {
-    if (onAcceptSuggestion) return onAcceptSuggestion(suggestionId, trigger);
-    const result = await suggestionCommand('suggestion.accept', { suggestionId }, { timeoutMs: 35000 });
-    await fetchData(true);
-    return result;
-  }
-
-  async function dismissSuggestion(suggestionId, trigger) {
-    if (onDismissSuggestion) return onDismissSuggestion(suggestionId, trigger);
-    return suggestionCommand('suggestion.dismiss', { suggestionId });
-  }
-
-  async function withdrawSuggestion(suggestionId, trigger) {
-    if (onWithdrawSuggestion) return onWithdrawSuggestion(suggestionId, trigger);
-    return suggestionCommand('suggestion.withdraw', { suggestionId });
-  }
-
-  function suggestionPopoverAnchor(trigger) {
-    if (trigger?.isConnected) return trigger;
-    if (suggestionsDialog.open) return suggestionsTitle;
-    return suggestionsOpen;
+  function supportersText(supporters) {
+    const [first = 'A viewer', ...others] = supporters;
+    return 'Suggested by ' + first + (others.length ? ' +' + others.length : '');
   }
 
   function renderSuggestions() {
-    suggestionsList.replaceChildren();
     const state = getState();
-    const me = getMe?.();
-    const suggestions = state?.suggestions || [];
-    const canAccept = !!state?.capabilities?.addQueue;
-    if (!suggestions.length) {
-      node('p', suggestionsList, 'No pending suggestions.', 'hint queue-suggestions-empty');
-      return;
-    }
-    for (const entry of suggestions) {
-      const item = entry.item || {};
-      const row = node('article', suggestionsList, undefined, 'queue-suggestions-row');
-      row.dataset.suggestionId = entry.id;
-      art(row, item, { plain: true, observer: suggestionsImageObserver });
-      const info = node('div', row, undefined, 'queue-suggestions-info');
-      node('strong', info, item.title || 'Unknown title', 'queue-suggestions-item-title');
-      const subtitle = formatSubtitle(item) || (Number.isInteger(item.year) ? String(item.year) : '');
-      if (subtitle) node('p', info, subtitle, 'hint queue-suggestions-item-subtitle');
-      const requesterName = entry.suggestedBy?.name || 'Viewer';
-      node('p', info, 'Suggested by ' + requesterName, 'hint queue-suggestions-requester');
-      const isOwn = !!(me?.userId && entry.suggestedBy?.userId === me.userId);
-      const actions = node('div', row, undefined, 'queue-suggestions-actions');
-      const rowButtons = [];
-      const setRowBusy = value => {
-        for (const control of rowButtons) control.disabled = value;
-      };
-      const addAction = (label, iconName, className, run, successText) => {
-        const control = button(
-          actions,
-          label + ' ' + (item.title || 'suggestion'),
-          iconName,
-          async () => {
-            if (control.disabled) return;
-            setRowBusy(true);
-            try {
-              await run(entry.id, control);
-              uburoomPopover.show(suggestionPopoverAnchor(control), { text: successText, state: 'success' });
-            } catch (error) {
-              setRowBusy(false);
-              uburoomPopover.show(suggestionPopoverAnchor(control), { text: error.message, state: 'error' });
-            }
-          },
-          false,
-          className,
-        );
-        node('span', control, label);
-        rowButtons.push(control);
-      };
-      if (canAccept) {
-        addAction('Accept', 'check', 'primary queue-suggestion-accept', acceptSuggestion, 'Added to queue');
-        addAction('Dismiss', 'close', 'quiet queue-suggestion-dismiss', dismissSuggestion, 'Dismissed');
-      } else if (isOwn) {
-        addAction('Withdraw', 'trash', 'quiet queue-suggestion-withdraw', withdrawSuggestion, 'Withdrawn');
-      }
-      if (!actions.childElementCount) actions.hidden = true;
-    }
+    const suggestions = state?.durable ? rankedSuggestions(state) : [];
+    const key = JSON.stringify([state?.id, state?.capabilities, suggestions, suggestionsExpanded]);
+    if (key === lastSuggestionsKey) return;
+    lastSuggestionsKey = key;
+    const hadRows = !suggestionsView.hidden;
+    suggestionsView.hidden = !suggestions.length;
+    if (!suggestions.length) suggestionsExpanded = false;
+    const label = suggestions.length === 1 ? '1 suggestion' : suggestions.length + ' suggestions';
+    suggestionsToggle.replaceChildren(
+      uburoomIcons.icon(doc, 'bulb'),
+      node('span', null, label, 'queue-suggestions-label'),
+      uburoomIcons.icon(doc, 'chevron'),
+    );
+    suggestionsToggle.setAttribute('aria-expanded', String(suggestionsExpanded));
+    suggestionsToggle.setAttribute('aria-label', (suggestionsExpanded ? 'Hide ' : 'Show ') + label);
+    suggestionsToggle.title = suggestionsExpanded ? 'Hide suggestions' : 'Show suggestions';
+    suggestionsList.hidden = !suggestionsExpanded;
+    suggestionsList.replaceChildren();
+    if (suggestionsExpanded) for (const entry of suggestions) suggestionRow(entry, state);
+    updateViewsVisibility();
+    if (hadRows !== !suggestionsView.hidden) scheduleNavigation();
   }
 
-  function openSuggestions(trigger = suggestionsOpen) {
-    if (!getState()?.durable) return;
-    renderSuggestions();
-    popups.open(suggestionsDialog, trigger);
-    suggestionsClose.focus({ preventScroll: true });
+  function suggestionRow(entry, state) {
+    const item = entry.item || {};
+    const capabilities = state.capabilities || {};
+    const row = node('article', suggestionsList, undefined, 'queue-entry queue-entry-suggestion');
+    row.dataset.suggestionId = entry.id;
+    const top = node('div', row, undefined, 'queue-entry-top');
+    node('span', top, supportersText(entry.supporters), 'queue-suggestion-supporters');
+    const moves = node('div', top, undefined, 'queue-move-actions');
+    const count = entry.supporters.length;
+    const agreeLabel = entry.agreed ? (count === 1 ? 'Withdraw suggestion' : 'Stop agreeing') : 'Agree with suggestion';
+    const agree = action(
+      moves,
+      agreeLabel,
+      'bulb',
+      () => suggestionCommand('agree', entry.id, { agree: !entry.agreed }),
+      !capabilities.suggestMedia,
+      'queue-suggestion-agree',
+    );
+    agree.setAttribute('aria-pressed', String(!!entry.agreed));
+    agree.setAttribute('aria-label', agreeLabel + ' (' + count + (count === 1 ? ' agrees)' : ' agree)'));
+    node('span', agree, String(count), 'queue-suggestion-count');
+    action(
+      moves,
+      'Dismiss suggestion',
+      'close',
+      () => suggestionCommand('dismiss', entry.id),
+      !capabilities.addQueue,
+      'queue-action-remove',
+    );
+    art(row, item);
+    const info = node('div', row, undefined, 'queue-entry-info');
+    title(info, item, 'queue-entry-title');
+    node('span', info, formatTime(item.duration), 'queue-meta');
+    const actions = node('div', row, undefined, 'queue-entry-actions');
+    node('span', actions, 'Suggestion', 'queue-entry-caption');
+    action(
+      actions,
+      'Add to queue',
+      'queue',
+      () => suggestionCommand('accept', entry.id),
+      !capabilities.addQueue,
+      'queue-action-pin',
+    );
+    action(
+      actions,
+      'Play now',
+      'play',
+      () => suggestionCommand('playNow', entry.id),
+      !capabilities.chooseMedia,
+      'queue-action-play',
+    );
   }
 
   function render(queueSummary) {
@@ -1717,7 +1680,6 @@ function mount(
         lastFetchedRevision = -1;
       }
       if (bulkDialog.open) bulkDialog.close();
-      if (suggestionsDialog.open) popups.close(suggestionsDialog);
       autoNotice.textContent = '';
       return;
     }
@@ -1727,11 +1689,11 @@ function mount(
         lastFetchedRoomId = null;
         lastFetchedRevision = -1;
       }
-      if (suggestionsDialog.open) popups.close(suggestionsDialog);
       currentQueue = { items: [], total: 0, queueRevision: 0 };
       currentHistory = { items: [], total: 0 };
       renderTab();
       renderNowPlaying();
+      renderSuggestions();
       renderHeaderBadge();
       return;
     }
@@ -1763,16 +1725,7 @@ function mount(
       capabilityKey = permissions;
       renderTab();
     }
-    const suggestionsKey = JSON.stringify([
-      state.id,
-      state.capabilities?.addQueue,
-      getMe?.()?.userId,
-      state.suggestions || [],
-    ]);
-    if (suggestionsKey !== lastSuggestionsKey) {
-      lastSuggestionsKey = suggestionsKey;
-      if (suggestionsDialog.open) renderSuggestions();
-    }
+    renderSuggestions();
     renderHeaderBadge(queueSummary);
     if (queueSummary) {
       if (queueSummary.queueRevision > lastFetchedRevision || state.id !== lastFetchedRoomId) {
@@ -1798,8 +1751,6 @@ function mount(
     render,
     add,
     bulk,
-    suggest,
-    openSuggestions,
     openAuto,
     fetchData,
     get selectedEntryId() {

@@ -100,6 +100,10 @@ function suggestion(a) {
   if (typeof a.suggestionId !== 'string' || !ENTRY.test(a.suggestionId)) throw new Error('Choose a suggestion');
   return { suggestionId: a.suggestionId };
 }
+function suggestionAgreement(a) {
+  if (typeof a.agree !== 'boolean') throw new Error('Choose to agree or not');
+  return { ...suggestion(a), agree: a.agree };
+}
 function event(a, action) {
   const args = {};
   if (action !== 'room.event.create') {
@@ -345,6 +349,14 @@ const COMMANDS = Object.freeze({
     liveOnly: true,
     args: suggestion,
   },
+  'queue.suggestion.playNow': {
+    scope: 'room',
+    refillsAutoQueue: true,
+    capability: 'chooseMedia',
+    prepares: true,
+    liveOnly: true,
+    args: suggestion,
+  },
   'queue.suggestion.dismiss': {
     scope: 'room',
     capability: 'addQueue',
@@ -352,12 +364,12 @@ const COMMANDS = Object.freeze({
     liveOnly: true,
     args: suggestion,
   },
-  'queue.suggestion.withdraw': {
+  'queue.suggestion.agree': {
     scope: 'room',
     capability: 'suggestMedia',
     roomLocal: true,
     liveOnly: true,
-    args: suggestion,
+    args: suggestionAgreement,
   },
   'queue.playNow': {
     refillsAutoQueue: true,
