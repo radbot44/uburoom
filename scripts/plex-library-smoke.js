@@ -244,7 +244,8 @@ async function main(name) {
     const until = (page, expression, label) => browser.until(page, expression, label, 15000);
     const context = await browser.page(config.publicUrl + '/?demo=host');
     await browser.viewport(context, 1360, 1200);
-    await until(context, '!!me', 'demo login');
+    // Creating a room needs the room connection, not just the sign-in.
+    await until(context, '!!me && transport?.ready', 'demo login and room connection');
     await evaluate(context, 'document.getElementById("create").click()');
     await until(context, 'document.getElementById("room-dialog").open', 'room chooser');
     await evaluate(context, 'document.getElementById("room-create").click()');

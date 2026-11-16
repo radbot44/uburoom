@@ -168,7 +168,14 @@ async function playbackBrowser(name, { binary, acceleration = 'software' } = {})
         ? await command('script.evaluate', { expression, target: { context: page }, awaitPromise: true })
         : await command('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, page);
       if (result.type === 'exception' || result.exceptionDetails)
-        throw new Error(result.exceptionDetails?.text || 'Browser expression failed');
+        // Name the expression, so a failing step in a long runner can be found.
+        throw new Error(
+          (result.exceptionDetails?.exception?.description ||
+            result.exceptionDetails?.text ||
+            'Browser expression failed') +
+            ' in: ' +
+            expression.slice(0, 160),
+        );
       return firefox ? unpack(result.result) : result.result?.value;
     };
     const until = async (page, expression, label, timeout = 20000) => {
