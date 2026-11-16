@@ -66,7 +66,7 @@ class Jellyfin {
     // A server may live under a path, so resources resolve inside it, never beside it.
     this.base = settings.url ? new URL(settings.url.replace(/\/+$/, '') + '/') : undefined;
     this.device = 'uburoom-' + createHash('sha256').update(String(settings.url)).digest('hex').slice(0, 16);
-    /** @type {Map<string,{poster?: {id: string, type: string}, landscape?: {id: string, type: string}}>} */
+    /** @type {Map<string,{poster?: {id: string, type: string}, landscape?: {id: string, type: string}, backdrop?: {id: string, type: string}}>} */
     this.art = new Map();
     /** @type {Map<string,{at: number, ok: boolean}>} */
     this.seen = new Map();
@@ -236,7 +236,7 @@ class Jellyfin {
         const poster = type === 'episode' ? series || own : own,
           landscape = type === 'episode' ? own || backdrop : backdrop || own;
         this.art.delete(id);
-        this.art.set(id, { poster, landscape });
+        this.art.set(id, { poster, landscape, backdrop });
         while (this.art.size > 1200) this.art.delete(this.art.keys().next().value);
         this.remember(id, true);
         const playable = ['movie', 'episode'].includes(type);
@@ -268,6 +268,7 @@ class Jellyfin {
           showId: lower(type === 'episode' ? x.SeriesId : undefined),
           hasPoster: !!poster,
           hasLandscape: !!landscape,
+          hasBackdrop: !!backdrop,
           ...(playable ? { summary: text(x.Overview, 500) } : {}),
         };
       });
@@ -523,13 +524,16 @@ class Jellyfin {
     };
   }
   async artwork(id, kind = 'poster') {
+    const widths = { poster: 300, landscape: 400, backdrop: 1280 };
+    if (!Object.hasOwn(widths, kind)) throw failure('Invalid artwork', 400);
     const key = jellyfinIdentity(id).itemId;
     if (!this.art.has(key)) this.items([await this.one(key, 'Path')]);
-    const source = this.art.get(key)?.[kind === 'landscape' ? 'landscape' : 'poster'];
+    const width = widths[kind],
+      source = this.art.get(key)?.[kind];
     if (!source) throw failure('Artwork unavailable', 404);
     const response = await this.request(
       this.path(`Items/${guid(source.id)}/Images/${source.type}`, {
-        maxWidth: kind === 'landscape' ? 400 : 300,
+        maxWidth: width,
         quality: 85,
       }),
       { headers: { Accept: 'image/*' } },

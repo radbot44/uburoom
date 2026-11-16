@@ -807,9 +807,6 @@
     flex: 1;
   }
   @container plex-library (max-width:760px) {
-    .library-choice .watch-control-label {
-      display: none;
-    }
     .library-views .group-button span {
       display: none;
     }

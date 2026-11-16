@@ -194,6 +194,38 @@ test('editions, people and ratings are sanitized; private artwork paths never le
   assert.equal(progressItems[3].viewOffset, undefined);
 });
 
+test('backdrops come only from the item or show background art, at backdrop size, and other kinds are refused', async t => {
+  const requested = [];
+  const plex = fixture(async url => {
+    if (url.pathname === '/photo/:/transcode') {
+      requested.push([url.searchParams.get('url'), url.searchParams.get('width'), url.searchParams.get('height')]);
+      return new Response(Buffer.from('fixture image'), { headers: { 'Content-Type': 'image/jpeg' } });
+    }
+    return json({ Metadata: [movie(4, { art: '/library/metadata/4/art/99' })] });
+  });
+  t.after(() => plex.close());
+  const [withArt, episode, unsafe, none] = plex.items([
+    movie(4, { art: '/library/metadata/4/art/99' }),
+    movie(5, { type: 'episode', grandparentArt: '/library/metadata/50/art/7' }),
+    movie(6, { art: 'https://evil.test/private.jpg' }),
+    movie(7),
+  ]);
+  assert.equal(withArt.hasBackdrop, true);
+  assert.equal(episode.hasBackdrop, true, "an episode uses its show's background");
+  assert.equal(unsafe.hasBackdrop, false, 'only Plex library art paths are used');
+  assert.equal(none.hasBackdrop, false);
+  await plex.artwork('4', 'backdrop');
+  await plex.artwork('5', 'backdrop');
+  assert.deepEqual(requested, [
+    ['/library/metadata/4/art/99', '1280', '720'],
+    ['/library/metadata/50/art/7', '1280', '720'],
+  ]);
+  await assert.rejects(plex.artwork('6', 'backdrop'), /Artwork unavailable/);
+  for (const kind of ['constructor', '__proto__', 'art'])
+    await assert.rejects(plex.artwork('4', kind), /Invalid artwork/);
+  assert.equal(requested.length, 2);
+});
+
 test('show and season queue expansion pages the complete corpus, sorts cross-season episodes and filters Specials', async t => {
   const episodes = Array.from({ length: 245 }, (_, index) =>
     movie(index + 1, {

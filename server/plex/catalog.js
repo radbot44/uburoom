@@ -4,8 +4,12 @@ const Sources = require('../plex-source');
 const { plexIdentity } = require('./identity');
 const { SharedTask } = require('../operation');
 
+/** Requested picture sizes (width, height); a backdrop is large enough to sit behind a details page. */
+const ART_SIZES = { poster: ['300', '450'], landscape: ['400', '225'], backdrop: ['1280', '720'] };
+
 // Catalog browsing: library, search, details, artwork, queue expansion and file
 // availability, with small short-lived caches. Playback decisions never use these caches.
+
 class PlexCatalog {
   constructor(plex, cacheBudget) {
     this.plex = plex;
@@ -564,15 +568,15 @@ class PlexCatalog {
   async artwork(id, kind = 'poster', type) {
     const baseId = String(id).split(':')[0];
     this.plex.id(baseId);
-    if (!['poster', 'landscape'].includes(kind)) throw new Error('Invalid artwork');
+    if (!Object.hasOwn(ART_SIZES, kind)) throw new Error('Invalid artwork');
     if (!this.artSources.has(id) && !this.artSources.has(baseId)) await this.plex.details(id, type);
     const source = this.artSources.get(id) || this.artSources.get(baseId),
-      resource = kind === 'landscape' ? source?.landscape : source?.poster;
+      resource = source?.[kind];
     if (!resource) throw new Error('Artwork unavailable');
     return this.plex.cached(this.imageCache, resource + ':' + kind, 96, async () => {
       const query = new URLSearchParams({
-        width: kind === 'landscape' ? '400' : '300',
-        height: kind === 'landscape' ? '225' : '450',
+        width: ART_SIZES[kind][0],
+        height: ART_SIZES[kind][1],
         minSize: '1',
         upscale: '0',
         url: resource,
@@ -611,10 +615,11 @@ class PlexCatalog {
       )
       .flatMap(x => {
         const poster = thumb(x.type === 'episode' ? x.grandparentThumb || x.thumb : x.thumb),
-          landscape = thumb(x.thumb || x.art);
+          landscape = thumb(x.thumb || x.art),
+          backdrop = thumb(x.art || x.grandparentArt);
         const id = String(x.ratingKey);
         this.artSources.delete(id);
-        this.artSources.set(id, { poster, landscape });
+        this.artSources.set(id, { poster, landscape, backdrop });
         while (this.artSources.size > 1200) this.artSources.delete(this.artSources.keys().next().value);
         const viewOffsetSec = Number(x.viewOffset || 0) > 0 ? Math.round(Number(x.viewOffset) / 1000) : undefined;
         const durSec = Number(x.duration || 0) / 1000;
@@ -647,6 +652,7 @@ class PlexCatalog {
           showId: x.grandparentRatingKey && String(x.grandparentRatingKey),
           hasPoster: !!poster,
           hasLandscape: !!landscape,
+          hasBackdrop: !!backdrop,
           ...(['movie', 'episode'].includes(x.type) ? { summary: String(x.summary || '').slice(0, 500) } : {}),
           ...(hasValidProgress ? { viewOffset: viewOffsetSec } : {}),
         };

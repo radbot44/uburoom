@@ -66,19 +66,12 @@
     align-items: center;
     margin-top: var(--space-14);
   }
-  .library-detail-actions .library-play-now {
-    margin-top: 0;
-  }
-  .library-queue-add.library-play-now,
-  .library-suggest.library-play-now {
-    background: var(--elevated);
-    color: var(--text);
-    border: 1px solid var(--border);
-    margin-top: 0;
-  }
-  .library-queue-add.library-play-now:hover,
-  .library-suggest.library-play-now:hover:not(:disabled) {
-    background: var(--hover);
+  /* Details actions are the shared primary (Play now) and quiet buttons with an icon and label. */
+  .library-detail-actions > button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-8);
+    white-space: nowrap;
   }
   [data-view='cards'] .library-tile:not(.episode) > .library-art > .library-queue-add,
   [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-queue-add,
@@ -202,6 +195,17 @@
     background: var(--card);
     padding: var(--space-14) 0 var(--space-12);
     z-index: var(--z-local-5);
+    transition: transform 0.2s ease;
+  }
+  /* While browsing down the catalog the tool rows slide up behind the header; scrolling up returns them. */
+  .library-tools.library-tools-tucked {
+    transform: translateY(-100%);
+    pointer-events: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .library-tools {
+      transition: none;
+    }
   }
   .drawer .library-tools {
     position: sticky;
@@ -213,6 +217,7 @@
   }
   .library-navigation-history {
     flex: none;
+    flex-wrap: nowrap;
   }
   .library-choices {
     flex: none;
@@ -220,6 +225,95 @@
   }
   .library-choices .library-choice {
     white-space: nowrap;
+  }
+  .library-header .library-heading {
+    flex: none;
+  }
+  /* "More" (or, when nothing else fits, the current library's name) opens the libraries that did not fit. */
+  .library-more > svg:last-child {
+    width: 16px;
+    height: 16px;
+    color: var(--muted);
+  }
+  .library-more .watch-control-label {
+    min-width: 0;
+    max-width: 18ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* Alone, the button naming the current library may shrink to the space left, truncating its name. */
+  .library-navigation-history:has(> .library-choices > .library-more[data-current]:not([hidden])),
+  .library-choices:has(> .library-more[data-current]:not([hidden])) {
+    flex-shrink: 1;
+    min-width: 0;
+  }
+  .library-panel .library-more[data-current] {
+    flex-shrink: 1;
+    min-width: 0;
+    color: var(--accent-text);
+  }
+  .library-choice-menu {
+    position: fixed;
+    inset: auto;
+    left: var(--x);
+    top: var(--y);
+    margin: 0;
+    width: 260px;
+    max-width: calc(100vw - 16px);
+    max-height: min(360px, calc(100dvh - var(--y) - 8px));
+    box-sizing: border-box;
+    flex-direction: column;
+    gap: var(--space-6);
+    padding: var(--space-6);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-12);
+    background: var(--card);
+    color: var(--text);
+    box-shadow: 0 8px 30px var(--black-a53);
+  }
+  .library-choice-menu:popover-open {
+    display: flex;
+  }
+  .library-choice-filter {
+    flex: none;
+    height: var(--watch-control-height);
+    box-sizing: border-box;
+  }
+  .library-choice-list {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .library-choice-menu .library-choice-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--space-10);
+    min-height: 40px;
+    padding: 0 var(--space-10);
+    border: 0;
+    border-radius: var(--radius-7);
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+  }
+  .library-choice-menu .library-choice-item .watch-control-label {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .library-choice-menu .library-choice-item:is(:hover, :focus-visible) {
+    background: var(--elevated);
+  }
+  .library-choice-menu .library-choice-item[aria-current='page'] {
+    color: var(--accent-text);
+  }
+  .library-choice-menu .library-choice-item svg {
+    flex: none;
+    width: var(--watch-icon-size);
+    height: var(--watch-icon-size);
   }
   .library-panel .library-choice[aria-current='page'] {
     color: var(--accent-text);
@@ -417,6 +511,7 @@
   }
   .library-views {
     flex: none;
+    margin-left: auto;
   }
   .library-key {
     display: flex;
@@ -669,7 +764,7 @@
     }
   }
   .library-tile .library-play:disabled,
-  .library-play-now:disabled {
+  .library-detail-actions > button:disabled {
     opacity: 0.4;
     cursor: default;
   }
@@ -808,6 +903,56 @@
   .library-overview {
     margin: var(--space-36) 0 var(--space-24);
   }
+  /* Details backdrop: the provider's background art across the top of the page, fading into the panel,
+     with the poster, title and actions starting partway down it. */
+  .library-overview.has-backdrop {
+    position: relative;
+    isolation: isolate;
+  }
+  .library-detail-backdrop {
+    position: absolute;
+    inset: 0 0 auto;
+    aspect-ratio: 21/9;
+    z-index: var(--z-behind);
+    overflow: hidden;
+    border-radius: var(--radius-12) var(--radius-12) 0 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    /* Fade the picture itself out, so it meets the panel whatever colour the theme gives it. */
+    mask-image: linear-gradient(to bottom, var(--black) 35%, transparent);
+  }
+  .library-detail-backdrop.loaded {
+    opacity: 1;
+  }
+  .library-detail-backdrop img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 20%;
+  }
+  .library-detail-backdrop::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    /* Darkens (or, in the light theme, lightens) the picture under the title and actions. */
+    background: linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--card) 10%, transparent),
+      color-mix(in srgb, var(--card) 55%, transparent) 60%
+    );
+  }
+  :root[data-theme='light'] .library-detail-backdrop::after {
+    background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--card) 45%, transparent) 60%);
+  }
+  .has-backdrop > .library-detail-top {
+    padding: 22cqw var(--space-20) 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .library-detail-backdrop {
+      transition: none;
+    }
+  }
   .library-detail-top {
     display: grid;
     grid-template-columns: 112px minmax(0, 1fr);
@@ -838,40 +983,6 @@
     margin: 0 0 var(--space-8);
     overflow-wrap: anywhere;
   }
-  .library-detail-actions {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space-8);
-    margin-top: var(--space-14);
-  }
-  .library-detail-actions .library-play-now {
-    margin-top: 0;
-  }
-  .library-resume {
-    background: var(--elevated);
-    color: var(--text);
-    border: 1px solid var(--border);
-  }
-  .library-resume:hover {
-    background: var(--hover);
-    border-color: var(--border-hover);
-  }
-  .library-play-now {
-    display: flex;
-    align-items: center;
-    gap: var(--space-8);
-    background: var(--primary);
-    color: var(--on-primary);
-    padding: var(--space-10) var(--space-16);
-    border-radius: var(--radius-10);
-    min-height: 44px;
-    margin-top: var(--space-14);
-    font-weight: 600;
-  }
-  .library-play-now:hover {
-    background: var(--primary-hover);
-  }
   .library-detail-body {
     margin-top: var(--space-18);
   }
@@ -880,14 +991,10 @@
     margin: 0 0 var(--space-16);
     overflow-wrap: anywhere;
   }
-  .library-credit,
-  .library-replace {
+  .library-credit {
     font-size: var(--font-size-12);
     color: var(--muted);
     margin: var(--space-10) 0;
-  }
-  .library-replace:empty {
-    display: none;
   }
   .library-facts {
     display: grid;
@@ -1064,10 +1171,6 @@
     }
   }
   @container plex-library (max-width:760px) {
-    .library-panel .library-choice {
-      width: var(--watch-control-height);
-      padding: 0;
-    }
     .episode-detail {
       grid-template-columns: 1fr;
     }
@@ -1107,25 +1210,18 @@
       min-width: 40px;
       padding: 0;
     }
-    .library-filters-toggle .filter-label {
+    .library-filters-toggle .filter-label,
+    .library-scope-actions .library-auto-queue-label {
       display: none;
+    }
+    .library-panel .library-scope-actions .library-auto-queue {
+      width: 40px;
+      min-width: 40px;
+      padding: 0;
     }
     .library-views {
       margin-left: auto;
       flex: none;
-    }
-  }
-  @container plex-library (max-width:440px) {
-    .library-choices {
-      display: none;
-    }
-    .library-header-right .library-auto-queue .library-auto-queue-label {
-      display: none;
-    }
-    .library-panel .library-header-right .library-auto-queue {
-      width: 40px;
-      min-width: 40px;
-      padding: 0;
     }
   }
   @media (max-width: 700px) {
@@ -1142,14 +1238,6 @@
     .library-header-right {
       order: 2;
       margin-left: auto;
-    }
-    .library-panel .library-header-right .library-auto-queue {
-      width: 40px;
-      min-width: 40px;
-      padding: 0;
-    }
-    .library-header-right .library-auto-queue .library-auto-queue-label {
-      display: none;
     }
     .library-crumbs {
       order: 3;

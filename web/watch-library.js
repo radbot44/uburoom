@@ -65,10 +65,7 @@ function mount(
   header?.querySelector('h2')?.classList.add('watch-panel-heading');
   const headerLeft = doc.getElementById('library-header-left') || header?.querySelector('.library-header-left');
   const headerRight = doc.getElementById('library-header-right') || header?.querySelector('.library-header-right');
-  const scopeActions = node('div', headerRight || host, undefined, 'library-scope-actions');
-  scopeActions.hidden = true;
   const topWrap = headerRight?.querySelector('.library-top');
-  if (topWrap) headerRight.insertBefore(scopeActions, topWrap);
   if (topWrap) controls.content(topWrap.querySelector('button'), { label: 'Back to top', icon: 'arrow-bar-to-up' });
   const navParent = headerLeft || host;
   navParent.querySelector('.library-navigation-history')?.remove();
@@ -97,6 +94,129 @@ function mount(
   const choices = node('div', historyGroup, undefined, 'library-choices watch-control-group watch-header-actions');
   choices.setAttribute('role', 'group');
   choices.setAttribute('aria-label', 'Libraries');
+  // Libraries that do not fit beside the navigation go into one menu at the end of the row. The current
+  // library always stays visible; when even it and the menu button do not fit, the button alone names it.
+  const choiceMenu = node('div', header || host, undefined, 'library-choice-menu');
+  choiceMenu.id = 'library-choice-menu';
+  choiceMenu.popover = 'auto';
+  choiceMenu.setAttribute('role', 'menu');
+  choiceMenu.setAttribute('aria-label', 'Libraries');
+  const choiceFilter = node('input', choiceMenu, undefined, 'library-choice-filter');
+  choiceFilter.type = 'search';
+  choiceFilter.placeholder = 'Find a library';
+  choiceFilter.setAttribute('aria-label', 'Find a library');
+  const choiceList = node('div', choiceMenu, undefined, 'library-choice-list');
+  let choiceMore = null,
+    overflowSections = [];
+  const MENU_FILTER_AT = 10;
+  function menuItems() {
+    return [...choiceList.querySelectorAll('button:not([hidden])')];
+  }
+  function renderChoiceMenu() {
+    choiceList.replaceChildren();
+    const term = choiceFilter.value.trim().toLowerCase();
+    for (const section of overflowSections) {
+      const b = button(choiceList, section.title, undefined, 'library-choice-item');
+      b.setAttribute('role', 'menuitem');
+      controls.content(b, { label: section.title, icon: section.mediaType === 'show' ? 'tv' : 'film' });
+      b.dataset.section = section.id;
+      if (section.id === screen?.section) b.setAttribute('aria-current', 'page');
+      b.hidden = !!term && !section.title.toLowerCase().includes(term);
+      b.onclick = () => {
+        choiceMenu.hidePopover();
+        void chooseLibrary(section.id, screen?.tab);
+      };
+    }
+  }
+  choiceMenu.addEventListener('beforetoggle', event => {
+    if (event.newState !== 'open' || !choiceMore) return;
+    choiceFilter.value = '';
+    choiceFilter.hidden = sections.length <= MENU_FILTER_AT;
+    renderChoiceMenu();
+    placeChoiceMenu();
+  });
+  choiceMenu.addEventListener('toggle', event => {
+    choiceMore?.setAttribute('aria-expanded', String(event.newState === 'open'));
+    if (event.newState !== 'open') return;
+    (choiceFilter.hidden
+      ? menuItems().find(b => b.hasAttribute('aria-current')) || menuItems()[0]
+      : choiceFilter
+    )?.focus();
+  });
+  choiceFilter.addEventListener('input', renderChoiceMenu);
+  choiceMenu.addEventListener('keydown', event => {
+    const items = menuItems();
+    if (!items.length || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const index = items.indexOf(doc.activeElement);
+    const nextIndex =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? items.length - 1
+          : event.key === 'ArrowDown'
+            ? (index + 1) % items.length
+            : index <= 0
+              ? items.length - 1
+              : index - 1;
+    items[nextIndex].focus();
+  });
+  // Position goes to the stylesheet as --x and --y; the menu keeps a fixed width there.
+  function placeChoiceMenu() {
+    if (!choiceMore) return;
+    const anchor = choiceMore.getBoundingClientRect(),
+      width = parseFloat(getComputedStyle(choiceMenu).width) || 260;
+    choiceMenu.style.setProperty('--x', Math.max(8, Math.min(innerWidth - width - 8, anchor.left)) + 'px');
+    choiceMenu.style.setProperty('--y', anchor.bottom + 6 + 'px');
+  }
+  doc.addEventListener('scroll', () => choiceMenu.matches(':popover-open') && placeChoiceMenu(), {
+    capture: true,
+    passive: true,
+  });
+  addEventListener('resize', () => choiceMenu.matches(':popover-open') && choiceMenu.hidePopover());
+  /** Show as many library buttons as fit before the header's right-hand controls; the rest go to the menu. */
+  function fitChoices() {
+    if (!choiceMore || choices.hidden || !header || !choices.getClientRects().length) return;
+    const items = [...choices.querySelectorAll('.library-choice:not(.library-more)')];
+    const current = items.find(b => b.getAttribute('aria-current') === 'page');
+    const gap = parseFloat(getComputedStyle(header).columnGap) || 0;
+    const fits = () =>
+      [...choices.children]
+        .filter(b => !b.hidden)
+        .pop()
+        .getBoundingClientRect().right <=
+      (headerRight ? headerRight.getBoundingClientRect().left - gap : header.getBoundingClientRect().right) + 0.5;
+    const label = compact => {
+      const section = compact && sections.find(item => item.id === screen?.section);
+      const text = section ? section.title : 'More';
+      controls.content(choiceMore, {
+        label: text,
+        icon: section ? (section.mediaType === 'show' ? 'tv' : 'film') : undefined,
+      });
+      // It keeps its name at every width (truncating when it must) rather than collapsing to an icon.
+      choiceMore.classList.remove('watch-control-responsive');
+      choiceMore.append(uburoomIcons.icon(doc, 'chevron'));
+      choiceMore.setAttribute('aria-label', section ? 'Library: ' + section.title : 'More libraries');
+      choiceMore.title = section ? 'Choose a library' : 'More libraries';
+      choiceMore.toggleAttribute('data-current', !!section);
+    };
+    items.forEach(b => (b.hidden = false));
+    choiceMore.hidden = true;
+    if (!fits()) {
+      label(false);
+      choiceMore.hidden = false;
+      for (const b of items.filter(b => b !== current).reverse()) {
+        b.hidden = true;
+        if (fits()) break;
+      }
+      if (!fits()) {
+        items.forEach(b => (b.hidden = true));
+        label(true);
+      }
+    }
+    overflowSections = sections.filter(section => items.some(b => b.hidden && b.dataset.section === section.id));
+    if (choiceMore.hidden && choiceMenu.matches(':popover-open')) choiceMenu.hidePopover();
+  }
   const crumbs = node('nav', navParent, undefined, 'library-crumbs');
   crumbs.setAttribute('aria-label', 'Library location');
   const tools = node('div', host, undefined, 'library-tools');
@@ -131,6 +251,9 @@ function mount(
   filterButton.append(node('span', null, 'Filters', 'filter-label watch-control-label'));
   filterButton.setAttribute('aria-expanded', 'false');
   filterButton.setAttribute('aria-controls', 'library-filters');
+  // Set as auto-queue acts on the list being browsed, so it sits with Sort and Filters.
+  const scopeActions = node('div', toolControls, undefined, 'library-scope-actions');
+  scopeActions.hidden = true;
   const views = node('div', toolControls, undefined, 'library-views view-switch watch-segmented watch-segmented-view');
   views.setAttribute('role', 'group');
   views.setAttribute('aria-label', 'Library view');
@@ -185,6 +308,54 @@ function mount(
   choices.hidden = true;
   crumbs.hidden = true;
   const navigationControls = [home, search, sort, filterButton, ...viewButtons];
+  // Scrolling: Back to top appears once Media has scrolled past its top, and while browsing the catalog
+  // the search and sort/filter rows slide up behind the header on the way down and return on the way up.
+  const TUCK_DISTANCE = 24;
+  let scrollFrame = 0,
+    turnY = 0,
+    tucked = false;
+  function tuckTools(value) {
+    if (tucked === value) return;
+    tucked = value;
+    tools.classList.toggle('library-tools-tucked', value);
+  }
+  function toolsStuck(headerBottom) {
+    let after = tools.nextElementSibling;
+    while (after && (after.hidden || !after.getClientRects().length)) after = after.nextElementSibling;
+    return !!after && after.getBoundingClientRect().top - tools.offsetHeight < headerBottom - 4;
+  }
+  function followScroll() {
+    scrollFrame = 0;
+    const panel = host.closest('#library-panel');
+    if (!panel || !header) return;
+    const root = scrollElement(),
+      box = viewport(root),
+      y = root.scrollTop;
+    const scrolled = panel.getBoundingClientRect().top < box.top - 1;
+    if (panel.classList.contains('library-scrolled') !== scrolled) {
+      panel.classList.toggle('library-scrolled', scrolled);
+      fitChoices();
+    }
+    const inUse = tools.contains(doc.activeElement) || !filters.hidden;
+    if (!scrolled || tools.hidden || inUse || !toolsStuck(header.getBoundingClientRect().bottom)) {
+      tuckTools(false);
+      turnY = y;
+      return;
+    }
+    if (tucked ? y > turnY : y < turnY) turnY = y;
+    else if (Math.abs(y - turnY) > TUCK_DISTANCE) {
+      tuckTools(!tucked);
+      turnY = y;
+    }
+  }
+  doc.addEventListener(
+    'scroll',
+    () => {
+      if (!scrollFrame) scrollFrame = requestAnimationFrame(followScroll);
+    },
+    { capture: true, passive: true },
+  );
+  tools.addEventListener('focusin', () => tuckTools(false));
   let room,
     generation = 0,
     controller,
@@ -353,7 +524,17 @@ function mount(
     // Batch writes after measurements so loaded rows do not each force layout.
     for (const [target, property, value] of updates)
       if (target.style.getPropertyValue(property) !== value) target.style.setProperty(property, value);
+    if (entries.some(entry => entry.target === header)) scheduleFit();
   });
+  let fitFrame = 0;
+  function scheduleFit() {
+    if (!fitFrame)
+      fitFrame = requestAnimationFrame(() => {
+        fitFrame = 0;
+        fitChoices();
+      });
+  }
+  void doc.fonts?.ready.then(scheduleFit);
   layoutObserver.observe(host);
   if (header) layoutObserver.observe(header);
   function measureHeader() {
@@ -572,6 +753,24 @@ function mount(
         });
     }
   }
+  /** One provider picture in `box`, loaded through the shared image queue; the box gets `loaded` once shown. */
+  function picture(box, item, kind) {
+    const key = item.id + ':' + kind;
+    const img = reusableImages?.get(key) || doc.createElement('img');
+    reusableImages?.delete(key);
+    box.append(img);
+    img.alt = '';
+    img.decoding = 'async';
+    img.dataset.item = item.id;
+    img.dataset.kind = kind;
+    img.dataset.type = item.type;
+    img.onload = () => {
+      img.parentElement?.classList.add('loaded');
+    };
+    if (img.src) box.classList.toggle('loaded', img.complete && img.naturalWidth > 0);
+    else if (images.has(key)) img.src = images.get(key);
+    else imageObserver.observe(img);
+  }
   function art(parent, item, landscape = false) {
     const box = node('div', parent, undefined, 'library-art' + (landscape ? ' landscape' : ''));
     const fallback = node('span', box, undefined, 'library-art-fallback');
@@ -582,24 +781,7 @@ function mount(
       ),
     );
     node('span', fallback, item.title);
-    if (landscape ? item.hasLandscape : item.hasPoster) {
-      const kind = landscape ? 'landscape' : 'poster',
-        key = item.id + ':' + kind;
-      const img = reusableImages?.get(key) || doc.createElement('img');
-      reusableImages?.delete(key);
-      box.append(img);
-      img.alt = '';
-      img.decoding = 'async';
-      img.dataset.item = item.id;
-      img.dataset.kind = kind;
-      img.dataset.type = item.type;
-      img.onload = () => {
-        img.parentElement?.classList.add('loaded');
-      };
-      if (img.src) box.classList.toggle('loaded', img.complete && img.naturalWidth > 0);
-      else if (images.has(key)) img.src = images.get(key);
-      else imageObserver.observe(img);
-    }
+    if (landscape ? item.hasLandscape : item.hasPoster) picture(box, item, landscape ? 'landscape' : 'poster');
     if (item.viewOffset > 0 && item.duration > 0) {
       const pct = Math.min(100, Math.max(0, (item.viewOffset / item.duration) * 100));
       const track = node('div', box, undefined, 'library-progress');
@@ -718,7 +900,7 @@ function mount(
     }
   }
   function playButton(parent, item, large = false) {
-    const b = button(parent, 'Play ' + identity(item), 'play', large ? 'library-play-now' : 'library-play');
+    const b = button(parent, 'Play ' + identity(item), 'play', large ? 'library-play-now primary' : 'library-play');
     b.dataset.play = item.id;
     b.dataset.action = 'play';
     b.dataset.unavailable = String(item.available === false);
@@ -729,7 +911,7 @@ function mount(
   }
   function resumeButton(parent, item) {
     const timeStr = formatTimestamp(item.viewOffset);
-    const b = button(parent, 'Resume at ' + timeStr, 'play', 'library-resume library-play-now quiet');
+    const b = button(parent, 'Resume at ' + timeStr, 'play', 'library-resume quiet');
     b.dataset.play = item.id;
     b.dataset.action = 'resume';
     b.dataset.unavailable = String(item.available === false);
@@ -743,7 +925,7 @@ function mount(
       parent,
       'Add ' + identity(item) + ' to queue',
       'queue',
-      large ? 'library-queue-add library-play-now' : 'library-queue-add',
+      large ? 'library-queue-add quiet' : 'library-queue-add',
     );
     b.dataset.unavailable = String(item.available === false);
     b.dataset.queue = item.id;
@@ -772,12 +954,7 @@ function mount(
     return b;
   }
   function suggestButton(parent, item, large = false) {
-    const b = button(
-      parent,
-      'Suggest ' + identity(item),
-      'bulb',
-      large ? 'library-suggest library-play-now' : 'library-suggest',
-    );
+    const b = button(parent, 'Suggest ' + identity(item), 'bulb', large ? 'library-suggest quiet' : 'library-suggest');
     b.dataset.unavailable = String(item.available === false);
     b.dataset.suggest = item.id;
     b.dataset.identity = identity(item);
@@ -887,6 +1064,9 @@ function mount(
     overview.hidden = !item;
     if (!item) return;
     const episode = item.type === 'episode';
+    // The provider's background art fades in behind the top of the page; without one the page stays plain.
+    overview.classList.toggle('has-backdrop', !!item.hasBackdrop);
+    if (item.hasBackdrop) picture(node('div', overview, undefined, 'library-detail-backdrop'), item, 'backdrop');
     const top = node(
       'div',
       overview,
@@ -905,8 +1085,6 @@ function mount(
       if (item.viewOffset > 0) resumeButton(actionRow, item);
       if (addToQueue && getPlayer()?.durable) queueButton(actionRow, item, true);
       if (suggestMedia && item.id !== 'demo' && getPlayer()?.durable) suggestButton(actionRow, item, true);
-      const warning = node('p', copy, '', 'library-replace');
-      warning.textContent = getPlayer()?.mediaId ? 'Replaces the current video for everyone.' : '';
     } else if (getPlayer()?.durable) {
       const actionRow = node('div', copy, undefined, 'library-detail-actions');
       if (addBulkToQueue && ['show', 'season'].includes(item.type)) bulkButton(actionRow, item);
@@ -989,6 +1167,12 @@ function mount(
       if (section.id === screen.section) b.setAttribute('aria-current', 'page');
       b.onclick = () => void chooseLibrary(section.id, screen.tab);
     });
+    choiceMore = button(choices, 'More libraries', undefined, 'library-key library-choice library-more');
+    choiceMore.setAttribute('aria-haspopup', 'menu');
+    choiceMore.setAttribute('aria-expanded', 'false');
+    choiceMore.popoverTargetElement = choiceMenu;
+    choiceMore.hidden = true;
+    fitChoices();
     if (focusedSection)
       [...choices.querySelectorAll('button')].find(b => b.dataset.section === focusedSection)?.focus();
     crumbs.replaceChildren();
@@ -1038,6 +1222,7 @@ function mount(
         section.title,
       );
     tools.hidden = details || atHome;
+    tuckTools(false);
     row.hidden = details || atHome;
     chips.hidden = details || atHome;
     filterButton.hidden =
@@ -1140,7 +1325,10 @@ function mount(
   function renderResults(reuseImages = false) {
     reusableImages = reuseImages
       ? new Map(
-          [...host.querySelectorAll('.library-art img')].map(img => [img.dataset.item + ':' + img.dataset.kind, img]),
+          [...host.querySelectorAll('.library-art img, .library-detail-backdrop img')].map(img => [
+            img.dataset.item + ':' + img.dataset.kind,
+            img,
+          ]),
         )
       : undefined;
     renderTools();
@@ -1521,6 +1709,7 @@ function mount(
     overview.hidden = true;
     choices.replaceChildren();
     choices.hidden = true;
+    choiceMore = null;
     crumbs.replaceChildren();
     crumbs.hidden = true;
     chips.replaceChildren();
