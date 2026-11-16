@@ -91,6 +91,7 @@
  * @property {boolean} [hasLandscape]
  * @property {boolean} [hasBackdrop]
  * @property {boolean} [hasLogo]
+ * @property {string} [section] - The library the item is in, when the provider says; lets Media show it as the current library.
  * @property {string} [parentId] - The season an episode belongs to.
  * @property {string} [showId] - The show an episode or season belongs to.
  * @property {number} [index] - Episode or season number.

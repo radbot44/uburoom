@@ -1038,7 +1038,7 @@ function mount(
   }
   function bulkButton(parent, item) {
     const label = 'Add ' + (item.type === 'season' ? 'season' : 'show') + ' to queue';
-    const b = button(parent, label, 'queue', 'library-queue-add library-play-now');
+    const b = button(parent, label, 'queue', 'library-queue-add quiet');
     b.dataset.queue = item.id;
     b.append(node('span', null, label));
     b.onclick = () => {
@@ -1050,6 +1050,7 @@ function mount(
     const b = button(parent, 'Set as auto-queue from ' + title, 'sparkle', 'library-auto-queue');
     if (parent === scopeActions)
       b.classList.add('watch-control', 'watch-control-responsive', 'watch-control-solid-disabled');
+    else b.classList.add('quiet');
     b.dataset.autoQueue = scope.id;
     node('span', b, 'Set as auto-queue', 'library-auto-queue-label watch-control-label');
     b.onclick = () => {
@@ -1539,6 +1540,16 @@ function mount(
       signalError(error.message, () => void loadPage(append));
     }
   }
+  // A page opened outside any library takes on its item's library, on the same server, as the current one.
+  function adoptLibrary(current, full) {
+    if (current.section || !full.section) return;
+    const library = sections.find(
+      section => section.id === full.section && (!current.server || section.serverId === current.server),
+    );
+    if (!library) return;
+    current.section = library.id;
+    renderTools();
+  }
   async function getDetails(item, current) {
     detailController?.abort();
     detailController = new AbortController();
@@ -1551,6 +1562,7 @@ function mount(
       if (version !== generation || screen !== current) return;
       current.detail = full;
       current.detailsLoaded = true;
+      adoptLibrary(current, full);
       summary(full);
       setBusy(busy);
       void checkAvailability([full], current);
@@ -1559,13 +1571,15 @@ function mount(
         signalError('Details could not load. ' + error.message, () => void getDetails(item, current));
     }
   }
-  async function openItem(item) {
+  // `outside`: opened from elsewhere (the queue), so not inside the library on screen; the item's own
+  // server answers, and its library becomes current once its details say which it is.
+  async function openItem(item, { outside = false } = {}) {
     prefetchArt(item);
     if (!screen) screen = homeContext();
     prepareNavigation();
     screen.focusItem = item.id;
     trail.push(screen);
-    const from = screen;
+    const from = outside ? homeContext() : screen;
     screen = {
       ...context(from.section, from.tab),
       title: item.title,

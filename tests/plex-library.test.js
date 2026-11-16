@@ -158,6 +158,7 @@ test('editions, people and ratings are sanitized; private artwork paths never le
       Metadata: [
         movie(2, {
           editionTitle: 'The Final Cut',
+          librarySectionID: 1,
           summary: 'Synopsis',
           Director: [{ tag: 'Director' }],
           Role: [{ tag: 'Actor' }],
@@ -171,6 +172,7 @@ test('editions, people and ratings are sanitized; private artwork paths never le
   t.after(() => plex.close());
   const detail = await plex.details('2');
   assert.equal(detail.edition, 'The Final Cut');
+  assert.equal(detail.section, '1', 'details name their library, so Media can show it as current');
   assert.deepEqual(detail.cast, ['Actor']);
   assert.equal(detail.ratings[0].source, 'IMDb');
   assert.equal(detail.hasPoster, true);

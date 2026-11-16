@@ -665,6 +665,7 @@ class PlexCatalog {
           hasLandscape: !!landscape,
           hasBackdrop: !!backdrop,
           hasLogo: !!logo,
+          ...(/^\d{1,20}$/.test(String(x.librarySectionID ?? '')) ? { section: String(x.librarySectionID) } : {}),
           ...(['movie', 'episode'].includes(x.type) ? { summary: String(x.summary || '').slice(0, 500) } : {}),
           ...(hasValidProgress ? { viewOffset: viewOffsetSec } : {}),
         };

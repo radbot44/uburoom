@@ -298,6 +298,19 @@ class Jellyfin {
     this.views = new Map(items.map(item => [item.id, item.mediaType]));
     return items;
   }
+  // The user library a details page's item sits in, found among its ancestors; unknown is left out.
+  async librarySection(id) {
+    try {
+      if (!this.views.size) await this.libraries();
+      const ancestors = await this.json(`Items/${guid(id)}/Ancestors`, { userId: await this.userId() });
+      const found = (Array.isArray(ancestors) ? ancestors : [])
+        .map(folder => lower(folder?.Id))
+        .find(folderId => folderId && this.views.has(folderId));
+      return found ? { section: found } : {};
+    } catch {
+      return {};
+    }
+  }
   async section(id) {
     const key = guid(id);
     if (!this.views.has(key)) await this.libraries();
@@ -437,6 +450,7 @@ class Jellyfin {
       ratings.push({ source: 'Critics', value: Number(x.CriticRating) / 10 });
     return {
       ...item,
+      ...(await this.librarySection(x.Id)),
       summary: text(x.Overview, 2000),
       directors: people('Director'),
       cast: people('Actor'),

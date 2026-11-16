@@ -86,6 +86,7 @@ class LocalMedia {
     const info = this.index.known(entry);
     return {
       id: entry.token,
+      section: entry.library,
       type: 'movie',
       title: entry.title,
       subtitle: entry.folder,

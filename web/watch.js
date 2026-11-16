@@ -258,7 +258,7 @@ const queueUI = uburoomQueueUI.mount($('queue-content'), {
   browseMedia: (...args) => deps.browseMedia(...args),
   openLibraryItem: item => {
     deps.selectSection('media');
-    return library?.openItem(item);
+    return library?.openItem(item, { outside: true });
   },
   artwork: fetchArtwork,
   changed: async () => {

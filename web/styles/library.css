@@ -350,32 +350,8 @@
     gap: var(--space-8);
     margin: 0;
   }
-  .library-auto-queue {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-8);
-    height: 40px;
-    min-height: 40px;
-    border-radius: var(--radius-12);
-    background: var(--elevated);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 0 var(--space-16);
-    font-size: var(--font-size-14);
-    font-weight: 500;
-    box-sizing: border-box;
-    white-space: nowrap;
-    cursor: pointer;
-  }
-  .library-auto-queue:hover:not(:disabled) {
-    background: var(--hover);
-    border-color: color-mix(in srgb, var(--secondary) 45%, var(--border));
-  }
-  .library-auto-queue:disabled {
-    opacity: 0.35;
-    cursor: default;
-  }
+  /* Set as auto-queue is the shared quiet button on details pages and the toolbar control in the tools row;
+   only its secondary-accent icon is its own. */
   .library-auto-queue svg {
     color: var(--secondary);
     width: 20px;

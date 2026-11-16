@@ -93,3 +93,34 @@ test('Jellyfin backdrops and title logos use the right images at their sizes, an
     await assert.rejects(jellyfin.artwork(movie, kind), /Invalid artwork/);
   assert.equal(images.length, 3, 'a refused kind never reaches Jellyfin');
 });
+
+test('Jellyfin details name the user library an item sits in, and leave it out when that cannot be told', async () => {
+  const user = 'a'.repeat(32),
+    movie = 'b'.repeat(32),
+    library = 'e'.repeat(32),
+    folder = 'f'.repeat(32);
+  let ancestors = [{ Id: folder.toUpperCase() }, { Id: library.toUpperCase() }];
+  const jellyfin = new Jellyfin(
+    { url: 'http://jellyfin.invalid:8096', apiKey: 'fixture-key', user: 'Viewer' },
+    {
+      pipeline: {},
+      fetcher: async input => {
+        const url = new URL(input);
+        if (url.pathname === '/Users') return Response.json([{ Id: user, Name: 'Viewer' }]);
+        if (url.pathname === '/UserViews')
+          return Response.json({ Items: [{ Id: library, Name: 'Films', CollectionType: 'movies' }] });
+        if (url.pathname === `/Items/${movie}/Ancestors`)
+          return ancestors ? Response.json(ancestors) : new Response('', { status: 500 });
+        if (url.pathname === '/Items') return Response.json({ Items: [{ Id: movie, Type: 'Movie', Name: 'Film' }] });
+        return Response.json({ Items: [] });
+      },
+    },
+  );
+  assert.equal((await jellyfin.details(movie)).section, library);
+  ancestors = [{ Id: folder }];
+  assert.equal((await jellyfin.details(movie)).section, undefined, 'an item outside the user libraries names none');
+  ancestors = null;
+  const detail = await jellyfin.details(movie);
+  assert.equal(detail.section, undefined, 'a failed lookup leaves the library out');
+  assert.equal(detail.title, 'Film', 'and still shows the details');
+});
