@@ -313,7 +313,8 @@ function mount(
   const TUCK_DISTANCE = 24;
   let scrollFrame = 0,
     turnY = 0,
-    tucked = false;
+    tucked = false,
+    toolsScreen;
   function tuckTools(value) {
     if (tucked === value) return;
     tucked = value;
@@ -550,10 +551,19 @@ function mount(
     const top = root === document.scrollingElement ? 0 : root.getBoundingClientRect().top + root.clientTop;
     return { top, bottom: top + root.clientHeight };
   }
+  /**
+   * Where the tool rows end once settled (shown, or tucked up behind the header), whatever their slide is
+   * doing now: the edge the visible list starts below, which scroll positions are kept relative to.
+   */
+  function toolsEdge(tuckedState = tucked) {
+    const transform = getComputedStyle(tools).transform;
+    const shift = transform && transform !== 'none' ? new DOMMatrixReadOnly(transform).m42 : 0;
+    return tools.getBoundingClientRect().bottom - shift - (tuckedState ? tools.offsetHeight : 0);
+  }
   function captureAnchor() {
     const root = scrollElement(),
       box = viewport(root),
-      top = Math.max(box.top, tools.getBoundingClientRect().bottom);
+      top = Math.max(box.top, toolsEdge());
     const item = [...results.querySelectorAll('.library-tile')].find(n => {
       const b = n.getBoundingClientRect();
       return b.bottom > top && b.top < box.bottom;
@@ -562,6 +572,7 @@ function mount(
       id: item?.dataset.item,
       offset: item ? item.getBoundingClientRect().top - top : 0,
       scroll: root.scrollTop,
+      tucked,
     };
   }
   function rememberScroll() {
@@ -586,18 +597,23 @@ function mount(
     screen.minHeight = Math.ceil(Math.max(0, end - rect.top + 8, desired + root.clientHeight - hostTop));
     host.style.minHeight = screen.minHeight + 'px';
   }
+  // Returning to a list puts it back as it was left: the same tile at the same place, with the tool rows
+  // tucked or shown as they were.
   function restoreAnchor(anchor) {
     const root = scrollElement(),
       item = anchor.id && [...results.querySelectorAll('.library-tile')].find(n => n.dataset.item === anchor.id);
+    tuckTools(!!anchor.tucked && !tools.hidden);
     let desired = anchor.scroll;
     if (item) {
       const b = item.getBoundingClientRect(),
-        top = Math.max(viewport(root).top, tools.getBoundingClientRect().bottom);
+        top = Math.max(viewport(root).top, toolsEdge());
       const offset = Math.max(anchor.offset, -Math.max(0, b.height - 44));
       desired = Math.max(0, root.scrollTop + b.top - top - offset);
     }
     roomForScroll(desired);
     root.scrollTop = desired;
+    // This scroll is the restore itself, not someone browsing: it neither tucks nor shows the tools.
+    turnY = root.scrollTop;
   }
   function restoreScroll(value) {
     const current = screen,
@@ -613,13 +629,17 @@ function mount(
     const contentTop = Math.max(
       box.top,
       header?.getBoundingClientRect().bottom || box.top,
-      tools.hidden ? box.top : tools.getBoundingClientRect().bottom,
+      tools.hidden ? box.top : toolsEdge(),
     );
     const visible = [...host.querySelectorAll('.library-tile,.library-home-card,.library-overview')].some(item => {
       const bounds = item.getBoundingClientRect();
       return bounds.width > 0 && bounds.height > 0 && bounds.bottom > contentTop && bounds.top < box.bottom;
     });
-    if (visible || (rect.top >= box.top && rect.top < box.bottom)) return;
+    if (visible || (rect.top >= box.top && rect.top < box.bottom)) {
+      // Nothing to scroll to: keep only the height the current scroll position needs.
+      roomForScroll(root.scrollTop);
+      return;
+    }
     // The content host starts after the header. Aligning it to the viewport
     // would put the first row underneath that sticky header.
     const panel = host.closest('#library-panel') || host;
@@ -1167,6 +1187,8 @@ function mount(
     sections.forEach(section => {
       const b = button(choices, section.title, undefined, 'library-key library-choice');
       controls.content(b, { label: section.title, icon: section.mediaType === 'show' ? 'tv' : 'film' });
+      // Library buttons keep their names at every width: what does not fit goes into the More menu.
+      b.classList.remove('watch-control-responsive');
       b.dataset.section = section.id;
       if (section.id === screen.section) b.setAttribute('aria-current', 'page');
       b.onclick = () => void chooseLibrary(section.id, screen.tab);
@@ -1226,7 +1248,10 @@ function mount(
         section.title,
       );
     tools.hidden = details || atHome;
-    tuckTools(false);
+    if (toolsScreen !== screen) {
+      toolsScreen = screen;
+      tuckTools(false);
+    }
     row.hidden = details || atHome;
     chips.hidden = details || atHome;
     filterButton.hidden =

@@ -1270,8 +1270,15 @@
     .library-header-left {
       display: contents;
     }
+    /* The heading takes the first row; the navigation group fills the second beside Back to top (rows wrap
+       before anything shrinks, so it starts from no width and grows, letting the library button shrink). */
+    .library-panel > .library-header .library-heading {
+      flex-basis: 100%;
+    }
     .library-navigation-history {
       order: 1;
+      flex: 1 1 0;
+      min-width: 0;
     }
     .library-header-right {
       order: 2;
