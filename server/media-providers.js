@@ -148,6 +148,31 @@ class MediaProviders {
     if (unanswered && !items.length) throw unanswered;
     return { items, total: items.length, offset: 0, nextOffset: null };
   }
+  /**
+   * The Media Home rows for one viewer: Continue watching from providers that know this viewer's own progress,
+   * and Recently added from every provider that lists it, newest first. Each item names its server.
+   */
+  async shelves(actor, scopeFor = (person, serverId) => this.for(person, serverId)) {
+    const continueWatching = [],
+      recentlyAdded = [];
+    for (const provider of this.list) {
+      if (!provider.root?.configured) continue;
+      try {
+        const first = provider === this.primary,
+          serverId = await provider.identity().catch(error => {
+            if (!first) throw error;
+          });
+        const named = item => (serverId ? { ...item, serverId } : item);
+        const scope = await scopeFor(actor, first ? undefined : serverId);
+        if (provider.continueWatching) continueWatching.push(...(await provider.continueWatching(actor)).map(named));
+        if (scope.recentlyAdded) recentlyAdded.push(...(await scope.recentlyAdded()).map(named));
+      } catch {
+        // A server that cannot answer leaves its items out; the rest still show.
+      }
+    }
+    recentlyAdded.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+    return { continueWatching: continueWatching.slice(0, 20), recentlyAdded: recentlyAdded.slice(0, 20) };
+  }
   /** Whoever prepared a media object releases it; one that no provider prepared holds only pipeline state. */
   stop(media) {
     if (media?.provider) return media.provider.stop(media);

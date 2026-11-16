@@ -576,6 +576,10 @@
     min-width: 0;
     isolation: isolate;
   }
+  /* A wide picture (an episode scene, or Continue watching) keeps the picture's own 16:9. */
+  .library-art.landscape {
+    aspect-ratio: 16/9;
+  }
   .library-progress {
     position: absolute;
     bottom: 0;
@@ -1143,6 +1147,35 @@
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: var(--space-14);
     margin-top: var(--space-36);
+  }
+  /* Media Home rows above the library cards: each spans the grid and scrolls sideways at every width. */
+  .library-landing > .library-shelf,
+  .library-landing > .library-shelf-title {
+    grid-column: 1 / -1;
+  }
+  .library-shelf {
+    min-width: 0;
+  }
+  .library-shelf-title {
+    margin: 0 0 var(--space-10);
+    font-size: var(--font-size-16);
+    font-weight: 600;
+  }
+  .library-shelf-row {
+    display: flex;
+    gap: var(--space-14);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding-bottom: var(--space-8);
+    /* The app's thin, muted native scrollbar, as on its other scrolling lists. */
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--muted) 70%, transparent) transparent;
+  }
+  .library-shelf-row.landscape > .library-tile {
+    flex: 0 0 220px;
+  }
+  .library-shelf-row.poster > .library-tile {
+    flex: 0 0 132px;
   }
   .library-home-card {
     background: var(--card);

@@ -699,10 +699,16 @@ function mount(
     if (item.contentRating) node('span', line, item.contentRating, 'library-rating');
     if (item.genres?.length) node('span', line, (full ? item.genres : item.genres.slice(0, 2)).join(' · '));
   }
-  function tile(item) {
-    const episode = item.type === 'episode',
-      row = episode || view === 'list';
-    const card = node('article', results, undefined, 'library-tile' + (episode ? ' episode' : ''));
+  /**
+   * One title as a tile. On Media Home a row passes its container and a shape ('landscape' for Continue
+   * watching, 'poster' for Recently added): there every title, episodes too, is a picture tile, and it opens
+   * from its own server as a page opened from outside a library does.
+   */
+  function tile(item, { parent = results, shape } = {}) {
+    const episode = item.type === 'episode' && !shape,
+      row = !shape && (episode || view === 'list');
+    const open = () => void openItem(item, shape ? { outside: true } : undefined);
+    const card = node('article', parent, undefined, 'library-tile' + (episode ? ' episode' : ''));
     card.dataset.item = item.id;
     card.classList.toggle('unavailable', item.available === false);
     if (item.hasLogo || item.hasBackdrop) {
@@ -725,19 +731,16 @@ function mount(
         if (event.target.closest('button,a,input,select,textarea,summary')) return;
         const selection = doc.getSelection();
         if (selection?.toString() && card.contains(selection.anchorNode)) return;
-        void openItem(item);
+        open();
       });
     }
-    const picture = art(card, item, episode),
-      open = button(picture, 'View ' + identity(item), '', 'library-open');
-    open.addEventListener('click', () => {
-      void openItem(item);
-    });
+    const picture = art(card, item, shape ? shape === 'landscape' : episode);
+    button(picture, 'View ' + identity(item), '', 'library-open').addEventListener('click', open);
     const copy = node('div', card, undefined, 'library-copy');
     const title = button(copy, 'View ' + identity(item), undefined, 'library-title');
     title.textContent = item.title;
-    title.addEventListener('click', () => void openItem(item));
-    node('p', copy, metadata(item), 'library-meta');
+    title.addEventListener('click', open);
+    node('p', copy, shape === 'landscape' ? resumeLine(item) : metadata(item), 'library-meta');
     if (row) {
       extras(copy, item);
       if (episode && item.summary) node('p', copy, item.summary, 'library-episode-summary');
@@ -756,8 +759,53 @@ function mount(
     } else {
       const target = row ? node('div', card, undefined, 'library-row-actions') : picture;
       const b = button(target, 'Browse ' + item.title, 'right', 'library-browse');
-      b.addEventListener('click', () => void openItem(item));
+      b.addEventListener('click', open);
     }
+  }
+  // Under a Continue watching tile: where an episode sits in its show, or how much of a movie is left.
+  function resumeLine(item) {
+    if (item.type === 'episode')
+      return [
+        item.showTitle,
+        Number.isInteger(item.seasonIndex) ? 'S' + item.seasonIndex : '',
+        Number.isInteger(item.index) ? 'E' + item.index : '',
+      ]
+        .filter(Boolean)
+        .join(' · ');
+    const left = item.duration > 0 && item.viewOffset > 0 ? item.duration - item.viewOffset : 0;
+    return left > 60 ? runtime(left) + ' left' : metadata(item);
+  }
+  // Media Home rows: fetched when Libraries home shows, at most once a minute for a room.
+  let shelfData = null,
+    shelfRoom,
+    shelfAt = 0,
+    shelfRead;
+  function loadShelves() {
+    if (!room || (shelfRoom === room && Date.now() - shelfAt < 60000) || shelfRead) return;
+    const version = generation,
+      wanted = room;
+    shelfRead = request('library.shelves', roomScope(), roomController?.signal)
+      .then(data => {
+        if (version !== generation || wanted !== room) return;
+        shelfData = data;
+        shelfRoom = wanted;
+        shelfAt = Date.now();
+        if (screen?.kind === 'home') renderLanding();
+      })
+      .catch(() => {})
+      .finally(() => {
+        shelfRead = undefined;
+      });
+  }
+  function shelf(title, items, shape) {
+    if (!items?.length) return;
+    const section = node('section', landing, undefined, 'library-shelf');
+    section.setAttribute('aria-label', title);
+    node('h3', section, title, 'library-shelf-title');
+    const strip = node('div', section, undefined, 'library-shelf-row ' + shape);
+    // The card styles of the matching library view: wide pictures, or posters.
+    strip.dataset.view = shape === 'landscape' ? 'cards' : 'posters';
+    for (const item of items) tile(item, { parent: strip, shape });
   }
   function renderTools() {
     if (!screen) return;
@@ -876,6 +924,12 @@ function mount(
   }
   function renderLanding() {
     landing.replaceChildren();
+    loadShelves();
+    if (shelfRoom === room && shelfData) {
+      shelf('Continue watching', shelfData.continueWatching, 'landscape');
+      shelf('Recently added', shelfData.recentlyAdded, 'poster');
+      if (landing.childElementCount) node('h3', landing, 'Libraries', 'library-shelf-title');
+    }
     for (const card of homeCards(sections)) {
       const b = button(landing, card.title, card.icon, 'library-home-card');
       b.dataset.section = card.id;
@@ -898,8 +952,10 @@ function mount(
     renderTools();
     clearResults();
     if (screen.kind === 'home') renderLanding();
-    else if (screen.kind !== 'details') {
-      screen.items.forEach(tile);
+    // Away from Home its rows hold no tiles: hidden copies would linger behind the page being browsed.
+    else landing.replaceChildren();
+    if (screen.kind !== 'home' && screen.kind !== 'details') {
+      screen.items.forEach(item => tile(item));
       if (!screen.items.length && screen.loading)
         for (let i = 0; i < 3; i++) {
           const placeholder = node('div', results, undefined, 'library-skeleton');

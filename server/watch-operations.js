@@ -581,7 +581,11 @@ function watchOperations({
       await stamp([data.item]);
       if (data.item) applyRoomProgress(watch, args.room, [data.item]);
     } else if (op === 'library.filters') data = await provider.filters(text(args.section));
-    else {
+    else if (op === 'library.shelves') {
+      data = await watch.providers.shelves(auth.actor, (actor, serverId) => hub.mediaFor(actor, serverId));
+      // Recently added shows the room's progress as other library tiles do; Continue watching stays the viewer's own.
+      if (data.recentlyAdded.length) applyRoomProgress(watch, args.room, data.recentlyAdded);
+    } else {
       const query = Object.fromEntries(
         LIBRARY_QUERY.filter(key => args[key] !== undefined && args[key] !== null).map(key => [key, String(args[key])]),
       );
@@ -654,6 +658,7 @@ function watchOperations({
     'library.availability': input => library('library.availability', input),
     'library.filters': input => library('library.filters', input),
     'library.art': input => library('library.art', input),
+    'library.shelves': input => library('library.shelves', input),
     async 'playback.history'({ auth, current }) {
       const history = await watch.tracking.history(auth.actor.userId);
       if (!(await current())) return result(403, { error: 'Playback history access expired' });

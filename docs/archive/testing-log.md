@@ -164,3 +164,11 @@ Checks:
 - Without internet metadata Jellyfin names items from folders and files ("Rehearsal Show - S01E02 - Second"), which the check matches.
 - Not covered: servers before 10.9, subtitles, conversion, room-level play through a Jellyfin item, a browser, owner acceptance.
 
+## 2026-11-16 — Media Home rows (A/B; Jellyfin part C, isolated)
+
+- `library.shelves`: Continue watching only through a viewer's own verified Plex sign-in (`plexProvider.continueWatching`), never the shared fallback or a single configured token; Recently added from every provider with `recentlyAdded()` (Plex `/library/recentlyAdded`, Jellyfin `Items/Latest`), merged newest first, each item stamped with its server. `tests/media-home.test.js` covers the own-progress rule, the merge and the Plex endpoints.
+- Fixture preview in Chrome and Firefox (desktop and phone): both rows render above the library cards and scroll sideways; a Continue watching tile reads "Queue fixture show · S1 · E1"; a tile opens from its own server with its library current; Back returns to Home with both rows. Continue watching was previewed by answering it as a signed-in viewer would (scratch only); the demo host has no Plex sign-in of their own, so the real fixture shows no Continue watching, as intended.
+- Found while running the smoke set: hidden Home tiles lingered behind the page being browsed; Home's content is now emptied when it is left and rebuilt on return.
+- Real Jellyfin 12.4 (uburoom-demo): Recently added lists the movie and the show (a new episode shows as its show), 9/9 checks.
+- `node --test` 489/489, lint, typecheck, format; `npm run smoke` 4/4.
+

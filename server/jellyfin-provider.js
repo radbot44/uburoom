@@ -530,6 +530,13 @@ class Jellyfin {
       ),
     );
   }
+  /** The newest additions the configured user can see; a new episode shows as its show. */
+  async recentlyAdded() {
+    const latest = await this.json('Items/Latest', { userId: await this.userId(), limit: 20, fields: LIST_FIELDS });
+    return this.items(
+      (Array.isArray(latest) ? latest : []).filter(x => ['Movie', 'Series', 'Season', 'Episode'].includes(x?.Type)),
+    );
+  }
   async neighbors(x) {
     const { previous, next } = await this.episodeNeighbors(x);
     return { previousId: previous?.id, nextId: next?.id };

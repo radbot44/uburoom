@@ -89,6 +89,14 @@ async function startFixtureServer({ localLibrary = false } = {}) {
     else if (p === '/library/sections/2/all') rows = [show];
     else if (p.endsWith('/collections')) rows = [collection];
     else if (p === '/library/collections/200/children') rows = movies;
+    // Media Home rows: an episode and a movie part watched, and the newest additions.
+    else if (p === '/library/onDeck')
+      rows = [
+        { ...episodes[1], viewOffset: 25000 },
+        { ...movies[0], viewOffset: 20000 },
+      ];
+    else if (p === '/library/recentlyAdded')
+      rows = [...movies, show].map((item, index) => ({ ...item, addedAt: 1700000000 + index }));
     else if (p === '/library/metadata/100/children') rows = seasons;
     else if (p === '/library/metadata/100/allLeaves') rows = episodes;
     else if (p === '/library/metadata/110/children') rows = episodes.slice(0, 1);

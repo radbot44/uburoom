@@ -43,6 +43,14 @@ function plexProvider({ plex, config = {}, registry, plexAuth, entryPolicy }) {
       }
       return identifying;
     },
+    /**
+     * Continue watching is each viewer's own: their Plex On Deck through their own verified Plex sign-in.
+     * A viewer without one gets none, since the shared account's progress is not theirs.
+     */
+    async continueWatching(actor) {
+      if (!plexAuth || !registry.identities(actor.userId).some(i => i.provider === 'plex' && i.verified)) return [];
+      return (await provider.scopeFor(actor)).continueWatching();
+    },
     // Without the services that know people, everyone watches through the configured token.
     async scopeFor(actor) {
       if (!plexAuth) return plex;

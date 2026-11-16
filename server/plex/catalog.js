@@ -4,6 +4,8 @@ const Sources = require('../plex-source');
 const { plexIdentity } = require('./identity');
 const { SharedTask } = require('../operation');
 
+/** How many items a Media Home row holds. */
+const SHELF = 20;
 /** Requested picture sizes (width, height); a backdrop is large enough to sit behind a details page. */
 const ART_SIZES = {
   poster: ['300', '450'],
@@ -714,6 +716,17 @@ class PlexCatalog {
       .filter(value => value !== undefined && value !== null && value !== '')
       .join(' · ')
       .slice(0, 200);
+  }
+  /** Plex's On Deck for whoever this catalog signs in as: videos in progress and the next episode of shows
+   * being watched, most recent first. */
+  async continueWatching() {
+    const data = await this.catalog('/library/onDeck?X-Plex-Container-Start=0&X-Plex-Container-Size=' + SHELF);
+    return this.plex.cachedAvailability(this.plex.items((data.Metadata || []).slice(0, SHELF)));
+  }
+  /** The newest additions across the libraries this catalog can see. */
+  async recentlyAdded() {
+    const data = await this.catalog('/library/recentlyAdded?X-Plex-Container-Start=0&X-Plex-Container-Size=' + SHELF);
+    return this.plex.cachedAvailability(this.plex.items((data.Metadata || []).slice(0, SHELF)));
   }
   async neighbors(item) {
     const { previous, next } = await this.episodeNeighbors(item);

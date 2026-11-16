@@ -44,6 +44,10 @@
  * @property {(id: string, type?: string) => Promise<boolean>} visible - Whether this scope may see an item at all.
  * @property {(mediaId: string) => Promise<any>} [nextEpisodeOffer]
  *   The episode that follows one that just ended, for providers that know series order.
+ * @property {() => Promise<CatalogItem[]>} [recentlyAdded] - The newest additions this scope can see (Media Home).
+ * @property {() => Promise<CatalogItem[]>} [continueWatching] - Videos in progress and next episodes for whoever this
+ *   scope signs in as. Media Home asks through the provider entry's `continueWatching(actor)`, which answers only
+ *   with a viewer's own progress.
  *
  * Delivery
  * @property {(resource: string) => URL} url - Resolve a provider resource, refusing anything outside the provider.

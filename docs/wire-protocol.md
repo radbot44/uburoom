@@ -52,7 +52,7 @@ A request carries an `id` the client chooses (a non-negative integer, unique amo
 
 A `command` is a room command from the shared command table ([`shared/room-protocol.mjs`](../shared/room-protocol.mjs)), fenced by the room `epoch` the sender last saw and an `expiresAt` in server time.
 
-`call` covers what is neither a room command nor room state. `op` is one of the names in `CALLS`: `me`, `profile.rename`, `admin.mode`, `library.browse`, `library.item`, `library.availability`, `library.filters`, `playback.history`, `rooms.list`, `rooms.saved`, `rooms.create`, `events.list`, `events.schedule`, and for one room (`roomId` required) `room.reopen`, `room.close`, `room.people`, `room.settings`, `room.settings.edit`, `room.events`, `room.events.command`, `room.share`, `room.share.command`, `room.queue`, `room.queue.command`, `room.history`, `room.history.command`, `room.check`, `room.delivery`.
+`call` covers what is neither a room command nor room state. `op` is one of the names in `CALLS`: `me`, `profile.rename`, `admin.mode`, `library.browse`, `library.item`, `library.availability`, `library.filters`, `library.shelves`, `playback.history`, `rooms.list`, `rooms.saved`, `rooms.create`, `events.list`, `events.schedule`, and for one room (`roomId` required) `room.reopen`, `room.close`, `room.people`, `room.settings`, `room.settings.edit`, `room.events`, `room.events.command`, `room.share`, `room.share.command`, `room.queue`, `room.queue.command`, `room.history`, `room.history.command`, `room.check`, `room.delivery`.
 
 Two messages have no answer of their own: `clock` (the server replies with a `clock` message carrying the same `id`, `serverNow` and `timing`) and `quality` (a tab's sync-quality report).
 

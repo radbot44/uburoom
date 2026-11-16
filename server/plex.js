@@ -201,6 +201,12 @@ class Plex {
   neighbors(item) {
     return this.catalogs.neighbors(item);
   }
+  continueWatching() {
+    return this.catalogs.continueWatching();
+  }
+  recentlyAdded() {
+    return this.catalogs.recentlyAdded();
+  }
   nextEpisodeOffer(episodeMediaId) {
     return this.catalogs.nextEpisodeOffer(episodeMediaId);
   }
