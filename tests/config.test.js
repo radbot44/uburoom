@@ -212,7 +212,9 @@ test('missing YAML fails before TLS or providers and never falls back to .env/en
 
 test(
   'real entry point serves health from external YAML with isolated persistent state',
-  { timeout: 20000 },
+  // A real server start takes about 6 s on Vigrid alone and more beside the rest of the suite; these limits
+  // catch a server that never starts, not a slow one.
+  { timeout: 60000 },
   async t => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-config-start-')),
       file = path.join(dir, 'config.yaml');
@@ -261,7 +263,7 @@ test(
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     });
     let status;
-    const deadline = Date.now() + 12000;
+    const deadline = Date.now() + 45000;
     while (Date.now() < deadline && child.exitCode === null) {
       status = await new Promise(resolve => {
         const request = https.get(
@@ -291,7 +293,7 @@ test(
 
 test(
   'real entry point cleans up application resources and exits nonzero on listen failure',
-  { timeout: 10000 },
+  { timeout: 60000 },
   async t => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-config-fail-')),
       file = path.join(dir, 'config.yaml');
@@ -330,7 +332,7 @@ test(
       output += chunk;
     });
     const exitPromise = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));
-    const timer = setTimeout(() => child.kill(), 8000);
+    const timer = setTimeout(() => child.kill(), 45000);
     t.after(() => clearTimeout(timer));
     const { code } = await exitPromise;
     clearTimeout(timer);
