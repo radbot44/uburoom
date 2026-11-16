@@ -157,7 +157,12 @@ function createApp(config, options = {}) {
       ...{ watchRoutes, accountRoutes, operatorRoutes: operatorHttp({ config, registry, editor, ...sessions }) },
     });
     const server = createHttpServer({ config, logger, tls, json: sessions.json, route });
-    const sockets = watchSockets({ server, config, routes: watchRoutes, watch, hub, throttle: sessions.throttle });
+    const sockets = watchSockets({
+      ...{ server, config, routes: watchRoutes, watch, hub, throttle: sessions.throttle },
+      // Tests shorten the socket deadlines; production keeps the defaults.
+      idleMs: options.socketTiming?.idleMs,
+      livenessMs: options.socketTiming?.livenessMs,
+    });
     const sweep = setInterval(() => {
       watch.maintainProviderSessions();
       for (const service of [watchRoutes, accountRoutes, signIn, sessions]) service.sweep();

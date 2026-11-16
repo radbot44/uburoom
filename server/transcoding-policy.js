@@ -7,6 +7,8 @@ class ConversionPolicy {
     this.settings = settings;
     this.jobs = new Set();
     this.waiters = [];
+    // How long a viewer waits for a free conversion job before being told none is free.
+    this.waitMs = 8000;
   }
   failure(message) {
     return Object.assign(new (require('./av1').PlaybackError)(message), { playbackPolicy: true });
@@ -60,7 +62,7 @@ class ConversionPolicy {
       for (let i = 0; i < count && i < this.waiters.length; i++) this.waiters[i]?.();
     };
   }
-  async wait({ signal, authorized, timeoutMs = 8000, background = false } = {}) {
+  async wait({ signal, authorized, timeoutMs = this.waitMs, background = false } = {}) {
     if (signal?.aborted || (authorized && !(await authorized())))
       throw this.failure('Conversion waiting cancelled: viewing access expired or selection changed.');
     if (!this.settings) return () => {};

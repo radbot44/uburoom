@@ -139,3 +139,10 @@ Checks:
 - `npm run smoke`: all four pass in Chrome and Firefox (room UI 120 s, queue controls 23 s, Media controls 17 s, Plex library 71 s).
 - Unit overlap review: no unit test duplicates what the smokes check. The unit suite covers server state, permissions, protocol and playback policy, which the fixture-driven smokes never reach. `node --test tests/*.test.js` takes about 32 s; its slowest tests wait real time (WebSocket pong presence 12 s, two conversion-capacity tests 8 s each).
 
+## 2026-11-16 — Faster unit suite (A/B, on main after `573e673`)
+
+- The WebSocket pong presence test waited 11.5 s past the production idle deadline. `watchSockets` now takes `idleMs`/`livenessMs` (production defaults 10000/1000, set through `createApp` `socketTiming`); the test uses 1000/100 and waits 2.5 s. It still fails when pongs stop refreshing the connection (checked by disabling that line). 12 s to about 3.5 s.
+- The two conversion-capacity tests each waited the 8 s a viewer waits for a free conversion job. `ConversionPolicy.waitMs` (default 8000) is now a property; the tests set 100 ms. 8 s each to about 0.15 s.
+- `accounts.test.js` (26 s alone) and `config.test.js` (22 s alone) were mostly Windows permission steps run through PowerShell (about 0.3 s per launch: four per config save, one per credential key at app start). That security code is unchanged; the files are split so their halves run in parallel: saved operator settings moved to `saved-settings.test.js` with the shared app fixture in `tests/helpers/account-app.js`, and the YAML editor tests moved to `config-editor.test.js`. Test count unchanged.
+- `node --test tests/*.test.js`: `483` passed, `0` failed, `0` skipped, about 24-25 s (was about 32 s). `lint`, `format:check`, `typecheck` pass.
+

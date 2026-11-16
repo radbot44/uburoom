@@ -509,6 +509,8 @@ test('Plex conversions reserve/release shared global capacity and follow video-c
       return provider.fetch(input, options);
     },
   );
+  // A full pool turns a viewer away after its wait; a short wait keeps the test quick.
+  plex.pipeline.conversionPolicy.waitMs = 100;
   try {
     const media = await plex.prepare('1', '720p4', true);
     assert.equal(plex.pipeline.conversionPolicy.jobs.size, 1);
@@ -728,6 +730,8 @@ test('explicit software AV1 uses/probes only software and identical viewers cons
   const a = manager.acquire(source, 'direct'),
     b = manager.acquire({ ...source }, 'direct'),
     other = manager.acquire({ ...source, sourceKey: 'other' }, 'direct');
+  // The third viewer is turned away after its wait for the one job; a short wait keeps the test quick.
+  manager.conversionPolicy.waitMs = 100;
   try {
     const first = manager.chunk(a, 0, new AbortController().signal);
     await encoding;

@@ -12,7 +12,7 @@ const { requestByPath, hello } = require('./helpers/wire-paths');
 const { PROTOCOL_VERSION, serverMessageError } = require('../shared/wire-protocol.mjs');
 const certFile = path.join(__dirname, '../certs/server-cert.pem');
 
-async function fixture(t) {
+async function fixture(t, appOptions = {}) {
   const cert = fs.readFileSync(certFile),
     config = {
       cert,
@@ -26,6 +26,7 @@ async function fixture(t) {
   config.clientId = 'fixture';
   config.clientSecret = 'fixture-secret';
   const app = createApp(config, {
+    ...appOptions,
     oauthFetch: async url =>
       new Response(
         JSON.stringify(
@@ -202,18 +203,19 @@ test(
 );
 
 test('native WebSocket pongs retain room presence without JavaScript clock messages', tls, async t => {
-  const f = await fixture(t),
+  // A one-second idle deadline, pinged every 100 ms, stands in for the production ten seconds.
+  const f = await fixture(t, { socketTiming: { idleMs: 1000, livenessMs: 100 } }),
     host = await f.connect(await f.login('host'));
   t.after(() => host.ws.close());
   host.stopClock();
   const roomId = (await host.call('/api/watch/rooms', {})).value.id,
     viewer = randomUUID();
   await host.call('/api/watch/rooms/' + roomId + '?viewer=' + viewer);
-  await new Promise(resolve => setTimeout(resolve, 11500));
-  assert.equal(host.ws.readyState, 1, 'a throttled tab remains connected beyond the old idle deadline');
+  await new Promise(resolve => setTimeout(resolve, 2500));
+  assert.equal(host.ws.readyState, 1, 'a throttled tab remains connected beyond the idle deadline');
   const presence = f.app.watch.rooms.get(roomId)?.viewers.get(viewer);
   assert.ok(presence, 'same viewer survives');
-  assert.ok(Date.now() - presence.at < 2000, 'native pongs refresh viewer presence');
+  assert.ok(Date.now() - presence.at < 500, 'native pongs refresh viewer presence');
   f.revoke();
   const closed = once(host.ws, 'close');
   assert.equal((await closed)[0], 4003, 'server publication still rechecks authorization without client clocks');

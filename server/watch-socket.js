@@ -29,6 +29,9 @@ function watchSockets({
   throttle,
   publishTimeoutMs = 12000,
   resyncMs = RESYNC_MS,
+  // A connection silent this long (no message and no native pong) is closed; liveness runs every livenessMs.
+  idleMs = 10000,
+  livenessMs = 1000,
 }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8192, perMessageDeflate: false });
   server.once('listening', () => watch.roomState.startRecovery());
@@ -614,7 +617,7 @@ function watchSockets({
   const timer = setInterval(() => {
     const now = watch.clock.now();
     for (const client of clients) {
-      if (now - client.lastSeen >= 10000) {
+      if (now - client.lastSeen >= idleMs) {
         client.terminationCause = 'server-idle-timeout';
         client.ws.terminate();
         continue;
@@ -629,7 +632,7 @@ function watchSockets({
         void client.lanes.lobby.request(true);
       }
     }
-  }, 1000);
+  }, livenessMs);
   timer.unref();
   return {
     close() {
