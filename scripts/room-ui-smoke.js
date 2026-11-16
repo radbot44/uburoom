@@ -198,7 +198,7 @@ async function main() {
       }
 
       await until(shown('#queue-panel'), 'Queue panel visible');
-      await until(hasText('#queue-upcoming-view', 'The queue is empty'), 'Empty queue hint');
+      await until(count('#queue-upcoming-list .queue-entry') + '===0', 'Nothing queued');
       assert.equal(await run(text('#queue-scroll-next .queue-navigation-count')), '');
       await run('queueUI.add({mediaId:"demo",title:"First queued item",subtitle:"Ep 1",duration:60})');
       await until(
@@ -241,7 +241,7 @@ async function main() {
       await run(pressId('queue-clear-history'));
       await until(isOpen('#room-confirm-dialog'), 'Clear history confirmation');
       await run(pressId('room-confirm-yes'));
-      await until(hasText('#queue-history-view', 'No playback history yet'), 'History cleared');
+      await until('!document.querySelector("#queue-history-view .queue-history-entry")', 'History cleared');
       await run(pressId('queue-scroll-next'));
       await until(byId('queue-autoplay') + '.checked', 'Autoplay default on');
       // Scrolling toward upcoming smooth-scrolls the queue list; Firefox ends it with sub-pixel steps for

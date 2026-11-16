@@ -672,8 +672,8 @@ function mount(
 
   function centerCurrent(smooth = false) {
     if (!layout.clientWidth) return;
-    // Without history there is nothing to scroll back to: the "No playback history yet" line, Now Playing
-    // and the upcoming rows start at the top with no centering space.
+    // Without history there is nothing to scroll back to: Now Playing and the upcoming rows start at the top
+    // with no centering space.
     hadHistory = Boolean(layout.querySelector('.queue-history-entry'));
     layout.style.paddingBlock = hadHistory
       ? Math.max(0, (layout.clientHeight - nowPlayingBox.offsetHeight) / 2) + 'px'
@@ -884,7 +884,7 @@ function mount(
     const qLen = summary?.pendingCount ?? currentQueue.total ?? 0;
     const hLen = summary?.historyCount ?? currentHistory.total ?? 0;
     previousCount.textContent = hLen ? hLen + ' past' : '';
-    // Without history the button has nothing to scroll to and would cover the "No playback history yet" line.
+    // Without history the button has nothing to scroll to and would cover Now Playing.
     previousButton.classList.toggle('queue-navigation-idle', !hLen);
     timeline.classList.toggle('queue-has-history', hLen > 0);
     nextCount.textContent = qLen ? qLen + ' queued' : '';
@@ -1097,13 +1097,6 @@ function mount(
     const autoNext = state?.queueSummary?.autoQueue?.mode !== 'off' ? state?.queueSummary?.autoQueue?.next : null;
     const canEdit = !!state?.capabilities?.editQueue,
       canChoose = !!state?.capabilities?.chooseMedia;
-    if (!items.length && !autoNext)
-      node(
-        'p',
-        upcomingView,
-        'The queue is empty. Choose "Add to queue" from Media to line up videos.',
-        'hint queue-empty',
-      );
     const list = node('div', upcomingView, undefined, 'queue-list queue-upcoming-list');
     list.id = 'queue-upcoming-list';
     items.forEach((item, i) => {
@@ -1296,7 +1289,6 @@ function mount(
         : 'Queue editing is unavailable for your role.';
     clear.id = 'queue-clear-history';
     footerActions.prepend(clear);
-    if (!items.length) node('p', historyView, 'No playback history yet.', 'hint queue-empty');
     if (items.length < currentHistory.total) {
       const older = button(
         historyView,
