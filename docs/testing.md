@@ -26,14 +26,14 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 | Installation diagnostics / doctor | `npm run doctor` (`node scripts/doctor.js`) |
 | Clock and drift-controller simulation | `npm run sync:bench` (also runs in `npm test` as `tests/sync-bench.test.js`) |
 | Decoded video/audio baseline | `npm run test:playback` (`node scripts/playback-baseline.js`) |
-| UI smoke before a deploy (all four runners below, Chrome and Firefox) | `npm run smoke` (`node scripts/smoke.js`; `-- --browsers=chrome` for one browser, `-- --lanes` to run two at a time, about three minutes, while runner timing races remain) |
+| UI smoke before a deploy (all four runners below, Chrome and Firefox) | `npm run smoke` (`node scripts/smoke.js`; `-- --browsers=chrome` for one browser, `-- --sequential` for one runner at a time with live output) |
 | Room lifecycle / permissions | `node scripts/room-ui-smoke.js --browsers=chrome,firefox` |
 | Queue / Media controls | `node scripts/queue-controls-smoke.js` / `node scripts/media-controls-smoke.js` |
 | Library browsing | `node scripts/plex-library-smoke.js` (Chrome and Firefox; `--browsers=` to choose) |
 | Scheduled controls | `node scripts/sync-controls-smoke.js --browser=chrome` |
 | Local WebM | `node scripts/local-webm-smoke.js --browser=chrome --codec=vp9` |
 
-`npm run smoke` runs one runner at a time, about five minutes. `--lanes` takes about three, but under that load the runners' timing-sensitive steps still fail about 1 run in 4, so it is not the deploy default. It is the browser check before a deploy that changes `web/`, `server/` or `shared/`. A full pass on committed code (both browsers, no uncommitted app changes) is recorded by git tree in `.git/uburoom-smoke-pass.json`, and a deploy of that same code skips the second run. Use both Chrome and Firefox for relevant browser checks. TLS, browser binaries, and FFmpeg/FFprobe may be required. Missing prerequisites or unexpected skips are not a clean pass. Fixtures establish isolated behavior, not real Plex/Activity/device support.
+`npm run smoke` runs the room UI runner beside the other three in turn, about three minutes (`--sequential` about five). Runner steps that act on a page still settling press until the result shows (`act.pressUntil`) or wait for the room to be selected first. It is the browser check before a deploy that changes `web/`, `server/` or `shared/`. A full pass on committed code (both browsers, no uncommitted app changes) is recorded by git tree in `.git/uburoom-smoke-pass.json`, and a deploy of that same code skips the second run. Use both Chrome and Firefox for relevant browser checks. TLS, browser binaries, and FFmpeg/FFprobe may be required. Missing prerequisites or unexpected skips are not a clean pass. Fixtures establish isolated behavior, not real Plex/Activity/device support.
 
 ---
 

@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { playbackBrowser, pause } = require('./lib/playback-browser');
-const { startFixtureServer, openPage, dom } = require('./lib/ui-fixture');
+const { startFixtureServer, openPage, dom, act } = require('./lib/ui-fixture');
 
 const { shown, isOpen } = dom;
 const byId = id => 'document.getElementById(' + JSON.stringify(id) + ')';
@@ -282,14 +282,8 @@ async function queueAcrossProviders(name) {
     await run(byId('room-name') + '.value="Across providers";' + byId('room-create') + '.click();true');
     // Selecting the new room resets Media to its Libraries home; browse only once that is done.
     await until(dom.text('#options-title') + '==="Across providers"', 'Room created', 30000);
-    // Libraries home re-renders as the new room settles, and a press on a card being replaced is lost:
-    // press it again until the library has opened.
     await until(
-      '(()=>{if(' +
-        dom.q('.library-landing') +
-        '.hidden)return true;' +
-        dom.q('.library-home-card[data-section="film"]') +
-        '?.click();return false})()',
+      act.pressUntil('.library-home-card[data-section="film"]', dom.q('.library-landing') + '.hidden'),
       'Local library opened from Libraries home',
       30000,
     );

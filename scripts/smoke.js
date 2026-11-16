@@ -1,5 +1,5 @@
 /* The browser smoke runners, one after another in Chrome and Firefox: the UI check before a deploy.
-   Usage: npm run smoke [-- --browsers=chrome,firefox] [-- --lanes]
+   Usage: npm run smoke [-- --browsers=chrome,firefox] [-- --sequential]
    A full pass on committed code is recorded in .git/uburoom-smoke-pass.json by its git tree, so a deploy of
    that same code can skip running them again. */
 'use strict';
@@ -11,11 +11,10 @@ const { spawn, execFileSync } = require('node:child_process');
 const RUNNERS = ['room-ui-smoke.js', 'queue-controls-smoke.js', 'media-controls-smoke.js', 'plex-library-smoke.js'];
 
 const browsers = process.argv.find(arg => arg.startsWith('--browsers='));
-// One runner at a time with live output, unless --lanes: the room UI runner beside the other three in turn,
-// each with its own fixture server, about 170 s instead of about 290 s. Lanes are opt-in because the runners
-// still have timing-sensitive steps that fail under that load (measured 2026-11-16: 1 of 4 two-lane runs;
-// all four at once, 3 of 4).
-const lanes = process.argv.includes('--lanes');
+// Two lanes: the room UI runner beside the other three in turn, each runner with its own fixture server,
+// about 160 s instead of about 290 s (10 of 10 clean on 2026-11-16 once the runners waited for a settled
+// page). --sequential runs one at a time with live output. All four at once overloads the machine.
+const lanes = !process.argv.includes('--sequential');
 const root = path.resolve(__dirname, '..');
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true }).trim();
 

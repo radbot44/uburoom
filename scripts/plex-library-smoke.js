@@ -909,9 +909,16 @@ async function main(name) {
     await browser.viewport(activity, 1920, 1080);
     await until(activity, 'document.querySelector("#rooms button")', 'Activity rooms');
     await evaluate(activity, 'document.querySelector("#rooms button").click()');
-    await until(activity, 'document.querySelectorAll(".library-home-card").length===5', 'Activity home');
-    await evaluate(activity, 'document.querySelector(".library-home-card[data-tab=library]:first-child").click()');
-    await until(activity, 'document.querySelectorAll(".library-tile").length===48', 'Activity library');
+    // Joining resets Media to the room's Libraries home, and a press during that is lost: press until it opens.
+    await until(activity, '!!selected && document.querySelectorAll(".library-home-card").length===5', 'Activity home');
+    await until(
+      activity,
+      act.pressUntil(
+        '.library-home-card[data-tab=library]:first-child',
+        'document.querySelectorAll(".library-tile").length===48',
+      ),
+      'Activity library',
+    );
     await evaluate(activity, act.openDrawer() + ';document.getElementById("options-collapse").click()');
     assert.equal(
       await evaluate(

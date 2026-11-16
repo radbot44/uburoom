@@ -151,3 +151,9 @@ Checks:
 - Deploying `db75a0e` (episode steps) failed twice on Vigrid's own `npm test`: only "real entry point serves health from external YAML" (12.5 s) and "real entry point cleans up ... on listen failure" (8.2 s) timed out, and the updater kept uburoom stopped as designed. Run alone on Vigrid both passed, each needing about 6 s to start a server; beside the full suite they passed their 12 s and 8 s limits.
 - `cec36f8` gives both tests 45 s to start (60 s per test): they check that the real entry point starts and cleans up, not its speed. The next deploy passed Vigrid's full suite and restarted with `/health` OK. uburoom was down on Vigrid from the first failed run until that restart.
 
+## 2026-11-16 — Smoke runners side by side (B, on main after `9f3a7f1`)
+
+- Running the four runners at once failed 3 of 4 runs and two lanes 1 of 4, each in a different step that acted on a page still settling: Libraries home cards pressed while a room selection reset Media (media-controls, plex-library Activity, the new cross-provider check), a settings dismiss lost while the page resized (room UI "Settings closed"), Back to top read before the scroll handler's frame, and a room reopening that took longer than a page step under load.
+- Fixes: `act.pressUntil(selector, done)` in `scripts/lib/ui-fixture.js` for presses safe to repeat; waits for the created room's title before browsing; Back to top waited for instead of read once; 45 s for the reopened room to reach 0:17.
+- `node scripts/smoke.js --lanes`, ten consecutive runs: 10 of 10 passed in Chrome and Firefox, 150-171 s each (sequential about 290 s). Two lanes are now the default; `--sequential` remains.
+

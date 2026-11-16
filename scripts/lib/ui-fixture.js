@@ -183,6 +183,13 @@ const setTheater = on =>
   ')b.click();return true;})()';
 const openDrawer = () => '(()=>{if(' + byId('drawer') + '.hidden)' + byId('drawer-open') + '.click();return true;})()';
 const selectSection = key => '(' + byId('section-tab-' + key) + '.click(),true)';
+/**
+ * Press `selector` until `done` holds, for use with `until`. A press can be lost on a page still settling
+ * (Libraries home re-rendering as a room is selected, a dialog while the window resizes); only for presses
+ * that are safe to repeat, such as opening a library card or closing a dialog.
+ */
+const pressUntil = (selector, done) =>
+  '(()=>{if(' + done + ')return true;' + q(selector) + '?.click();return false})()';
 
 module.exports = {
   fixtureLibrary,
@@ -190,5 +197,5 @@ module.exports = {
   openPage,
   navigatePage,
   dom: { q, shown, hidden: hiddenEl, text, hasText, enabled, attr, isOpen, count },
-  act: { setTheater, openDrawer, selectSection },
+  act: { setTheater, openDrawer, selectSection, pressUntil },
 };

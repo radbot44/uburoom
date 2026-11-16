@@ -106,11 +106,14 @@ async function main() {
         browser.screenshot(page, path.resolve(EVIDENCE, 'media-controls-' + name + '-after-' + label + '.png'));
       await browser.viewport(page, 1440, 1000);
       await until('me?.durableRooms && transport?.ready', 'Login');
-      await run('document.getElementById("create").click();document.getElementById("room-create").click()');
-      await until('document.querySelector(".library-home-card")', 'Media home');
-      await pause(300);
-      await run('document.querySelector(".library-home-card").click()');
-      await until('document.querySelector(".library-tile")', 'Media items');
+      await run('document.getElementById("create").click()');
+      await until('document.getElementById("room-dialog").open', 'Room chooser');
+      await run(
+        'document.getElementById("room-name").value="Media controls";document.getElementById("room-create").click()',
+      );
+      // Selecting the new room resets Media to its Libraries home; browse only once that is done.
+      await until('document.getElementById("options-title").textContent==="Media controls"', 'Room created');
+      await until(act.pressUntil('.library-home-card', '!!document.querySelector(".library-tile")'), 'Media items');
       await run('document.getElementById("library-panel").scrollIntoView({block:"start"})');
       await pause(180);
       assert.equal(await run('getComputedStyle(document.getElementById("library-heading")).fontSize'), '24px');
@@ -323,7 +326,8 @@ async function main() {
       // buttons that keep their names; Back to top joins the end of that row only once Media has scrolled.
       const headerRow =
         '(()=>{const top=e=>e.getBoundingClientRect().top,h=top(document.getElementById("library-heading")),n=top(document.querySelector(".library-navigation-history")),c=[...document.querySelectorAll(".library-choices .library-choice")].filter(b=>!b.hidden);return c.length>0 && n>h && c.map(top).every(y=>Math.abs(y-n)<2)})()';
-      assert.equal(await run(dom.hidden('#library-top')), true, 'Back to top waits until Media has scrolled');
+      // The scroll handler settles on the next frame; under load that can be after this page step.
+      await until(dom.hidden('#library-top'), 'Back to top waits until Media has scrolled');
       assert.equal(await run(headerRow), true, 'Navigation and libraries share the row under the phone heading');
       assert.equal(
         await run(

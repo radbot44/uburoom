@@ -11,7 +11,7 @@ const { EVIDENCE } = require('./lib/evidence');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { playbackBrowser, pause } = require('./lib/playback-browser');
-const { startFixtureServer, openPage, dom } = require('./lib/ui-fixture');
+const { startFixtureServer, openPage, dom, act } = require('./lib/ui-fixture');
 
 const { shown, hidden, text, hasText, enabled, attr, isOpen, count } = dom;
 const byId = id => 'document.getElementById(' + JSON.stringify(id) + ')';
@@ -47,7 +47,10 @@ async function main() {
         await browser.activate(host);
         return browser.evaluate(host, expression);
       };
-      const until = (expression, label) => browser.until(host, expression, label);
+      const until = (expression, label, timeout) => browser.until(host, expression, label, timeout);
+      // A dismiss pressed while the page resizes can be lost: press until the dialog has closed.
+      const closeSettings = () =>
+        until(act.pressUntil('#room-settings-dismiss', '!' + isOpen('#room-settings-dialog')), 'Settings closed');
       require('node:fs').mkdirSync(EVIDENCE, { recursive: true });
       const shot = label => browser.screenshot(host, path.resolve(EVIDENCE, 'room-ui-' + name + '-' + label + '.png'));
       await browser.viewport(host, 1360, 1000);
@@ -92,8 +95,7 @@ async function main() {
       await browser.viewport(host, 390, 844);
       await shot('lifecycle-phone');
       await browser.viewport(host, 1360, 1000);
-      await run(pressId('room-settings-dismiss'));
-      await until('!' + isOpen('#room-settings-dialog'), 'Settings closed');
+      await closeSettings();
 
       await until(shown('.library-key[data-play=demo]'), 'Synchronization video in Media');
       await run(press('.library-key[data-play=demo]'));
@@ -186,7 +188,7 @@ async function main() {
         0,
         'quality stays out of Room Settings participant lists',
       );
-      await run(pressId('room-settings-dismiss'));
+      await closeSettings();
       delete hostPresence.syncQuality;
       hostPresence.syncQuality = undefined;
       await run('refreshState()');
@@ -313,8 +315,7 @@ async function main() {
       await run(pressId('queue-auto-save'));
       await waitFor(() => queueOf(id).autoQueue?.mode === 'random', 'Random configuration saved');
       assert.equal(queueOf(id).autoQueue.scope.type, 'show');
-      await run(pressId('room-settings-dismiss'));
-      await until('!' + isOpen('#room-settings-dialog'), 'Settings closed');
+      await closeSettings();
       await until(
         enabled('#queue-auto-toggle') + ' && ' + byId('queue-auto-toggle') + '.checked',
         'Auto-queue toggle ready',
@@ -351,7 +352,7 @@ async function main() {
       );
       await run(choose('queue-auto-mode', 'off') + ';' + pressId('queue-auto-save'));
       await waitFor(() => queueOf(id).autoQueue?.mode === 'off', 'Auto-queue disabled');
-      await run(pressId('room-settings-dismiss'));
+      await closeSettings();
       await browser.viewport(host, 1360, 1000);
       await run(pressId('library-home') + ';' + press('.library-home-card[data-section="1"][data-tab=library]'));
       await until(shown('.library-scope-actions [data-auto-queue]'), 'Movie library random source');
@@ -375,7 +376,7 @@ async function main() {
         isOpen('#room-settings-dialog') + ' && ' + hasText('#queue-auto-source', 'Queue fixture collection'),
         'Collection random source selected',
       );
-      await run(pressId('room-settings-dismiss'));
+      await closeSettings();
       await run(pressId('queue-clear-queue'));
       await until(isOpen('#room-confirm-dialog'), 'Bulk cleanup confirmation');
       await run(pressId('room-confirm-yes'));
@@ -542,7 +543,7 @@ async function main() {
         attr('#admin-mode', 'aria-checked') + '==="false" && ' + text('#options-title') + '!=="Friday room"',
         'Admin mode off removes private access',
       );
-      await run(pressId('room-settings-dismiss'));
+      await closeSettings();
       await run(pressId('room-settings-open'));
       await until(shown('#room-settings-content'), 'Settings reopened');
       await run(settingsSection('manage'));
@@ -558,7 +559,8 @@ async function main() {
       await run(press('#saved-rooms .room-actions button'));
       await until(text('#title') + '==="uburoom synchronization test" && !' + isOpen('#room-dialog'), 'Restored media');
       assert.ok(app.watch.rooms.get(id), 'the same room reopened');
-      await until(pausedAt('0:17'), 'Restored paused at 17s');
+      // Reopening loads the saved video before it seeks; under load that takes longer than a page step.
+      await until(pausedAt('0:17'), 'Restored paused at 17s', 45000);
       assert.ok(enginePosition(id).paused && Math.abs(enginePosition(id).position - 17) < 0.1);
       await shot('restored');
       await run(pressId('theater'));
