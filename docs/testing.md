@@ -33,7 +33,7 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 | Scheduled controls | `node scripts/sync-controls-smoke.js --browser=chrome` |
 | Local WebM | `node scripts/local-webm-smoke.js --browser=chrome --codec=vp9` |
 
-`npm run smoke` takes about four minutes and is the browser check before a deploy that changes `web/`, `server/` or `shared/`. Use both Chrome and Firefox for relevant browser checks. TLS, browser binaries, and FFmpeg/FFprobe may be required. Missing prerequisites or unexpected skips are not a clean pass. Fixtures establish isolated behavior, not real Plex/Activity/device support.
+`npm run smoke` takes about four minutes and is the browser check before a deploy that changes `web/`, `server/` or `shared/`. A full pass on committed code (both browsers, no uncommitted app changes) is recorded by git tree in `.git/uburoom-smoke-pass.json`, and a deploy of that same code skips the second run. Use both Chrome and Firefox for relevant browser checks. TLS, browser binaries, and FFmpeg/FFprobe may be required. Missing prerequisites or unexpected skips are not a clean pass. Fixtures establish isolated behavior, not real Plex/Activity/device support.
 
 ---
 
