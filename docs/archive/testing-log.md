@@ -146,3 +146,8 @@ Checks:
 - `accounts.test.js` (26 s alone) and `config.test.js` (22 s alone) were mostly Windows permission steps run through PowerShell (about 0.3 s per launch: four per config save, one per credential key at app start). That security code is unchanged; the files are split so their halves run in parallel: saved operator settings moved to `saved-settings.test.js` with the shared app fixture in `tests/helpers/account-app.js`, and the YAML editor tests moved to `config-editor.test.js`. Test count unchanged.
 - `node --test tests/*.test.js`: `483` passed, `0` failed, `0` skipped, about 24-25 s (was about 32 s). `lint`, `format:check`, `typecheck` pass.
 
+## 2026-11-16 — Vigrid deploy stopped by entry point test limits (C deploy, `db75a0e` then `cec36f8`)
+
+- Deploying `db75a0e` (episode steps) failed twice on Vigrid's own `npm test`: only "real entry point serves health from external YAML" (12.5 s) and "real entry point cleans up ... on listen failure" (8.2 s) timed out, and the updater kept uburoom stopped as designed. Run alone on Vigrid both passed, each needing about 6 s to start a server; beside the full suite they passed their 12 s and 8 s limits.
+- `cec36f8` gives both tests 45 s to start (60 s per test): they check that the real entry point starts and cleans up, not its speed. The next deploy passed Vigrid's full suite and restarted with `/health` OK. uburoom was down on Vigrid from the first failed run until that restart.
+
