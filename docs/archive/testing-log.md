@@ -122,3 +122,13 @@ Checks:
 - Rendered in headless Chrome (dark theme, 1400 px wide) against the same server: Libraries home shows the local library card after the Plex library with no Collections card; the local library lists both files, with filters and the auto-queue action hidden.
 - `npm run test:full` (`478` tests, `478` passed, `0` failed, `0` skipped), `format:check`, `lint` and `typecheck` pass. The known concurrent-load flake in `tests/subtitle-resources.test.js` (`NaN !== 0`) appeared in some full runs and passed on re-run and alone.
 - Not covered: a real Plex server or a real library, decoded picture and sound in a browser, a second viewer, guests, Firefox, light theme, phone width, 200% zoom, a local-only install without Plex, and owner acceptance. Nothing was deployed.
+
+## 2026-11-16 — Media library UI, queue scroll button and MKV flake (A/B, on main after `e8e4a55`)
+
+- Scope: `434d8d9`..`e8e4a55` plus this change. Queue card-layout leftovers removed, suggestions box, no empty hints; Media header on one row with a More menu, single-button fallback and "Find a library" filter past ten libraries; tool rows tuck while scrolling down; details pages with one action row, backdrops and title logos (preloaded on open and tile hover, shown without a fade once fetched); tile actions hidden on unavailable titles and the suggestion bulb as a pill; the "N queued" scroll button and its strip shown only while something is queued.
+- `tests/plex-library.test.js` and `tests/jellyfin.test.js`: backdrop and logo artwork (allowed paths, sizes, PNG logos, episodes without logos, invalid kinds refused before any provider request).
+- `tests/subtitle-resources.test.js` "generated two-hour MKV windows": the `NaN !== 0` flake reproduced in 4 of 14 concurrent runs. FFprobe reported no container `start_time` for some generated files (`format: {}`), which the reference check required; the app's own probe already falls back to the first packet time. The reference now uses the offset the file was written with: 14/14 concurrent runs pass.
+- `node --test tests/*.test.js`: `483` tests, `483` passed, `0` failed, `0` skipped.
+- `node scripts/room-ui-smoke.js --browsers=chrome,firefox`, `node scripts/media-controls-smoke.js` (Chrome, Firefox) and `node scripts/plex-library-smoke.js` (Firefox): passed. The two Media runners were repaired for the current client in `14bb5e1`.
+- Owner check on Vigrid (D, partial): title logos load ahead on hover-then-open against the real Plex. Not covered: Jellyfin artwork against a real server, and a hidden "N queued" button with nothing queued was not separately rendered.
+
