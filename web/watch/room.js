@@ -281,6 +281,7 @@ export function mount(host, deps) {
       store.room.state.tracks?.audioId === next.tracks?.audioId &&
       burned(store.room.state) === burned(next);
     const changed = !seamless && (mediaChanged || store.stream.mediaSource !== next.mediaUrl);
+    let released = false;
     if (store.stream.heldStream) {
       const held = store.stream.heldStream.next;
       if (
@@ -296,8 +297,19 @@ export function mount(host, deps) {
       }
       // Someone seeked, paused or changed the video, so the new stream is needed now.
       deps.dropHeldStream();
+      released = true;
     }
-    if (!local && changed && !mediaChanged && deps.canHoldStream(next)) return void deps.holdStream(next);
+    // Only a timeline nobody changed may keep the old stream playing; a pause or seek, or a
+    // hold just released for one, applies to the player now.
+    if (
+      !released &&
+      !local &&
+      changed &&
+      !mediaChanged &&
+      next.state?.paused === store.room.state?.state?.paused &&
+      deps.canHoldStream(next)
+    )
+      return void deps.holdStream(next);
     const qualityContextChanged =
       !!store.room.state &&
       (store.room.state.mediaVersion !== next.mediaVersion ||
@@ -373,9 +385,9 @@ export function mount(host, deps) {
           const reason =
             next.hdrKind === 'dovi-p5' && videoUnsupported
               ? 'Dolby Vision Profile 5 is not supported directly by this browser.'
-              : next.hdr && hdrMode() === 'sdr'
+              : next.hdr && videoUnsupported && hdrMode() === 'sdr'
                 ? 'SDR chosen in Player settings; converting HDR to SDR.'
-                : next.hdr && !uburoomPlayback.supportsHdrDisplay()
+                : next.hdr && videoUnsupported && !uburoomPlayback.supportsHdrDisplay(undefined, hdrMode())
                   ? 'HDR Original requires an HDR display; converting to SDR.'
                   : 'The browser does not support the original codecs.';
           queueMicrotask(() => {
