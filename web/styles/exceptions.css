@@ -216,7 +216,7 @@
     min-height: 150px;
     display: flex;
   }
-  /* Empty queues use a neutral screen, independent of the remembered timeline layout. */
+  /* Empty queues show a neutral screen in place of the timeline. */
   .queue-timeline[hidden],
   .queue-empty-screen[hidden],
   .queue-toolbar[hidden],
@@ -228,9 +228,6 @@
   }
   .queue-next {
     color: var(--primary);
-  }
-  .queue-entry-auto {
-    border-color: color-mix(in srgb, var(--secondary) 55%, var(--border));
   }
   .queue-entry-auto .queue-rank-auto,
   .queue-entry-auto .queue-entry-caption {

@@ -64,8 +64,7 @@
   }
   .queue-header,
   .queue-toolbar,
-  .queue-heading,
-  .queue-navigation {
+  .queue-heading {
     display: flex;
     align-items: center;
   }
@@ -88,28 +87,26 @@
     margin-bottom: var(--space-16);
     flex-wrap: wrap;
   }
-  .queue-navigation {
-    gap: var(--space-5);
-    margin-left: auto;
-  }
-  .queue-navigation button {
-    display: grid;
-    place-items: center;
-    min-width: 40px;
-    min-height: 40px;
-    padding: var(--space-7);
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-11);
-    color: var(--muted);
-  }
-  .queue-navigation button:hover {
-    background: var(--hover);
-    color: var(--text);
-  }
+  /* One column of 120px rows scrolling in place: History above Now Playing, suggestions and Upcoming below. */
   .queue-layout {
     min-width: 0;
     width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    height: 592px;
+    overflow-y: auto;
+    overflow-anchor: none;
+    overscroll-behavior-y: contain;
+    scrollbar-width: thin;
+    -ms-overflow-style: none;
+  }
+  .queue-layout::-webkit-scrollbar {
+    display: none;
+  }
+  .queue-view,
+  .queue-list {
+    display: contents;
   }
   .queue-layout:focus-visible {
     border-radius: var(--radius-12);
@@ -117,21 +114,35 @@
   .queue-entry,
   .queue-history-entry,
   .queue-now-playing {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    flex: 0 0 120px;
     min-width: 0;
+    height: 120px;
+    min-height: 120px;
+    padding: var(--space-8) var(--space-10) var(--space-8) var(--space-72);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
     background: var(--elevated);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-16);
-    padding: var(--space-12);
+    border: 0;
+    border-radius: var(--radius-10);
   }
   .queue-now-playing {
-    border-color: color-mix(in srgb, var(--primary) 60%, var(--border));
     background: color-mix(in srgb, var(--primary) 5%, var(--elevated));
+    box-shadow: inset 0 0 0 2px var(--primary);
   }
+  /* The rank or label line is exactly one row of 32px action buttons. */
+  .queue-entry-top,
   .queue-now-playing-header {
+    flex: none;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-8);
+    gap: var(--space-6);
+    height: 32px;
+    min-width: 0;
   }
   .queue-section-label {
     font-size: var(--font-size-12);
@@ -158,13 +169,17 @@
     font-variant-numeric: tabular-nums;
   }
   .queue-art {
-    position: relative;
+    position: absolute;
+    left: 10px;
+    top: 20px;
+    width: 48px;
+    height: 72px;
     display: grid;
     place-items: center;
     background: var(--card);
-    border-radius: var(--radius-10);
+    border-radius: var(--radius-5);
     overflow: hidden;
-    aspect-ratio: 16/9;
+    aspect-ratio: 2/3;
     color: var(--muted);
   }
   .queue-content .queue-art > svg {
@@ -188,7 +203,9 @@
     font: inherit;
     font-weight: 650;
     text-align: left;
-    overflow-wrap: anywhere;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
   button.queue-title-link {
     cursor: pointer;
@@ -204,19 +221,24 @@
   }
   .queue-entry-title,
   .queue-now-playing-title {
-    font-size: var(--font-size-14);
+    font-size: var(--font-size-12);
     line-height: 1.4;
   }
   .queue-entry-subtitle {
     font-size: var(--font-size-12);
-    margin: var(--space-4) 0;
-    overflow-wrap: anywhere;
+    margin: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
   .queue-progress {
+    position: absolute;
+    left: 10px;
+    bottom: 8px;
     display: block;
-    width: 100%;
-    height: 5px;
-    margin-top: var(--space-12);
+    width: 48px;
+    height: 3px;
+    margin: 0;
     border: 0;
     border-radius: var(--radius-pill);
     overflow: hidden;
@@ -240,8 +262,13 @@
     margin-top: var(--space-5);
   }
   .queue-entry-actions {
+    position: absolute;
+    bottom: 4px;
+    right: 8px;
+    left: 72px;
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: var(--watch-icon-gap);
     min-width: 0;
   }
@@ -266,13 +293,6 @@
     font-size: var(--font-size-12);
     color: var(--muted);
   }
-  .queue-entry-top {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-6);
-    min-width: 0;
-  }
   .queue-entry-top > .queue-rank {
     flex: 1;
     min-width: 0;
@@ -289,11 +309,10 @@
   .queue-history-status {
     display: flex;
     align-items: flex-start;
-    min-height: 34px;
-    padding-top: var(--space-8);
   }
-  .queue-entry-top > .queue-rank {
-    padding-top: var(--space-8);
+  .queue-history-older {
+    flex: none;
+    font-size: var(--font-size-12);
   }
   .queue-move-actions {
     display: flex;
@@ -319,21 +338,6 @@
   .queue-content :is(.queue-entry-actions, .queue-move-actions) svg {
     width: 24px;
     height: 24px;
-  }
-  .queue-now-playing > .queue-entry-actions {
-    justify-content: flex-end;
-  }
-  .queue-column-heading {
-    margin: 0;
-    font-size: var(--font-size-14);
-  }
-  .queue-history-heading {
-    min-height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-10);
-    margin-bottom: var(--space-10);
   }
   .queue-empty {
     font-size: var(--font-size-12);
@@ -394,129 +398,49 @@
     max-width: 200px;
     font-size: var(--font-size-12);
   }
+  /* The floating scroll buttons sit over the timeline box; its bottom strip holds the "N queued" button
+   below the list and, when history exists, a top strip holds "N past", so neither covers a row. */
   .queue-timeline {
     position: relative;
     min-width: 0;
+    padding-bottom: var(--space-44);
+  }
+  .queue-timeline.queue-has-history {
+    padding-top: var(--space-44);
   }
   .queue-navigation {
     position: absolute;
     inset: 0;
     pointer-events: none;
     z-index: var(--z-local-5);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     justify-content: space-between;
     margin: 0;
+    padding: var(--space-4) 0;
   }
   .queue-navigation[hidden] {
     display: none;
   }
   .queue-navigation button {
     pointer-events: auto;
+    display: flex;
+    align-items: center;
+    align-self: center;
+    gap: var(--space-4);
+    width: auto;
+    min-width: 40px;
+    min-height: 40px;
+    padding: var(--space-9) var(--space-6);
     background: color-mix(in srgb, var(--card) 92%, transparent);
     border: 0;
-    box-shadow: 0 2px 8px var(--black-a33);
-    align-self: center;
-    width: 32px;
-    min-width: 32px;
-    min-height: 44px;
-    padding: var(--space-4);
+    border-radius: var(--radius-11);
+    color: var(--muted);
   }
-  .queue-layout {
-    overflow-anchor: none;
-  }
-  [data-view='list'] .queue-layout {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-8);
-    height: 592px;
-    overflow-y: auto;
-    overscroll-behavior-y: contain;
-    scrollbar-width: thin;
-  }
-  [data-view='list'] .queue-view,
-  [data-view='list'] .queue-list {
-    display: contents;
-  }
-  [data-view='list'] .queue-column-heading,
-  [data-view='list'] .queue-history-heading {
-    display: none;
-  }
-  [data-view='list'] :is(.queue-entry, .queue-history-entry, .queue-now-playing) {
-    position: relative;
-    flex: 0 0 120px;
-    min-height: 120px;
-    height: 120px;
-    padding: var(--space-8) var(--space-10) var(--space-8) var(--space-72);
-    border: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    border-radius: var(--radius-10);
-  }
-  [data-view='list'] .queue-now-playing {
-    box-shadow: inset 0 0 0 2px var(--primary);
-  }
-  [data-view='list'] :is(.queue-entry-top, .queue-now-playing-header) {
-    height: 40px;
-    min-height: 40px;
-    align-items: center;
-  }
-  [data-view='list'] .queue-art {
-    position: absolute;
-    left: 10px;
-    top: 20px;
-    width: 48px;
-    height: 72px;
-    aspect-ratio: 2/3;
-    border-radius: var(--radius-5);
-  }
-  [data-view='list'] .queue-title-link {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    font-size: var(--font-size-12);
-  }
-  [data-view='list'] .queue-entry-subtitle {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    margin: 0;
-    font-size: var(--font-size-12);
-  }
-  [data-view='list'] .queue-entry-actions {
-    position: absolute;
-    bottom: 4px;
-    right: 8px;
-    left: 72px;
-    justify-content: flex-end;
-  }
-  [data-view='list'] .queue-now-playing-meta,
-  [data-view='list'] .queue-meta {
-    font-size: var(--font-size-12);
-  }
-  [data-view='list'] .queue-progress {
-    position: absolute;
-    left: 10px;
-    bottom: 8px;
-    width: 48px;
-    margin: 0;
-    height: 3px;
-  }
-  [data-view='list'] .queue-history-status {
-    padding: 0;
-    min-height: 0;
-  }
-  [data-view='list'] .queue-rank {
-    padding-top: 0;
-  }
-  [data-view='list'] .queue-history-older {
-    flex: none;
-    font-size: var(--font-size-12);
-  }
-  @media (pointer: coarse) {
-    .queue-navigation button {
-      min-height: 40px;
-      min-width: 40px;
-    }
+  .queue-navigation button:hover {
+    background: var(--hover);
+    color: var(--text);
   }
   .queue-no-current .queue-now-playing {
     border: 0;
@@ -590,21 +514,6 @@
       padding: 0;
     }
   }
-  .queue-layout {
-    -ms-overflow-style: none;
-  }
-  .queue-layout::-webkit-scrollbar {
-    display: none;
-  }
-  .queue-navigation button {
-    width: auto;
-    min-width: 40px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--space-4);
-    padding: var(--space-9) var(--space-6);
-  }
   .queue-navigation-count {
     font-size: var(--font-size-12);
     white-space: nowrap;
@@ -615,27 +524,6 @@
   }
   .queue-navigation-count:empty {
     display: none;
-  }
-  /* The floating scroll buttons sit over the timeline box; its bottom strip holds the "N queued" button
-   below the list and, when history exists, a top strip holds "N past", so neither covers a row. */
-  [data-view='list'] .queue-timeline {
-    padding-bottom: var(--space-44);
-  }
-  [data-view='list'] .queue-timeline.queue-has-history {
-    padding-top: var(--space-44);
-  }
-  [data-view='list'] .queue-navigation {
-    flex-direction: column;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--space-4) 0;
-  }
-  [data-view='list'] .queue-navigation button {
-    align-self: center;
-    min-height: 40px;
-    min-width: 40px;
-    flex-direction: row;
-    box-shadow: none;
   }
   .queue-history-entry {
     opacity: 0.65;
@@ -649,19 +537,15 @@
     display: none;
     pointer-events: none;
   }
-  [data-view='list'] :is(.queue-entry, .queue-history-entry, .queue-now-playing) {
-    isolation: isolate;
-    overflow: hidden;
-  }
   /* Dark theme: rows sit on a darkened blur of their artwork. In the light theme they keep the
    ordinary surface tokens (elevated rows, the Now Playing tint) like the other list surfaces. */
-  :root:not([data-theme='light']) [data-view='list'] :is(.queue-entry, .queue-history-entry, .queue-now-playing) {
+  :root:not([data-theme='light']) :is(.queue-entry, .queue-history-entry, .queue-now-playing) {
     background: var(--chrome-background);
     --text: var(--chrome-text);
     --muted: var(--chrome-muted);
     color: var(--text);
   }
-  :root:not([data-theme='light']) [data-view='list'] .queue-row-backdrop {
+  :root:not([data-theme='light']) .queue-row-backdrop {
     display: block;
     position: absolute;
     inset: -20px;
@@ -672,9 +556,6 @@
     z-index: var(--z-behind);
   }
   .queue-entry-auto {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--secondary) 35%, transparent);
-  }
-  [data-view='list'] .queue-entry-auto {
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--secondary) 55%, transparent);
   }
   .queue-auto-toggle:checked,
@@ -682,10 +563,16 @@
     background: var(--secondary);
   }
   /* Pending suggestions between Now Playing and Upcoming: one row collapsed, queue-style rows expanded. */
+  /* One framed group: the toggle is its header and the expanded rows sit inside the frame. */
   .queue-suggestions {
+    flex: none;
     display: flex;
     flex-direction: column;
-    gap: var(--space-6);
+    gap: var(--space-4);
+    padding: var(--space-4);
+    border: 1px solid color-mix(in srgb, var(--accent-text) 35%, var(--border));
+    border-radius: var(--radius-12);
+    background: color-mix(in srgb, var(--accent-text) 5%, var(--elevated));
   }
   .queue-suggestions[hidden],
   .queue-suggestions-list[hidden] {
@@ -697,10 +584,10 @@
     gap: var(--space-8);
     width: 100%;
     min-height: var(--watch-control-height);
-    padding: 0 var(--space-12);
+    padding: 0 var(--space-8);
     border: 0;
-    border-radius: var(--radius-10);
-    background: var(--elevated);
+    border-radius: var(--radius-8);
+    background: none;
     color: var(--muted);
     font-size: var(--font-size-14);
     font-weight: 600;

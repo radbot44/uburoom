@@ -73,7 +73,6 @@ async function main() {
       assert.equal(await run('getComputedStyle(document.querySelector(".queue-quick-controls")).gap'), '8px');
       assert.equal(await run('getComputedStyle(document.querySelector(".queue-header")).rowGap'), '16px');
       assert.equal(await run('!document.querySelector(".queue-view-switch")'), true, 'Queue has one layout');
-      assert.equal(await run(byId('queue-content') + '.dataset.view'), 'list');
       const footerGeometry = await run(
         `(()=>{const room=getComputedStyle(document.getElementById("switch-room"));return ["queue-clear-history","queue-shuffle","queue-clear-queue"].map(id=>{const e=document.getElementById(id),r=e.getBoundingClientRect(),s=getComputedStyle(e);return [id,e.className,r.height,s.borderRadius,s.backgroundColor,s.borderTopWidth,room.borderRadius,room.backgroundColor]})})()`,
       );

@@ -96,7 +96,6 @@ function mount(
   const confirm = message => popups.confirm(message, { destructive: true });
 
   host.replaceChildren();
-  host.dataset.view = 'list';
   const header = node('header', host, undefined, 'queue-header watch-panel-header');
   const heading = node('h2', header, undefined, 'queue-heading watch-panel-heading');
   const symbol = node('span', heading, undefined, 'watch-panel-symbol');
@@ -932,7 +931,6 @@ function mount(
     timeline.hidden = centerButton.hidden = noEntries;
     toolbar.hidden = autoOpen.hidden = !state;
     emptyScreen.hidden = !noEntries;
-    host.dataset.view = noEntries ? 'empty' : 'list';
     host.classList.toggle('queue-is-empty', noEntries);
     emptyTitle.textContent = state ? 'The queue is empty' : 'The queue lives in a room';
     emptyText.hidden = !!state;
@@ -1094,7 +1092,6 @@ function mount(
 
   function renderUpcoming() {
     upcomingView.replaceChildren();
-    node('h3', upcomingView, 'Upcoming →', 'queue-column-heading');
     const state = getState(),
       items = currentQueue.items || [];
     const autoNext = state?.queueSummary?.autoQueue?.mode !== 'off' ? state?.queueSummary?.autoQueue?.next : null;
@@ -1266,13 +1263,12 @@ function mount(
 
   function renderHistory() {
     historyView.replaceChildren();
-    const top = node('div', historyView, undefined, 'queue-history-heading');
-    node('h3', top, '← History', 'queue-column-heading');
+    const footerActions = footer.querySelector('.queue-footer-actions');
     const state = getState(),
       items = currentHistory.items || [];
     const canChoose = !!state?.capabilities?.chooseMedia;
     const clear = button(
-      top,
+      footerActions,
       'Clear history',
       undefined,
       async () => {
@@ -1299,7 +1295,7 @@ function mount(
         ? 'There is no playback history to clear.'
         : 'Queue editing is unavailable for your role.';
     clear.id = 'queue-clear-history';
-    footer.querySelector('.queue-footer-actions').prepend(clear);
+    footerActions.prepend(clear);
     if (!items.length) node('p', historyView, 'No playback history yet.', 'hint queue-empty');
     if (items.length < currentHistory.total) {
       const older = button(
