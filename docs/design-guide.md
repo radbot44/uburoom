@@ -100,6 +100,7 @@ A watch night is a room with a time on it: every event belongs to one saved room
 - **Original versus converted:** Original means untouched source media. When Original is selected but the output is converted, the option reads Maximum with the output codec and the badge reads `MAX`. Subtitles burned in without being chosen read "Automatic (burned in)" with a status line.
 - **Automatic fallback:** keeps the viewer's selected quality in the controls and shows "Using fallback · <height>p · <Mbps> Mbps" as status with an `FB` badge. Toasts announce switching to fallback and returning. Fallback is a delivery status, not a selectable quality.
 - **Stream swaps:** a quality change keeps the current stream playing, and its last frame on screen, until the new one is ready.
+- **HDR:** a segmented Auto / HDR / SDR choice directly under Quality in Player settings (not in the desktop quick menu), always shown, saved in this browser, default Auto. Auto follows what the screen reports, and its hint names it ("This screen: SDR"); HDR sends HDR pictures and lets the browser adapt them; SDR has uburoom convert HDR to SDR even on HDR screens. It affects HDR videos at Original only, and changing it swaps the stream like a quality change.
 
 ### Subtitles and audio
 

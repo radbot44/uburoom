@@ -1277,6 +1277,14 @@ test('codecMatches and trackItem handle PCM audio and embedded closed captions w
     true,
     '8-bit-only HEVC decoder converts 10-bit HDR',
   );
+  // The viewer's HDR choice overrides what the screen reports, but never what the decoder can do.
+  assert.equal(Playback.needsVideoConversion(hdr10Source, hevcMain10, sdrScreen, 'hdr'), false, 'HDR keeps Original');
+  assert.equal(Playback.needsVideoConversion(hdr10Source, hevcMain10, hdrScreen, 'sdr'), true, 'SDR converts');
+  assert.equal(
+    Playback.needsVideoConversion(hdr10Source, hevc8BitOnly, sdrScreen, 'hdr'),
+    true,
+    'decoder still decides',
+  );
 
   const hdr10TrueHdSource = {
     format: 'file',

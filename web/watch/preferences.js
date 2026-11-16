@@ -75,7 +75,7 @@ export function createSubtitleOffsetStore(
   };
 }
 
-/* Saved viewer preferences: volume, quality, subtitles and audio language, subtitle appearance, audio mode and the sync correction mode; what this tab says about itself when it joins. */
+/* Saved viewer preferences: volume, quality, HDR, subtitles and audio language, subtitle appearance, audio mode and the sync correction mode; what this tab says about itself when it joins. */
 export function mount(host, deps) {
   const playerPreferenceKey = 'uburoom.player';
   store.preferences.playerPreferences = {
@@ -91,6 +91,7 @@ export function mount(host, deps) {
     plexWatchState: false,
     discordRichPresence: false,
     audioMode: 'normal',
+    hdrMode: 'auto',
   };
   try {
     const saved = JSON.parse(localStorage.getItem(playerPreferenceKey) || 'null');
@@ -106,6 +107,7 @@ export function mount(host, deps) {
         store.preferences.playerPreferences.discordRichPresence = saved.discordRichPresence;
       if (['normal', 'dialogue', 'night'].includes(saved.audioMode))
         store.preferences.playerPreferences.audioMode = saved.audioMode;
+      if (['auto', 'hdr', 'sdr'].includes(saved.hdrMode)) store.preferences.playerPreferences.hdrMode = saved.hdrMode;
       if (uburoom.validQuality(saved.quality))
         store.preferences.playerPreferences.quality = uburoom.qualityId(saved.quality);
       if (['auto', 'burn'].includes(saved.subtitleMode))
@@ -395,12 +397,50 @@ export function mount(host, deps) {
   syncButtonGroup('subtitle-size', 'subtitle-size-group');
   syncButtonGroup('subtitle-position', 'subtitle-position-group');
   syncButtonGroup('audio-mode', 'audio-mode-group');
+  syncButtonGroup('hdr-mode', 'hdr-mode-group');
   applySubtitleAppearance();
   applyAudioMode(store.preferences.playerPreferences.audioMode);
   $('audio-mode')?.addEventListener('change', () => {
     const next = $('audio-mode').value;
     savePlayerPreferences({ audioMode: next });
     applyAudioMode(next);
+  });
+  const screenHdr = typeof matchMedia === 'function' ? matchMedia('(dynamic-range: high)') : undefined;
+  function renderHdrMode() {
+    const mode = store.preferences.playerPreferences.hdrMode;
+    if ($('hdr-mode').value !== mode) $('hdr-mode').value = mode;
+    $('hdr-mode-hint').textContent =
+      mode === 'hdr'
+        ? 'Always HDR; your browser adjusts it for this screen.'
+        : mode === 'sdr'
+          ? 'uburoom converts HDR to SDR, even on HDR screens.'
+          : 'HDR on HDR screens, SDR on others. This screen: ' +
+            (uburoomPlayback.supportsHdrDisplay() ? 'HDR' : 'SDR') +
+            '.';
+  }
+  // An HDR video at Original gets a new stream when the choice changes what it should be.
+  // Starting over from Original lets the usual decision apply the new choice.
+  function reconsiderHdr() {
+    const state = store.room.state,
+      info = state?.deliveryInfo;
+    if (!info?.sourceHdr || info.sourceHdrKind === 'dovi-p5' || store.preferences.preferredQuality !== 'direct') return;
+    const wantHdr = uburoomPlayback.supportsHdrDisplay(undefined, store.preferences.playerPreferences.hdrMode);
+    if (!!info.toneMapped !== wantHdr) return;
+    store.stream.localFallbackAttempts = new Set();
+    deps
+      .execute({ action: 'media.quality.set', args: { quality: store.preferences.preferredQuality, reset: true } })
+      .catch(error => deps.fail(error.message));
+  }
+  renderHdrMode();
+  $('hdr-mode').addEventListener('change', () => {
+    savePlayerPreferences({ hdrMode: $('hdr-mode').value });
+    renderHdrMode();
+    reconsiderHdr();
+  });
+  // Turning Windows HDR on or off, or moving the window to another screen, changes what Auto means.
+  screenHdr?.addEventListener('change', () => {
+    renderHdrMode();
+    if (store.preferences.playerPreferences.hdrMode === 'auto') reconsiderHdr();
   });
   const subtitleOffsets = createSubtitleOffsetStore();
   function getSubtitleOffset(mediaId, track) {

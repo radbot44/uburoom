@@ -305,9 +305,14 @@ function timeline(buffered, duration, position, chapters) {
     : '';
   return `${notchLayer}linear-gradient(to right,var(--primary) 0%,var(--primary) ${progress},transparent ${progress},transparent 100%),linear-gradient(to right,${stops.join(',')})`;
 }
+// Whether HDR pictures go to this viewer as they are. The viewer's HDR choice decides:
+// 'hdr' always, 'sdr' never, and 'auto' (or none) whatever the screen reports.
 function supportsHdrDisplay(
   matchMedia = typeof globalThis.matchMedia === 'function' ? globalThis.matchMedia.bind(globalThis) : null,
+  hdrMode = 'auto',
 ) {
+  if (hdrMode === 'hdr') return true;
+  if (hdrMode === 'sdr') return false;
   if (typeof matchMedia !== 'function') return false;
   try {
     return Boolean(matchMedia('(video-dynamic-range: high)')?.matches || matchMedia('(dynamic-range: high)')?.matches);
@@ -315,18 +320,18 @@ function supportsHdrDisplay(
     return false;
   }
 }
-function needsVideoConversion(source, canPlayType, matchMedia) {
+function needsVideoConversion(source, canPlayType, matchMedia, hdrMode) {
   // Positive answers remain only hints. Only an explicit negative for every
   // representative family probe rules out an initial HEVC direct-play trial.
   // Test Main/Main10 and both sample entries: bare `hvc1` alone is insufficient.
   if (!source || typeof canPlayType !== 'function') return false;
   try {
     if (source.hdrKind === 'dovi-p5') {
-      if (!supportsHdrDisplay(matchMedia)) return true;
+      if (!supportsHdrDisplay(matchMedia, hdrMode)) return true;
       const dovi = ['dvh1.05.06', 'dvhe.05.06'];
       if (dovi.every(codec => canPlayType(`video/mp4; codecs="${codec}"`) === '')) return true;
     } else if (source.hdr) {
-      if (!supportsHdrDisplay(matchMedia)) return true;
+      if (!supportsHdrDisplay(matchMedia, hdrMode)) return true;
     }
     if (/^(hevc|h265|hvc1|hev1)$/i.test(source.videoCodec || '')) {
       const codecs =
@@ -353,8 +358,8 @@ function needsAudioConversion(source, canPlayType) {
   }
   return false;
 }
-function needsCompatible(source, canPlayType, matchMedia) {
-  return needsVideoConversion(source, canPlayType, matchMedia) || needsAudioConversion(source, canPlayType);
+function needsCompatible(source, canPlayType, matchMedia, hdrMode) {
+  return needsVideoConversion(source, canPlayType, matchMedia, hdrMode) || needsAudioConversion(source, canPlayType);
 }
 function observationClock() {
   return timingApi().observationClock();

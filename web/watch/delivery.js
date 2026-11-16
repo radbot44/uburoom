@@ -50,7 +50,12 @@ export function mount(host, deps) {
     // server with its own transcoder, copies the video and converts only the audio.
     const canCopyVideo =
       /^(h264|avc1|hevc|h265|hvc1|hev1)$/i.test(store.room.state.videoCodec || '') &&
-      !uburoomPlayback.needsVideoConversion(store.room.state, type => deps.video.canPlayType(type));
+      !uburoomPlayback.needsVideoConversion(
+        store.room.state,
+        type => deps.video.canPlayType(type),
+        undefined,
+        store.preferences.playerPreferences.hdrMode,
+      );
     if (
       preferHLS &&
       (order.includes('provider') || store.identity.config.copyVideo) &&
@@ -217,7 +222,12 @@ export function mount(host, deps) {
   const fileNeedsAudioStream = next =>
     next.format === 'file' &&
     /^(h264|avc1|hevc|h265|hvc1|hev1)$/i.test(next.videoCodec || '') &&
-    !uburoomPlayback.needsVideoConversion(next, type => deps.video.canPlayType(type)) &&
+    !uburoomPlayback.needsVideoConversion(
+      next,
+      type => deps.video.canPlayType(type),
+      undefined,
+      store.preferences.playerPreferences.hdrMode,
+    ) &&
     ((store.identity.config.outputs || ['provider']).includes('provider') || store.identity.config.copyVideo) &&
     uburoomPlayback.needsAudioConversion(next, type => deps.video.canPlayType(type));
   function holdStream(next) {

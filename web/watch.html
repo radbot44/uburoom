@@ -722,6 +722,18 @@
                         <option value="720p2">720p · 2 Mbps</option>
                       </select>
                       <p id="quality-detail" class="hint" hidden></p>
+                      <label for="hdr-mode">HDR</label
+                      ><select id="hdr-mode" hidden>
+                        <option value="auto">Auto</option>
+                        <option value="hdr">HDR</option>
+                        <option value="sdr">SDR</option>
+                      </select>
+                      <div id="hdr-mode-group" class="button-group watch-segmented" role="group" aria-label="HDR">
+                        <button type="button" class="group-button" data-value="auto" aria-pressed="true">Auto</button
+                        ><button type="button" class="group-button" data-value="hdr" aria-pressed="false">HDR</button
+                        ><button type="button" class="group-button" data-value="sdr" aria-pressed="false">SDR</button>
+                      </div>
+                      <p id="hdr-mode-hint" class="hint"></p>
                       <div class="personal-sync">
                         <label for="sync-correction">Sync correction</label
                         ><select id="sync-correction" aria-describedby="sync-correction-hint">

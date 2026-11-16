@@ -9,6 +9,8 @@ import { store } from './store.js';
 
 /* The room as shown: applying each new view of the room, the stage and panels that follow it, viewers who are buffering, invites and room notices. */
 export function mount(host, deps) {
+  // The viewer's HDR choice in Player settings (web/watch/preferences.js).
+  const hdrMode = () => store.preferences.playerPreferences?.hdrMode;
   function renderVisibility() {
     $('empty-hint').hidden = !store.identity.me;
     const inRoom = Boolean(store.room.state || (store.identity.directRoomEntry && !store.identity.directRoomFailed));
@@ -357,16 +359,25 @@ export function mount(host, deps) {
         $('empty-stage').hidden = true;
         deps.watchFrames();
         if (
-          (next.format === 'file' && uburoomPlayback.needsCompatible(next, type => deps.video.canPlayType(type))) ||
-          (next.format === 'hls' && uburoomPlayback.needsVideoConversion(next, type => deps.video.canPlayType(type)))
+          (next.format === 'file' &&
+            uburoomPlayback.needsCompatible(next, type => deps.video.canPlayType(type), undefined, hdrMode())) ||
+          (next.format === 'hls' &&
+            uburoomPlayback.needsVideoConversion(next, type => deps.video.canPlayType(type), undefined, hdrMode()))
         ) {
-          const videoUnsupported = uburoomPlayback.needsVideoConversion(next, type => deps.video.canPlayType(type));
+          const videoUnsupported = uburoomPlayback.needsVideoConversion(
+            next,
+            type => deps.video.canPlayType(type),
+            undefined,
+            hdrMode(),
+          );
           const reason =
             next.hdrKind === 'dovi-p5' && videoUnsupported
               ? 'Dolby Vision Profile 5 is not supported directly by this browser.'
-              : next.hdr && !uburoomPlayback.supportsHdrDisplay()
-                ? 'HDR Original requires an HDR display; converting to SDR.'
-                : 'The browser does not support the original codecs.';
+              : next.hdr && hdrMode() === 'sdr'
+                ? 'SDR chosen in Player settings; converting HDR to SDR.'
+                : next.hdr && !uburoomPlayback.supportsHdrDisplay()
+                  ? 'HDR Original requires an HDR display; converting to SDR.'
+                  : 'The browser does not support the original codecs.';
           queueMicrotask(() => {
             if (store.room.state === next) void deps.compatibleFallback(reason, !videoUnsupported);
           });
