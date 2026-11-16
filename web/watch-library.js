@@ -1205,7 +1205,8 @@ function mount(
     void getDetails(item, screen);
     if (!playable(item)) await loadPage();
   }
-  // An episode names its show and season above its title, and a season its show, each a link there.
+  // An episode names its show and season above its title, and a season its show, each a link there. At the
+  // line's end an episode steps to the episodes either side of it in the show.
   function parentLine(parent, item) {
     const links =
       item.type === 'episode'
@@ -1217,13 +1218,43 @@ function mount(
           ? [{ id: item.parentId, type: 'show', title: item.parentTitle }]
           : [];
     const targets = links.filter(link => link.id && link.title);
-    if (!targets.length) return;
-    const line = node('p', parent, undefined, 'library-detail-parent');
+    const steps = item.type === 'episode' ? [item.previous, item.next] : [];
+    if (!targets.length && !steps.some(step => step?.id)) return;
+    const line = node('div', parent, undefined, 'library-detail-parent');
+    const crumbs = node('p', line, undefined, 'library-detail-parent-links');
     targets.forEach((target, index) => {
-      if (index) node('span', line, '·', 'library-detail-parent-divider');
-      const link = node('button', line, target.title, 'library-detail-parent-link');
+      if (index) node('span', crumbs, '·', 'library-detail-parent-divider');
+      const link = node('button', crumbs, target.title, 'library-detail-parent-link');
       link.type = 'button';
       link.onclick = () => openParent({ ...target, ...(item.serverId ? { serverId: item.serverId } : {}) });
+    });
+    if (!steps.some(step => step?.id)) return;
+    const pager = node('div', line, undefined, 'library-episode-steps');
+    pager.setAttribute('role', 'group');
+    pager.setAttribute('aria-label', 'Episodes');
+    steps.forEach((step, index) => {
+      const later = index === 1;
+      if (!step?.id) return;
+      // "E5" within the season, "S2 · E1" across a season boundary.
+      const where =
+        (step.seasonIndex !== undefined && step.seasonIndex !== item.seasonIndex
+          ? 'S' + step.seasonIndex + ' · '
+          : '') + (step.index !== undefined ? 'E' + step.index : later ? 'Next' : 'Previous');
+      const b = button(
+        pager,
+        (later ? 'Next episode: ' : 'Previous episode: ') + where + ' · ' + step.title,
+        later ? undefined : 'left',
+        'library-key library-episode-step',
+      );
+      node('span', b, where);
+      if (later) b.append(uburoomIcons.icon(doc, 'right'));
+      b.onclick = () =>
+        void openItem({
+          id: step.id,
+          type: 'episode',
+          title: step.title,
+          ...(item.serverId ? { serverId: item.serverId } : {}),
+        });
     });
   }
   // Going back to a show or season already on the way here restores it as it was left.

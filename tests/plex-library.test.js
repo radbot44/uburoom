@@ -863,3 +863,36 @@ test('a failed availability check rejects its callers without crashing the serve
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(plex.fileCache.size, 0, 'failed checks are not cached');
 });
+
+test('episode details step to the episodes either side across seasons, leaving Specials out', async t => {
+  const episode = (id, season, index, title) => ({
+    ratingKey: String(id),
+    type: 'episode',
+    title,
+    index,
+    parentIndex: season,
+    parentRatingKey: String(900 + season),
+    grandparentRatingKey: '900',
+    grandparentTitle: 'Show',
+  });
+  // Out of order on purpose: the steps follow season, then episode number.
+  const leaves = [
+    episode(23, 2, 1, 'Two one'),
+    episode(10, 0, 1, 'A special'),
+    episode(12, 1, 2, 'One two'),
+    episode(11, 1, 1, 'One one'),
+  ];
+  const plex = fixture(url => {
+    if (url.pathname === '/library/metadata/900/allLeaves') return json({ Metadata: leaves });
+    const id = url.pathname.split('/').pop();
+    return json({ Metadata: leaves.filter(item => item.ratingKey === id) });
+  });
+  t.after(() => plex.close());
+  const last = await plex.details('12');
+  assert.deepEqual(last.previous, { id: '11', title: 'One one', index: 1, seasonIndex: 1 });
+  assert.deepEqual(last.next, { id: '23', title: 'Two one', index: 1, seasonIndex: 2 }, 'into the next season');
+  const first = await plex.details('11');
+  assert.equal(first.previous, undefined, 'a Special is not the episode before the first');
+  assert.equal(first.next.id, '12');
+  assert.equal((await plex.details('23')).next, undefined);
+});

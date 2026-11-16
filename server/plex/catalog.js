@@ -570,6 +570,8 @@ class PlexCatalog {
       ratings,
       mediaInfo,
       otherEditions,
+      // An episode page steps to the episodes either side; a failed lookup only leaves the steps out.
+      ...(source.type === 'episode' ? await this.episodeNeighbors(source).catch(() => ({})) : {}),
     };
   }
   async artwork(id, kind = 'poster', type) {
@@ -714,6 +716,11 @@ class PlexCatalog {
       .slice(0, 200);
   }
   async neighbors(item) {
+    const { previous, next } = await this.episodeNeighbors(item);
+    return { previousId: previous?.id, nextId: next?.id };
+  }
+  /** The episodes before and after one in its show (Specials left out): id, title and where each sits. */
+  async episodeNeighbors(item) {
     if (item.type !== 'episode' || !/^\d+$/.test(String(item.grandparentRatingKey || ''))) return {};
     const data = await this.plex.catalog(`/library/metadata/${item.grandparentRatingKey}/allLeaves`);
     const episodes = (data.Metadata || [])
@@ -726,10 +733,14 @@ class PlexCatalog {
       .sort((a, b) => (a.parentIndex || 0) - (b.parentIndex || 0) || (a.index || 0) - (b.index || 0));
     const index = episodes.findIndex(x => String(x.ratingKey) === String(item.ratingKey));
     if (index < 0) return {};
-    return {
-      previousId: episodes[index - 1] && String(episodes[index - 1].ratingKey),
-      nextId: episodes[index + 1] && String(episodes[index + 1].ratingKey),
-    };
+    const brief = x =>
+      x && {
+        id: String(x.ratingKey),
+        title: String(x.title || '').slice(0, 200) || 'Episode',
+        ...(Number.isInteger(x.index) ? { index: x.index } : {}),
+        ...(Number.isInteger(x.parentIndex) ? { seasonIndex: x.parentIndex } : {}),
+      };
+    return { previous: brief(episodes[index - 1]), next: brief(episodes[index + 1]) };
   }
   async nextEpisodeOffer(episodeMediaId) {
     try {

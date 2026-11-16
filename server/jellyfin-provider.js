@@ -457,6 +457,8 @@ class Jellyfin {
       ratings,
       mediaInfo: this.mediaInfo(x.MediaSources?.[0]),
       otherEditions: [],
+      // An episode page steps to the episodes either side; a failed lookup only leaves the steps out.
+      ...(x.Type === 'Episode' ? await this.episodeNeighbors(x).catch(() => ({})) : {}),
     };
   }
   async playableItem(id) {
@@ -529,16 +531,25 @@ class Jellyfin {
     );
   }
   async neighbors(x) {
+    const { previous, next } = await this.episodeNeighbors(x);
+    return { previousId: previous?.id, nextId: next?.id };
+  }
+  /** The episodes before and after one in its series (Specials left out): id, title and where each sits. */
+  async episodeNeighbors(x) {
     if (x.Type !== 'Episode' || !GUID.test(x.SeriesId || '')) return {};
     const episodes = (await this.episodes(x.SeriesId, { fields: '', enableImages: false })).filter(
       episode => GUID.test(episode?.Id || '') && Number(episode.ParentIndexNumber) !== 0,
     );
     const index = episodes.findIndex(episode => episode.Id === x.Id);
     if (index < 0) return {};
-    return {
-      previousId: episodes[index - 1]?.Id.toLowerCase(),
-      nextId: episodes[index + 1]?.Id.toLowerCase(),
-    };
+    const brief = episode =>
+      episode && {
+        id: episode.Id.toLowerCase(),
+        title: text(episode.Name) || 'Episode',
+        ...(Number.isInteger(episode.IndexNumber) ? { index: episode.IndexNumber } : {}),
+        ...(Number.isInteger(episode.ParentIndexNumber) ? { seasonIndex: episode.ParentIndexNumber } : {}),
+      };
+    return { previous: brief(episodes[index - 1]), next: brief(episodes[index + 1]) };
   }
   async artwork(id, kind = 'poster') {
     const widths = { poster: 300, landscape: 400, backdrop: 1280, logo: 720 };

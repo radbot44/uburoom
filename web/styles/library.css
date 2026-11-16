@@ -321,12 +321,31 @@
   }
   .library-detail-parent {
     display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-8);
+    margin: 0 0 var(--space-4);
+  }
+  .library-detail-parent-links {
+    display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-6);
-    margin: 0 0 var(--space-4);
+    min-width: 0;
+    margin: 0;
     font-size: var(--font-size-14);
     color: var(--muted);
+  }
+  /* Previous and next episode: the header's navigation buttons, at the end of the show and season line. */
+  .library-episode-steps {
+    display: flex;
+    flex: none;
+    gap: var(--space-6);
+    margin-left: auto;
+  }
+  .library-episode-step {
+    font-size: var(--font-size-14);
+    white-space: nowrap;
   }
   .library-detail-parent-link {
     background: none;
