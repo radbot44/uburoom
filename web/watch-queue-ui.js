@@ -848,15 +848,33 @@ function mount(
     } catch {
       if (!signal.aborted) {
         imageRequests.delete(key);
-        img.parentNode?.setAttribute('title', 'Artwork unavailable');
+        // A poster that opens Media keeps saying so.
+        if (!img.parentNode?.classList.contains('queue-art-link'))
+          img.parentNode?.setAttribute('title', 'Artwork unavailable');
         img.remove();
       }
     }
   }
 
+  // Opens a queued video's page in Media.
+  function openInMedia(item) {
+    openLibraryItem({
+      id: item.mediaId || item.id,
+      type: item.type || 'movie',
+      title: item.title,
+      ...(item.serverId ? { serverId: item.serverId } : {}),
+    });
+  }
+
   function art(parent, item) {
     node('div', parent, undefined, 'queue-row-backdrop').setAttribute('aria-hidden', 'true');
     const box = node('div', parent, undefined, 'queue-art');
+    // The poster is a pointer shortcut to the title's link, which stays the keyboard and screen reader route.
+    if (openLibraryItem && (item.mediaId || item.id)) {
+      box.classList.add('queue-art-link');
+      box.title = 'View in library: ' + item.title;
+      box.addEventListener('click', () => openInMedia(item));
+    }
     box.append(uburoomIcons.icon(doc, item.type === 'episode' ? 'tv' : 'film'));
     if (
       !artwork ||
@@ -909,14 +927,7 @@ function mount(
     if (target.tagName === 'BUTTON') {
       target.type = 'button';
       target.title = 'View in library: ' + item.title;
-      target.addEventListener('click', () =>
-        openLibraryItem({
-          id: targetId,
-          type: item.type || 'movie',
-          title: item.title,
-          ...(item.serverId ? { serverId: item.serverId } : {}),
-        }),
-      );
+      target.addEventListener('click', () => openInMedia(item));
     }
     const subtitle = formatSubtitle(item);
     if (subtitle) node('p', parent, subtitle, 'hint queue-entry-subtitle');

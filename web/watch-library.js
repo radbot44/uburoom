@@ -1612,10 +1612,10 @@ function mount(
           (entry.kind === target.type && entry.detail?.id === target.id) ||
           (target.type === 'season' && entry.onlySeason?.id === target.id),
       );
-    if (entry) navigateCrumb(entry);
+    if (entry) returnTo(entry);
     else void openItem(target);
   }
-  function navigateCrumb(entry) {
+  function returnTo(entry) {
     const index = trail.indexOf(entry);
     if (index < 0) return;
     prepareNavigation();

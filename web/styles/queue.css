@@ -182,6 +182,9 @@
     aspect-ratio: 2/3;
     color: var(--muted);
   }
+  .queue-art-link {
+    cursor: pointer;
+  }
   .queue-content .queue-art > svg {
     width: 32px;
     height: 32px;
