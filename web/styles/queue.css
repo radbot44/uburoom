@@ -556,16 +556,19 @@
     background: var(--secondary);
   }
   /* Pending suggestions between Now Playing and Upcoming: one row collapsed, queue-style rows expanded. */
-  /* One framed group: the toggle is its header and the expanded rows sit inside the frame. */
+  /* One plain grey group: the toggle is its header and the expanded rows sit inside it. */
   .queue-suggestions {
     flex: none;
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
     padding: var(--space-4);
-    border: 1px solid color-mix(in srgb, var(--accent-text) 35%, var(--border));
     border-radius: var(--radius-12);
-    background: color-mix(in srgb, var(--accent-text) 5%, var(--elevated));
+    background: var(--elevated);
+  }
+  /* Light-theme rows are elevated surfaces themselves, so inside the grey group they sit on the card colour. */
+  :root[data-theme='light'] .queue-suggestions .queue-entry {
+    background: var(--card);
   }
   .queue-suggestions[hidden],
   .queue-suggestions-list[hidden] {
