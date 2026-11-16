@@ -1030,6 +1030,12 @@
     opacity: 0;
     visibility: hidden;
   }
+  /* Already fetched: the logo and backdrop simply show. */
+  .library-detail-logo.instant,
+  .library-detail-backdrop.instant,
+  .library-detail-copy h3:has(> .library-detail-logo.instant) > .library-detail-title {
+    transition: none;
+  }
   @media (prefers-reduced-motion: reduce) {
     .library-detail-logo,
     .library-detail-copy h3:has(> .library-detail-logo) > .library-detail-title {

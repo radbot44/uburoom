@@ -810,8 +810,12 @@ function mount(
       img.parentElement?.classList.add('loaded');
     };
     if (img.src) box.classList.toggle('loaded', img.complete && img.naturalWidth > 0);
-    else if (images.has(key)) img.src = images.get(key);
-    else if (PRIORITY_ART.includes(kind))
+    else if (images.has(key)) {
+      img.src = images.get(key);
+      // A details picture already fetched (a prefetch, or the page's first render) shows at once: no text
+      // title first and no fade. Only one that arrives while the page is open fades in.
+      if (PRIORITY_ART.includes(kind)) box.classList.add('loaded', 'instant');
+    } else if (PRIORITY_ART.includes(kind))
       loadImage(item.id, kind, item.type)
         .then(url => {
           if (url && img.isConnected && !img.src) img.src = url;
