@@ -157,3 +157,10 @@ Checks:
 - Fixes: `act.pressUntil(selector, done)` in `scripts/lib/ui-fixture.js` for presses safe to repeat; waits for the created room's title before browsing; Back to top waited for instead of read once; 45 s for the reopened room to reach 0:17.
 - `node scripts/smoke.js --lanes`, ten consecutive runs: 10 of 10 passed in Chrome and Firefox, 150-171 s each (sequential about 290 s). Two lanes are now the default; `--sequential` remains.
 
+## 2026-11-16 — Jellyfin provider against a real Jellyfin (C, isolated, at `fe3fc01`)
+
+- `C:\dev\uburoom-demo` profile `jellyfin`: `jellyfin/jellyfin:12.4` (digest `sha256:fea863d0…`) on the internal `jellyfin-only` network (checked: no DNS, no route out), with a generated library (`jellyfin/make-media.js`: one movie; a show with Season 1, Season 2 and a Special; local poster, backdrop and logo). `jellyfin/check.js` completes the setup wizard, creates an API key and Films/Shows libraries with internet metadata and image fetchers off, then drives `server/jellyfin-provider.js` from the live checkout.
+- 8/8: libraries through the provider's authorization header; browsing; details naming their library via `Items/{id}/Ancestors`; poster, backdrop and logo images; seasons and episodes; episode steps (S01E02: previous S01E01, next S02E01, nothing before S01E01 because the Special is left out); `source()` (30.0 s, h264/aac, next episode known); a ranged read of the stream (HTTP 206) equal to bytes 1000-5999 of the file on disk.
+- Without internet metadata Jellyfin names items from folders and files ("Rehearsal Show - S01E02 - Second"), which the check matches.
+- Not covered: servers before 10.9, subtitles, conversion, room-level play through a Jellyfin item, a browser, owner acceptance.
+
