@@ -226,6 +226,11 @@
   .queue-layout {
     scrollbar-width: none;
   }
+  /* An unavailable title offers no Add to queue or Suggest on its tile or row (a lit bulb still shows that
+     it was suggested). */
+  .library-tile.unavailable :is(.library-queue-add, .library-suggest:not([data-suggested='true'])) {
+    display: none;
+  }
   /* Back to top (to the video) only once Media has scrolled past its top. */
   .library-panel:not(.library-scrolled) .library-top-button {
     display: none;

@@ -83,7 +83,8 @@
     height: var(--watch-control-height);
     display: grid;
     place-items: center;
-    border-radius: var(--radius-round);
+    /* A circle while square, and a pill when the bulb widens to show how many agree. */
+    border-radius: var(--radius-pill);
     background: color-mix(in srgb, var(--card) 88%, transparent);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
@@ -111,8 +112,8 @@
     width: var(--space-20);
     height: var(--space-20);
   }
-  [data-view='cards'] .library-tile:not(.episode) > .library-art > .library-queue-add:hover,
-  [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-queue-add:hover,
+  [data-view='cards'] .library-tile:not(.episode) > .library-art > .library-queue-add:hover:not(:disabled),
+  [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-queue-add:hover:not(:disabled),
   [data-view='cards'] .library-tile:not(.episode) > .library-art > .library-suggest:hover:not(:disabled),
   [data-view='posters'] .library-tile:not(.episode) > .library-art > .library-suggest:hover:not(:disabled) {
     background: var(--primary);
@@ -872,12 +873,12 @@
     width: 26px;
     height: 26px;
   }
-  [data-view='list'] .library-play:hover,
-  [data-view='list'] .library-browse:hover,
-  .library-tile.episode .library-play:hover,
-  .library-row-actions .library-play:hover,
-  .library-row-actions .library-browse:hover,
-  .library-row-actions .library-queue-add:hover,
+  [data-view='list'] .library-play:hover:not(:disabled),
+  [data-view='list'] .library-browse:hover:not(:disabled),
+  .library-tile.episode .library-play:hover:not(:disabled),
+  .library-row-actions .library-play:hover:not(:disabled),
+  .library-row-actions .library-browse:hover:not(:disabled),
+  .library-row-actions .library-queue-add:hover:not(:disabled),
   .library-row-actions .library-suggest:hover:not(:disabled) {
     background: var(--hover);
     color: var(--text);
