@@ -983,7 +983,19 @@
     margin: 0 0 var(--space-8);
     overflow-wrap: anywhere;
   }
-  /* Title logo: collapsed (but still on screen for the image queue) until it loads, then it replaces the text. */
+  /* Title logo: a heading that has one reserves the logo's full height from the start, its contents at the
+     bottom, so the text title shows there first and the logo replaces it without moving anything below.
+     The logo box is collapsed (but still on screen for the image queue) until it loads. */
+  .library-detail-copy {
+    --library-logo-height: 110px;
+  }
+  .library-detail-copy h3:has(> .library-detail-logo) {
+    min-height: var(--library-logo-height);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    margin-bottom: var(--space-12);
+  }
   .library-detail-logo {
     display: block;
   }
@@ -996,7 +1008,7 @@
     width: auto;
     height: auto;
     max-width: min(100%, 360px);
-    max-height: 110px;
+    max-height: var(--library-logo-height);
     object-fit: contain;
     object-position: left center;
     /* Logos are usually white: a soft shadow keeps them clear of bright backdrops. */
@@ -1005,9 +1017,6 @@
   /* On the pale light theme a white logo needs an outline-like edge as well. */
   :root[data-theme='light'] .library-detail-logo img {
     filter: drop-shadow(0 0 1px var(--black-a75)) drop-shadow(0 2px 6px var(--black-a45));
-  }
-  .library-detail-copy h3:has(> .library-detail-logo.loaded) {
-    margin-bottom: var(--space-12);
   }
   .library-detail-copy h3:has(> .library-detail-logo.loaded) > .library-detail-title {
     display: none;
