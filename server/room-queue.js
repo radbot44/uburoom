@@ -1467,6 +1467,7 @@ class RoomQueue {
       current: currentRow
         ? {
             id: currentRow.id,
+            serverId: currentRow.serverId,
             mediaId: currentRow.mediaId,
             type: currentRow.type,
             title: currentRow.title,
@@ -1481,6 +1482,7 @@ class RoomQueue {
       next: nextRow
         ? {
             id: nextRow.id,
+            serverId: nextRow.serverId,
             mediaId: nextRow.mediaId,
             type: nextRow.type,
             title: nextRow.title,

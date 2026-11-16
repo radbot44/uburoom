@@ -1129,6 +1129,8 @@ test(
     assert.ok(state.queueSummary);
     assert.equal(state.queueSummary.queueLength, 0);
     assert.equal(state.queueSummary.current.mediaId, 'demo');
+    // Opening Now Playing in Media needs its server; without it the request reaches the default provider.
+    assert.equal(state.queueSummary.current.serverId, 'local-demo');
     assert.equal(state.hasNext, false);
 
     // Add 2 items to queue

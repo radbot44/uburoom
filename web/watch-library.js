@@ -1401,7 +1401,9 @@ function mount(
           'library-empty',
         );
     }
-    summary(screen.detail);
+    // A page opened from the queue knows only a title until its details arrive; it shows nothing until then
+    // rather than a bare placeholder that is replaced a moment later.
+    summary(screen.outside && !screen.detailsLoaded ? undefined : screen.detail);
     reusableImages = undefined;
     watchNextPage();
     setBusy(busy);
@@ -1588,6 +1590,7 @@ function mount(
       sort: 'default',
     };
     if (!from.section && (item.serverId || from.server)) screen.server = item.serverId || from.server;
+    if (outside) screen.outside = true;
     if (item.type === 'collection') screen.collection = item.id;
     else if (!playable(item)) screen.parent = item.id;
     pushVisit();
