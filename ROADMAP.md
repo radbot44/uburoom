@@ -20,7 +20,7 @@ A map of priorities and unfinished work. Implementation does not imply live veri
 - Verify admission, revoked credentials, account changes and media authorization across browser and Activity. Configured sponsorship is implemented and enabled by default; it is not personal Plex entitlement. Direct fallback delegation requires an explicit opt-in and a dedicated non-owner account. Granular grants and sponsored reporting remain unfinished.
 - Audit source, publication history and ZIP contents for private material and required license/source obligations. Obtain explicit publication approval.
 
-Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and [SPEC.md](SPEC.md). UI decisions remain governed by the [design guide](docs/design-guide.md). Neither a roadmap entry nor a passing test authorizes production changes, provider experiments or publication.
+Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and [SPEC.md](SPEC.md). UI decisions are recorded in the [design guide](docs/design-guide.md) and [approved screen behavior](docs/ui-behavior.md). Neither a roadmap entry nor a passing test authorizes production changes, provider experiments or publication.
 
 ### Verification routing for M1
 
@@ -48,45 +48,27 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 
 ### M1-P4 — Plex viewing experience
 
-**Status:** Decoupled reporting architecture, shared-producer safety (preventing viewer teardowns from terminating pooled HLS transcode slots), activity-only default with explicit per-user personal watch-state opt-in, sponsored viewer isolation, chapter markers/intro-credit skip navigation, library watch progress with room-priority resume actions, multi-edition separation, and details drawer sibling edition navigation are implemented and covered by unit/lifecycle tests on main. Version-qualified media identity now round-trips through queue, bookmark, provider and reporting paths, and reporting sends one current desired state under present consent.
+**Implemented:** Decoupled Plex reporting, stable viewing identity across eligible reconnects and stream changes, activity-only default with opt-in personal watch-state writes, sponsored isolation, chapters and edition navigation. Live Tautulli reporting baseline has owner acceptance.
 
-Reporter-owned viewing continuity is now implemented on main: one occurrence survives stream/observation changes and eligible reconnects, while bounded gap updates remain activity-only and terminal events include suspended viewers. The reporting and producer identities stay separate.
-
-**Next:** Baseline live reporting is owner-accepted from watch-night Tautulli history ([testing](docs/testing.md)). Verify continuity against actual PMS session keys and ungrouped Tautulli history under separately authorized tests; deliberate multi-viewer stop/seek, natural-completion and personal watch-state checks remain open. [Address forwarding](docs/plex-reporting-investigation.md) is deferred pending the owner's remote-stream/quality-limit risk decision and authorized live validation.
-
-**Later increments:** Split-file timelines, previews/extras; subtitle search and supported presentation/audio controls. Episode continuation uses P13's queue transition, not a second advance path.
-
-Details: [accounts and reporting](docs/accounts-and-access.md), [reporting investigation](docs/plex-reporting-investigation.md), [playback plan](docs/playback-reliability.md).
+**Open:** Live PMS/Tautulli identity continuity, deliberate multi-viewer stop/seek, natural ending and personal watch-state checks. Address forwarding remains deferred due to remote-stream limit risk. See [accounts and reporting](docs/accounts-and-access.md), [investigation archive](docs/archive/plex-reporting-investigation.md) and [testing](docs/testing.md). Later Plex parity features are separate scope.
 
 ### M1-P12 — Viewer telemetry
 
-**Status:** Passive Room sync-quality indicator, interactive viewer telemetry cards (with live status pills, sync score %, diagnostic explanation, and freshness), and host-gated voluntary buffering notices (`Pause to wait` and `Resume playback`) are implemented and covered by unit/lifecycle tests on main. Each sync report also carries playback health, validated in `shared/sync/quality.mjs`, which alone decides whether a viewer has an issue (error, stalling, low buffer, dropped frames or poor sync, held 15 seconds). Hosts see a warning in the roster and the details on the card; other viewers never receive them. Hosts also see the room's viewer spread (p50 and p95 of the gap between players' self-reported offsets, for the current video) in the roster heading, in their diagnostic report and in the server's kept diagnostics, for comparing with the T2 target; it excludes screen and speaker delay. Not yet checked with real guests.
+**Implemented:** Viewer health cards, host-only issue indicators and buffering notices, plus room offset-spread summaries. One shared sync-quality classifier handles health reporting; no healthy viewer is automatically interrupted.
 
-**Next:** Complete live accuracy and readability acceptance across multi-device viewing parties. Further expansions (timeline viewer indicators, operator resource HUD, optional presence cues) remain optional. None may automatically interrupt healthy viewers.
+**Open:** Multi-device accuracy, readability and guest acceptance. Other monitoring surfaces are optional. See [sync core](docs/sync-core.md) and [testing](docs/testing.md).
 
 ### M1-P13 — Persistent rooms and playback queues
 
-P13-1 through P13-5 are implemented, including single persisted tail previews (`autoQueue.next`), dynamic `continue` mode alongside `following` (In order) and `random` (Shuffle), `pin`/`skip`/`playNow` controls, full-stage ending interstitials, and bounded Plex catalog expansion without per-item file-check waterfalls. P13-6 UI has substantial local coverage; dual-browser rendered checks for the tail-preview/`continue` UI, remaining acceptance and P13-7 real continuity/recovery checks stay open. Durable records preserve room identity, permissions, bookmarks, queue and history; live viewers, consent and streams are never restored. The autoplay countdown prepares the next video (metadata, video check, every viewer's stream) through the normal paths; viewers adopt their prepared stream at the switch, and anything unadopted or cancelled is stopped. Start-time gains are not yet measured against real Plex. Auto-queue generation and automatic playback remain separate.
+**Implemented:** Durable rooms, histories and queues; single tail auto-queue preview, continue/in-order/shuffle, autoplay countdown and ending state. Final snapshots and bounded cleanup preserve retained intent without restoring live viewers or consent.
 
-Details: [rooms and queues](docs/rooms-and-queues.md).
-
-Owner-approved fixes from the [recovery/writer investigation](docs/room-recovery-investigation.md) are implemented in the local working tree: final snapshots preserve progress/intent before teardown, stale countdowns retain cleanup ownership, and bounded preparation cleanup drains before normal provider closure. Fixture, atomic commit/restart and short load checks passed in scope; real continuity, endurance and device gates remain open.
+**Open:** Dual-browser preview/continue UX, real Plex/Activity recovery, retained-state/load and measured transition timing. See [rooms and queues](docs/rooms-and-queues.md), [recovery investigation archive](docs/archive/room-recovery-investigation.md) and [testing](docs/testing.md).
 
 ### M1-P14 — Configuration, administration and account authorization
 
-**Status:** Private `config.yaml` remains the sole configuration authority. The browser Server Settings panel and `/api/operator/settings/saved` cover the complete M1 browser-editable scope (the 19-key allowlist across Rooms, Directory and Transcoding, requiring a manual restart to take effect), while access policy, single-room mode, retention/history deletion, operator IDs, credentials, connections and paths remain YAML-only.
+**Implemented (A/B):** Verified operator-only settings, protected account linking and session revocation, and validated 19-key browser configuration with YAML-only security settings. Local restore/rollback and key-safety rehearsal retain the original encryption key and account identities.
 
-**Complete (A/B):** P14 is bounded to three verified outcomes:
-
-1. **Authorization boundaries:** Verified operator identities alone authorize server settings. Room roles grant no Plex entitlement. Detected provider/item revocation rejects media, captions and subtitle windows and aborts active proxy streams.
-2. **Account safety:** Last usable login, conflicting identity and stale mutation protections are verified. Linking advances account revision; account changes revoke prior sessions, Activity tokens, media grants and viewers. Logout revokes the selected browser and its viewers.
-3. **Configuration and recovery:** All 19 supported keys pass the validated settings API; comments/private values and conflict handling are preserved. A consistent live SQLite snapshot plus YAML and the original key restores accounts, encrypted credentials, durable rooms/queues and settings, including rollback of subsequent fixture changes.
-
-Provider detection retains existing cache/polling bounds; direct Plex delivery depends on PMS enforcement. Real-provider/device integration and live operator recovery remain release checks, with independent container install, backup/rollback, and key-guard rehearsal limits recorded in [testing](docs/testing.md).
-
-Configured sharing for eligible viewers without personal Plex access is an approved policy, not the obsolete implicit-fallback defect. Expired/revoked credentials, provider errors and item restrictions must fail closed; during a provider outage admitted viewers keep their place while new admission fails closed. Editable names and existing host assignment are implemented; native login and owner name-lock rules are deferred. Room invites with guests (M2-P3) and the trusted server tier are implemented and pass isolated checks; real-provider and human acceptance remain.
-
-Details: [accounts and access](docs/accounts-and-access.md).
+**Open:** Independent installation, actual provider/device authorization, operator recovery and release acceptance. See [accounts and access](docs/accounts-and-access.md), [self-hosting](docs/self-hosting.md) and [testing](docs/testing.md).
 
 ## M2 — Future planned capabilities
 
@@ -97,10 +79,10 @@ Select and scope these individually after the relevant foundations are ready. Th
 | M2-P1 | HDR | Implemented: Dolby Vision profile classification (Profile 5 `IPTPQc2` vs Profile 7/8.1 HDR10 base, 8.4 HLG base and 8.2 SDR base), Vulkan `libplacebo` (`apply_dolbyvision=1`) and CPU `zscale` HDR-to-SDR tone mapping, and display-aware Original HDR passthrough with SDR fallback; live HDR/DV media and display acceptance open |
 | M2-P2 | Subtitle-aware Picture-in-Picture | Implemented: Document Picture-in-Picture with stage reparenting, full hover transport bar, and vector/bitmap subtitle canvas layers; native video PiP fallback with client-subtitle burn-in recommendation toast; live browser acceptance open |
 | M2-P3 | Room invites and guests | Single invite per room with Allow guests and the trusted tier is implemented; source review and isolated execution pass. Real-provider (Discord share link) and human acceptance remain open. Invites and guests never imply media or host authority |
-| M2-P4 | Local video library | Built on main (`31cb808`): media reaches rooms through a provider registry with Plex and local folders as providers, addressed by the server id stored with each queue entry and bookmark. `local_media.libraries` lists operator-selected folders shown as cards on Libraries home; everyone admitted may watch them, with direct play, uburoom's own conversion, embedded and sidecar subtitles, and queue/resume across restarts. Flat title-sorted list per library, no artwork, shows or auto-queue sources; no Plex-style metadata platform. Verified in isolated fixtures only; a real library, decoded browser playback and owner acceptance remain open. Jellyfin is built on the same registry (`bde6228`): one server through one configured user, with libraries, shows and seasons, posters, filters, auto-queue sources, direct play and uburoom's own conversion; no Jellyfin transcoding, reporting, collections or personal sign-in. Verified against a fake server only. Emby follows |
+| M2-P4 | Local library and Jellyfin integration | Implemented through the shared provider registry; local folders and Jellyfin browsing, queues and conversions have isolated fixture coverage. Real library/server, decoded browser playback and owner acceptance remain open. Emby support is future scope; see [playback reliability](docs/playback-reliability.md) |
 | M2-P5 | Shared YouTube playback | Use P5 timeline and P11 command transport; account for embed, ad and buffering constraints |
 | M2-P6 | Dialogue Boost / Night Mode | Implemented: personal client-side Web Audio dynamic range compression, speech peaking EQ and 3-choice selector (Normal/Dialogue/Night) in player dialog and sliding menu; live browser acceptance open |
-| M2-P9 | Discord presence and room invites | Implemented: explicit host publishing through Share, live room cards and native scheduled events, including removal/event-cancellation fixes, simpler copy, full invite URLs and poster thumbnails. Follow-up removes stale room/playback checks from publishing and event changes, narrows edit conflicts to event details, permits same-time events and removes invite validation from cancellation. Lobby watch nights are implemented on main: events are stored by uburoom (schema 11, `09befae`), Discord posting is optional, the `events.schedulers` tier (default trusted) controls scheduling, and events follow room visibility and keep their room until they end, along with the shared scheduler, lobby Schedule button and Upcoming list, room header schedule button and waiting-for-host state. Opt-in Activity personal Discord Rich Presence (`discord.rich_presence` config switch, private-room redaction) is implemented (`fe01959`). Real Discord Activity and owner acceptance remain open. See [Discord sharing](docs/self-hosting.md#publish-rooms-to-discord) |
+| M2-P9 | Discord presence and room invites | Host publishing, room/event invitations, watch-night scheduling and opt-in Activity Rich Presence implemented. Real Discord Activity and owner acceptance remain open; see [Discord sharing](docs/self-hosting.md#publish-rooms-to-discord) |
 | M2-P10 | Native client integration (`plezy-uburoom`) | Companion Flutter/`libmpv` client using authenticated `/watch-socket` sync on the typed room protocol (version 2), expiring handoff bearer tokens, and `delivery=local` for downloaded Plex files without upstream transcode allocation |
 
 Further directions: managed/project-hosted rooms and Live TV/DVR. Each needs a separate feasibility and authorization scope.
@@ -110,6 +92,6 @@ Further directions: managed/project-hosted rooms and Live TV/DVR. Each needs a s
 - **This roadmap:** priorities, phase status, remaining outcomes and dependencies. Update the affected row after material work; delete superseded status.
 - **[Testing](docs/testing.md):** evidence, failures and open verification gates. Keep dated results and test counts out of this roadmap.
 - **[Playback & delivery](docs/playback-reliability.md), [sync core](docs/sync-core.md), [rooms](docs/rooms-and-queues.md), [accounts](docs/accounts-and-access.md):** detailed requirements and implementation contracts.
-- **[Design](docs/design-guide.md), [development](docs/development.md), [self-hosting](docs/self-hosting.md), [Docker](docs/docker.md), [upgrading](docs/upgrading.md), [third-party review](docs/third-party.md):** UI decisions, commands, operator procedures and licensing.
+- **[Design](docs/design-guide.md), [screen behavior](docs/ui-behavior.md), [development](docs/development.md), [self-hosting](docs/self-hosting.md), [Docker](docs/docker.md), [upgrading](docs/upgrading.md), [third-party review](docs/third-party.md):** UI decisions, commands, operator procedures and licensing.
 
 Do not append work diaries, UI dimensions, commit narratives, repeated disclaimers or completed test reports here. Preserve substantive evidence in its owning document or history. Private suggestion audits stay in the ignored personal queue.
