@@ -1,8 +1,10 @@
 /* Isolated fixture server and on-screen page helpers for rendered UI checks. No .env or real providers. */
 'use strict';
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { createApp } = require('../../server/app');
+const { findOnPath } = require('../../server/media-tools');
 const { accountFixture } = require('../account-fixture');
 
 const root = path.resolve(__dirname, '../..');
@@ -45,7 +47,11 @@ function fixtureLibrary() {
  * Start an isolated demo server on 127.0.0.1 with fixture accounts and library.
  * Uses the worktree's development certificate; never reads private configuration.
  */
-async function startFixtureServer() {
+/**
+ * @param {{localLibrary?: boolean}} [options] `localLibrary` adds a local "Film" library (id `film`) holding one
+ *   copy of the demo video, beside the fake Plex; it needs FFmpeg and FFprobe on PATH.
+ */
+async function startFixtureServer({ localLibrary = false } = {}) {
   const fixture = accountFixture();
   const subjects = { host: '100000000000000001', guest: '100000000000000002', guest2: '100000000000000003' };
   const config = {
@@ -94,11 +100,32 @@ async function startFixtureServer() {
     } else return fixture.fetch(input, options);
     const start = Number(url.searchParams.get('X-Plex-Container-Start') || 0),
       size = Number(url.searchParams.get('X-Plex-Container-Size') || 120);
-    return new Response(
-      JSON.stringify({ MediaContainer: { Metadata: rows.slice(start, start + size), totalSize: rows.length } }),
-    );
+    // Real Plex names each item's library; Media shows it as the current library.
+    const page = rows
+      .slice(start, start + size)
+      .map(item => ({ ...item, librarySectionID: item.type === 'movie' ? 1 : item.type === 'collection' ? 1 : 2 }));
+    return new Response(JSON.stringify({ MediaContainer: { Metadata: page, totalSize: rows.length } }));
   };
+  let localFolder;
+  if (localLibrary) {
+    config.ffmpegPath = findOnPath('ffmpeg');
+    config.ffprobePath = findOnPath('ffprobe');
+    if (!config.ffmpegPath || !config.ffprobePath)
+      throw new Error(
+        'The local library fixture needs FFmpeg and FFprobe on PATH; without them this check cannot pass.',
+      );
+    localFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-fixture-film-'));
+    fs.copyFileSync(path.join(root, 'assets/demo/sync-test.mp4'), path.join(localFolder, 'Local Film.mp4'));
+    config.localMedia = { libraries: [{ id: 'film', name: 'Film', path: localFolder }] };
+  }
   const app = createApp(config, { plexFetch, oauthFetch: fixture.discordFetch, plexDemo: fixture });
+  if (localFolder) {
+    const close = app.close.bind(app);
+    app.close = async () => {
+      await close();
+      fs.rmSync(localFolder, { recursive: true, force: true });
+    };
+  }
   app.access.connect({
     isMember: () => true,
     refresh: async () => true,

@@ -1,5 +1,5 @@
 /* The browser smoke runners, one after another in Chrome and Firefox: the UI check before a deploy.
-   Usage: npm run smoke [-- --browsers=chrome,firefox]
+   Usage: npm run smoke [-- --browsers=chrome,firefox] [-- --lanes]
    A full pass on committed code is recorded in .git/uburoom-smoke-pass.json by its git tree, so a deploy of
    that same code can skip running them again. */
 'use strict';
@@ -11,6 +11,11 @@ const { spawn, execFileSync } = require('node:child_process');
 const RUNNERS = ['room-ui-smoke.js', 'queue-controls-smoke.js', 'media-controls-smoke.js', 'plex-library-smoke.js'];
 
 const browsers = process.argv.find(arg => arg.startsWith('--browsers='));
+// One runner at a time with live output, unless --lanes: the room UI runner beside the other three in turn,
+// each with its own fixture server, about 170 s instead of about 290 s. Lanes are opt-in because the runners
+// still have timing-sensitive steps that fail under that load (measured 2026-11-16: 1 of 4 two-lane runs;
+// all four at once, 3 of 4).
+const lanes = process.argv.includes('--lanes');
 const root = path.resolve(__dirname, '..');
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true }).trim();
 
@@ -36,31 +41,54 @@ function testedTree() {
   }
 }
 
-function run(script) {
+// Side by side, a runner's output is held and printed whole when it ends, so runners do not interleave.
+function run(script, live) {
   return new Promise(resolve => {
     const started = Date.now();
     const child = spawn(process.execPath, [path.join(__dirname, script), ...(browsers ? [browsers] : [])], {
-      stdio: ['ignore', 'inherit', 'inherit'],
+      stdio: ['ignore', live ? 'inherit' : 'pipe', live ? 'inherit' : 'pipe'],
       windowsHide: true,
     });
-    child.on('exit', code => resolve({ script, code, seconds: Math.round((Date.now() - started) / 1000) }));
+    const output = [];
+    child.stdout?.on('data', chunk => output.push(chunk));
+    child.stderr?.on('data', chunk => output.push(chunk));
+    let finished = false;
+    const done = code => {
+      if (finished) return;
+      finished = true;
+      if (!live) process.stdout.write('\n== ' + script + '\n' + Buffer.concat(output).toString());
+      resolve({ script, code, seconds: Math.round((Date.now() - started) / 1000) });
+    };
+    child.on('close', done);
     child.on('error', error => {
-      console.error(error);
-      resolve({ script, code: 1, seconds: Math.round((Date.now() - started) / 1000) });
+      output.push(Buffer.from(String(error) + '\n'));
+      done(1);
     });
   });
 }
 
 (async () => {
   const tree = testedTree();
-  const results = [];
-  for (const script of RUNNERS) {
-    console.log('\n== ' + script);
-    results.push(await run(script));
+  const started = Date.now();
+  let results = [];
+  if (!lanes)
+    for (const script of RUNNERS) {
+      console.log('\n== ' + script);
+      results.push(await run(script, true));
+    }
+  else {
+    const [longest, ...rest] = RUNNERS;
+    const lane = async scripts => {
+      const out = [];
+      for (const script of scripts) out.push(await run(script, false));
+      return out;
+    };
+    results = (await Promise.all([lane([longest]), lane(rest)])).flat();
   }
   console.log('\nSmoke summary:');
   for (const { script, code, seconds } of results)
     console.log('  ' + (code === 0 ? 'pass' : 'FAIL') + '  ' + script + '  (' + seconds + ' s)');
+  console.log('  total ' + Math.round((Date.now() - started) / 1000) + ' s');
   const passed = results.every(result => result.code === 0);
   process.exitCode = passed ? 0 : 1;
   // Checked again after the run: an edit made while it ran means the pass is not for this tree.

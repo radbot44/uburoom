@@ -78,13 +78,13 @@ function validateItem(raw) {
   };
 }
 
-function rowToEntry(row) {
-  if (!row) return null;
+/**
+ * The video an entry names: which server and item, and how to show it. Every entry a viewer receives (queue
+ * and history pages, and the summary's current, next and last-history entries) carries all of these, so
+ * opening one from anywhere reaches the same server.
+ */
+function mediaFields(row) {
   return {
-    id: row.id,
-    roomId: row.roomId,
-    state: row.state,
-    rank: row.rank,
     serverId: row.serverId,
     mediaId: row.mediaId,
     type: row.type,
@@ -93,6 +93,17 @@ function rowToEntry(row) {
     grandparentTitle: row.grandparentTitle || null,
     thumb: row.thumb || null,
     duration: row.duration,
+  };
+}
+
+function rowToEntry(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    roomId: row.roomId,
+    state: row.state,
+    rank: row.rank,
+    ...mediaFields(row),
     position: row.position,
     outcome: row.outcome || null,
     provenance: row.provenance || null,
@@ -1467,42 +1478,16 @@ class RoomQueue {
       current: currentRow
         ? {
             id: currentRow.id,
-            serverId: currentRow.serverId,
-            mediaId: currentRow.mediaId,
-            type: currentRow.type,
-            title: currentRow.title,
-            parentTitle: currentRow.parentTitle || null,
-            grandparentTitle: currentRow.grandparentTitle || null,
-            thumb: currentRow.thumb || null,
-            duration: currentRow.duration,
+            ...mediaFields(currentRow),
             position: currentRow.position,
             startedAt: currentRow.startedAt || null,
           }
         : null,
-      next: nextRow
-        ? {
-            id: nextRow.id,
-            serverId: nextRow.serverId,
-            mediaId: nextRow.mediaId,
-            type: nextRow.type,
-            title: nextRow.title,
-            parentTitle: nextRow.parentTitle || null,
-            grandparentTitle: nextRow.grandparentTitle || null,
-            thumb: nextRow.thumb || null,
-            duration: nextRow.duration,
-          }
-        : null,
+      next: nextRow ? { id: nextRow.id, ...mediaFields(nextRow) } : null,
       lastHistory: lastHistoryRow
         ? {
             id: lastHistoryRow.id,
-            serverId: lastHistoryRow.serverId,
-            mediaId: lastHistoryRow.mediaId,
-            type: lastHistoryRow.type,
-            title: lastHistoryRow.title,
-            parentTitle: lastHistoryRow.parentTitle || null,
-            grandparentTitle: lastHistoryRow.grandparentTitle || null,
-            thumb: lastHistoryRow.thumb || null,
-            duration: lastHistoryRow.duration,
+            ...mediaFields(lastHistoryRow),
             position: lastHistoryRow.position,
             outcome: lastHistoryRow.outcome || null,
             endedAt: lastHistoryRow.endedAt || null,

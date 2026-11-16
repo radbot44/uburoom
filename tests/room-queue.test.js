@@ -840,3 +840,26 @@ test('playAutoNow with skipPrevious: true marks all pending items skipped and ad
   assert.equal(skipped202.outcome, 'skipped');
   assert.equal(skipped203.outcome, 'skipped');
 });
+
+test('summary entries name their video exactly as queue and history entries do', async t => {
+  const f = fixture(t);
+  const room = await f.store.create(f.creator);
+  for (const n of [1, 2, 3]) await f.queue.add(room.id, f.creator, sampleItem(n));
+  await f.queue.next(room.id, f.creator);
+  await f.queue.next(room.id, f.creator, { currentPosition: 1800, outcome: 'completed' });
+  const summary = f.queue.summary(room.id),
+    pending = f.queue.list(room.id).items[0],
+    played = f.queue.history(room.id).items[0];
+  // The fields a viewer needs to open the video: the server above all, which Now Playing and Next once lacked.
+  const video = entry =>
+    Object.fromEntries(
+      ['serverId', 'mediaId', 'type', 'title', 'parentTitle', 'grandparentTitle', 'thumb', 'duration'].map(key => [
+        key,
+        entry[key],
+      ]),
+    );
+  assert.deepEqual(video(summary.next), video(pending));
+  assert.deepEqual(video(summary.lastHistory), video(played));
+  assert.deepEqual(video(summary.current), video(sampleItem(2)));
+  assert.equal(summary.current.serverId, 'plex-server-1');
+});

@@ -232,6 +232,121 @@ async function main() {
       await browser?.close();
       await app.close();
     }
+    await queueAcrossProviders(name);
+  }
+}
+
+/**
+ * A queued video opens in Media from its own server, whatever library is on screen: a local file playing
+ * (Now Playing) opened over TV Shows, and a Plex episode opened over the local library. Each page takes its
+ * own library as current and goes straight from empty to its details, with no title-only placeholder.
+ */
+async function queueAcrossProviders(name) {
+  const { app, config } = await startFixtureServer({ localLibrary: true });
+  let browser;
+  try {
+    browser = await playbackBrowser(name);
+    const page = await openPage(browser, config.publicUrl + '/?demo=host');
+    const run = async expression => {
+      await pause(150);
+      return browser.evaluate(page, expression);
+    };
+    const until = (expression, label, timeout) => browser.until(page, expression, label, timeout);
+    const library = title =>
+      '[...document.querySelectorAll(".library-choice")].find(b=>b.textContent.includes(' +
+      JSON.stringify(title) +
+      ')).click();true';
+    const poster = title =>
+      '[...document.querySelectorAll(".queue-art-link")].find(n=>n.title.includes(' + JSON.stringify(title) + '))';
+    // Every frame from the click until the page settles: hidden, or the heading with its details line.
+    const open = async title => {
+      await run(
+        '{window.__frames=[];const end=performance.now()+1500;(function f(){const o=document.querySelector(".library-overview");' +
+          'window.__frames.push(o.hidden?"hidden":(o.querySelector("h3")?.textContent||"")+"|"+(o.querySelector(".library-meta")?.textContent||""));' +
+          'if(performance.now()<end)requestAnimationFrame(f)})();' +
+          poster(title) +
+          '.click()};true',
+      );
+      await pause(1700);
+      return {
+        frames: [...new Set(JSON.parse(await run('JSON.stringify(window.__frames)')))],
+        heading: await run('document.querySelector(".library-overview:not([hidden]) h3")?.textContent'),
+        current: await run('document.querySelector(".library-choice[aria-current=page]")?.textContent'),
+        error: await run('document.querySelector(".library-error")?.textContent || ""'),
+      };
+    };
+    await browser.viewport(page, 1360, 1000);
+    await until('!document.body.classList.contains("auth-pending") && transport?.ready', 'Login', 30000);
+    await run(byId('create') + '.click();true');
+    await until(isOpen('#room-dialog'), 'Room chooser');
+    await run(byId('room-name') + '.value="Across providers";' + byId('room-create') + '.click();true');
+    // Selecting the new room resets Media to its Libraries home; browse only once that is done.
+    await until(dom.text('#options-title') + '==="Across providers"', 'Room created', 30000);
+    // Libraries home re-renders as the new room settles, and a press on a card being replaced is lost:
+    // press it again until the library has opened.
+    await until(
+      '(()=>{if(' +
+        dom.q('.library-landing') +
+        '.hidden)return true;' +
+        dom.q('.library-home-card[data-section="film"]') +
+        '?.click();return false})()',
+      'Local library opened from Libraries home',
+      30000,
+    );
+    // The local file first, so it becomes Now Playing; then a Plex season.
+    await until(shown('.library-tile .library-title'), 'Local library list', 45000);
+    await run(dom.q('.library-tile .library-title') + '.click();true');
+    await until(shown('.library-detail-actions .library-queue-add'), 'Local file details', 30000);
+    await run(dom.q('.library-detail-actions .library-queue-add') + '.click();true');
+    await until(poster('Local Film') + '!==undefined', 'Local file queued');
+    await run(library('TV Shows'));
+    await until(shown('.library-tile[data-item="100"] .library-title'), 'TV Shows');
+    await run(dom.q('.library-tile[data-item="100"] .library-title') + '.click();true');
+    await until(shown('.library-tile[data-item="111"] .library-title'), 'Seasons');
+    await run(dom.q('.library-tile[data-item="111"] .library-title') + '.click();true');
+    await until(shown('.library-detail-actions [data-queue]'), 'Season details');
+    await run(dom.q('.library-detail-actions [data-queue]') + '.click();true');
+    await until(isOpen('#queue-bulk-dialog'), 'Add season dialog');
+    await run(byId('queue-bulk-submit') + '.click();true');
+    await until(poster('Episode 1') + '!==undefined', 'Season queued');
+    assert.ok(
+      await run(poster('Local Film') + '.closest("[class*=now-playing]")!==null'),
+      'the local file is Now Playing',
+    );
+
+    await run(library('TV Shows'));
+    await until(shown('.library-tile[data-item="100"]'), 'TV Shows on screen');
+    const local = await open('Local Film');
+    assert.equal(local.error, '', 'a local Now Playing opens over a Plex library');
+    assert.equal(local.heading, 'Local Film');
+    assert.equal(local.current, 'Film', 'its own library becomes current');
+    assert.ok(
+      local.frames.every(frame => frame === 'hidden' || !frame.endsWith('|')),
+      'no placeholder frame',
+    );
+
+    await run(library('Film'));
+    await until(shown('.library-tile .library-title'), 'Film on screen');
+    const plex = await open('Episode 1');
+    assert.equal(plex.error, '', 'a Plex episode opens over a local library');
+    assert.equal(plex.heading, 'Episode 1');
+    assert.equal(plex.current, 'TV Shows');
+    assert.ok(
+      plex.frames.every(frame => frame === 'hidden' || !frame.endsWith('|')),
+      'no placeholder frame',
+    );
+    await run(byId('library-back') + '.click();true');
+    await until(
+      shown('.library-tile .library-title') +
+        ' && ' +
+        dom.text('.library-choice[aria-current=page]') +
+        '.includes("Film")',
+      'Back to Film',
+    );
+    console.log(name + ': queued videos open in Media across Plex and a local library');
+  } finally {
+    await browser?.close();
+    await app.close();
   }
 }
 main().catch(error => {
