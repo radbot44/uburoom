@@ -6,6 +6,7 @@ import { pictureLoader } from './watch-library-pictures.js';
 import { libraryChoices } from './watch-library-choices.js';
 import { libraryScroll } from './watch-library-scroll.js';
 import { libraryDetails } from './watch-library-details.js';
+import { libraryShelves } from './watch-library-shelves.js';
 
 /* One safe-DOM library browser for the website, fullscreen drawer and Activity. */
 function homeCards(items = []) {
@@ -761,6 +762,7 @@ function mount(
       const b = button(target, 'Browse ' + item.title, 'right', 'library-browse');
       b.addEventListener('click', open);
     }
+    return card;
   }
   // Under a Continue watching tile: where an episode sits in its show, or how much of a movie is left.
   function resumeLine(item) {
@@ -780,32 +782,33 @@ function mount(
     shelfRoom,
     shelfAt = 0,
     shelfRead;
+  const shelfHost = node('div', null, undefined, 'library-shelves');
+  const librariesTitle = node('h3', null, 'Libraries', 'library-shelf-title');
+  const shelves = libraryShelves({ host: shelfHost, node, button, tile });
+  function renderShelves() {
+    librariesTitle.hidden = !shelves.render([
+      { title: 'Continue watching', items: shelfData?.continueWatching, shape: 'landscape' },
+      { title: 'Recently added', items: shelfData?.recentlyAdded, shape: 'poster' },
+    ]);
+    setBusy(busy);
+  }
   function loadShelves() {
     if (!room || (shelfRoom === room && Date.now() - shelfAt < 60000) || shelfRead) return;
     const version = generation,
       wanted = room;
-    shelfRead = request('library.shelves', roomScope(), roomController?.signal)
+    const read = request('library.shelves', roomScope(), roomController?.signal)
       .then(data => {
         if (version !== generation || wanted !== room) return;
         shelfData = data;
         shelfRoom = wanted;
         shelfAt = Date.now();
-        if (screen?.kind === 'home') renderLanding();
+        if (screen?.kind === 'home') renderShelves();
       })
       .catch(() => {})
       .finally(() => {
-        shelfRead = undefined;
+        if (shelfRead === read) shelfRead = undefined;
       });
-  }
-  function shelf(title, items, shape) {
-    if (!items?.length) return;
-    const section = node('section', landing, undefined, 'library-shelf');
-    section.setAttribute('aria-label', title);
-    node('h3', section, title, 'library-shelf-title');
-    const strip = node('div', section, undefined, 'library-shelf-row ' + shape);
-    // The card styles of the matching library view: wide pictures, or posters.
-    strip.dataset.view = shape === 'landscape' ? 'cards' : 'posters';
-    for (const item of items) tile(item, { parent: strip, shape });
+    shelfRead = read;
   }
   function renderTools() {
     if (!screen) return;
@@ -924,12 +927,9 @@ function mount(
   }
   function renderLanding() {
     landing.replaceChildren();
+    landing.append(shelfHost, librariesTitle);
     loadShelves();
-    if (shelfRoom === room && shelfData) {
-      shelf('Continue watching', shelfData.continueWatching, 'landscape');
-      shelf('Recently added', shelfData.recentlyAdded, 'poster');
-      if (landing.childElementCount) node('h3', landing, 'Libraries', 'library-shelf-title');
-    }
+    renderShelves();
     for (const card of homeCards(sections)) {
       const b = button(landing, card.title, card.icon, 'library-home-card');
       b.dataset.section = card.id;
@@ -953,7 +953,10 @@ function mount(
     clearResults();
     if (screen.kind === 'home') renderLanding();
     // Away from Home its rows hold no tiles: hidden copies would linger behind the page being browsed.
-    else landing.replaceChildren();
+    else {
+      shelves.clear();
+      landing.replaceChildren();
+    }
     if (screen.kind !== 'home' && screen.kind !== 'details') {
       screen.items.forEach(item => tile(item));
       if (!screen.items.length && screen.loading)
@@ -1376,6 +1379,10 @@ function mount(
     clearTimeout(timer);
     roomController?.abort();
     roomController = new AbortController();
+    shelfData = null;
+    shelfRoom = shelfRead = undefined;
+    shelfAt = 0;
+    shelves.clear();
     pictures.reset();
     homes.clear();
     sections = [];
@@ -1448,8 +1455,8 @@ function mount(
     openItem,
     reveal: behavior => scroll.position(behavior),
     refreshSuggestions: syncSuggestions,
-    refreshAdmin: () => {
-      if (screen?.kind === 'home') renderLanding();
+    refreshShelves: () => {
+      if (screen?.kind === 'home') loadShelves();
     },
   };
 }

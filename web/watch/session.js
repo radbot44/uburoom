@@ -57,7 +57,7 @@ export function mount(host, deps) {
     $('open-browser').hidden = !deps.activity || store.identity.config.access?.publicWeb === false;
     if (typeof deps.updateAccountButton === 'function') deps.updateAccountButton();
     deps.roomUI.render();
-    deps.library.refreshAdmin();
+    deps.library.refreshShelves();
   }
   function stopBrowserHandoff(cancel = false) {
     deps.time.clearTimeout(store.identity.browserHandoffTimer);

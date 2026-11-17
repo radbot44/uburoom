@@ -1149,12 +1149,20 @@
     margin-top: var(--space-36);
   }
   /* Media Home rows above the library cards: each spans the grid and scrolls sideways at every width. */
-  .library-landing > .library-shelf,
+  .library-landing > .library-shelves,
   .library-landing > .library-shelf-title {
     grid-column: 1 / -1;
   }
   .library-shelf {
     min-width: 0;
+  }
+  .library-shelves {
+    display: grid;
+    gap: var(--space-14);
+    min-width: 0;
+  }
+  .library-shelves:empty {
+    display: none;
   }
   .library-shelf-title {
     margin: 0 0 var(--space-10);
@@ -1167,9 +1175,67 @@
     overflow-x: auto;
     overscroll-behavior-x: contain;
     padding-bottom: var(--space-8);
-    /* The app's thin, muted native scrollbar, as on its other scrolling lists. */
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--muted) 70%, transparent) transparent;
+    scrollbar-width: none;
+  }
+  .library-shelf-row::-webkit-scrollbar {
+    display: none;
+  }
+  .library-shelf-viewport {
+    position: relative;
+    --shelf-left-fade: 0px;
+    --shelf-right-fade: 0px;
+  }
+  .library-shelf-viewport[data-left='true'] {
+    --shelf-left-fade: var(--space-44);
+  }
+  .library-shelf-viewport[data-right='true'] {
+    --shelf-right-fade: var(--space-44);
+  }
+  .library-shelf-row {
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      var(--text) var(--shelf-left-fade),
+      var(--text) calc(100% - var(--shelf-right-fade)),
+      transparent
+    );
+  }
+  .library-shelf-arrow {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: var(--z-local-5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--space-40);
+    min-height: var(--space-40);
+    padding: var(--space-9) var(--space-6);
+    border: 0;
+    border-radius: var(--radius-11);
+    background: color-mix(in srgb, var(--card) 92%, transparent);
+    color: var(--muted);
+  }
+  .library-shelf-arrow.previous {
+    left: 0;
+  }
+  .library-shelf-arrow.next {
+    right: 0;
+  }
+  .library-shelf-arrow:hover:enabled {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .library-shelf-arrow:disabled {
+    visibility: hidden;
+  }
+  @media (forced-colors: active) {
+    .library-shelf-row {
+      mask-image: none;
+    }
+    .library-shelf-arrow {
+      border: 1px solid ButtonText;
+    }
   }
   .library-shelf-row.landscape > .library-tile {
     flex: 0 0 220px;

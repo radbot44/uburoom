@@ -172,3 +172,10 @@ Checks:
 - Real Jellyfin 12.4 (uburoom-demo): Recently added lists the movie and the show (a new episode shows as its show), 9/9 checks.
 - `node --test` 489/489, lint, typecheck, format; `npm run smoke` 4/4.
 
+## 2026-11-16 — Media Home refresh and shelf navigation (A/B, working tree after `8ac1d2c`)
+
+- The lobby/account publication called `refreshAdmin`, rebuilding all of Home on each resync. Identity publication now requests shelf data only when stale; the shelf view reconciles titles by server and item identity, retaining unchanged DOM and anchoring the visible title when new arrivals precede it. Room changes discard shelf data and reads, and leaving Home disconnects shelf resize observers and releases its tiles.
+- Home rows use hidden scrollbars, queue-style arrow buttons and directional edge fades. Native horizontal scrolling remains available; the focused row also supports Left/Right and Home/End, and arrow scrolling respects reduced motion.
+- B pass: `node scripts/plex-library-smoke.js` in Chrome and Firefox, extended with account publication and stale-data refresh regressions (same nodes, focus and scroll), a new arrival with the same local ID from a second server (distinct tiles, stable visible position), arrow/end-state and keyboard scrolling, and Home tile cleanup. `node scripts/media-controls-smoke.js` passes in both browsers. `node --test tests/media-home.test.js`: 3 passed, 0 failed/skipped. Focused ESLint and Prettier checks, `npm run typecheck` and `git diff --check` pass.
+- A: inspected fixture captures in dark/light at 1360 and 390 px, plus 680 px captures; arrows and fades fit without page overflow. Evidence: `uburoom-evidence/artifacts/{chrome,firefox}-home-shelves-{dark,light}-{1360,390}.png`. Fixture artwork is synthetic. C real-provider/device checks and D owner acceptance not run; no deployment.
+

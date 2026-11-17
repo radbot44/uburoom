@@ -28,6 +28,8 @@ async function main(name) {
     plexToken: 'synthetic-fixture-only',
   };
   let failNext = false;
+  let shelfReads = 0;
+  let newShelfItem = false;
   const artworkReads = [];
   const movies = Array.from({ length: 250 }, (_, i) => ({
     ratingKey: String(i + 1),
@@ -178,6 +180,10 @@ async function main(name) {
           { key: '2', type: 'show', title: 'TV Shows' },
         ],
       };
+    else if (p === '/library/recentlyAdded') {
+      data = { Metadata: movies.slice(0, 20).map((item, index) => ({ ...item, addedAt: 1700000000 - index })) };
+    } else if (p === '/library/onDeck')
+      data = { Metadata: movies.slice(0, 8).map(item => ({ ...item, viewOffset: 1200000 })) };
     else if (p.endsWith('/genre')) data = { Directory: [{ key: '5', title: 'Sci-Fi' }] };
     else if (p.endsWith('/year'))
       data = {
@@ -221,6 +227,19 @@ async function main(name) {
     return new Response(JSON.stringify({ MediaContainer: data }));
   };
   const app = createApp(config, { plexFetch, oauthFetch: fixture.discordFetch, plexDemo: fixture });
+  const readShelves = app.watch.providers.shelves.bind(app.watch.providers);
+  app.watch.providers.shelves = async (...args) => {
+    shelfReads++;
+    const data = await readShelves(...args);
+    if (newShelfItem) {
+      // Two servers can use the same local item ID; retain both as distinct titles.
+      data.recentlyAdded = [
+        { ...data.recentlyAdded[0], serverId: 'second-fixture' },
+        ...data.recentlyAdded.slice(0, 19),
+      ];
+    }
+    return data;
+  };
   app.watch.providers.primary.root.prepare = async id => ({
     ...app.watch.demoMedia,
     id,
@@ -252,6 +271,113 @@ async function main(name) {
     await until(context, 'document.querySelectorAll(".library-home-card").length===5', 'Libraries home');
     // Phone layouts show one section at a time (Room first in a saved room); these checks browse Media.
     await evaluate(context, act.selectSection('media'));
+    await until(
+      context,
+      'document.querySelectorAll(".library-shelf-row.poster .library-tile").length===20',
+      'Recently added',
+    );
+    await evaluate(
+      context,
+      `(()=>{
+      const row=document.querySelector('.library-shelf-row.poster');
+      row.scrollLeft=300;
+      const focus=row.querySelectorAll('.library-title')[3];
+      focus.focus({preventScroll:true});
+      window.shelfCheck={row,focus,left:row.scrollLeft,tile:row.children[3],identities:0};
+      new MutationObserver(()=>window.shelfCheck.identities++).observe(document.getElementById('identity'),{childList:true});
+    })()`,
+    );
+    app.watch.changed(undefined, { lobby: true });
+    await until(context, 'window.shelfCheck.identities>0', 'Account refresh');
+    const stableShelf = `(()=>{const s=window.shelfCheck;return s.row===document.querySelector('.library-shelf-row.poster') && s.tile===s.row.children[3] && Math.abs(s.row.scrollLeft-s.left)<1 && document.activeElement===s.focus})()`;
+    assert.equal(await evaluate(context, stableShelf), true, 'Account refresh preserves shelf nodes, focus and scroll');
+    const reads = shelfReads;
+    await evaluate(context, 'window.shelfClock=Date.now;Date.now=()=>window.shelfClock()+61000');
+    app.watch.changed(undefined, { lobby: true });
+    await until(context, 'window.shelfCheck.identities>1', 'Stale shelf refresh');
+    for (let i = 0; i < 100 && shelfReads === reads; i++) await pause(20);
+    assert.ok(shelfReads > reads, 'Stale shelves fetch fresh data');
+    await pause(200);
+    await evaluate(context, 'Date.now=window.shelfClock');
+    assert.equal(
+      await evaluate(context, stableShelf),
+      true,
+      'Unchanged fetched data preserves tiles, focus and scroll',
+    );
+    await evaluate(
+      context,
+      `window.shelfCheck.anchorLeft=window.shelfCheck.tile.getBoundingClientRect().left;Date.now=()=>window.shelfClock()+122000`,
+    );
+    newShelfItem = true;
+    app.watch.changed(undefined, { lobby: true });
+    await until(
+      context,
+      'window.shelfCheck.row.children[0].dataset.item===window.shelfCheck.row.children[1].dataset.item',
+      'New title from another server',
+    );
+    await evaluate(context, 'Date.now=window.shelfClock');
+    assert.equal(
+      await evaluate(
+        context,
+        `(()=>{const s=window.shelfCheck;return s.row.children.length===20 && s.row.children[4]===s.tile && document.activeElement===s.focus && Math.abs(s.tile.getBoundingClientRect().left-s.anchorLeft)<1})()`,
+      ),
+      true,
+      'New arrivals preserve the visible title, unchanged focus and separate server identities',
+    );
+    await evaluate(
+      context,
+      `(()=>{
+      const row=document.querySelector('.library-shelf-row.poster');
+      row.scrollLeft=0;
+      row.parentNode.querySelector('.next').click();
+    })()`,
+    );
+    await until(context, 'document.querySelector(".library-shelf-row.poster").scrollLeft>300', 'Shelf right arrow');
+    await evaluate(context, 'document.querySelector(".library-shelf-row.poster").scrollLeft=100000');
+    await until(
+      context,
+      'document.querySelector(".library-shelf-row.poster").parentNode.dataset.right==="false"',
+      'Shelf end',
+    );
+    await evaluate(
+      context,
+      'document.querySelector(".library-shelf-row.poster").parentNode.querySelector(".previous").click()',
+    );
+    await until(
+      context,
+      'document.querySelector(".library-shelf-row.poster").parentNode.dataset.right==="true"',
+      'Shelf left arrow',
+    );
+    await evaluate(context, 'document.querySelector(".library-shelf-row.poster").focus()');
+    await browser.key(context, 'Home');
+    await until(context, 'document.querySelector(".library-shelf-row.poster").scrollLeft===0', 'Shelf keyboard Home');
+    await browser.key(context, 'ArrowRight');
+    await until(context, 'document.querySelector(".library-shelf-row.poster").scrollLeft>100', 'Shelf keyboard Right');
+    for (const [theme, width] of [
+      ['dark', 1360],
+      ['light', 1360],
+      ['dark', 390],
+      ['light', 390],
+      ['dark', 680],
+    ]) {
+      await browser.viewport(context, width, 1200);
+      await evaluate(
+        context,
+        `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.getElementById('library-panel').scrollIntoView({block:'start'});document.querySelector('.library-shelf-row.poster').scrollLeft=0`,
+      );
+      await pause(100);
+      await browser.screenshot(context, path.join(EVIDENCE, name + '-home-shelves-' + theme + '-' + width + '.png'));
+      assert.equal(
+        await evaluate(
+          context,
+          `(()=>{const row=document.querySelector('.library-shelf-row.poster');return getComputedStyle(row).scrollbarWidth==='none' && document.documentElement.scrollWidth<=innerWidth+1})()`,
+        ),
+        true,
+        'Shelves hide scrollbars and fit the viewport',
+      );
+    }
+    await browser.viewport(context, 1360, 1200);
+    await evaluate(context, "document.documentElement.dataset.theme='dark'");
     assert.equal(await evaluate(context, '!!document.getElementById("library-select")'), false);
     await until(context, 'location.pathname.startsWith("/room/")', 'room address');
     const roomPath = await evaluate(context, 'location.pathname');
@@ -267,8 +393,13 @@ async function main(name) {
       true,
       'Browser Back at Home stays on the room page',
     );
-    await evaluate(context, 'document.querySelector(".library-home-card[data-tab=library]:first-child").click()');
+    await evaluate(context, 'document.querySelector(".library-home-card[data-tab=library]").click()');
     await until(context, 'document.querySelectorAll(".library-tile").length===48', 'first library page');
+    assert.equal(
+      await evaluate(context, 'document.querySelectorAll(".library-shelf-row .library-tile").length'),
+      0,
+      'Leaving Home releases its tiles',
+    );
     await evaluate(context, 'history.back()');
     await until(context, '!document.querySelector(".library-landing").hidden', 'browser Back to Home');
     await evaluate(context, 'history.forward()');
@@ -826,7 +957,7 @@ async function main(name) {
       ),
       'Home does not retain the old grid height',
     );
-    await evaluate(context, 'document.querySelector(".library-home-card[data-tab=library]:first-child").click()');
+    await evaluate(context, 'document.querySelector(".library-home-card[data-tab=library]").click()');
     await until(context, '!document.querySelector(".library").hidden', 'Return to Movies');
     assert.equal(
       await evaluate(context, 'document.getElementById("library-forward").disabled'),
@@ -861,7 +992,7 @@ async function main(name) {
           'Phone Home cards fit',
         );
         await browser.screenshot(context, path.join(EVIDENCE, name + '-plex-library-home-phone-qa.png'));
-        await evaluate(context, 'document.querySelector(".library-home-card[data-tab=library]:first-child").click()');
+        await evaluate(context, 'document.querySelector(".library-home-card[data-tab=library]").click()');
         await until(context, '!document.querySelector(".library").hidden', 'Phone library restored');
       }
       if (theater && width > 700) {
@@ -913,10 +1044,7 @@ async function main(name) {
     await until(activity, '!!selected && document.querySelectorAll(".library-home-card").length===5', 'Activity home');
     await until(
       activity,
-      act.pressUntil(
-        '.library-home-card[data-tab=library]:first-child',
-        'document.querySelectorAll(".library-tile").length===48',
-      ),
+      act.pressUntil('.library-home-card[data-tab=library]', 'document.querySelectorAll(".library-tile").length===48'),
       'Activity library',
     );
     await evaluate(activity, act.openDrawer() + ';document.getElementById("options-collapse").click()');
@@ -945,7 +1073,7 @@ async function main(name) {
     assert.equal(
       await evaluate(
         activity,
-        'location.pathname==="/" && document.querySelectorAll(".library-tile").length===0 && !document.querySelector(".library-landing").hidden',
+        'location.pathname==="/" && document.querySelectorAll(".library > .library-tile").length===0 && !document.querySelector(".library-landing").hidden',
       ),
       true,
       'Browser history cannot restore the previous room catalog',
