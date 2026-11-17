@@ -820,7 +820,11 @@ function mount(
     if (!room || (shelfRoom === room && Date.now() - shelfAt < 60000) || shelfRead) return;
     const version = generation,
       wanted = room;
-    const read = request('library.shelves', roomScope(), roomController?.signal)
+    // Asked once the page has finished starting: the library can render Libraries home while it is still being
+    // mounted (from the page's first paint), before the connection a request goes through exists.
+    const signal = roomController?.signal;
+    const read = Promise.resolve()
+      .then(() => request('library.shelves', roomScope(), signal))
       .then(data => {
         if (version !== generation || wanted !== room) return;
         shelfData = data;
@@ -952,7 +956,6 @@ function mount(
   function renderLanding() {
     landing.replaceChildren();
     landing.append(shelfHost, librariesTitle);
-    loadShelves();
     renderShelves();
     for (const card of homeCards(sections)) {
       const { item, open } = homeCard(card);
@@ -973,6 +976,8 @@ function mount(
       open.dataset.play = 'demo';
       open.onclick = () => void play(demoItem);
     }
+    // The rows above are fetched last: the library cards never wait on, or fail with, them.
+    loadShelves();
   }
   /** A card's frame and its main button: the icon at the top, the name and server at the bottom. */
   function homeCard(card) {

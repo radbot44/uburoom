@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { playbackBrowser, pause } = require('./lib/playback-browser');
-const { startFixtureServer, openPage, dom, act } = require('./lib/ui-fixture');
+const { startFixtureServer, openPage, navigatePage, dom, act } = require('./lib/ui-fixture');
 
 const { shown, isOpen } = dom;
 const byId = id => 'document.getElementById(' + JSON.stringify(id) + ')';
@@ -277,6 +277,27 @@ async function queueAcrossProviders(name) {
     };
     await browser.viewport(page, 1360, 1000);
     await until('!document.body.classList.contains("auth-pending") && transport?.ready', 'Login', 30000);
+    // Signed in, a reload puts the libraries in the page's first paint, and the library renders Libraries home
+    // while it is still starting: its cards (Plex and local) must survive that and stay once the page takes over.
+    await navigatePage(browser, page, config.publicUrl + '/');
+    // Right after the reload the page script may not have defined `transport` yet.
+    await until(
+      'typeof transport!=="undefined" && !document.body.classList.contains("auth-pending") && transport?.ready',
+      'Login after reload',
+      30000,
+    );
+    await until(
+      'JSON.parse(document.getElementById("watch-bootstrap")?.textContent||"null")?.library?.status===200 && ' +
+        'document.querySelectorAll(".library-home-card").length===3',
+      'Library cards after a signed-in reload',
+      30000,
+    );
+    await pause(1500);
+    assert.equal(
+      await run('document.querySelectorAll(".library-home-card").length'),
+      3,
+      'library cards stay once the page has started',
+    );
     await run(byId('create') + '.click();true');
     await until(isOpen('#room-dialog'), 'Room chooser');
     await run(byId('room-name') + '.value="Across providers";' + byId('room-create') + '.click();true');
