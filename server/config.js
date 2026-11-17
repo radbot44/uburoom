@@ -275,7 +275,7 @@ function normalizeConfig(
         !library ||
         typeof library !== 'object' ||
         Array.isArray(library) ||
-        Object.keys(library).some(key => !['id', 'name', 'paths'].includes(key)) ||
+        Object.keys(library).some(key => !['id', 'name', 'paths', 'parse_names'].includes(key)) ||
         typeof library.id !== 'string' ||
         !/^[a-z][a-z0-9-]{0,31}$/.test(library.id) ||
         typeof library.name !== 'string' ||
@@ -285,11 +285,12 @@ function normalizeConfig(
         !Array.isArray(library.paths) ||
         !library.paths.length ||
         library.paths.length > 16 ||
-        library.paths.some(folder => typeof folder !== 'string' || !folder),
+        library.paths.some(folder => typeof folder !== 'string' || !folder) ||
+        (library.parse_names !== undefined && typeof library.parse_names !== 'boolean'),
     )
   )
     throw new Error(
-      'local_media.libraries requires up to 32 entries with a quoted id (lowercase letters, digits and hyphens, starting with a letter), name and paths (a list of 1-16 folders)',
+      'local_media.libraries requires up to 32 entries with a quoted id (lowercase letters, digits and hyphens, starting with a letter), name and paths (a list of 1-16 folders), and optionally parse_names (true or false)',
     );
   if (new Set(libraries.map(library => library.id)).size !== libraries.length)
     throw new Error('local_media.libraries must not repeat an id');
@@ -306,6 +307,7 @@ function normalizeConfig(
       id: library.id,
       name: library.name.trim(),
       paths: library.paths.map(folder => path.resolve(base, folder)),
+      parseNames: library.parse_names ?? true,
     })),
   };
   // One Jellyfin server, seen through one of its users. Blank url leaves it out.

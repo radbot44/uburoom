@@ -37,6 +37,8 @@ function unavailable(entry) {
     title: entry.title,
   });
 }
+// Like a media server's line under a title: the year and edition once the name says them, otherwise the subfolder.
+const subtitle = entry => [entry.year, entry.edition].filter(Boolean).join(' · ') || entry.folder;
 const seconds = value => (Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : 0);
 const tag = (stream, name) => {
   const tags = stream?.tags || {};
@@ -63,7 +65,7 @@ function decodeText(bytes) {
  * See server/media-provider.js for the contract.
  */
 class LocalMedia {
-  /** @param {{id: string, name: string, paths: string[]}[]} libraries @param {{pipeline: any, logger?: any}} services */
+  /** @param {{id: string, name: string, paths: string[], parseNames?: boolean}[]} libraries @param {{pipeline: any, logger?: any}} services */
   constructor(libraries, { pipeline, logger }) {
     this.libraries = libraries;
     this.pipeline = pipeline;
@@ -89,11 +91,12 @@ class LocalMedia {
       section: entry.library,
       type: 'movie',
       title: entry.title,
-      subtitle: entry.folder,
+      subtitle: subtitle(entry),
+      ...(entry.year ? { year: entry.year } : {}),
       duration: info?.duration || 0,
       available: true,
-      edition: '',
-      sortTitle: entry.title,
+      edition: entry.edition,
+      sortTitle: entry.sortTitle,
       contentRating: '',
       addedAt: 0,
       genres: [],
@@ -202,7 +205,10 @@ class LocalMedia {
     let entries = this.index.list(section);
     if (needle)
       entries = entries.filter(
-        entry => entry.title.toLowerCase().includes(needle) || entry.folder.toLowerCase().includes(needle),
+        entry =>
+          entry.title.toLowerCase().includes(needle) ||
+          entry.folder.toLowerCase().includes(needle) ||
+          (!!entry.year && String(entry.year) === needle),
       );
     if (sort === 'random') {
       if (!/^[a-f0-9]{32}$/.test(seed || '')) throw failure('Invalid shuffle seed');
@@ -412,7 +418,7 @@ class LocalMedia {
     }
     const media = {
       title: entry.title,
-      subtitle: entry.folder,
+      subtitle: subtitle(entry),
       duration: info.duration,
       kind: this.kind,
       type: 'movie',

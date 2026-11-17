@@ -126,10 +126,14 @@ local_media:
   # included), listed together as one library. Keep an id for good: queues and
   # resume positions are recorded under it and a file's place inside its folder,
   # so folders can move but a changed id forgets them. When two folders hold the
-  # same file at the same place, the first listed is used. Example:
+  # same file at the same place, the first listed is used. parse_names (default
+  # true) reads release names as a film's title and year, like Plex:
+  # 65.2023.2160p.BluRay.x265-GROUP.mkv shows as "65" (2023); false shows the file
+  # name. Example:
   #   - id: 'films'
   #     name: 'Films'
   #     paths: ['D:\Media\Films', 'E:\Films']
+  #     parse_names: true
   libraries: []
 
 # Logging behavior

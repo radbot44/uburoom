@@ -41,6 +41,35 @@ test('a library lists every folder it names, and a file keeps its id when its fo
   assert.equal(moved.get(heat.token).path, path.join(second, 'Heat (1995)', 'Heat.mkv'));
 });
 
+test('release names list as films, sorted without their article, unless the library keeps file names', async t => {
+  const films = folder(t, [
+    'The.Matrix.1999.1080p.BluRay.x264-GROUP.mkv',
+    '65.2023.2160p.UHD.BluRay.x265-B0MBARDiERS.mkv',
+    'Heat (1995)/movie.mkv',
+  ]);
+  const index = new LocalIndex([
+    { id: 'film', name: 'Film', paths: [films] },
+    { id: 'raw', name: 'Raw', paths: [films], parseNames: false },
+  ]);
+  await index.refresh();
+  assert.deepEqual(
+    index.list('film').map(entry => [entry.title, entry.year]),
+    [
+      ['65', 2023],
+      ['Heat', 1995],
+      ['The Matrix', 1999],
+    ],
+  );
+  assert.deepEqual(
+    index.list('raw').map(entry => [entry.title, entry.year]),
+    [
+      ['65 2023 2160p UHD BluRay x265-B0MBARDiERS', 0],
+      ['The Matrix 1999 1080p BluRay x264-GROUP', 0],
+      ['movie', 0],
+    ],
+  );
+});
+
 test('a folder that cannot be read leaves the library its other folders', async t => {
   const present = folder(t, ['Alien.mp4']);
   const index = new LocalIndex([{ id: 'film', name: 'Film', paths: [path.join(present, 'missing'), present] }], {
@@ -57,8 +86,18 @@ test('local_media libraries take a list of folders, resolved beside the config, 
   const base = path.resolve(os.tmpdir(), 'uburoom-base');
   const library = paths => ({ local_media: { libraries: [{ id: 'film', name: 'Film', paths }] } });
   assert.deepEqual(normalizeConfig(library(['films', 'more']), { base, discoverTools: false }).localMedia.libraries, [
-    { id: 'film', name: 'Film', paths: [path.join(base, 'films'), path.join(base, 'more')] },
+    { id: 'film', name: 'Film', paths: [path.join(base, 'films'), path.join(base, 'more')], parseNames: true },
   ]);
+  const plain = { local_media: { libraries: [{ id: 'home', name: 'Home', paths: ['home'], parse_names: false }] } };
+  assert.equal(normalizeConfig(plain, { base, discoverTools: false }).localMedia.libraries[0].parseNames, false);
+  assert.throws(
+    () =>
+      normalizeConfig(
+        { local_media: { libraries: [{ id: 'home', name: 'Home', paths: ['home'], parse_names: 'yes' }] } },
+        { base, discoverTools: false },
+      ),
+    /parse_names/,
+  );
   for (const paths of [[], 'films', [''], Array(17).fill('x')])
     assert.throws(() => normalizeConfig(library(paths), { base, discoverTools: false }), /paths/);
   assert.throws(

@@ -159,6 +159,7 @@ Original files play as they are, and files a browser cannot play need FFmpeg and
 | `id` | Short permanent name (lowercase letters, digits and hyphens, starting with a letter). Queue entries and resume positions are recorded under it: the folder may move, but a changed `id` forgets them. |
 | `name` | The card's title. |
 | `paths` | One or more folders (up to 16), shown together as one library. Relative paths resolve beside `config.yaml`. Symbolic links are not followed. A file is known by its place inside its folder, so a folder can move to another drive and keep its queues and resume positions; when two folders hold a file at the same place, the first listed is used. |
+| `parse_names` | `true` (default) reads each name as a film's title, year and edition, the way Plex reads file names: everything after the year (resolution, source, codec, release group) is dropped, so `65.2023.2160p.UHD.BluRay.x265-GROUP.mkv` is *65* (2023) and `Blade Runner 2049 (2017).mkv` is *Blade Runner 2049* (2017). Plex's `{edition-…}` marker sets the edition. A file without a year that is the only video in its folder takes the folder's name, as in `Heat (1995)/movie.mkv`. Nothing is looked up online. `false` shows each file name as it is. |
 
 Local media has no accounts of its own: everyone uburoom admits, including guests in their room, may browse and watch it, and it never becomes another way in. `access.require_plex` keeps its meaning as an entry rule. Viewers name a file only by an opaque token, never a path.
 

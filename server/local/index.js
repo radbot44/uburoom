@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { SharedTask } = require('../operation');
+const { filmName, sortTitle } = require('./names');
 
 const VIDEO = new Set(['.mkv', '.mp4', '.m4v', '.webm', '.mov', '.avi', '.ts', '.m2ts', '.mpg', '.mpeg', '.wmv']);
 /** Sidecar subtitle extensions and the codec each holds. */
@@ -30,6 +31,17 @@ function title(name) {
   const bare = name.replace(/\.[^.]+$/, '');
   return (/\s/.test(bare) ? bare : bare.replace(/[._]+/g, ' ')).trim().slice(0, 200) || name.slice(0, 200);
 }
+/**
+ * What a video is called. With `parse_names`, release names read as a film's title, year
+ * and edition (see names.js); otherwise the file name is the title. A name that parses to
+ * nothing keeps its plain title.
+ * @param {string} file @param {string} folder @param {boolean} alone @param {boolean} parse
+ */
+function named(file, folder, alone, parse) {
+  const parsed = parse ? filmName(file, folder, alone) : { title: '' };
+  const shown = parsed.title || title(file);
+  return { title: shown, sortTitle: sortTitle(shown), year: parsed.year || 0, edition: parsed.edition || '' };
+}
 
 /**
  * The videos under the configured library folders, held in memory and rebuilt from
@@ -37,10 +49,14 @@ function title(name) {
  * may list several folders: a file is known by its place inside its folder, so a
  * folder can move to another drive and keep its queues and resume positions, and
  * when two folders hold a file at the same place the first listed is used.
- * @typedef {{token: string, library: string, relative: string, path: string, title: string, folder: string}} LocalEntry
+ * @typedef {{token: string, library: string, relative: string, path: string, title: string, sortTitle: string,
+ *   year: number, edition: string, folder: string}} LocalEntry
  */
 class LocalIndex {
-  /** @param {{id: string, name: string, paths: string[]}[]} libraries @param {{logger?: any, now?: () => number}} [options] */
+  /**
+   * @param {{id: string, name: string, paths: string[], parseNames?: boolean}[]} libraries
+   * @param {{logger?: any, now?: () => number}} [options]
+   */
   constructor(libraries, { logger, now = Date.now } = {}) {
     this.libraries = libraries;
     this.logger = logger;
@@ -92,13 +108,17 @@ class LocalIndex {
           continue;
         }
         const folders = [];
+        const isVideo = row => row.isFile() && !row.isSymbolicLink() && VIDEO.has(path.extname(row.name).toLowerCase());
+        // A folder holding one video may name it: `Heat (1995)/movie.mkv`.
+        const alone = rows.filter(isVideo).length === 1,
+          own = depth ? path.basename(directory) : '';
         for (const row of rows) {
           if (row.name.startsWith('.') || row.isSymbolicLink()) continue;
           const inside = relative ? relative + '/' + row.name : row.name;
           if (row.isDirectory()) {
             if (depth < MAX_DEPTH)
               folders.push({ directory: path.join(directory, row.name), relative: inside, depth: depth + 1 });
-          } else if (row.isFile() && VIDEO.has(path.extname(row.name).toLowerCase()) && found.length < MAX_FILES) {
+          } else if (isVideo(row) && found.length < MAX_FILES) {
             const id = token(library.id, inside);
             if (entries.has(id)) {
               repeated++;
@@ -109,7 +129,7 @@ class LocalIndex {
               library: library.id,
               relative: inside,
               path: path.join(directory, row.name),
-              title: title(row.name),
+              ...named(row.name, own, alone, library.parseNames !== false),
               folder: relative.split('/').filter(Boolean).join(' / ').slice(0, 200),
             };
             entries.set(id, entry);
@@ -124,7 +144,10 @@ class LocalIndex {
           'Local',
           `Library "${library.name}" has ${repeated} files at the same place in two folders; the first folder listed is used`,
         );
-      found.sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }));
+      found.sort(
+        (a, b) =>
+          a.sortTitle.localeCompare(b.sortTitle, undefined, { numeric: true, sensitivity: 'base' }) || a.year - b.year,
+      );
       byLibrary.set(library.id, found);
     }
     this.entries = entries;
