@@ -1325,6 +1325,8 @@ function mount(
         values.forEach(x => option(control, x.id, x.title));
         control.disabled = false;
       }
+      // A library with no genres (a local one) offers only the filters it has.
+      genreLabel.hidden = !value.genres.length;
       filterStatus.textContent = '';
       renderTools();
     } catch (error) {

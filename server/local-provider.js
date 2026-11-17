@@ -184,13 +184,14 @@ class LocalMedia {
     };
   }
   async browse(options = {}) {
-    const { section, parent, collection, tab = 'library', q = '', sort, order = 'asc', seed } = options;
+    const { section, parent, collection, tab = 'library', q = '', sort, order = 'asc', seed, year = '' } = options;
     const offset = Number(options.offset || 0);
     if (
       !Number.isSafeInteger(offset) ||
       offset < 0 ||
       typeof q !== 'string' ||
       q.length > 200 ||
+      (year && !/^\d{4}$/.test(year)) ||
       !['asc', 'desc'].includes(order) ||
       !['library', 'collections'].includes(tab)
     )
@@ -204,7 +205,8 @@ class LocalMedia {
         mediaType: 'movie',
         source: 'folder',
         collections: false,
-        filters: false,
+        // Release years come from names, so a library that keeps its file names has nothing to filter by.
+        filters: library.parseNames !== false,
         autoQueue: false,
       }));
       return { items, total: items.length, offset: 0, nextOffset: null };
@@ -221,6 +223,7 @@ class LocalMedia {
           entry.folder.toLowerCase().includes(needle) ||
           (!!entry.year && String(entry.year) === needle),
       );
+    if (year) entries = entries.filter(entry => String(entry.year) === year);
     if (sort === 'random') {
       if (!/^[a-f0-9]{32}$/.test(seed || '')) throw failure('Invalid shuffle seed');
       const rank = entry =>
@@ -231,7 +234,23 @@ class LocalMedia {
         .map(entry => ({ entry, rank: rank(entry) }))
         .sort((a, b) => (a.rank < b.rank ? -1 : 1))
         .map(row => row.entry);
-    } else if (order === 'desc') entries = [...entries].reverse();
+    } else {
+      // The index is in title order; other orders keep it among equals. Unknown values go last either way.
+      const value = {
+        added: entry => entry.addedMs,
+        year: entry => entry.year,
+        // Known once the file has been read for playback or pictures.
+        runtime: entry => this.index.known(entry)?.duration,
+      }[sort];
+      if (value) {
+        const direction = order === 'desc' ? -1 : 1;
+        entries = [...entries].sort((a, b) => {
+          const x = value(a) || 0,
+            y = value(b) || 0;
+          return !x || !y ? (y ? 1 : 0) - (x ? 1 : 0) || 0 : (x - y) * direction;
+        });
+      } else if (order === 'desc') entries = [...entries].reverse();
+    }
     const page = entries.slice(offset, offset + PAGE);
     return {
       items: page.map(entry => this.item(entry)),
@@ -248,8 +267,11 @@ class LocalMedia {
       .slice(0, 20)
       .map(entry => this.item(entry));
   }
-  async filters() {
-    return { genres: [], years: [] };
+  /** A local library is narrowed by release year only: the years its names give, newest first. */
+  async filters(section) {
+    await this.index.refresh();
+    const years = [...new Set(this.index.list(section).map(entry => entry.year))].filter(Boolean).sort((a, b) => b - a);
+    return { genres: [], years: years.map(year => ({ id: String(year), title: String(year) })) };
   }
   async details(id) {
     const entry = await this.entry(id);

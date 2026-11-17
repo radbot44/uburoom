@@ -130,3 +130,22 @@ test('Recently added lists local videos newest first, by when each file arrived'
   );
   assert.ok(recent[0].addedAt >= recent[1].addedAt && recent[0].addedAt > 1e9, 'seconds since 1970, like Plex');
 });
+
+test('a local library sorts by release year, date added and title, and filters by year', async t => {
+  const films = folder(t, ['Heat.1995.mkv', 'Alien.1979.mkv', 'Arrival.2016.mkv', 'Home video.mkv']);
+  const { LocalMedia } = require('../server/local-provider');
+  const local = new LocalMedia([{ id: 'film', name: 'Film', paths: [films] }], { pipeline: {} });
+  t.after(() => local.close());
+  const titles = async query => (await local.browse({ section: 'film', ...query })).items.map(item => item.title);
+  assert.deepEqual(await titles({}), ['Alien', 'Arrival', 'Heat', 'Home video']);
+  // A video without a year goes last whichever way the years run.
+  assert.deepEqual(await titles({ sort: 'year', order: 'asc' }), ['Alien', 'Heat', 'Arrival', 'Home video']);
+  assert.deepEqual(await titles({ sort: 'year', order: 'desc' }), ['Arrival', 'Heat', 'Alien', 'Home video']);
+  assert.deepEqual(await titles({ year: '1995' }), ['Heat']);
+  assert.deepEqual(await local.filters('film'), {
+    genres: [],
+    years: ['2016', '1995', '1979'].map(year => ({ id: year, title: year })),
+  });
+  await assert.rejects(local.browse({ section: 'film', year: 'nineteen' }), /Invalid library query/);
+  assert.equal((await local.browse({})).items[0].filters, true);
+});
