@@ -1,6 +1,7 @@
 'use strict';
 // @ts-check
 const fs = require('node:fs/promises');
+const os = require('node:os');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { classifyHdr, cpuTonemap } = require('../av1');
@@ -12,15 +13,18 @@ const MAX_PICTURE = 3 * 1024 * 1024,
   AT_ONCE = 2,
   TIMEOUT_MS = 30000,
   // Raise when the pictures made from the same source change, so old ones are not served.
-  VERSION = 1;
+  VERSION = 2;
+/** Where frames are looked for, as parts of the running time: early, so a picture never gives the film away. */
+const MOMENTS = [0.05, 0.1, 0.15, 0.2];
 const unavailable = () => Object.assign(new Error('Artwork unavailable'), { status: 404 });
 
 /**
  * Pictures for local videos, made with FFmpeg and kept in a folder of the data directory,
  * never beside the media. A picture file beside the video (`poster.jpg`, `Film-fanart.jpg`)
- * is used when there is one; otherwise a frame from about a fifth of the way in, picked by
- * FFmpeg's thumbnail filter from about a second of video so it is rarely a black or
- * blurred one. HDR frames are tone-mapped. A frame that does not fit the picture's shape
+ * is used when there is one; otherwise a frame from early in the video: FFmpeg's thumbnail
+ * filter picks one from half a second at each of 5%, 10%, 15% and 20% of the running time
+ * (never later, so nothing is spoiled), and the brightest, most detailed of the four is
+ * used, since an early scene is often dark. HDR frames are tone-mapped. A frame that does not fit the picture's shape
  * sits whole on a blurred, darkened copy of itself (owner-approved 2026-11-16). Each
  * picture is made once per source file version, two at a time, and the folder is kept
  * under its size by removing the least recently used.
@@ -112,30 +116,14 @@ class LocalArt {
         `scale=w='min(${width},iw)':h='min(${height},ih)':force_original_aspect_ratio=decrease`,
       ];
     } else {
-      const video = source.info.streams?.find(stream => stream.codec_type === 'video');
-      if (!video?.width || !video?.height) throw unavailable();
-      const hdr = classifyHdr(video);
-      // Dolby Vision Profile 5 has no picture zscale can tone-map; a wrong-colored frame is worse than none.
-      if (hdr.doviP5) throw unavailable();
-      const duration = Number(source.info.duration) || 0;
-      const at = duration > 20 ? duration * 0.2 : duration / 2;
-      // Shrunk first: the thumbnail filter holds its frames in memory, and tone-mapping a small picture is quick.
-      const picture = [
-        'scale=iw*sar:ih',
-        'setsar=1',
-        "scale=w='min(1280,iw)':h=-2",
-        ...cpuTonemap(hdr),
-        'thumbnail=24',
-        'split[a][b]',
-      ].join(',');
+      const frame = await this.frame(entry, source, tools);
+      // A frame that does not fit the picture's shape sits whole on a blurred, lightly darkened copy of itself.
       args = [
-        '-ss',
-        at.toFixed(3),
         '-i',
-        entry.path,
+        frame,
         '-filter_complex',
-        `[0:v:0]${picture};` +
-          `[a]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=30:2,eq=brightness=-0.22:saturation=0.8[back];` +
+        `[0:v:0]split[a][b];` +
+          `[a]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=30:2,eq=brightness=-0.1:saturation=0.85[back];` +
           `[b]scale=${width}:${height}:force_original_aspect_ratio=decrease[front];` +
           `[back][front]overlay=(W-w)/2:(H-h)/2:format=yuv444[out]`,
         '-map',
@@ -177,6 +165,127 @@ class LocalArt {
     );
     return bytes;
   }
+  /**
+   * The video's frame for its pictures, kept in the picture folder so every kind is made from the same one
+   * without reading the video again. @returns {Promise<string>} The frame's file.
+   */
+  async frame(entry, source, tools) {
+    const key = createHash('sha256')
+      .update([VERSION, entry.token, 'frame', entry.path, source.stat.size, source.stat.mtimeMs].join('\n'))
+      .digest('hex')
+      .slice(0, 32);
+    const file = path.join(this.directory, key + '.jpg');
+    if (
+      await fs.stat(file).then(
+        stat => stat.size > 0,
+        () => false,
+      )
+    )
+      return file;
+    let making = this.making.get(key);
+    if (!making) {
+      making = this.choose(entry, source.info, tools).then(async bytes => {
+        await this.save(file, bytes);
+        return bytes;
+      });
+      this.making.set(key, making);
+      making.finally(() => this.making.delete(key)).catch(() => {});
+    }
+    await making;
+    return file;
+  }
+  /**
+   * The best of four early frames, as a JPEG at most 1280 wide: the brightest and most detailed, since an early
+   * scene is often dark. Candidates are written as BMPs to a temporary folder to be scored, then removed.
+   * @returns {Promise<Buffer>}
+   */
+  async choose(entry, info, tools) {
+    const video = info.streams?.find(stream => stream.codec_type === 'video');
+    if (!video?.width || !video?.height) throw unavailable();
+    const hdr = classifyHdr(video);
+    // Dolby Vision Profile 5 has no picture zscale can tone-map; a wrong-colored frame is worse than none.
+    if (hdr.doviP5) throw unavailable();
+    const duration = Number(info.duration) || 0;
+    const moments = duration > 0 ? MOMENTS.map(part => duration * part) : [0];
+    // Shrunk first: the thumbnail filter holds its frames in memory, and tone-mapping a small picture is quick.
+    const prepare = [
+      'scale=iw*sar:ih',
+      'setsar=1',
+      "scale=w='min(1280,iw)':h=-2",
+      ...cpuTonemap(hdr),
+      'trim=end_frame=12',
+      'thumbnail=12',
+      'format=bgr24',
+    ].join(',');
+    const signal = () => AbortSignal.any([AbortSignal.timeout(TIMEOUT_MS), this.closing.signal]);
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'uburoom-frame-'));
+    try {
+      // One moment at a time: decoding four 4K streams at once needs more memory than a picture is worth.
+      for (const [index, at] of moments.entries())
+        await tools
+          .run(
+            tools.ffmpeg,
+            [
+              '-v',
+              'error',
+              '-nostdin',
+              '-ss',
+              at.toFixed(3),
+              '-t',
+              '1',
+              '-i',
+              entry.path,
+              '-map',
+              '0:v:0',
+              '-vf',
+              prepare,
+              '-frames:v',
+              '1',
+              '-f',
+              'image2',
+              path.join(directory, index + '.bmp'),
+            ],
+            signal(),
+            TIMEOUT_MS,
+          )
+          // A moment that cannot be read leaves the others to choose from.
+          .catch(() => {});
+      const scored = [];
+      for (const name of await fs.readdir(directory)) {
+        const file = path.join(directory, name);
+        const score = frameScore(await fs.readFile(file));
+        if (score !== undefined) scored.push({ file, score });
+      }
+      if (!scored.length) throw unavailable();
+      const best = scored.sort((a, b) => b.score - a.score)[0].file;
+      const bytes = await tools.run(
+        tools.ffmpeg,
+        [
+          '-v',
+          'error',
+          '-nostdin',
+          '-i',
+          best,
+          '-c:v',
+          'mjpeg',
+          '-q:v',
+          '2',
+          '-pix_fmt',
+          'yuvj444p',
+          '-f',
+          'image2pipe',
+          'pipe:1',
+        ],
+        signal(),
+        TIMEOUT_MS,
+        MAX_PICTURE,
+      );
+      if (!Buffer.isBuffer(bytes) || !bytes.length) throw unavailable();
+      return bytes;
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+    }
+  }
   async save(cached, bytes) {
     await fs.mkdir(this.directory, { recursive: true });
     const temporary = cached + '.' + randomUUID() + '.tmp';
@@ -205,4 +314,32 @@ class LocalArt {
   }
 }
 
-module.exports = { LocalArt, SIZES };
+/**
+ * How good a frame is to show: its average brightness plus its contrast, from an uncompressed 24-bit BMP, so a
+ * lit scene with something in it beats both a black frame and a flat grey one. Undefined for anything else.
+ * @param {Buffer} bytes
+ */
+function frameScore(bytes) {
+  if (bytes.length < 54 || bytes.toString('latin1', 0, 2) !== 'BM' || bytes.readUInt16LE(28) !== 24) return;
+  const offset = bytes.readUInt32LE(10),
+    width = bytes.readInt32LE(18),
+    height = Math.abs(bytes.readInt32LE(22));
+  const row = Math.ceil((width * 3) / 4) * 4;
+  if (width <= 0 || !height || offset + row * height > bytes.length) return;
+  let sum = 0,
+    squares = 0,
+    count = 0;
+  // Every fourth pixel of every fourth row is plenty to tell a dark frame from a lit one.
+  for (let y = 0; y < height; y += 4)
+    for (let x = 0; x < width; x += 4) {
+      const at = offset + y * row + x * 3;
+      const luma = 0.114 * bytes[at] + 0.587 * bytes[at + 1] + 0.299 * bytes[at + 2];
+      sum += luma;
+      squares += luma * luma;
+      count++;
+    }
+  const mean = sum / count;
+  return mean + Math.sqrt(Math.max(0, squares / count - mean * mean));
+}
+
+module.exports = { LocalArt, SIZES, frameScore };

@@ -7,6 +7,7 @@ const os = require('node:os');
 const { findOnPath } = require('../server/media-tools');
 const { AV1, run } = require('../server/av1');
 const { LocalMedia } = require('../server/local-provider');
+const { frameScore } = require('../server/local/art');
 
 const ffmpeg = findOnPath('ffmpeg'),
   ffprobe = findOnPath('ffprobe');
@@ -54,11 +55,11 @@ test(
     // A wide frame fills the tall poster: it sits whole on a blurred copy of itself.
     assert.deepEqual(jpegSize(poster.bytes), { width: 300, height: 450 });
     assert.deepEqual(jpegSize((await local.artwork(item.id, 'landscape')).bytes), { width: 400, height: 225 });
-    const saved = fs.readdirSync(art);
-    assert.equal(saved.length, 2);
+    // The chosen frame is kept too, so each kind is made from it without reading the video again.
+    assert.equal(fs.readdirSync(art).length, 3);
     // Asked again, the saved picture is served as it is.
     assert.deepEqual((await local.artwork(item.id, 'poster')).bytes, poster.bytes);
-    assert.equal(fs.readdirSync(art).length, 2);
+    assert.equal(fs.readdirSync(art).length, 3);
     assert.deepEqual(fs.readdirSync(path.join(media, 'Clip (2020)')), ['Clip.mp4']);
     await assert.rejects(local.artwork(item.id, 'logo'), /unavailable/);
     await assert.rejects(local.artwork(item.id, 'banner'), /Invalid artwork/);
@@ -104,5 +105,65 @@ test(
     assert.deepEqual(jpegSize((await local.artwork(clip.id, 'landscape')).bytes), { width: 200, height: 100 });
     // `Name-poster` belongs to its own video even at the top of a library; folder names like `poster` do not.
     assert.deepEqual(jpegSize((await local.artwork(other.id, 'poster')).bytes), { width: 200, height: 100 });
+  },
+);
+
+// A 24-bit BMP whose rows are each one grey level.
+function bmp(width, height, level) {
+  const row = Math.ceil((width * 3) / 4) * 4,
+    bytes = Buffer.alloc(54 + row * height);
+  bytes.write('BM', 0, 'latin1');
+  bytes.writeUInt32LE(54, 10);
+  bytes.writeUInt32LE(40, 14);
+  bytes.writeInt32LE(width, 18);
+  bytes.writeInt32LE(height, 22);
+  bytes.writeUInt16LE(1, 26);
+  bytes.writeUInt16LE(24, 28);
+  for (let y = 0; y < height; y++) bytes.fill(level(y), 54 + y * row, 54 + y * row + width * 3);
+  return bytes;
+}
+
+test('a lit frame with something in it scores above a black or a flat one', () => {
+  const black = frameScore(bmp(64, 64, () => 0)),
+    flat = frameScore(bmp(64, 64, () => 90)),
+    lit = frameScore(bmp(64, 64, y => (Math.floor(y / 4) % 2 ? 200 : 40)));
+  assert.ok(black < flat && flat < lit, [black, flat, lit].join(' < '));
+  assert.equal(frameScore(Buffer.from('not a bitmap')), undefined);
+});
+
+test(
+  'an early dark scene loses to a lit one, and no frame comes from past a fifth of the video',
+  { skip: !ffmpeg || !ffprobe },
+  async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-art-dark-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    // 40 seconds: black to 3 s (5% is 2 s), a lit test pattern to 8 s (10% and 15%), then plain dark red to the end.
+    const clip = path.join(root, 'clip.mp4');
+    const parts = [
+      'color=c=black:s=320x180:r=24:d=3',
+      'testsrc2=s=320x180:r=24:d=5',
+      'color=c=0x400000:s=320x180:r=24:d=32',
+    ];
+    await run(
+      ffmpeg,
+      [
+        '-v',
+        'error',
+        ...parts.flatMap(part => ['-f', 'lavfi', '-i', part]),
+        '-filter_complex',
+        '[0][1][2]concat=n=3:v=1:a=0',
+        '-pix_fmt',
+        'yuv420p',
+        clip,
+      ],
+      undefined,
+      60000,
+    );
+    const { local, art } = setup(t, { 'Clip.mp4': clip });
+    const [item] = (await local.browse({ section: 'film' })).items;
+    await local.artwork(item.id, 'landscape');
+    // The frame is the larger of the two files; a busy test pattern is far larger as a JPEG than black or plain red.
+    const sizes = fs.readdirSync(art).map(name => fs.statSync(path.join(art, name)).size);
+    assert.ok(Math.max(...sizes) > 20000, 'saved sizes ' + sizes.join(', '));
   },
 );
