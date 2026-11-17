@@ -48,6 +48,8 @@ A request carries an `id` the client chooses (a non-negative integer, unique amo
 
 `viewerId` is a UUID the client makes for its tab and keeps across reconnects. `join` is the only way into a room: it admits the tab, or renews the tab that is already in. After a reconnect a client joins again with the same `viewerId`.
 
+Each connection holds one joined room/viewer pair. A successful join to another room or viewer ID releases its preceding viewer. Failed or canceled joins remove their provisional viewer, preparation retries and readiness participation; an older abandoned join cannot detach a newer successful attachment of the same viewer. Successfully joined viewers retain the ordinary reconnect grace after an unexpected connection loss.
+
 `preferences` (all optional): `quality`, `delivery` (`auto` or `local`), `subtitles` (`browser`), `codecs`, `volume`, `muted`, `plexReporting`, `plexWatchState`, `subtitlePreference`, `subtitleMode`, `audioPreference`.
 
 A `command` is a room command from the shared command table ([`shared/room-protocol.mjs`](../shared/room-protocol.mjs)), fenced by the room `epoch` the sender last saw and an `expiresAt` in server time.

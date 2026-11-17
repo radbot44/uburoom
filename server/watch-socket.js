@@ -213,7 +213,19 @@ function watchSockets({
 
   // ---- Presence ----------------------------------------------------------
   // The tabs this connection holds, by room: its presence and its close go straight to them.
-  const holds = (client, roomId, viewerId) => client.viewers.set(roomId, viewerId);
+  function holds(client, roomId, viewerId) {
+    for (const [oldRoomId, oldViewerId] of client.viewers) {
+      if (oldRoomId === roomId && oldViewerId === viewerId) continue;
+      release(client, oldRoomId);
+      const room = watch.rooms.get(oldRoomId),
+        viewer = room?.viewers.get(oldViewerId);
+      if (viewer?.watchSocket === client.ws)
+        void watch
+          .leave(room, viewer.actor, oldViewerId, 'superseded')
+          .catch(error => hub.logger.warn('Socket', 'Could not detach superseded viewer: ' + error.message));
+    }
+    client.viewers.set(roomId, viewerId);
+  }
   function release(client, roomId) {
     client.viewers.delete(roomId);
     if (client.room?.roomId === roomId) client.room = undefined;
@@ -359,6 +371,7 @@ function watchSockets({
       run: (ctx, message) => operations.join(ctx, message),
       done(client, message, result) {
         const { roomId, viewerId } = message;
+        const viewerVersion = (client.room?.viewerVersion || 0) + 1;
         holds(client, roomId, viewerId);
         /** @type {Subscription} */
         const subscription = (client.room = {
@@ -366,7 +379,7 @@ function watchSockets({
           viewerId,
           sentRoom: result.value.version,
           stamp: result.value.stamp,
-          viewerVersion: (client.room?.viewerVersion || 0) + 1,
+          viewerVersion,
         });
         const { room: roomLane, viewer: viewerLane, timing } = result.value;
         return {

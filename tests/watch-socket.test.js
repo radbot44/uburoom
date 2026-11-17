@@ -956,3 +956,224 @@ test('stream preparation failure and recovery publish promptly without a resync 
   );
   assert.equal(viewer.streamFailure, undefined);
 });
+
+for (const failure of ['cancel', 'disconnect', 'stream-failure']) {
+  test(
+    `a host-eligible ${failure} during join cannot leave a phantom viewer or stop healthy playback`,
+    tls,
+    async t => {
+      const f = await fixture(t);
+      const hostIdentity = await f.login('host');
+      const host = await f.connect(hostIdentity),
+        healthy = await f.connect(await f.login('guest'));
+      t.after(() => {
+        host.ws.terminate();
+        healthy.ws.terminate();
+      });
+      const roomId = (await host.call('/api/watch/rooms', { keepEmpty: true })).value.id;
+      const root = '/api/watch/rooms/' + roomId,
+        hostId = randomUUID(),
+        healthyId = randomUUID();
+      await host.call(root + '?viewer=' + hostId);
+      await healthy.call(root + '?viewer=' + healthyId);
+      const watch = f.app.watch,
+        room = watch.rooms.get(roomId),
+        store = watch.roomState.store;
+      const record = store.get(roomId);
+      watch.roomState.apply(
+        room,
+        await store.edit(roomId, record.creatorId, record.revision, {
+          action: 'permissions',
+          role: 'viewer',
+          permissions: { continueWithoutHost: true },
+        }),
+      );
+      assert.equal(
+        (
+          await host.call(root + '/command', {
+            viewerId: hostId,
+            epoch: room.epoch,
+            expiresAt: watch.clock.now() + 2500,
+            command: { action: 'media.load', args: { mediaId: 'demo', quality: 'direct' } },
+          })
+        ).value.status,
+        'applied',
+      );
+      await Promise.all([...room.viewers.values()].map(viewer => viewer.streamWork));
+      for (const [client, viewerId] of [
+        [host, hostId],
+        [healthy, healthyId],
+      ])
+        await client.call(root + '/ready', {
+          viewerId,
+          mediaVersion: room.mediaVersion,
+          readinessVersion: room.readinessVersion,
+          ready: true,
+        });
+      await host.call(root + '/leave', { viewerId: hostId });
+      await pushedWithin(
+        () => room.hostViewerId === healthyId && !room.state.paused,
+        'healthy viewer did not continue playback',
+      );
+      const joiningClient = await f.connect(hostIdentity),
+        attemptedId = randomUUID();
+      t.after(() => joiningClient.ws.terminate());
+      const gate = Promise.withResolvers();
+      t.after(() => gate.resolve());
+      let attempted;
+      const prepare = watch.prepareViewer.bind(watch);
+      t.mock.method(watch, 'prepareViewer', async (currentRoom, actor, viewerId) => {
+        if (viewerId === attemptedId) {
+          attempted = currentRoom.viewers.get(viewerId);
+          await gate.promise;
+          if (failure === 'stream-failure')
+            throw Object.assign(new Error('Fixture stream preparation failed'), { status: 503 });
+        }
+        return prepare(currentRoom, actor, viewerId);
+      });
+      const pending = joiningClient.send({ type: 'join', roomId, viewerId: attemptedId });
+      await pushedWithin(() => attempted, 'join never entered stream preparation');
+      assert.equal(room.hostViewerId, attemptedId, 'the attempted host join exercised host election');
+      if (failure === 'disconnect') {
+        joiningClient.ws.terminate();
+      } else if (failure === 'cancel') {
+        // The fixture send() allocates the first request ID as 1 on this socket.
+        joiningClient.ws.send(JSON.stringify({ type: 'cancel', id: 1 }));
+      } else {
+        gate.resolve();
+        const result = await pending;
+        assert.equal(result.type, 'error');
+        assert.equal(result.status, 503);
+      }
+      // Cancellation/disconnection must detach even while the provider still retires.
+      await pushedWithin(() => !room.viewers.has(attemptedId), 'failed join kept a phantom viewer');
+      gate.resolve();
+      await attempted.streamWork;
+      assert.equal(room.initialViewers.has(attemptedId), false);
+      assert.equal(room.disconnectedViewers.has(attemptedId), false);
+      assert.ok(!attempted.streamRetry || attempted.streamRetry._destroyed, 'retry timer was not cleared');
+      let now = watch.clock.now();
+      t.mock.method(watch.clock, 'now', () => now);
+      now += require('../shared/sync/envelope.mjs').PRESENCE_TIMEOUT_MS + 1;
+      room.viewers.get(healthyId).at = now;
+      watch.review(room);
+      await pushedWithin(() => !room.state.paused, 'healthy playback stopped after the failed host join');
+      assert.ok(!room.frozen);
+      assert.equal(room.hostViewerId, healthyId);
+      assert.equal(room.viewers.size, 1);
+    },
+  );
+}
+
+test('a socket switching rooms or viewer IDs detaches its superseded viewer immediately', tls, async t => {
+  const f = await fixture(t),
+    client = await f.connect(await f.login('host'));
+  t.after(() => client.ws.terminate());
+  const a = (await client.call('/api/watch/rooms', { name: 'First', keepEmpty: true })).value.id;
+  const b = (await client.call('/api/watch/rooms', { name: 'Second', keepEmpty: true })).value.id;
+  const first = randomUUID(),
+    second = randomUUID(),
+    replacement = randomUUID();
+  await client.call('/api/watch/rooms/' + a + '?viewer=' + first);
+  const old = f.app.watch.rooms.get(a);
+  await client.call('/api/watch/rooms/' + b + '?viewer=' + second);
+  assert.equal(old.viewers.has(first), false);
+  assert.equal(old.disconnectedViewers.has(first), false);
+  const current = f.app.watch.rooms.get(b);
+  await client.call('/api/watch/rooms/' + b + '?viewer=' + replacement);
+  assert.equal(current.viewers.has(second), false);
+  assert.equal(current.disconnectedViewers.has(second), false);
+  assert.equal(current.viewers.has(replacement), true);
+});
+
+test('an older abandoned join cannot detach a newer successful connection for the same viewer', tls, async t => {
+  const f = await fixture(t),
+    identity = await f.login('host');
+  const old = await f.connect(identity),
+    current = await f.connect(identity);
+  t.after(() => {
+    old.ws.terminate();
+    current.ws.terminate();
+  });
+  const id = (await current.call('/api/watch/rooms', { keepEmpty: true })).value.id;
+  const watch = f.app.watch,
+    room = watch.rooms.get(id),
+    viewerId = randomUUID();
+  const gate = Promise.withResolvers(),
+    retired = Promise.withResolvers();
+  t.after(() => gate.resolve());
+  let first = true,
+    attempted,
+    previousSocket;
+  const prepare = watch.prepareViewer.bind(watch);
+  t.mock.method(watch, 'prepareViewer', async (...args) => {
+    if (args[2] === viewerId && first) {
+      first = false;
+      attempted = room.viewers.get(viewerId);
+      previousSocket = attempted.watchSocket;
+      await gate.promise;
+      try {
+        return await prepare(...args);
+      } finally {
+        retired.resolve();
+      }
+    }
+    return prepare(...args);
+  });
+  void old.send({ type: 'join', roomId: id, viewerId });
+  await pushedWithin(() => attempted, 'first join never prepared');
+  assert.equal((await current.call('/api/watch/rooms/' + id + '?viewer=' + viewerId)).status, 200);
+  const socket = attempted.watchSocket;
+  assert.notEqual(socket, previousSocket);
+  const closed = once(old.ws, 'close');
+  old.ws.terminate();
+  await closed;
+  gate.resolve();
+  await retired.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(room.viewers.get(viewerId), attempted);
+  assert.equal(attempted.watchSocket, socket);
+  assert.equal((await current.send({ type: 'resync' })).type, 'ack');
+  assert.equal(room.viewers.has(viewerId), true);
+});
+
+test('a join refused during media projection removes its admitted viewer', tls, async t => {
+  const f = await fixture(t),
+    host = await f.connect(await f.login('host')),
+    guest = await f.connect(await f.login('guest'));
+  t.after(() => {
+    host.ws.terminate();
+    guest.ws.terminate();
+  });
+  const id = (await host.call('/api/watch/rooms', {})).value.id;
+  const watch = f.app.watch,
+    room = watch.rooms.get(id),
+    hostId = randomUUID(),
+    guestId = randomUUID();
+  await host.call('/api/watch/rooms/' + id + '?viewer=' + hostId);
+  assert.equal(
+    (
+      await host.call('/api/watch/rooms/' + id + '/command', {
+        viewerId: hostId,
+        epoch: room.epoch,
+        expiresAt: watch.clock.now() + 2500,
+        command: { action: 'media.load', args: { mediaId: 'demo', quality: 'direct' } },
+      })
+    ).value.status,
+    'applied',
+  );
+  let denied = false;
+  const canView = watch.canView.bind(watch);
+  t.mock.method(watch, 'canView', (currentRoom, actor) =>
+    denied && actor.userId !== room.hostId ? false : canView(currentRoom, actor),
+  );
+  t.mock.method(watch.providers, 'directFile', async () => {
+    denied = true;
+    return undefined;
+  });
+  const result = await guest.call('/api/watch/rooms/' + id + '?viewer=' + guestId);
+  assert.equal(result.status, 409);
+  assert.equal(room.viewers.has(guestId), false);
+  assert.equal(room.initialViewers.has(guestId), false);
+  assert.equal(room.viewers.has(hostId), true);
+});

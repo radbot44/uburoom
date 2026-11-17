@@ -25,7 +25,11 @@ function controlClient(t, config, cert) {
         req.on('error', reject);
       });
     }
-    const key = JSON.stringify(headers);
+    // Each named viewer is a simulated browser tab with its own connection.
+    // Reusing one connection for different tabs would now correctly leave the
+    // preceding viewer, defeating multi-tab logout, kick and recovery fixtures.
+    const viewerId = new URL(path, config.publicUrl).searchParams.get('viewer') || data?.viewerId;
+    const key = JSON.stringify([headers, viewerId || 'lobby']);
     let client = clients.get(key);
     if (!client || client.ws.readyState >= 2) {
       client = { pending: new Map(), sequence: 0 };

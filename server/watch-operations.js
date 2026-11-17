@@ -13,6 +13,7 @@ const { localFormat } = require('../web/playback-policy');
 const { ObservationError } = require('./playback-tracking');
 const { clientAddress } = require('./client-address');
 const { REJOIN } = require('./watch');
+const { waitFor } = require('./operation');
 const { CALLS, splitView } = require('../shared/wire-protocol.mjs');
 
 function applyRoomProgress(watch, roomId, items = []) {
@@ -159,6 +160,7 @@ function watchOperations({
   validGrant,
 }) {
   const result = (status, value) => ({ status, value });
+  const joining = new WeakMap();
   const refusal = error => {
     const known = error.status || error instanceof PlaybackError;
     // The viewer gets a generic line; the operator needs the cause to fix it.
@@ -405,21 +407,44 @@ function watchOperations({
         if (!UUID.test(viewerId || '')) throw new Error('Invalid viewer');
         const { authenticated, alive } = signedIn(context, auth);
         const viewer = admit(room, auth, context, viewerId, preferences, alive, authenticated);
-        await watch.prepareStream(room, auth.actor, viewerId);
-        watch.requestEndingMeta(room);
-        watch.reconcileFallback(room);
-        if (viewer.streamFailure) throw viewer.streamFailure;
-        if (!(await watch.canView(room, auth.actor)) || !(await alive()) || room.viewers.get(viewerId) !== viewer)
-          return result(403, { error: 'Viewing access was revoked' });
-        const view = await project(context, auth, room, viewer, { renew: true });
-        if (view.status === 200)
-          view.value.timing = {
-            serverReceivedAt,
-            serverSentAt: watch.clock.now(),
-            serverProcessingMs: performance.now() - receivedMono,
-            clockEpoch,
-          };
-        return view;
+        const attempt = {};
+        joining.set(viewer, attempt);
+        let joined = false;
+        try {
+          const view = await waitFor(
+            (async () => {
+              await watch.prepareStream(room, auth.actor, viewerId);
+              context.signal?.throwIfAborted();
+              watch.requestEndingMeta(room);
+              watch.reconcileFallback(room);
+              if (viewer.streamFailure) throw viewer.streamFailure;
+              if (!(await watch.canView(room, auth.actor)) || !(await alive()) || room.viewers.get(viewerId) !== viewer)
+                return result(403, { error: 'Viewing access was revoked' });
+              const view = await project(context, auth, room, viewer, { renew: true });
+              if (view.status !== 200) return view;
+              if (!(await alive()) || room.viewers.get(viewerId) !== viewer || joining.get(viewer) !== attempt)
+                return result(403, { error: 'Room connection changed' });
+              context.signal?.throwIfAborted();
+              view.value.timing = {
+                serverReceivedAt,
+                serverSentAt: watch.clock.now(),
+                serverProcessingMs: performance.now() - receivedMono,
+                clockEpoch,
+              };
+              return view;
+            })(),
+            context.signal,
+          );
+          joined = view.status === 200;
+          return view;
+        } finally {
+          // An older failed join must never detach a newer join of this viewer.
+          if (joining.get(viewer) === attempt) {
+            joining.delete(viewer);
+            if (!joined && room.viewers.get(viewerId) === viewer)
+              await watch.leave(room, auth.actor, viewerId, 'join-aborted');
+          }
+        }
       },
       { recover: true },
     );
