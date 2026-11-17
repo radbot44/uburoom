@@ -567,7 +567,18 @@ function watchOperations({
     };
     let data;
     if (op === 'library.art') {
-      const art = await provider.artwork(text(args.item), text(args.kind) || 'poster', text(args.type));
+      const kind = text(args.kind) || 'poster';
+      let art;
+      try {
+        art = await provider.artwork(text(args.item), kind, text(args.type));
+      } catch (error) {
+        // One line naming the picture, so a blank tile can be traced to its server and item.
+        hub.logger?.warn(
+          'Library',
+          `No ${String(kind).slice(0, 20)} picture for ${provider.kind || 'media'} item ${String(text(args.item)).slice(0, 80)}: ${error?.message || error}`,
+        );
+        throw error?.status === 400 ? error : Object.assign(new Error('Artwork unavailable'), { status: 404 });
+      }
       if (!(await eligible()) || !(await scopeCurrent()) || !(await itemVisible()))
         return result(403, { error: 'Library access was revoked' });
       return { status: 200, resource: art };
