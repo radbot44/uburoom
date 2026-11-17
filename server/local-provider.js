@@ -677,11 +677,12 @@ class LocalMedia {
   stop(media) {
     return runOperation(undefined, () => this.pipeline.release(media));
   }
-  close() {
+  /** Stop scanning and making pictures; resolves once background work has ended and holds no file. */
+  async close() {
     this.index.close();
     this.closed = true;
     clearTimeout(this.startup);
-    this.art?.close();
+    await Promise.allSettled([this.art?.close(), this.warming]);
   }
 }
 

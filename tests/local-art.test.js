@@ -15,7 +15,6 @@ const demo = path.join(__dirname, '..', 'assets', 'demo', 'sync-test.mp4');
 
 function setup(t, files) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-art-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const media = path.join(root, 'media'),
     art = path.join(root, 'data', 'local-art');
   for (const [file, from] of Object.entries(files)) {
@@ -28,7 +27,11 @@ function setup(t, files) {
     pipeline: { av1 },
     artDirectory: art,
   });
-  t.after(() => local.close());
+  // Pictures may still be in the making in the background: the folder goes once they have ended.
+  t.after(async () => {
+    await local.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   return { local, media, art };
 }
 

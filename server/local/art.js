@@ -309,8 +309,10 @@ class LocalArt {
       total -= file.size;
     }
   }
-  close() {
+  /** Stop making pictures; resolves once any being made have ended, so nothing still holds a file. */
+  async close() {
     this.closing.abort();
+    await Promise.allSettled([...this.making.values()]);
   }
 }
 
