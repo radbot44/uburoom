@@ -84,3 +84,36 @@ test('the Plex catalog reads On Deck and recent additions twenty at a time, keep
   await plex.recentlyAdded();
   assert.deepEqual(requests, ['/library/onDeck?20', '/library/recentlyAdded?20']);
 });
+
+test("a room's Continue watching lists what it left unfinished, newest first, through the viewer's own access", async () => {
+  const { roomContinue } = require('../server/watch-operations');
+  const row = (mediaId, position, duration, outcome = 'stopped', serverId = 'plex') => ({
+    serverId,
+    mediaId,
+    position,
+    duration,
+    outcome,
+  });
+  const rows = [
+    row('1', 600, 6000), // newest: unfinished
+    row('2', 5, 6000), // barely started
+    row('3', 5900, 6000), // past 92%: finished in all but name
+    row('4', 3000, 6000, 'completed'),
+    row('1', 100, 6000), // an older stop of the same film
+    row('5', 1200, 6000), // hidden from this viewer
+    row('6', 300, 2400, 'stopped', 'local-media'),
+  ];
+  const items = await roomContinue(rows, async serverId => ({
+    playableItem: async id => {
+      if (id === '5') throw Object.assign(new Error('Not yours'), { status: 403 });
+      return { id, title: 'Item ' + id, server: serverId };
+    },
+  }));
+  assert.deepEqual(
+    items.map(item => [item.id, item.serverId, item.viewOffset]),
+    [
+      ['1', 'plex', 600],
+      ['6', 'local-media', 300],
+    ],
+  );
+});

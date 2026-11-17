@@ -67,6 +67,39 @@ function applyRoomProgress(watch, roomId, items = []) {
   }
 }
 
+/**
+ * The room's own Continue watching: what it started and left unfinished (between 10 seconds and 92%, as progress
+ * bars count it), newest first, each once. Every item is looked up through this viewer's own access, so one they
+ * may not watch is left out, as is one that has gone from its server.
+ * @param {any[]} rows The room's history entries, newest first.
+ * @param {(serverId: string) => Promise<any>} scopeFor The viewer's own access to a server.
+ */
+async function roomContinue(rows, scopeFor) {
+  const seen = new Set(),
+    unfinished = [];
+  for (const row of rows) {
+    const key = row.serverId + '\n' + row.mediaId;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const position = Number(row.position || 0),
+      duration = Number(row.duration || 0);
+    if (row.outcome !== 'completed' && position >= 10 && (!duration || position <= duration * 0.92))
+      unfinished.push({ row, position });
+    if (unfinished.length >= 10) break;
+  }
+  const items = await Promise.all(
+    unfinished.map(async ({ row, position }) => {
+      try {
+        const item = await (await scopeFor(row.serverId)).playableItem(row.mediaId);
+        return item && { ...item, serverId: row.serverId, viewOffset: Math.round(position) };
+      } catch {
+        return undefined;
+      }
+    }),
+  );
+  return items.filter(Boolean);
+}
+
 const QUEUE_ACTIONS = [
   'add',
   'suggest',
@@ -596,6 +629,13 @@ function watchOperations({
       data = await watch.providers.shelves(auth.actor, (actor, serverId) => hub.mediaFor(actor, serverId));
       // Recently added shows the room's progress as other library tiles do; Continue watching stays the viewer's own.
       if (data.recentlyAdded.length) applyRoomProgress(watch, args.room, data.recentlyAdded);
+      let history = [];
+      try {
+        if (args.room) history = repositories(watch.roomState.store.db).queue.listHistory(text(args.room));
+      } catch {
+        /* A room without saved history has nothing to continue. */
+      }
+      data.roomContinue = await roomContinue(history, serverId => hub.mediaFor(auth.actor, serverId));
     } else {
       const query = Object.fromEntries(
         LIBRARY_QUERY.filter(key => args[key] !== undefined && args[key] !== null).map(key => [key, String(args[key])]),
@@ -843,4 +883,4 @@ function watchOperations({
   }
   return { call, join, leave, command, ready, observe, lanes, lobby };
 }
-module.exports = { watchOperations };
+module.exports = { watchOperations, roomContinue };

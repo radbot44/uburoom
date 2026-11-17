@@ -809,6 +809,8 @@ function mount(
   const shelves = libraryShelves({ host: shelfHost, node, button, tile });
   function renderShelves() {
     librariesTitle.hidden = !shelves.render([
+      // What this room started and left unfinished, before each viewer's own Plex progress.
+      { title: 'Continue in this room', items: shelfData?.roomContinue, shape: 'landscape' },
       { title: 'Continue watching', items: shelfData?.continueWatching, shape: 'landscape' },
       { title: 'Recently added', items: shelfData?.recentlyAdded, shape: 'poster' },
     ]);
