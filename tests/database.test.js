@@ -247,7 +247,9 @@ test('matched offline SQLite and original-key backup restores UUIDs, credentials
 });
 
 test('HTTP acknowledgements survive a forced process kill without graceful close', { timeout: 20000 }, async t => {
-  const { file, vault } = fixture(t);
+  const { file, directory } = fixture(t);
+  const key = path.join(directory, 'crash.key'),
+    vault = credentialVault(key);
   const { spawn } = require('node:child_process');
   const { once } = require('node:events');
   const https = require('node:https');
@@ -261,7 +263,7 @@ test('HTTP acknowledgements survive a forced process kill without graceful close
     const { loginStore } = require(path.join(root, 'server/storage'));
     const { RoomStore } = require(path.join(root, 'server/room-store'));
     const { RoomQueue } = require(path.join(root, 'server/room-queue'));
-    const accounts = new Accounts(${JSON.stringify(file)}, credentialVault());
+    const accounts = new Accounts(${JSON.stringify(file)}, credentialVault(${JSON.stringify(key)}));
     const logins = loginStore('crash', accounts.vault, accounts);
     const rooms = new RoomStore(accounts), queue = new RoomQueue(accounts, rooms);
     const json = (res, status, value) => { res.writeHead(status, {'Content-Type':'application/json'}); res.end(JSON.stringify(value)); };
@@ -405,3 +407,223 @@ test('history and audit retention bound age and row count without deleting recen
     await accounts.close();
   }
 });
+
+function durableSnapshot(file) {
+  const read = new DatabaseSync(file, { readOnly: true });
+  try {
+    return Object.fromEntries(
+      ['credentials', 'browser_logins', 'meta', 'audit', 'playback_history'].map(table => [
+        table,
+        read.prepare('SELECT * FROM ' + table + ' ORDER BY rowid').all(),
+      ]),
+    );
+  } finally {
+    read.close();
+  }
+}
+
+for (const proof of ['credentials', 'expired-oauth', 'canary-only']) {
+  test(`startup authenticates ${proof} before context changes, pruning or other writes`, async t => {
+    const { file, directory, vault } = fixture(t);
+    const accounts = new Accounts(file, vault);
+    const store = loginStore('original-context', vault, accounts);
+    store.logins.set('fixture-login', {
+      userId: 'fixture',
+      expires: 1,
+      ...(proof === 'expired-oauth' ? { oauth: { refreshToken: 'fixture-private-token' } } : {}),
+    });
+    await store.save();
+    if (proof === 'credentials') accounts.credential('101', { token: 'fixture-private-token' });
+    if (proof !== 'canary-only') accounts.db.exec("DELETE FROM meta WHERE key='credentialKeyCanary'");
+    accounts.db
+      .prepare('INSERT INTO audit(at,actor,action,detail) VALUES(?,?,?,?)')
+      .run(0, 'fixture', 'retained-proof', '{}');
+    await accounts.close();
+    const before = durableSnapshot(file);
+    assert.throws(() => new Accounts(file, credentialVault()), /authenticate stored credentials/);
+    assert.deepEqual(durableSnapshot(file), before);
+    const wrongKey = path.join(directory, 'wrong.key');
+    credentialVault(wrongKey);
+    assert.throws(
+      () =>
+        require('../server/app').createApp({
+          accountFile: file,
+          credentialKeyFile: wrongKey,
+          publicUrl: 'https://changed-fixture.invalid',
+        }),
+      /authenticate stored credentials/,
+    );
+    assert.deepEqual(durableSnapshot(file), before);
+    assert.equal(fs.existsSync(file + '.lock'), false, 'failed authentication releases the instance lock');
+    const reopened = new Accounts(file, vault);
+    try {
+      assert.ok(reopened.meta('credentialKeyCanary'), 'the original key can seal a legacy database after validation');
+    } finally {
+      await reopened.close();
+    }
+  });
+}
+
+test('the canary never hides a damaged credential or expired OAuth envelope under the correct key', async t => {
+  const { file, vault } = fixture(t);
+  const accounts = new Accounts(file, vault);
+  accounts.credential('101', { token: 'fixture' });
+  accounts.db
+    .prepare('INSERT INTO browser_logins VALUES(?,?)')
+    .run('expired', JSON.stringify({ expires: 1, oauth: vault.seal({ refreshToken: 'fixture' }) }));
+  await accounts.close();
+  for (const table of ['credentials', 'browser_logins']) {
+    const edit = new DatabaseSync(file);
+    const row = edit.prepare('SELECT * FROM ' + table).get();
+    const column = table === 'credentials' ? 'value' : 'record';
+    const record = JSON.parse(row[column]);
+    const envelope = table === 'credentials' ? record : record.oauth;
+    envelope.tag = Buffer.alloc(16).toString('base64');
+    edit.prepare('UPDATE ' + table + ' SET ' + column + '=?').run(JSON.stringify(record));
+    edit.close();
+    const before = durableSnapshot(file);
+    assert.throws(() => new Accounts(file, vault), /authenticate stored credentials/);
+    assert.deepEqual(durableSnapshot(file), before);
+    const restore = new DatabaseSync(file);
+    restore.prepare('UPDATE ' + table + ' SET ' + column + '=?').run(row[column]);
+    restore.close();
+  }
+});
+
+test('a second account/app instance fails before writes or checkpoint while read-only tools still work', async t => {
+  const { file, directory, vault } = fixture(t);
+  const accounts = new Accounts(file, vault);
+  t.after(() => accounts.close());
+  accounts.db
+    .prepare('INSERT INTO playback_history VALUES(?,?,?,?)')
+    .run('active', 'fixture', Date.now(), JSON.stringify({ lastReceivedAt: Date.now() }));
+  const before = durableSnapshot(file);
+  const { spawnSync } = require('node:child_process');
+  const modulePath = path.resolve(__dirname, '../server/accounts');
+  const attempted = spawnSync(
+    process.execPath,
+    [
+      '-e',
+      `
+    const {Accounts,credentialVault} = require(${JSON.stringify(modulePath)});
+    try { new Accounts(${JSON.stringify(file)}, credentialVault()); process.exitCode=1; }
+    catch (error) { if (!/already open/.test(error.message)) throw error; }
+  `,
+    ],
+    { windowsHide: true, encoding: 'utf8', timeout: 5000 },
+  );
+  assert.equal(attempted.status, 0, attempted.stderr);
+  let checkpoints = 0;
+  const prepare = DatabaseSync.prototype.prepare;
+  t.mock.method(DatabaseSync.prototype, 'prepare', function (sql) {
+    if (/wal_checkpoint/i.test(sql)) checkpoints++;
+    return prepare.call(this, sql);
+  });
+  assert.throws(() => new Accounts(file, vault), /already open/);
+  const key = path.join(directory, 'other.key');
+  credentialVault(key);
+  assert.throws(
+    () =>
+      require('../server/app').createApp({
+        accountFile: file,
+        credentialKeyFile: key,
+        publicUrl: 'https://fixture.invalid',
+      }),
+    /already open/,
+  );
+  assert.equal(checkpoints, 0);
+  assert.deepEqual(durableSnapshot(file), before);
+  assert.ok(fs.existsSync(file + '.lock'));
+  await accounts.close();
+  assert.equal(checkpoints, 1);
+  assert.equal(fs.existsSync(file + '.lock'), false);
+});
+
+test('uncertain lock ownership and interrupted recovery fail closed without changing the database', async t => {
+  const { file, vault } = fixture(t);
+  const accounts = new Accounts(file, vault);
+  await accounts.close();
+  const before = durableSnapshot(file);
+  for (const [suffix, contents, message] of [
+    ['.lock', 'invalid-json', /unreadable/],
+    ['.lock', JSON.stringify({ pid: 1, host: 'other-fixture-host', token: 'fixture' }), /another host/],
+    ['.lock.recovery', 'interrupted', /recovery is in progress or was interrupted/],
+  ]) {
+    fs.writeFileSync(file + suffix, contents);
+    assert.throws(() => new Accounts(file, vault), message);
+    assert.deepEqual(durableSnapshot(file), before);
+    fs.unlinkSync(file + suffix);
+  }
+});
+
+test('canonical directory aliases cannot bypass the active instance lock', async t => {
+  const { file, directory, vault } = fixture(t);
+  const accounts = new Accounts(file, vault);
+  const alias = path.join(directory, 'alias');
+  try {
+    fs.symlinkSync(directory, alias, 'junction');
+    assert.throws(() => new Accounts(path.join(alias, path.basename(file)), vault), /already open/);
+  } finally {
+    if (fs.existsSync(alias)) fs.unlinkSync(alias);
+    await accounts.close();
+  }
+});
+
+test(
+  'simultaneous processes reclaim a dead owner lock with only one active database owner',
+  { timeout: 15000 },
+  async t => {
+    const { file, directory } = fixture(t);
+    const { spawn, spawnSync } = require('node:child_process');
+    const { once } = require('node:events');
+    const key = path.join(directory, 'shared.key');
+    const vault = credentialVault(key),
+      accounts = new Accounts(file, vault);
+    await accounts.close();
+    const exited = spawnSync(process.execPath, ['-e', ''], { windowsHide: true });
+    assert.equal(exited.status, 0);
+    fs.writeFileSync(file + '.lock', JSON.stringify({ pid: exited.pid, host: os.hostname(), token: 'dead-owner' }));
+    const source = `
+    const {Accounts,credentialVault} = require(${JSON.stringify(path.resolve(__dirname, '../server/accounts'))});
+    const vault = credentialVault(${JSON.stringify(key)});
+    let accounts;
+    process.on('message', async command => {
+      if (command === 'open') {
+        try { accounts = new Accounts(${JSON.stringify(file)}, vault); process.send({ opened: true }); }
+        catch (error) { process.send({ opened: false, error: error.message }); }
+      } else { await accounts?.close(); process.exit(); }
+    });
+    process.send({ ready: true });
+  `;
+    const children = Array.from({ length: 3 }, () =>
+      spawn(process.execPath, ['-e', source], {
+        windowsHide: true,
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+      }),
+    );
+    const endings = children.map(child => once(child, 'exit'));
+    t.after(async () => {
+      for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await Promise.all(endings);
+    });
+    const next = child =>
+      Promise.race([
+        once(child, 'message').then(([message]) => message),
+        once(child, 'exit').then(() => {
+          throw new Error('Lock contender exited before reporting');
+        }),
+      ]);
+    await Promise.all(children.map(next));
+    const outcomes = children.map(next);
+    for (const child of children) child.send('open');
+    const results = await Promise.all(outcomes);
+    assert.equal(results.filter(result => result.opened).length, 1, JSON.stringify(results));
+    for (const result of results.filter(result => !result.opened)) assert.match(result.error, /already open|recovery/);
+    for (const child of children) child.send('close');
+    await Promise.all(endings);
+    assert.equal(fs.existsSync(file + '.lock'), false);
+    assert.equal(fs.existsSync(file + '.lock.recovery'), false);
+    const reopened = new Accounts(file, vault);
+    await reopened.close();
+  },
+);

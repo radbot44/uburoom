@@ -65,9 +65,36 @@ function displayName(value) {
 class Accounts {
   constructor(file, vault) {
     if (file) fs.mkdirSync(path.dirname(file), { recursive: true });
-    this.persistence = openDatabase(file, initializeSchema);
+    let canary;
+    this.persistence = openDatabase(file, initializeSchema, db => {
+      // Authenticate all durable envelopes before startup sweeps, context changes
+      // or retention can discard the only remaining proof of the original key.
+      try {
+        const open = value => {
+          const envelope = JSON.parse(value);
+          if (envelope?.encrypted !== 1) throw new Error('Invalid encrypted record');
+          return vault.open(envelope);
+        };
+        const held = db.prepare("SELECT value FROM meta WHERE key='credentialKeyCanary'").get();
+        if (held && open(held.value) !== 'uburoom-credential-key-v1') throw new Error('Invalid key canary');
+        for (const row of db.prepare('SELECT value FROM credentials').all()) open(row.value);
+        for (const row of db.prepare('SELECT record FROM browser_logins').all()) {
+          const record = JSON.parse(row.record);
+          if (record.oauth) {
+            if (record.oauth.encrypted !== 1) throw new Error('Invalid encrypted OAuth record');
+            vault.open(record.oauth);
+          }
+        }
+        if (!held) canary = JSON.stringify(vault.seal('uburoom-credential-key-v1'));
+      } catch {
+        throw new Error(
+          'Cannot authenticate stored credentials; restore the original credential key and a matched database before starting',
+        );
+      }
+    });
     this.db = this.persistence.db;
     try {
+      if (canary) this.meta('credentialKeyCanary', canary);
       repositories(this.db).accounts.pruneAudit(Date.now());
       this.auditPrunedAt = Date.now();
     } catch (error) {

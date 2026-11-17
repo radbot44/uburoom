@@ -13,8 +13,10 @@ config*.yml
 /certs/
 *.sqlite
 *.sqlite-*
+*.sqlite.lock*
 *.db
 *.db-*
+*.db.lock*
 *.key
 *.pem
 *.pfx

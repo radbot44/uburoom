@@ -61,7 +61,7 @@ test('server operator authority requires an explicit verified provider identity 
 
 test('traditional PIN sign-in works when PMS rejects JWT resource tokens, with safe stage-specific access errors', async t => {
   const provider = accountFixture(),
-    accounts = new Accounts(),
+    accounts = new Accounts(undefined, credentialVault()),
     config = { plexUrl: 'http://plex-fixture.invalid:32400', plexToken: 'fixture-owner' };
   let jwkRegistered = false,
     failure;
@@ -112,7 +112,7 @@ test('traditional PIN sign-in works when PMS rejects JWT resource tokens, with s
 
 test('previous JWT credentials still renew through their registered signing key', async t => {
   const provider = accountFixture(),
-    accounts = new Accounts(),
+    accounts = new Accounts(undefined, credentialVault()),
     config = { plexUrl: 'http://plex-fixture.invalid:32400', plexToken: 'fixture-owner' },
     plex = new Plex(config, provider.fetch),
     auth = new PlexAuth(config, accounts, plex, provider.fetch);
@@ -141,7 +141,7 @@ test('previous JWT credentials still renew through their registered signing key'
 
 test('configured account fallback resolves its own PMS token and keeps discovery credentials separate', async t => {
   const provider = accountFixture(),
-    accounts = new Accounts(),
+    accounts = new Accounts(undefined, credentialVault()),
     config = {
       plexUrl: 'http://plex-fixture.invalid:32400',
       plexToken: 'fixture-owner',

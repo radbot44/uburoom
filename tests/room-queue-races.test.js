@@ -248,6 +248,7 @@ test('orderly shutdown captures final progress and restart intent before detachi
   await previous;
   await closing;
   await f.registry.flush();
+  await f.registry.close();
   const restarted = new Accounts(f.file, f.vault);
   try {
     const record = new (require('../server/room-store').RoomStore)(restarted).get(f.id);
