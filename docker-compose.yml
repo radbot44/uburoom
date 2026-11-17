@@ -1,6 +1,11 @@
 services:
   uburoom:
     build: .
+    # Optional: include GPU drivers at build time (none | vulkan | all; replace `build: .` above)
+    # build:
+    #   context: .
+    #   args:
+    #     GPU_DRIVERS: all
     container_name: uburoom
     restart: unless-stopped
     stop_grace_period: 45s

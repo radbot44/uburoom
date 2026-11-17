@@ -150,11 +150,13 @@ export function mount(host, deps) {
       version = store.room.state.mediaVersion,
       readinessVersion = store.room.state.readinessVersion;
     const target = expected();
+    const { duration, ceiling } = uburoomTiming.nearEndBounds(store.room.state.state.duration, deps.video.duration);
+    const readyTarget = Math.max(0, Math.min(target, ceiling));
     const bufferedReady =
       !store.room.state.state.paused ||
       (!deps.video.seeking &&
-        Math.abs(deps.video.currentTime - target) <= (target === 0 ? 0.25 : readinessVersion ? 0.15 : 0.65) &&
-        uburoomPlayback.readinessBuffered(deps.video.buffered, target, store.room.state.state.duration));
+        Math.abs(deps.video.currentTime - readyTarget) <= (readyTarget === 0 ? 0.25 : readinessVersion ? 0.15 : 0.65) &&
+        uburoomPlayback.readinessBuffered(deps.video.buffered, readyTarget, duration));
     const ready =
       bufferedReady &&
       deps.video.readyState >= 3 &&

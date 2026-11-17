@@ -18,8 +18,14 @@ class uburoomAV1 {
     this.chunkBytes = new Map();
     this.seekVersion = 0;
     this.endSignalled = false;
+    this.lastPumpAt = 0;
     this.onSeek = () => this.restart();
+    this.onTimeUpdate = () => this.kick(false);
+    this.onNeedData = () => this.kick(true);
     video.addEventListener('seeking', this.onSeek);
+    video.addEventListener('timeupdate', this.onTimeUpdate);
+    video.addEventListener('waiting', this.onNeedData);
+    video.addEventListener('stalled', this.onNeedData);
     this.source = new MediaSource();
     this.objectUrl = URL.createObjectURL(this.source);
     this.source.addEventListener('sourceopen', () => this.start().catch(error => this.fail(error)), { once: true });
@@ -238,6 +244,12 @@ class uburoomAV1 {
     this.chunkBytes.set(index, videoBytes.byteLength + audioBytes.byteLength);
     return true;
   }
+  kick(urgent = false) {
+    if (this.abort.signal.aborted || this.pumping || !this.buffer || this.held) return;
+    if (!urgent && Date.now() - this.lastPumpAt < 200) return;
+    this.pump().catch(error => this.fail(error));
+  }
+
   async pump() {
     if (this.abort.signal.aborted || this.pumping || !this.buffer || this.held) return;
     this.pumping = true;
@@ -247,6 +259,7 @@ class uburoomAV1 {
       await this.fill();
     } finally {
       this.pumping = false;
+      this.lastPumpAt = Date.now();
       if (!this.abort.signal.aborted)
         this.timer = setTimeout(
           () => this.pump().catch(error => this.fail(error)),
@@ -398,6 +411,9 @@ class uburoomAV1 {
     this.abort.abort();
     this.request?.abort();
     this.video.removeEventListener('seeking', this.onSeek);
+    this.video.removeEventListener('timeupdate', this.onTimeUpdate);
+    this.video.removeEventListener('waiting', this.onNeedData);
+    this.video.removeEventListener('stalled', this.onNeedData);
     this.chunkBytes.clear();
     this.appended.clear();
     this.coverage?.clear();

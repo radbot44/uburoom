@@ -552,3 +552,13 @@ test('.dockerignore excludes secrets, keys, databases and config backups while k
     assert.equal(ignored(required), false, `expected .dockerignore to preserve ${required}`);
   }
 });
+
+test('Dockerfile supports opt-in GPU_DRIVERS build arg while defaulting to none', () => {
+  const dockerfile = fs.readFileSync(path.join(__dirname, '..', 'Dockerfile'), 'utf8');
+  const compose = fs.readFileSync(path.join(__dirname, '..', 'docker-compose.yml'), 'utf8');
+  assert.match(dockerfile, /^ARG GPU_DRIVERS=none$/m);
+  for (const token of ['none)', 'vulkan)', 'all)', 'mesa-vulkan-drivers', 'mesa-va-drivers', 'intel-media-va-driver']) {
+    assert.ok(dockerfile.includes(token), `expected Dockerfile to contain ${token}`);
+  }
+  assert.ok(compose.includes('GPU_DRIVERS'), 'expected docker-compose.yml to document GPU_DRIVERS');
+});

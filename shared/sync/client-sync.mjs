@@ -221,14 +221,17 @@ export function createSync(host) {
         return;
       }
     }
-    const difference = target - currentTime;
+    const { duration: effectiveDuration, ceiling: alignCeiling } = (
+      timingApi.nearEndBounds || defaultTiming.nearEndBounds
+    )(state.state.duration, player.duration());
+    const alignTarget = Math.max(0, Math.min(target, alignCeiling));
     // Keep the final decoded frame while the server verifies ending evidence.
     // Calling play() on an ended element can restart this occurrence at zero.
     if (
       state.durable &&
       player.ended() &&
-      currentTime >= state.state.duration - 0.5 &&
-      target >= state.state.duration - 0.5
+      currentTime >= effectiveDuration - 0.5 &&
+      target >= effectiveDuration - 0.5
     ) {
       resetDriftCorrection();
       renderTransport();
@@ -251,8 +254,8 @@ export function createSync(host) {
     if (hlsPreparationUntil && !state.state.paused) {
       // A replacement has discarded this viewer's old buffer. Fill ahead of the
       // moving room target before starting locally; healthy viewers keep playing.
-      const required = Math.min(2, Math.max(0, state.state.duration - target));
-      if (now() < hlsPreparationUntil && player.bufferedAhead(target) < required) {
+      const required = Math.min(2, Math.max(0, effectiveDuration - alignTarget));
+      if (now() < hlsPreparationUntil && player.bufferedAhead(alignTarget) < required) {
         player.pause();
         resetDriftCorrection();
         renderTransport();
@@ -261,11 +264,12 @@ export function createSync(host) {
       hlsPreparationUntil = 0;
     }
     if (state.waitingForReady) player.pause();
-    const bufferedTarget = player.bufferedAhead(target) > 0;
+    const bufferedTarget = player.bufferedAhead(alignTarget) > 0;
     // A shared seek/restart can supersede a native seek still waiting for old
     // chunks. Retarget it once the new source-time window is buffered.
-    const targetBuffered = player.bufferedAhead(target) >= Math.min(0.5, Math.max(0, state.state.duration - target));
-    if (!player.seeking() && !playerWaiting && player.readyState() >= 3 && Math.abs(difference) <= 0.65)
+    const targetBuffered =
+      player.bufferedAhead(alignTarget) >= Math.min(0.5, Math.max(0, effectiveDuration - alignTarget));
+    if (!player.seeking() && !playerWaiting && player.readyState() >= 3 && Math.abs(alignTarget - currentTime) <= 0.65)
       syncSeekPending = false;
     // Let an in-flight alignment refill before chasing a moving playing target.
     // Repeated out-of-buffer seeks abort the very HLS fragments needed to recover.
@@ -277,11 +281,7 @@ export function createSync(host) {
         : undefined;
     const align = (eventName = 'sync-seek') => {
       presentationTiming.interrupt?.('seek');
-      const playerDuration = player.duration();
-      const destination = Math.max(
-        0,
-        Math.min(target, (Number.isFinite(playerDuration) ? playerDuration : state.state.duration) - 0.05),
-      );
+      const destination = alignTarget;
       const automaticCorrection =
         (eventName === 'sync-seek' || eventName === 'sync-jump') &&
         now() >= correctionSuppressionUntil &&
@@ -315,11 +315,12 @@ export function createSync(host) {
       (clockValid || state.state.paused) &&
       canAlign &&
       (!player.seeking() || bufferedTarget || sharedSeekPending) &&
-      Math.abs(difference) > (state.waitingForReady && state.readinessVersion ? 0.05 : 0.65)
+      Math.abs(alignTarget - currentTime) > (state.waitingForReady && state.readinessVersion ? 0.05 : 0.65)
     ) {
       align();
     }
     const postAlignTime = player.currentTime();
+    const difference = alignTarget - postAlignTime;
     const eligible =
       clockValid &&
       host.visibility() === 'visible' &&
@@ -335,7 +336,7 @@ export function createSync(host) {
     const evaluateSignal = timingApi.controlSignal;
     const signal = evaluateSignal
       ? evaluateSignal({
-          target,
+          target: alignTarget,
           currentTime: postAlignTime,
           presentation: presentationSample,
           clockValid,

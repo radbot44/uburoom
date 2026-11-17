@@ -676,3 +676,108 @@ test('reducing and committing an event for a 30-viewer room stays well under a m
     Sync.commitRoomState(room, Sync.reduceRoom(room, { type: 'touch', viewerId: 'v' + (i % 30) }, context).state);
   assert.ok((performance.now() - started) / runs < 1);
 });
+
+test('nearEndBounds and createSync clamp slight container duration shortfalls without truncating short streams', async () => {
+  assert.deepEqual(Sync.nearEndBounds(10.3, 10.0), { duration: 10.0, ceiling: 9.95 });
+  assert.deepEqual(Sync.nearEndBounds(120, 45), { duration: 120, ceiling: 44.95 });
+  assert.deepEqual(Sync.nearEndBounds(10, 10.4), { duration: 10, ceiling: 10.35 });
+  assert.deepEqual(Sync.nearEndBounds(10, NaN), { duration: 10, ceiling: 9.95 });
+  assert.deepEqual(Sync.nearEndBounds(undefined, undefined), { duration: 0, ceiling: Infinity });
+
+  const tailBuffered = { length: 1, start: () => 0, end: () => 9.96 };
+  const incompleteBuffered = { length: 1, start: () => 0, end: () => 9.5 };
+  assert.equal(Sync.readinessBuffered(tailBuffered, 9.95, 10.0), true);
+  assert.equal(Sync.readinessBuffered(incompleteBuffered, 9.95, 10.0), false);
+
+  let monoNow = 1000;
+  let wallNow = 50_000;
+  const clock = Sync.clock({ monotonic: () => monoNow, wall: () => wallNow });
+  for (let i = 0; i < 4; i++) {
+    monoNow += 30;
+    wallNow += 30;
+    const req = clock.begin();
+    monoNow += 20;
+    wallNow += 20;
+    clock.add(req, {
+      serverReceivedAt: wallNow,
+      serverSentAt: wallNow,
+      serverProcessingMs: 0,
+      clockEpoch: 'epoch-1',
+    });
+  }
+
+  let currentTime = 0;
+  let playCalls = 0;
+  const seeks = [];
+  const noop = () => {};
+  const snapshot = {
+    mediaVersion: '00000000-0000-4000-8000-000000000010',
+    streamVersion: '00000000-0000-4000-8000-000000000011',
+    epoch: '00000000-0000-4000-8000-000000000012',
+    revision: 1,
+    waitingForReady: false,
+    serverNow: clock.read().serverTime,
+    state: { paused: true, position: 10.1, duration: 10.3, volume: 65, muted: false },
+  };
+  const sync = Sync.createSync({
+    now: () => monoNow,
+    player: {
+      readyState: () => 4,
+      currentTime: () => currentTime,
+      seek: dest => {
+        seeks.push(dest);
+        currentTime = dest;
+      },
+      duration: () => 10.0,
+      paused: () => true,
+      ended: () => false,
+      seeking: () => false,
+      playbackRate: () => 1,
+      setPlaybackRate: noop,
+      setAudio: noop,
+      play: async () => {
+        playCalls++;
+      },
+      pause: noop,
+      bufferedAhead: () => Math.max(0, 10.0 - currentTime),
+      isBufferedAt: () => true,
+    },
+    read: () => ({
+      receivedAt: monoNow,
+      probing: false,
+      playbackError: '',
+      playerWaiting: false,
+      autoplayBlocked: false,
+      syncCorrectionMode: 'proportional',
+      state: snapshot,
+    }),
+    clock,
+    mediaReady: () => true,
+    presentation: Sync.presentation(),
+    expected: () => 10.1,
+    decodedFrames: () => 0,
+    unlockLocal: () => Promise.resolve(),
+    reportReadiness: () => Promise.resolve(),
+    render: noop,
+    checkFrames: noop,
+    sample: noop,
+    error: noop,
+    playing: noop,
+    visibility: () => 'visible',
+    online: () => true,
+    repeat: () => 0,
+    cancelRepeat: noop,
+  });
+
+  try {
+    for (let i = 0; i < 5; i++) {
+      monoNow += 500;
+      await sync.synchronize();
+    }
+    assert.equal(seeks.length, 1, 'converges on one seek instead of looping near EOF');
+    assert.ok(Math.abs(seeks[0] - 9.95) < 0.01);
+    assert.equal(playCalls, 0);
+  } finally {
+    sync.close();
+  }
+});

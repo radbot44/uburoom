@@ -1,10 +1,26 @@
 FROM node:22-bookworm-slim
 
-# Install ffmpeg and ca-certificates
-RUN apt-get update && \
+ARG GPU_DRIVERS=none
+
+# Install ffmpeg, ca-certificates, and optional GPU drivers (none | vulkan | all)
+RUN set -eu; \
+    extra_pkgs=""; \
+    case "$GPU_DRIVERS" in \
+        none) ;; \
+        vulkan) extra_pkgs="mesa-vulkan-drivers" ;; \
+        all) \
+            extra_pkgs="mesa-vulkan-drivers mesa-va-drivers"; \
+            if [ "$(dpkg --print-architecture)" = "amd64" ]; then \
+                extra_pkgs="$extra_pkgs intel-media-va-driver"; \
+            fi \
+            ;; \
+        *) echo "Unsupported GPU_DRIVERS='$GPU_DRIVERS' (expected none, vulkan, or all)" >&2; exit 1 ;; \
+    esac; \
+    apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
-        ca-certificates && \
+        ca-certificates \
+        $extra_pkgs && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

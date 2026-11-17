@@ -256,3 +256,76 @@ test('AV1 signals natural EOF only when the final chunk is needed, and only once
   await player.pump();
   assert.equal(player.source.ends, 2, 'the same movie can end again after rewind');
 });
+
+test('playback progress and underrun events kick the AV1 pump when timers are throttled and detach on destroy', async () => {
+  const listeners = new Map();
+  const video = {
+    src: '',
+    addEventListener(type, fn) {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type).add(fn);
+    },
+    removeEventListener(type, fn) {
+      listeners.get(type)?.delete(fn);
+    },
+    emit(type) {
+      for (const fn of [...(listeners.get(type) || [])]) fn();
+    },
+  };
+  const origMediaSource = globalThis.MediaSource;
+  const origCreate = URL.createObjectURL;
+  const origRevoke = URL.revokeObjectURL;
+  const origNow = Date.now;
+  let now = 1000;
+  let pumps = 0;
+  Date.now = () => now;
+  globalThis.MediaSource = class {
+    addEventListener() {}
+  };
+  URL.createObjectURL = () => 'blob:mock';
+  URL.revokeObjectURL = () => {};
+  const player = new uburoomAV1(video, '/av1', 0, () => {});
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  try {
+    player.buffer = {};
+    player.held = false;
+    player.pumping = false;
+    player.fill = async () => {
+      pumps++;
+    };
+
+    video.emit('timeupdate');
+    await flush();
+    assert.equal(pumps, 1, 'initial timeupdate kicks immediately');
+
+    now += 100;
+    video.emit('timeupdate');
+    await flush();
+    assert.equal(pumps, 1, 'routine timeupdate is throttled below 200ms');
+
+    video.emit('waiting');
+    await flush();
+    assert.equal(pumps, 2, 'waiting bypasses the timeupdate throttle');
+
+    now += 50;
+    video.emit('stalled');
+    await flush();
+    assert.equal(pumps, 3, 'stalled bypasses the timeupdate throttle');
+
+    now += 200;
+    video.emit('timeupdate');
+    await flush();
+    assert.equal(pumps, 4, 'timeupdate resumes pumping after the throttle window');
+
+    player.destroy();
+    for (const type of ['seeking', 'timeupdate', 'waiting', 'stalled']) {
+      assert.equal(listeners.get(type)?.size || 0, 0, `expected ${type} listener removed on destroy`);
+    }
+  } finally {
+    clearTimeout(player.timer);
+    globalThis.MediaSource = origMediaSource;
+    URL.createObjectURL = origCreate;
+    URL.revokeObjectURL = origRevoke;
+    Date.now = origNow;
+  }
+});

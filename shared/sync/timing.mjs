@@ -819,6 +819,21 @@ export function createTimingApi() {
     return 0;
   }
 
+  function nearEndBounds(catalogDuration, playerDuration) {
+    const validCatalog = Number.isFinite(catalogDuration) && catalogDuration > 0 ? catalogDuration : 0;
+    const validPlayer = Number.isFinite(playerDuration) && playerDuration > 0;
+    // Tolerate bounded container-vs-catalog shortfalls (up to 2 s) without treating a truncated file as EOF.
+    const duration =
+      validPlayer && (!validCatalog || playerDuration >= validCatalog - 2)
+        ? validCatalog
+          ? Math.min(validCatalog, playerDuration)
+          : playerDuration
+        : validCatalog;
+    const ceiling =
+      validPlayer || validCatalog ? Math.max(0, (validPlayer ? playerDuration : validCatalog) - 0.05) : Infinity;
+    return { duration, ceiling };
+  }
+
   function readinessBuffered(buffered, position, duration) {
     // Muxed audio/video may start a few frames after zero. Only tolerate this
     // bounded leading gap at the source origin, never holes elsewhere.
@@ -826,7 +841,13 @@ export function createTimingApi() {
       position === 0 && buffered && buffered.length && buffered.start(0) <= 0.25
         ? Math.max(0, buffered.start(0))
         : position;
-    return bufferedAhead(buffered, start) >= Math.min(2, Math.max(0, duration - start));
+    if (bufferedAhead(buffered, start) >= Math.min(2, Math.max(0, duration - start))) return true;
+    if (duration > 0 && start >= duration - 0.15 && buffered && Number.isFinite(buffered.length)) {
+      for (let i = 0; i < buffered.length; i++) {
+        if (start >= buffered.start(i) - 0.05 && buffered.end(i) >= Math.max(0, duration - 0.15)) return true;
+      }
+    }
+    return false;
   }
 
   // Start delay: how long a player takes from play() to its first advancing frame, per stream kind. A scheduled
@@ -910,6 +931,7 @@ export function createTimingApi() {
     correction,
     jumpCorrection,
     bufferedAhead,
+    nearEndBounds,
     readinessBuffered,
     observationClock,
     startDelay,
@@ -929,6 +951,7 @@ export const {
   correction,
   jumpCorrection,
   bufferedAhead,
+  nearEndBounds,
   readinessBuffered,
   observationClock,
   startDelay,

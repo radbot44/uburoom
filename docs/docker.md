@@ -190,14 +190,26 @@ docker compose down
 
 ## Hardware Transcoding (Optional)
 
-uburoom includes built-in video conversion and subtitle extraction using FFmpeg. If your host has an Intel processor with Quick Sync Video (QSV) or an AMD GPU on Linux, you can pass the render device into the container:
+uburoom includes built-in video conversion and subtitle extraction using FFmpeg. By default (`GPU_DRIVERS=none`), the container image omits optional GPU user-space drivers to stay minimal (~789 MB). You can opt in to drivers at build time with `--build-arg GPU_DRIVERS=<mode>`:
 
-1. In `docker-compose.yml`, uncomment the `devices` block:
+| `GPU_DRIVERS` | Added image size | Included drivers | When to choose |
+| --- | --- | --- | --- |
+| `none` (default) | `0 MB` | CPU / software FFmpeg only | Smallest image; no GPU device passthrough needed |
+| `vulkan` | `+~61 MB` | `mesa-vulkan-drivers` | Vulkan `libplacebo` tonemapping / Dolby Vision Profile 5 filter paths |
+| `all` | `+~89 MB` | `mesa-vulkan-drivers`, `mesa-va-drivers`, plus `intel-media-va-driver` on `amd64` | Intel Quick Sync / VAAPI or AMD GPU hardware conversion via `/dev/dri` alongside Vulkan filters |
+
+If your host has an Intel processor with Quick Sync Video (QSV) or an AMD GPU on Linux:
+
+1. Rebuild with the desired driver set (or configure `build.args.GPU_DRIVERS` in `docker-compose.yml`):
+   ```sh
+   docker compose build --build-arg GPU_DRIVERS=all
+   ```
+2. In `docker-compose.yml`, uncomment the `devices` block:
    ```yaml
    devices:
      - /dev/dri:/dev/dri
    ```
-2. Verify access permissions on the host:
+3. Verify access permissions on the host:
    ```sh
    ls -la /dev/dri
    ```

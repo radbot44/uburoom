@@ -27,6 +27,7 @@ export {
   correction,
   jumpCorrection,
   bufferedAhead,
+  nearEndBounds,
   readinessBuffered,
   observationClock,
   startDelay,
