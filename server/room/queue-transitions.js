@@ -213,19 +213,16 @@ module.exports = {
   /** Ends the current video: reserved in the mailbox, written outside, unloaded back inside. */
   async finishQueueMedia(room, data) {
     if (this.shuttingDown || room.closed) return;
-    const signal = currentSignal();
     const work = await this.inRoom(
       room,
-      () =>
-        this.startMediaWork(room, work => this.finishQueueMediaOwned(room, data, work), { kind: 'transition', signal }),
+      () => this.startMediaWork(room, work => this.finishQueueMediaOwned(room, data, work), { kind: 'transition' }),
       undefined,
     );
     await work?.promise;
   },
   async finishQueueMediaOwned(room, data, work) {
-    if (room.autoplayCountdown || room.transition || room.endedVersion === room.mediaVersion) return;
+    if (!room.media || room.autoplayCountdown || room.transition || room.endedVersion === room.mediaVersion) return;
     const endedVersion = room.mediaVersion;
-    room.endedVersion = endedVersion;
     room.initialGate = false;
     room.readinessTimedOut = false;
     room.readinessVersion = randomUUID();
@@ -284,10 +281,21 @@ module.exports = {
           if (corpus) {
             await this.roomState.queue.generate(record.id, actor.userId, corpus, {
               expectedRevision: latestRecord.queueRevision,
+              continuation: true,
             });
             await this.verifyAutoNext(record.id, actor, corpus);
             latestRecord = this.roomState.store.get(record.id);
-            this.roomState.apply(room, latestRecord);
+            await this.inRoom(
+              room,
+              () => {
+                this.roomState.apply(room, latestRecord);
+                if (!latestRecord.autoplay) {
+                  room.revision++;
+                  this.changed(room);
+                }
+              },
+              undefined,
+            );
             next = this.nextCandidate(record.id);
           }
         }

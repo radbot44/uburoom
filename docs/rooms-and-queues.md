@@ -19,6 +19,8 @@ Empty-room retention, inactivity/capacity defaults and single-room reset are def
 
 Previously open rooms reserve recovery slots, return paused and admit original participants with fresh authorization. Auto-resume requires prior playing intent, all expected accounts back before expiry, fresh readiness and a present authorized controller; otherwise remain paused. No old stream or countdown is restored.
 
+Verified natural completion belongs to the room once accepted: canceling its observation request or disconnecting that viewer does not cancel completion. The completion marker is committed with unloading the finished media, after the durable queue write. An aborted pre-commit attempt leaves the loaded media eligible for a later completion. Configured auto-queue continuation uses the continuing viewer's permitted playback authority and publishes its generated successor even when autoplay is off.
+
 ## Roles and permissions
 
 Creator > host > viewer, using canonical UUIDs. Hosts inherit viewer grants; defaults give viewers play/pause and hosts ordinary controls except deletion/Add hosts. Management capabilities cannot be granted to viewers.

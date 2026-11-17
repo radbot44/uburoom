@@ -189,6 +189,10 @@ async function fixture(t, { fallback = false } = {}) {
     playTail,
     prepared,
     stopped,
+    useController(person) {
+      controller = person;
+      playTail();
+    },
     async hostController() {
       const record = store.get(id);
       watch.roomState.apply(
@@ -907,4 +911,126 @@ test('turning auto-queue on in an idle room with autoplay enabled immediately ma
   assert.equal(f.queue.current(id).mediaId, '301');
   assert.equal(f.queue.pending(id).length, 0);
   assert.equal(f.store.get(id).autoQueue.next?.mediaId, '302');
+});
+
+for (const interrupted of ['cancel', 'disconnect']) {
+  test(`natural completion survives observer ${interrupted} while a checkpoint is pending`, async t => {
+    const { runOperation } = require('../server/operation');
+    const f = await fixture(t);
+    const record = f.store.get(f.id);
+    f.watch.roomState.apply(
+      f.room,
+      await f.store.edit(f.id, f.creator.userId, record.revision, {
+        action: 'host.add',
+        userId: f.guest.userId,
+      }),
+    );
+    f.watch.join(f.room, f.guest, f.guest.watchViewerId, { alive: async () => true, quality: 'direct' });
+    await f.watch.prepareViewer(f.room, f.guest, f.guest.watchViewerId);
+    f.watch.autoplayDelayMs = 10000;
+    for (const position of [96, 97, 98, 99]) await f.observe(position);
+    await f.room.saving;
+    const checkpoint = Promise.withResolvers();
+    t.after(() => checkpoint.resolve());
+    f.room.saving = checkpoint.promise;
+    const controller = new AbortController();
+    const completing = runOperation(controller.signal, () => f.observe(100, 'ended'));
+    await waitFor(() => f.room.transition?.commit);
+    controller.abort();
+    let leaving;
+    if (interrupted === 'disconnect') {
+      f.room.viewers.get(f.creator.watchViewerId).alive = async () => false;
+      leaving = f.watch.leave(f.room, f.creator, f.creator.watchViewerId, 'disconnected');
+    }
+    checkpoint.resolve();
+    await completing;
+    await leaving;
+    assert.equal(f.room.media, undefined);
+    assert.equal(f.queue.current(f.id), null);
+    assert.equal(f.queue.history(f.id).total, 1, 'exactly one occurrence completes');
+    assert.equal(f.queue.history(f.id).items[0].outcome, 'completed');
+    assert.equal(f.room.transition, undefined);
+    assert.equal(f.queue.pending(f.id).length, 2, 'completion does not prematurely consume the successor');
+    if (interrupted === 'cancel') assert.equal(f.room.autoplayCountdown.nextEntryId, f.upcoming[0].id);
+    assert.ok(f.room.viewers.has(f.guest.watchViewerId));
+  });
+}
+
+test('an owned completion aborted before commit does not latch endedVersion or prevent a later completion', async t => {
+  const f = await fixture(t);
+  await f.command('media.autoplay.set', { enabled: false });
+  await f.room.saving;
+  const version = f.room.mediaVersion,
+    current = f.queue.current(f.id);
+  const checkpoint = Promise.withResolvers();
+  t.after(() => checkpoint.resolve());
+  f.room.saving = checkpoint.promise;
+  const completing = f.watch.finishQueueMedia(f.room);
+  const rejected = assert.rejects(completing, /abort/i);
+  await waitFor(() => f.room.transition?.commit);
+  const work = [...f.watch.mediaWork].find(work => work.room === f.room && work.kind === 'transition');
+  work.controller.abort();
+  checkpoint.resolve();
+  await rejected;
+  assert.equal(f.room.mediaVersion, version);
+  assert.notEqual(f.room.endedVersion, version);
+  assert.equal(f.queue.current(f.id).id, current.id);
+  assert.equal(f.room.transition, undefined);
+  await f.watch.finishQueueMedia(f.room);
+  assert.equal(f.room.media, undefined);
+  assert.equal(f.queue.history(f.id).total, 1);
+});
+
+test('a continuing viewer without queue-edit permission generates and publishes post-end auto-queue with autoplay off', async t => {
+  const { splitView } = require('../shared/wire-protocol.mjs');
+  const f = await fixture(t);
+  await f.command('queue.clear');
+  await f.command('media.autoplay.set', { enabled: false });
+  const prepare = f.plex.prepare;
+  f.plex.prepare = async (...args) => ({ ...(await prepare(...args)), type: 'episode' });
+  f.plex.details = async () => ({ showId: '50' });
+  const corpus = gate();
+  t.after(() => corpus.release());
+  f.plex.queueItems = async () => {
+    corpus.enter();
+    await corpus.held;
+    return ['200', '201', '202'].map(id => ({ id, type: 'episode', title: 'Episode ' + id, duration: 100 }));
+  };
+  assert.equal((await f.command('media.load', { mediaId: '200', quality: 'direct' })).status, 'applied');
+  await f.queue.configureAuto(f.id, f.creator.userId, { mode: 'continue' });
+  const record = f.store.get(f.id);
+  f.watch.roomState.apply(
+    f.room,
+    await f.store.edit(f.id, f.creator.userId, record.revision, {
+      action: 'permissions',
+      role: 'viewer',
+      permissions: { continueWithoutHost: true, editQueue: false },
+    }),
+  );
+  f.watch.join(f.room, f.guest, f.guest.watchViewerId, { alive: async () => true, quality: 'direct' });
+  await f.watch.prepareViewer(f.room, f.guest, f.guest.watchViewerId);
+  await f.watch.leave(f.room, f.creator, f.creator.watchViewerId);
+  f.useController(f.guest);
+  assert.equal(f.hub.authorize(f.guest, f.room, 'editQueue').ok, false);
+  assert.equal(f.hub.authorize(f.guest, f.room, 'continueWithoutHost').ok, true);
+  const published = [];
+  f.watch.onPublish = room => {
+    if (room === f.room && !f.watch.shuttingDown && room.viewers.has(f.guest.watchViewerId))
+      published.push(splitView(f.watch.view(room, f.guest, f.guest.watchViewerId)).room);
+  };
+  const completing = f.end();
+  await waitFor(() => corpus.started);
+  const boundary = published.length;
+  corpus.release();
+  await completing;
+  assert.equal(f.store.get(f.id).autoQueue.next.mediaId, '201');
+  assert.equal(f.room.autoplayCountdown, undefined);
+  assert.equal(f.room.media, undefined);
+  assert.ok(
+    published.slice(boundary).some(lane => lane.ending?.next?.mediaId === '201'),
+    'the generated successor must publish after the earlier ending frame',
+  );
+  const ending = f.watch.view(f.room, f.guest, f.guest.watchViewerId).ending;
+  assert.equal(ending.state, 'upNext');
+  assert.equal(ending.next.mediaId, '201');
 });
