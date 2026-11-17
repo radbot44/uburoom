@@ -63,3 +63,42 @@ test('sort titles skip a leading article', () => {
   assert.equal(sortTitle('Theodore'), 'Theodore');
   assert.equal(sortTitle('The'), 'The');
 });
+
+test('episode names give their show, season, number and title', () => {
+  const { episodeName } = require('../server/local/names');
+  const name = (file, folders = []) => episodeName(file, folders, { latestYear: 2026 });
+  assert.deepEqual(name('Show.S01E02.The.Title.1080p.WEB-DL.x264-GRP.mkv'), {
+    show: 'Show',
+    season: 1,
+    episode: 2,
+    title: 'The Title',
+  });
+  assert.deepEqual(name('Show.S01E02.1080p.mkv', ['Show (2005)', 'Season 1']), {
+    show: 'Show',
+    year: 2005,
+    season: 1,
+    episode: 2,
+    title: '',
+  });
+  assert.deepEqual(name('03 - Pilot.mkv', ['Show', 'Season 2']), {
+    show: 'Show',
+    season: 2,
+    episode: 3,
+    title: 'Pilot',
+  });
+  assert.deepEqual(name('The.Office.US.s02e03e04.720p.mkv', ['The Office (US)']), {
+    show: 'The Office (US)',
+    season: 2,
+    episode: 3,
+    title: '',
+  });
+  assert.deepEqual(name('Show 1x05 Name.avi'), { show: 'Show', season: 1, episode: 5, title: 'Name' });
+  assert.deepEqual(name('Extras.mkv', ['Show', 'Specials']), { show: 'Show', season: 0, title: 'Extras' });
+  assert.deepEqual(name('Doctor.Who.2005.S01E01.Rose.mkv'), {
+    show: 'Doctor Who',
+    year: 2005,
+    season: 1,
+    episode: 1,
+    title: 'Rose',
+  });
+});

@@ -129,11 +129,17 @@ local_media:
   # same file at the same place, the first listed is used. parse_names (default
   # true) reads release names as a film's title and year, like Plex:
   # 65.2023.2160p.BluRay.x265-GROUP.mkv shows as "65" (2023); false shows the file
-  # name. Example:
+  # name. type is 'movies' (default) or 'shows': a shows library groups files
+  # named like Show.S01E02.mkv (or Show/Season 1/02 - Title.mkv) into shows,
+  # seasons and episodes. Example:
   #   - id: 'films'
   #     name: 'Films'
   #     paths: ['D:\Media\Films', 'E:\Films']
   #     parse_names: true
+  #   - id: 'tv'
+  #     name: 'TV'
+  #     type: 'shows'
+  #     paths: ['D:\Media\TV']
   libraries: []
 
 # Logging behavior

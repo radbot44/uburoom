@@ -40,6 +40,16 @@ function unavailable(entry) {
 }
 // Like a media server's line under a title: the year and edition once the name says them, otherwise the subfolder.
 const subtitle = entry => [entry.year, entry.edition].filter(Boolean).join(' · ') || entry.folder;
+// An episode's line, as Plex writes it: show, season and episode.
+const episodeLine = entry =>
+  [
+    entry.episode.showTitle,
+    entry.episode.seasonIndex ? 'Season ' + entry.episode.seasonIndex : 'Specials',
+    entry.episode.index !== undefined ? 'Episode ' + entry.episode.index : undefined,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+    .slice(0, 200);
 const seconds = value => (Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : 0);
 const tag = (stream, name) => {
   const tags = stream?.tags || {};
@@ -111,10 +121,12 @@ class LocalMedia {
         for (const entry of this.index.newest()) {
           if (this.closed) return;
           while (this.pipeline.busy && !this.closed) await new Promise(resolve => setTimeout(resolve, 30000).unref?.());
-          if (this.closed || this.unpictured.has(entry.token) || !this.index.get(entry.token)) continue;
+          // An episode's poster is its show's, made once for the whole show.
+          const source = this.index.get(entry.token) && this.pictureSource(entry.token, 'poster');
+          if (this.closed || !source || this.unpictured.has(source.subject.token)) continue;
           await this.art
-            .picture(entry, 'poster', () => this.described(entry))
-            .catch(() => this.unpictured.add(entry.token));
+            .picture(source.subject, 'poster', () => this.described(source.video))
+            .catch(() => this.unpictured.add(source.subject.token));
         }
       } while (this.warmAgain && !this.closed);
     })().finally(() => {
@@ -134,16 +146,19 @@ class LocalMedia {
     return this;
   }
   // Catalog
+  /** A film, or an episode of a show in a `shows` library, as the library shows it. */
   item(entry) {
     const info = this.index.known(entry);
     // With FFmpeg every video has a frame to show; a picture file beside it is used first.
     const frames = !!this.art?.available;
+    const place = entry.episode,
+      show = place && /** @type {any} */ (this.index.group(place.show));
     return {
       id: entry.token,
       section: entry.library,
-      type: 'movie',
+      type: place ? 'episode' : 'movie',
       title: entry.title,
-      subtitle: subtitle(entry),
+      subtitle: place ? episodeLine(entry) : subtitle(entry),
       ...(entry.year ? { year: entry.year } : {}),
       duration: info?.duration || 0,
       available: true,
@@ -156,14 +171,67 @@ class LocalMedia {
       genreIds: [],
       count: 0,
       episodeCount: 0,
-      showTitle: '',
-      parentTitle: '',
+      showTitle: place ? place.showTitle : '',
+      parentTitle: place ? (place.seasonIndex ? 'Season ' + place.seasonIndex : 'Specials') : '',
+      ...(place
+        ? {
+            ...(place.index !== undefined ? { index: place.index } : {}),
+            seasonIndex: place.seasonIndex,
+            parentId: place.season,
+            showId: place.show,
+          }
+        : {}),
       hasPoster: frames,
       hasLandscape: frames,
       hasBackdrop: frames,
-      hasLogo: frames && !!entry.art.logo,
+      // An episode shows its show's logo, as a Plex episode does.
+      hasLogo: frames && !!(place ? show?.art.logo : entry.art.logo),
       summary: '',
     };
+  }
+  /** A show or a season of a `shows` library, as the library shows it. */
+  groupItem(group) {
+    const frames = !!this.art?.available;
+    const show = /** @type {any} */ ('seasons' in group ? group : this.index.group(group.show));
+    const season = 'seasons' in group ? undefined : group;
+    const episodes = season ? season.episodes : show.episodes;
+    return {
+      id: group.token,
+      section: show.library,
+      type: season ? 'season' : 'show',
+      title: season ? season.title : show.title,
+      subtitle: season ? show.title : show.year ? String(show.year) : '',
+      ...(!season && show.year ? { year: show.year } : {}),
+      duration: 0,
+      edition: '',
+      sortTitle: season ? season.title : show.sortTitle,
+      contentRating: '',
+      addedAt: Math.floor(Math.max(0, ...episodes.map(entry => entry.addedMs || 0)) / 1000),
+      genres: [],
+      genreIds: [],
+      count: season ? episodes.length : show.seasons.length,
+      episodeCount: episodes.length,
+      ...(season ? { index: season.index, parentId: show.token, showTitle: show.title, parentTitle: show.title } : {}),
+      showTitle: season ? show.title : '',
+      parentTitle: season ? show.title : '',
+      hasPoster: frames,
+      hasLandscape: frames,
+      hasBackdrop: frames,
+      hasLogo: frames && !!show.art.logo,
+    };
+  }
+  /**
+   * What a picture of an item is made from: for a show, a season or an episode's poster, backdrop and logo, the
+   * show's own folder pictures or else its first episode's frame; for an episode's wide picture, its own frame.
+   */
+  pictureSource(id, kind) {
+    const entry = this.index.get(id);
+    if (entry && (!entry.episode || kind === 'landscape')) return { subject: entry, video: entry };
+    const group = /** @type {any} */ (entry ? this.index.group(entry.episode?.show) : this.index.group(id));
+    const show = group && ('seasons' in group ? group : this.index.group(group.show));
+    const first = show?.episodes.find(episode => episode.episode?.seasonIndex) || show?.episodes[0];
+    if (!show || !first) return undefined;
+    return { subject: { token: show.token, path: first.path, art: show.art, title: show.title }, video: first };
   }
   async entry(id) {
     await this.index.refresh();
@@ -246,78 +314,112 @@ class LocalMedia {
         id: library.id,
         title: library.name,
         type: 'library',
-        mediaType: 'movie',
+        mediaType: library.type === 'shows' ? 'show' : 'movie',
         source: 'folder',
         collections: false,
         // Release years come from names, so a library that keeps its file names has nothing to filter by.
-        filters: library.parseNames !== false,
+        filters: library.parseNames !== false || library.type === 'shows',
         autoQueue: false,
       }));
       return { items, total: items.length, offset: 0, nextOffset: null };
     }
-    if (!this.libraries.some(library => library.id === section)) throw failure('Select a library', 404);
-    // Folders hold videos only: no collections and nothing inside an item.
-    if (parent || collection || tab === 'collections') return { items: [], total: 0, offset: 0, nextOffset: null };
+    // Folders hold no collections.
+    if (collection || tab === 'collections') return { items: [], total: 0, offset: 0, nextOffset: null };
     const needle = q.trim().toLowerCase();
-    let entries = this.index.list(section);
+    /** @type {{token: string, title: string, folder?: string, year: number, addedMs?: number, item: () => any, runtime?: () => number}[]} */
+    let rows;
+    if (parent) {
+      // Inside a show its seasons, inside a season its episodes, each in playing order.
+      const group = /** @type {any} */ (this.index.group(parent));
+      if (!group) throw failure('Select a show or season', 404);
+      rows =
+        'seasons' in group
+          ? group.seasons.map(season => ({ ...season, year: 0, item: () => this.groupItem(season) }))
+          : group.episodes.map(entry => this.row(entry));
+    } else {
+      const library = this.libraries.find(candidate => candidate.id === section);
+      if (!library) throw failure('Select a library', 404);
+      rows =
+        library.type === 'shows'
+          ? this.index.shows(section).map(show => ({ ...show, item: () => this.groupItem(show) }))
+          : this.index.list(section).map(entry => this.row(entry));
+    }
     if (needle)
-      entries = entries.filter(
-        entry =>
-          entry.title.toLowerCase().includes(needle) ||
-          entry.folder.toLowerCase().includes(needle) ||
-          (!!entry.year && String(entry.year) === needle),
+      rows = rows.filter(
+        row =>
+          row.title.toLowerCase().includes(needle) ||
+          !!row.folder?.toLowerCase().includes(needle) ||
+          (!!row.year && String(row.year) === needle),
       );
-    if (year) entries = entries.filter(entry => String(entry.year) === year);
+    if (year) rows = rows.filter(row => String(row.year) === year);
     if (sort === 'random') {
       if (!/^[a-f0-9]{32}$/.test(seed || '')) throw failure('Invalid shuffle seed');
-      const rank = entry =>
+      const rank = row =>
         createHash('sha256')
-          .update(seed + entry.token)
+          .update(seed + row.token)
           .digest('hex');
-      entries = entries
-        .map(entry => ({ entry, rank: rank(entry) }))
+      rows = rows
+        .map(row => ({ row, rank: rank(row) }))
         .sort((a, b) => (a.rank < b.rank ? -1 : 1))
-        .map(row => row.entry);
+        .map(ranked => ranked.row);
     } else {
-      // The index is in title order; other orders keep it among equals. Unknown values go last either way.
+      // Rows come in title (or playing) order; other orders keep it among equals. Unknown values go last either way.
       const value = {
-        added: entry => entry.addedMs,
-        year: entry => entry.year,
+        added: row => row.addedMs,
+        year: row => row.year,
         // Known once the file has been read for playback or pictures.
-        runtime: entry => this.index.known(entry)?.duration,
+        runtime: row => row.runtime?.(),
       }[sort];
       if (value) {
         const direction = order === 'desc' ? -1 : 1;
-        entries = [...entries].sort((a, b) => {
+        rows = [...rows].sort((a, b) => {
           const x = value(a) || 0,
             y = value(b) || 0;
           return !x || !y ? (y ? 1 : 0) - (x ? 1 : 0) || 0 : (x - y) * direction;
         });
-      } else if (order === 'desc') entries = [...entries].reverse();
+      } else if (order === 'desc') rows = [...rows].reverse();
     }
-    const page = entries.slice(offset, offset + PAGE);
+    const page = rows.slice(offset, offset + PAGE);
     return {
-      items: page.map(entry => this.item(entry)),
-      total: entries.length,
+      items: page.map(row => row.item()),
+      total: rows.length,
       offset,
-      nextOffset: offset + PAGE < entries.length ? offset + PAGE : null,
+      nextOffset: offset + PAGE < rows.length ? offset + PAGE : null,
     };
   }
-  /** Media Home's Recently added: the newest files across every local library. */
+  /** A video as a row of a listing, with what it sorts by. */
+  row(entry) {
+    return { ...entry, item: () => this.item(entry), runtime: () => this.index.known(entry)?.duration };
+  }
+  /** Media Home's Recently added: the newest files across every local library; a new episode shows as its show. */
   async recentlyAdded() {
     await this.index.refresh();
-    return this.index
-      .newest()
-      .slice(0, 20)
-      .map(entry => this.item(entry));
+    const items = [],
+      shows = new Set();
+    for (const entry of this.index.newest()) {
+      if (items.length >= 20) break;
+      if (!entry.episode) items.push(this.item(entry));
+      else if (!shows.has(entry.episode.show)) {
+        shows.add(entry.episode.show);
+        const show = this.index.group(entry.episode.show);
+        if (show) items.push(this.groupItem(show));
+      }
+    }
+    return items;
   }
   /** A local library is narrowed by release year only: the years its names give, newest first. */
   async filters(section) {
     await this.index.refresh();
-    const years = [...new Set(this.index.list(section).map(entry => entry.year))].filter(Boolean).sort((a, b) => b - a);
+    const library = this.libraries.find(candidate => candidate.id === section);
+    const rows = library?.type === 'shows' ? this.index.shows(section) : this.index.list(section);
+    const years = [...new Set(rows.map(row => row.year))].filter(Boolean).sort((a, b) => b - a);
     return { genres: [], years: years.map(year => ({ id: String(year), title: String(year) })) };
   }
   async details(id) {
+    await this.index.refresh();
+    const group = this.index.group(id);
+    if (group)
+      return { ...this.groupItem(group), summary: '', directors: [], cast: [], ratings: [], otherEditions: [] };
     const entry = await this.entry(id);
     const { info } = await this.described(entry);
     const audio = info.streams.find(stream => stream.codec_type === 'audio');
@@ -337,7 +439,27 @@ class LocalMedia {
       ]
         .filter(Boolean)
         .map(value => String(value).slice(0, 60)),
+      // An episode page steps to the episodes either side.
+      ...(entry.episode ? this.neighbors(entry) : {}),
     };
+  }
+  /**
+   * The episodes before and after one in its show, Specials left out: id, title and where each sits.
+   * @returns {{previous?: any, next?: any}}
+   */
+  neighbors(entry) {
+    const show = /** @type {any} */ (this.index.group(entry.episode?.show));
+    if (!show || !entry.episode?.seasonIndex) return {};
+    const episodes = show.episodes.filter(episode => episode.episode.seasonIndex);
+    const at = episodes.findIndex(episode => episode.token === entry.token);
+    const brief = episode =>
+      episode && {
+        id: episode.token,
+        title: episode.title,
+        ...(episode.episode.index !== undefined ? { index: episode.episode.index } : {}),
+        seasonIndex: episode.episode.seasonIndex,
+      };
+    return at < 0 ? {} : { previous: brief(episodes[at - 1]), next: brief(episodes[at + 1]) };
   }
   async playableItem(id) {
     const entry = await this.entry(id);
@@ -360,12 +482,20 @@ class LocalMedia {
     }
     return status;
   }
-  async queueItems({ type, id } = {}) {
+  /** Every video of a library, show or season, in playing order; Specials only when asked for. */
+  async queueItems({ type, id, includeSpecials = false } = {}) {
     await this.index.refresh();
-    if (type !== 'library' || !this.libraries.some(library => library.id === id))
-      throw failure('Select a library', 404);
+    let list;
+    const group = /** @type {any} */ (this.index.group(id));
+    if (type === 'library' && this.libraries.some(library => library.id === id)) {
+      const library = this.libraries.find(candidate => candidate.id === id);
+      list = library?.type === 'shows' ? this.index.shows(id).flatMap(show => show.episodes) : this.index.list(id);
+    } else if (type === 'show' && group && 'seasons' in group) list = group.episodes;
+    else if (type === 'season' && group && !('seasons' in group)) list = group.episodes;
+    else throw failure('Select a library, show or season', 404);
+    if (!includeSpecials && type !== 'season') list = list.filter(entry => !entry.episode || entry.episode.seasonIndex);
     const items = [];
-    for (const entry of this.index.list(id)) {
+    for (const entry of list) {
       // A queue entry records its duration, so every queued file is read once.
       try {
         await this.described(entry);
@@ -378,12 +508,14 @@ class LocalMedia {
   }
   async artwork(id, kind = 'poster') {
     if (!this.art) throw failure('Artwork unavailable', 404);
-    const entry = await this.entry(id);
-    return this.art.picture(entry, kind, () => this.described(entry));
+    await this.index.refresh();
+    const source = this.pictureSource(id, kind);
+    if (!source) throw failure('Select a video from the library', 404);
+    return this.art.picture(source.subject, kind, () => this.described(source.video));
   }
   async allows(id) {
     await this.index.refresh();
-    return !!this.index.get(id);
+    return !!this.index.get(id) || !!this.index.group(id);
   }
   visible(id) {
     return this.allows(id);
@@ -503,12 +635,14 @@ class LocalMedia {
         },
       });
     }
+    const steps = entry.episode ? this.neighbors(entry) : {};
     const media = {
       title: entry.title,
-      subtitle: subtitle(entry),
+      subtitle: entry.episode ? episodeLine(entry) : subtitle(entry),
       duration: info.duration,
       kind: this.kind,
-      type: 'movie',
+      type: entry.episode ? 'episode' : 'movie',
+      ...(entry.episode ? { previousId: steps.previous?.id, nextId: steps.next?.id } : {}),
       resources: new Map(),
       id,
       principal: this.principal,

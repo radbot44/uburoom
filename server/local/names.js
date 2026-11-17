@@ -79,4 +79,55 @@ function sortTitle(title) {
   return title.replace(ARTICLE, '') || title;
 }
 
-module.exports = { parseName, filmName, sortTitle };
+// S01E02 (also s1e2 and S01E02E03, which counts as its first episode), or 1x02.
+const EPISODE =
+  /(?:^|[\s._\-\[(])(?:s(\d{1,3})[\s._-]?e(\d{1,4})(?:[\s._-]?e\d{1,4})*|(\d{1,2})x(\d{2,3}))(?=$|[\s._\-\])])/i;
+const SEASON_FOLDER = /^(?:season|series|staffel|saison|temporada)[\s._-]*(\d{1,3})$/i;
+
+/**
+ * A show's episode from its file name and the folders above it, the way media servers read
+ * them: `Show/Season 1/Show.S01E02.Title.1080p.mkv` is episode 2 of season 1 of "Show",
+ * titled "Title". The show is the first folder inside the library when there is one, or
+ * else the name before the episode number; "Season N" folders give the season when the
+ * name has none, and "Specials" is season 0. A file with no episode number is a special
+ * of its show. Nothing is looked up anywhere.
+ * @param {string} file The file name. @param {string[]} folders The folders from the library down to the file.
+ * @returns {{show: string, year?: number, season: number, episode?: number, title: string}}
+ */
+function episodeName(file, folders, options) {
+  const stem = file.replace(/\.[^.]+$/, '');
+  const match = EPISODE.exec(stem);
+  let season = match ? Number(match[1] ?? match[3]) : undefined,
+    episode = match ? Number(match[2] ?? match[4]) : undefined;
+  // The show: its own folder, else what comes before the episode number.
+  const before = match ? stem.slice(0, match.index) : '';
+  const shown = folders.length ? parseName(folders[0], options) : parseName(before || stem, options);
+  const show = shown.title || parseName(stem, options).title || stem.slice(0, 200);
+  // The season, when the name has none: a "Season 2" or "Specials" folder.
+  let folderSeason;
+  for (const folder of folders.slice(1)) {
+    const seasonMatch = SEASON_FOLDER.exec(folder.trim());
+    if (seasonMatch) folderSeason = Number(seasonMatch[1]);
+    else if (/^specials?$/i.test(folder.trim())) folderSeason = 0;
+  }
+  // In a season folder, a name that starts with a number is that episode: `Season 2/03 - Pilot.mkv`.
+  let rest = match ? stem.slice(match.index + match[0].length) : stem;
+  const numbered =
+    !match && folderSeason !== undefined ? /^(\d{1,3})(?:[\s._]*-[\s._]*|[\s._]+)(.*)$/.exec(stem) : null;
+  if (numbered) {
+    episode = Number(numbered[1]);
+    rest = numbered[2];
+  }
+  // The episode's own title: what follows the number, up to the first release tag.
+  rest = rest.replace(/^[\s._-]+/, '');
+  const title = RELEASE.test(rest.split(/[\s.]/)[0] || '') ? '' : parseName(rest, options).title;
+  return {
+    show,
+    ...(shown.year ? { year: shown.year } : {}),
+    season: season ?? folderSeason ?? 0,
+    ...(episode !== undefined ? { episode } : {}),
+    title: title && title !== show ? title : '',
+  };
+}
+
+module.exports = { parseName, filmName, sortTitle, episodeName };

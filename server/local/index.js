@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { SharedTask } = require('../operation');
-const { filmName, sortTitle } = require('./names');
+const { filmName, sortTitle, episodeName } = require('./names');
 
 const VIDEO = new Set(['.mkv', '.mp4', '.m4v', '.webm', '.mov', '.avi', '.ts', '.m2ts', '.mpg', '.mpeg', '.wmv']);
 /** Sidecar subtitle extensions and the codec each holds. */
@@ -34,6 +34,87 @@ function artFiles(images, stem, alone, directory) {
   }
   return found;
 }
+/**
+ * An episode's names and place, from its file name and the folders above it inside the library (see names.js).
+ * @param {string} libraryId @param {string} file @param {string} relative The folder, inside the library.
+ */
+function episodeEntry(libraryId, file, relative) {
+  const folders = relative.split('/').filter(Boolean);
+  const parsed = episodeName(file, folders);
+  // One show per folder (or per name, for files at the top), whatever each file calls it.
+  const key = (folders[0] || parsed.show + (parsed.year ? ' ' + parsed.year : '')).toLowerCase();
+  const label = parsed.title || (parsed.episode !== undefined ? 'Episode ' + parsed.episode : title(file));
+  return {
+    title: label.slice(0, 200),
+    sortTitle: label,
+    year: 0,
+    edition: '',
+    episode: {
+      show: showToken(libraryId, key),
+      season: seasonToken(libraryId, key, parsed.season),
+      seasonIndex: parsed.season,
+      ...(parsed.episode !== undefined ? { index: parsed.episode } : {}),
+      showTitle: parsed.show,
+      showYear: parsed.year || 0,
+      folder: folders[0] ? folders[0].toLowerCase() : '',
+    },
+  };
+}
+/**
+ * A library's episodes as shows and seasons, each in playing order: seasons by number with Specials (season 0)
+ * last, episodes by number and then name. Every show and season is also recorded in `groups`.
+ * @param {string} libraryId @param {LocalEntry[]} episodes
+ * @param {Map<string, {[kind: string]: string}>} folderArt @param {Map<string, any>} groups
+ * @returns {LocalShow[]}
+ */
+function groupShows(libraryId, episodes, folderArt, groups) {
+  /** @type {Map<string, any>} */
+  const shows = new Map();
+  for (const entry of episodes) {
+    const place = /** @type {NonNullable<LocalEntry['episode']>} */ (entry.episode);
+    let show = shows.get(place.show);
+    if (!show) {
+      show = {
+        token: place.show,
+        library: libraryId,
+        title: place.showTitle,
+        sortTitle: sortTitle(place.showTitle),
+        year: place.showYear,
+        art: (place.folder && folderArt.get(place.folder)) || {},
+        seasons: new Map(),
+        addedMs: 0,
+      };
+      shows.set(place.show, show);
+    }
+    show.year ||= place.showYear;
+    let season = show.seasons.get(place.seasonIndex);
+    if (!season) {
+      season = {
+        token: place.season,
+        index: place.seasonIndex,
+        title: place.seasonIndex ? 'Season ' + place.seasonIndex : 'Specials',
+        show: show.token,
+        episodes: [],
+      };
+      show.seasons.set(place.seasonIndex, season);
+    }
+    season.episodes.push(entry);
+  }
+  const byNumber = (a, b) =>
+    (a.episode.index ?? Infinity) - (b.episode.index ?? Infinity) ||
+    a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+  const list = [...shows.values()].map(show => {
+    const seasons = [...show.seasons.values()].sort((a, b) => (a.index || Infinity) - (b.index || Infinity));
+    for (const season of seasons) {
+      season.episodes.sort(byNumber);
+      groups.set(season.token, season);
+    }
+    const value = { ...show, seasons, episodes: seasons.flatMap(season => season.episodes) };
+    groups.set(show.token, value);
+    return value;
+  });
+  return list.sort((a, b) => a.sortTitle.localeCompare(b.sortTitle, undefined, { numeric: true, sensitivity: 'base' }));
+}
 const MAX_FILES = 20000,
   MAX_DEPTH = 12,
   RESCAN_MS = 60000,
@@ -44,15 +125,18 @@ const MAX_FILES = 20000,
  * path inside it. A token is only ever looked up in the index, never turned back
  * into a path, so nothing a client sends can reach outside a configured folder.
  */
-function token(libraryId, relative) {
+function token(libraryId, relative, prefix = 'f') {
   return (
-    'f' +
+    prefix +
     createHash('sha256')
       .update(libraryId + '\n' + relative)
       .digest('base64url')
       .slice(0, 21)
   );
 }
+/** A show's or a season's token: from its library and name, so it lasts as long as their files' do. */
+const showToken = (libraryId, key) => token(libraryId, 'show\n' + key, 'h');
+const seasonToken = (libraryId, key, season) => token(libraryId, 'season\n' + key + '\n' + season, 'n');
 function title(name) {
   const bare = name.replace(/\.[^.]+$/, '');
   return (/\s/.test(bare) ? bare : bare.replace(/[._]+/g, ' ')).trim().slice(0, 200) || name.slice(0, 200);
@@ -75,12 +159,18 @@ function named(file, folder, alone, parse) {
  * may list several folders: a file is known by its place inside its folder, so a
  * folder can move to another drive and keep its queues and resume positions, and
  * when two folders hold a file at the same place the first listed is used.
+ * In a `shows` library each video is an episode: `episode` says which show and season it is in.
  * @typedef {{token: string, library: string, relative: string, path: string, title: string, sortTitle: string,
- *   year: number, edition: string, folder: string, art: {[kind: string]: string}, addedMs?: number}} LocalEntry
+ *   year: number, edition: string, folder: string, art: {[kind: string]: string}, addedMs?: number,
+ *   episode?: {show: string, season: string, seasonIndex: number, index?: number, showTitle: string,
+ *   showYear: number, folder: string}}} LocalEntry
+ * @typedef {{token: string, index: number, title: string, show: string, episodes: LocalEntry[]}} LocalSeason
+ * @typedef {{token: string, library: string, title: string, sortTitle: string, year: number,
+ *   art: {[kind: string]: string}, seasons: LocalSeason[], episodes: LocalEntry[], addedMs: number}} LocalShow
  */
 class LocalIndex {
   /**
-   * @param {{id: string, name: string, paths: string[], parseNames?: boolean}[]} libraries
+   * @param {{id: string, name: string, paths: string[], parseNames?: boolean, type?: 'movies'|'shows'}[]} libraries
    * @param {{logger?: any, now?: () => number}} [options]
    */
   constructor(libraries, { logger, now = Date.now } = {}) {
@@ -93,6 +183,10 @@ class LocalIndex {
     this.entries = new Map();
     /** @type {Map<string, LocalEntry[]>} */
     this.byLibrary = new Map();
+    /** @type {Map<string, LocalShow[]>} The shows of each `shows` library, in title order. */
+    this.showsByLibrary = new Map();
+    /** @type {Map<string, LocalShow | LocalSeason>} Every show and season by token. */
+    this.groups = new Map();
     this.scannedAt = -Infinity;
     /** @type {Map<string, {size: number, mtimeMs: number, info: any}>} */
     this.probes = new Map();
@@ -118,9 +212,14 @@ class LocalIndex {
   }
   async scan(signal) {
     const entries = new Map(),
-      byLibrary = new Map();
+      byLibrary = new Map(),
+      showsByLibrary = new Map(),
+      groups = new Map();
     for (const library of this.libraries) {
       const found = [];
+      const shows = library.type === 'shows';
+      /** @type {Map<string, {[kind: string]: string}>} The pictures in each show's own folder. */
+      const showFolderArt = new Map();
       let repeated = 0;
       // Folders are walked in the order listed, so the first one holding a place keeps it.
       const pending = library.paths.map(folder => ({ directory: folder, relative: '', depth: 0 })).reverse();
@@ -145,6 +244,8 @@ class LocalIndex {
             .filter(row => row.isFile() && !row.isSymbolicLink() && IMAGE.has(path.extname(row.name).toLowerCase()))
             .map(row => [row.name.slice(0, -path.extname(row.name).length).toLowerCase(), row.name]),
         );
+        // A show's own folder is the first one inside the library: `Show/poster.jpg`, `Show/fanart.jpg`.
+        if (shows && depth === 1) showFolderArt.set(relative.toLowerCase(), artFiles(images, '', true, directory));
         for (const row of rows) {
           if (row.name.startsWith('.') || row.isSymbolicLink()) continue;
           const inside = relative ? relative + '/' + row.name : row.name;
@@ -162,9 +263,16 @@ class LocalIndex {
               library: library.id,
               relative: inside,
               path: path.join(directory, row.name),
-              ...named(row.name, own, alone, library.parseNames !== false),
+              ...(shows
+                ? episodeEntry(library.id, row.name, relative)
+                : named(row.name, own, alone, library.parseNames !== false)),
               // The folder's own picture names count only in a film's own folder, not at the top of a library.
-              art: artFiles(images, row.name.slice(0, -path.extname(row.name).length), alone && depth > 0, directory),
+              art: artFiles(
+                images,
+                row.name.slice(0, -path.extname(row.name).length),
+                !shows && alone && depth > 0,
+                directory,
+              ),
               folder: relative.split('/').filter(Boolean).join(' / ').slice(0, 200),
             };
             entries.set(id, entry);
@@ -184,10 +292,16 @@ class LocalIndex {
           a.sortTitle.localeCompare(b.sortTitle, undefined, { numeric: true, sensitivity: 'base' }) || a.year - b.year,
       );
       byLibrary.set(library.id, found);
+      if (shows) showsByLibrary.set(library.id, groupShows(library.id, found, showFolderArt, groups));
     }
     await this.dated(entries, signal);
+    // A show was added when its newest episode was.
+    for (const list of showsByLibrary.values())
+      for (const show of list) show.addedMs = Math.max(0, ...show.episodes.map(entry => entry.addedMs || 0));
     this.entries = entries;
     this.byLibrary = byLibrary;
+    this.showsByLibrary = showsByLibrary;
+    this.groups = groups;
     this.scannedAt = this.now();
     for (const key of this.probes.keys()) if (!entries.has(key)) this.probes.delete(key);
     this.onScanned?.();
@@ -217,6 +331,14 @@ class LocalIndex {
   /** Every video in every library, newest first. @returns {LocalEntry[]} */
   newest() {
     return [...this.entries.values()].sort((a, b) => (b.addedMs || 0) - (a.addedMs || 0));
+  }
+  /** A show or season by token. @returns {LocalShow | LocalSeason | undefined} */
+  group(id) {
+    return typeof id === 'string' ? this.groups.get(id) : undefined;
+  }
+  /** @returns {LocalShow[]} */
+  shows(libraryId) {
+    return this.showsByLibrary.get(libraryId) || [];
   }
   /** @returns {LocalEntry | undefined} */
   get(id) {
