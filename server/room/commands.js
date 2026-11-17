@@ -183,7 +183,10 @@ module.exports = {
     if (action.startsWith('media.ready.')) {
       if (!this.hub.authorize(actor, room, 'chooseMedia').ok)
         return { status: 'unavailable', message: 'This readiness choice expired.' };
-      const outcome = applyReadinessDecision(room, action, args.readinessId);
+      const outcome = applyReadinessDecision(room, action, args.readinessId, {
+        now: this.clock.now(),
+        monoNow: performance.now(),
+      });
       if (outcome.status !== 'applied') return { status: outcome.status, message: outcome.message };
       this.review(room);
       return { status: 'applied', message: outcome.message };

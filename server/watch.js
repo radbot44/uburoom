@@ -47,7 +47,11 @@ class Watch extends WatchParts {
     super();
     // Room timelines and every in-memory deadline read this clock, never Date.now() (stored and external times excepted).
     this.clock = hub?.clock || createServerClock();
-    this.tracking = new PlaybackTracking(registry);
+    this.tracking = new PlaybackTracking(
+      registry,
+      () => Date.now(),
+      () => this.clock.now(),
+    );
     this.hub = hub;
     // Rooms reach media only through the providers; what one of them alone offers hangs off it.
     this.providers =

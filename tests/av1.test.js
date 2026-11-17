@@ -53,7 +53,11 @@ test('a failed speculative AV1 chunk stays bounded without poisoning other chunk
   }
 });
 
-test('AV1 retries an isolated failed chunk after cooldown without losing good cached chunks', async () => {
+test('AV1 retries an isolated failed chunk after monotonic cooldown despite wall-clock steps', async t => {
+  let mono = 1000,
+    wall = Date.now();
+  t.mock.method(performance, 'now', () => mono);
+  t.mock.method(Date, 'now', () => wall);
   let unavailable = true,
     encodes = 0,
     probes = 0;
@@ -83,14 +87,18 @@ test('AV1 retries an isolated failed chunk after cooldown without losing good ca
     await assert.rejects(manager.chunk(lease, 4, signal), /Temporary probe failure/);
     assert.equal(probes, 1);
     assert.equal(encodes, 0);
-    lease.group.chunks.get(4).failedAt -= 5001;
+    wall += 30000;
+    await assert.rejects(manager.chunk(lease, 4, signal), /Temporary probe failure/);
+    assert.equal(probes, 1, 'wall steps cannot bypass the failure cooldown');
+    mono += 5001;
     await assert.rejects(manager.chunk(lease, 4, signal), /Temporary source failure/);
     assert.equal(probes, 2);
     assert.equal(encodes, 1);
     unavailable = false;
+    wall -= 40000;
     await assert.rejects(manager.chunk(lease, 4, signal), /Temporary source failure/);
     assert.equal(encodes, 1);
-    lease.group.chunks.get(4).failedAt -= 5001;
+    mono += 5001;
     const recovered = await manager.chunk(lease, 4, signal);
     assert.ok(recovered.video.length);
     assert.equal(encodes, 2);
@@ -667,6 +675,39 @@ test('shared probe survives one cancelled chunk and source fallback is learned a
   } finally {
     releaseProbe?.();
     manager.release(lease);
+    await manager.close();
+  }
+});
+
+test('recent AV1 fallback demand survives wall steps and yields capacity only after monotonic expiry', async t => {
+  let mono = 1000,
+    wall = Date.now();
+  t.mock.method(performance, 'now', () => mono);
+  t.mock.method(Date, 'now', () => wall);
+  const manager = new AV1({ ffmpegPath: 'fixture' }, async (_binary, args) =>
+    args.includes('-show_entries')
+      ? Buffer.from(JSON.stringify({ streams: [{ codec_type: 'video', width: 640, height: 360 }] }))
+      : args.includes('pipe:3')
+        ? { video: Buffer.alloc(200), audio: Buffer.alloc(50) }
+        : Buffer.alloc(200),
+  );
+  const source = { id: 'fallback', duration: 60, start: 'http://fixture' };
+  const fallback = manager.acquire(source, 'direct', false, 'av1', { background: true });
+  const viewers = Array.from({ length: 7 }, (_, index) => manager.acquire({ ...source, id: String(index) }, 'direct'));
+  let urgent;
+  try {
+    await manager.chunk(fallback, 0, new AbortController().signal);
+    for (const step of [30000, -40000]) {
+      wall += step;
+      assert.throws(() => manager.acquire({ ...source, id: 'urgent' }, 'direct'), /busy/);
+      assert.equal(fallback.released, false);
+    }
+    mono += 15001;
+    urgent = manager.acquire({ ...source, id: 'urgent' }, 'direct');
+    assert.equal(fallback.released, true);
+    assert.equal(manager.groups.size, 8);
+  } finally {
+    for (const lease of [fallback, ...viewers, urgent]) manager.release(lease);
     await manager.close();
   }
 });

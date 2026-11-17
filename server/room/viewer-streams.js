@@ -592,7 +592,7 @@ module.exports = {
           this.clock.now() - viewer.syncQuality.updatedAt < 15000,
       )
     )
-      media.av1Lease.group.viewerDemandAt = this.clock.now();
+      media.av1Lease.group.viewerDemandAt = performance.now();
     room.fallbackStream?.reconcile(this.position(room), !room.state.paused);
     // The fallback encoder follows the playhead once a second while it exists.
     if (room.fallbackStream && !room.fallbackTimer) {

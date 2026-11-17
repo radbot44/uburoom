@@ -364,3 +364,22 @@ test('client pauses at the common deadline and cancels a superseded pause alarm'
   await ctx.synchronize();
   assert.equal(pauses, 1);
 });
+
+for (const wallStep of [30000, -10000]) {
+  test(`readiness force-start stays on the room clock after a ${wallStep}ms wall step`, async t => {
+    const f = await fixture(t);
+    await f.load();
+    await f.ready(f.h);
+    f.advance(10000);
+    assert.equal(f.room.readinessTimedOut, true);
+    const roomNow = f.watch.clock.now();
+    t.mock.method(Date, 'now', () => f.now() + wallStep);
+    const applied = await f.dispatch('media.ready.start', { readinessId: f.room.readinessId });
+    assert.equal(applied.status, 'applied');
+    assert.equal(f.room.changedAt, roomNow);
+    assert.equal(f.room.startAt, roomNow + 400);
+    f.advance(500);
+    assert.equal(f.room.state.paused, false);
+    assert.ok(f.watch.position(f.room) > 0, 'the scheduled start advances on the unchanged room clock');
+  });
+}

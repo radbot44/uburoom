@@ -129,6 +129,7 @@ async function fixture(t, { fallback = false } = {}) {
   let observedAt = Date.now(),
     sequence = 0;
   watch.tracking.now = () => observedAt;
+  watch.tracking.clockNow = () => observedAt;
   async function observe(position, state = 'playing', extra = {}) {
     observedAt += 1000;
     sequence++;

@@ -765,7 +765,7 @@ class AV1 {
           if (
             candidate.leases.size &&
             [...candidate.leases].every(lease => lease.background) &&
-            Date.now() - (candidate.viewerDemandAt || 0) > 15000
+            performance.now() - (candidate.viewerDemandAt ?? -Infinity) > 15000
           ) {
             for (const lease of [...candidate.leases]) this.release(lease);
             break;
@@ -984,7 +984,7 @@ class AV1 {
     const group = lease.group,
       source = lease.source || group.source,
       start = index * CHUNK;
-    if (!background) group.viewerDemandAt = Date.now();
+    if (!background) group.viewerDemandAt = performance.now();
     if (!Number.isSafeInteger(index) || index < 0 || start >= source.duration)
       throw new PlaybackError('Invalid WebM chunk.');
     let entry = group.chunks.get(index);
@@ -995,7 +995,7 @@ class AV1 {
     // Briefly memoize failures to collapse concurrent track/viewer requests.
     // A later bounded client retry must be able to recover a temporary Plex
     // outage; caching a rejected chunk forever makes that source time unusable.
-    if (entry?.error && !entry.users && Date.now() - entry.failedAt >= 5000) {
+    if (entry?.error && !entry.users && performance.now() - entry.failedAt >= 5000) {
       group.chunks.delete(index);
       entry = undefined;
     }
@@ -1277,7 +1277,7 @@ class AV1 {
             // Keep failure local to this chunk and cool down before re-encoding.
             entry.error = error instanceof PlaybackError ? error : new PlaybackError('WebM chunk preparation failed.');
             this.logger.warn('Conversion', `Chunk ${index} failed: ${entry.error.message}`);
-            entry.failedAt = Date.now();
+            entry.failedAt = performance.now();
             this.prune(group, entry);
           }
           throw entry.error || error;

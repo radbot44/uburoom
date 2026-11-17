@@ -23,9 +23,10 @@ const length = intervals => intervals.reduce((sum, [a, b]) => sum + b - a, 0);
 class PlaybackTracking {
   /** An observation ends after this long without a sample. */
   static OBSERVATION_GAP_MS = GAP;
-  constructor(registry, now = Date.now) {
+  constructor(registry, now = () => Date.now(), clockNow = now) {
     this.registry = registry;
     this.now = now;
+    this.clockNow = clockNow;
     this.db = registry.db;
     // Runtime viewers and consent are never restored after a process restart.
     for (const row of repositories(this.db).history.listInterrupted()) {
@@ -57,11 +58,12 @@ class PlaybackTracking {
     viewer.observationSample = undefined;
   }
   expire(viewer) {
-    if (viewer.tracking && this.now() - viewer.tracking.record.lastReceivedAt > GAP)
+    if (viewer.tracking && this.clockNow() - viewer.tracking.lastObservedServerAt > GAP)
       this.end(viewer, 'observation-timeout');
   }
   observe(room, viewer, viewerId, data) {
     const now = this.now();
+    const clockNow = this.clockNow();
     const rejection = !viewer.media
       ? 'media-unavailable'
       : viewer.mediaVersion !== room.mediaVersion || data.mediaVersion !== room.mediaVersion
@@ -84,9 +86,9 @@ class PlaybackTracking {
                         ? 'sample-replayed'
                         : !Number.isFinite(data.observedAt)
                           ? 'invalid-clock'
-                          : now - data.observedAt > 3000
+                          : clockNow - data.observedAt > 3000
                             ? 'sample-stale'
-                            : data.observedAt - now > 1000
+                            : data.observedAt - clockNow > 1000
                               ? 'sample-future'
                               : !Number.isFinite(data.position) ||
                                   data.position < 0 ||
@@ -108,6 +110,7 @@ class PlaybackTracking {
         .identities(viewer.userId)
         .map(i => ({ provider: i.provider, subject: i.subject }));
       viewer.tracking = {
+        lastObservedServerAt: clockNow,
         record: {
           id: randomUUID(),
           userId: viewer.userId,
@@ -137,7 +140,7 @@ class PlaybackTracking {
     const credit = { reason: 'baseline', creditedSeconds: 0 };
     if (previous) {
       const elapsed = (data.sampleAt - previous.sampleAt) / 1000,
-        received = (now - record.lastReceivedAt) / 1000,
+        received = (clockNow - viewer.tracking.lastObservedServerAt) / 1000,
         advanced = data.position - previous.position;
       const clockDelta = (data.observedAt - previous.observedAt) / 1000 - elapsed;
       credit.reason =
@@ -189,6 +192,7 @@ class PlaybackTracking {
       sourceSeconds: length(record.sourceIntervals),
     });
     viewer.tracking.previous = { ...data };
+    viewer.tracking.lastObservedServerAt = clockNow;
     this.save(record);
     if (starting) this.prune();
     return {

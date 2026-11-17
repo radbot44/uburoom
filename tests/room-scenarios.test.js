@@ -17,7 +17,40 @@ for (const scenario of scenarios)
     const file = path.join(directory, scenario.name + '.json');
     assert.ok(fs.existsSync(file), `No recording for ${scenario.name}; run npm run traces:record -- ${scenario.name}`);
     const expected = JSON.parse(fs.readFileSync(file, 'utf8')).steps;
-    const run = await runScenario(scenario),
+    const run = await runScenario({
+        ...scenario,
+        async run(s) {
+          await scenario.run(s);
+          if (scenario.name !== 'server-wall-clock-step') return;
+          const alice = s.viewers.find(viewer => viewer.label === 'alice');
+          const watch = s.server.app.watch;
+          const room = watch.rooms.get(alice.roomId);
+          const viewer = room.viewers.get(alice.viewerId);
+          let sequence = 0;
+          for (const wallStep of [0, 30000, -40000]) {
+            s.clock.stepWall(wallStep);
+            const observed = await alice.request('observe after wall step', transport =>
+              transport.observe(alice.roomId, alice.viewerId, {
+                epoch: room.epoch,
+                mediaVersion: room.mediaVersion,
+                streamVersion: viewer.streamVersion,
+                observationEpoch: viewer.observationEpoch,
+                sequence: ++sequence,
+                sampleAt: performance.now(),
+                observedAt: watch.clock.now(),
+                position: watch.position(room),
+                state: 'playing',
+                frames: sequence * 30,
+                rate: 1,
+                discontinuity: 0,
+              }),
+            );
+            assert.equal(observed.ok, true, JSON.stringify(observed));
+            assert.equal(observed.value.watchedSeconds, sequence - 1);
+            await s.advance(1000);
+          }
+        },
+      }),
       actual = run.steps;
     if (scenario.plexSessions) {
       // A stale completion must stop what it prepared: once the server closes, nothing is open.

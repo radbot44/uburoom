@@ -166,3 +166,114 @@ test('observation clock manages poll jitter, refuses stale evidence, isolates ep
     assert.equal(stepClock.sample(2000), 102000 + step);
   }
 });
+
+for (const wallStep of [30000, -10000]) {
+  test(`Watch accepts decoded observations and natural completion after a ${wallStep}ms wall step`, async t => {
+    const { Hub } = require('../server/core');
+    const { Watch } = require('../server/watch');
+    const { wireRooms } = require('./helpers/live-room');
+    const { watchOperations } = require('../server/watch-operations');
+    const { randomUUID } = require('node:crypto');
+    let clock = Date.now(),
+      wall = clock;
+    t.mock.method(Date, 'now', () => wall);
+    const registry = new Accounts(undefined, credentialVault());
+    const host = { userId: registry.resolve('discord', '111111111111111111', 'Host').id, watchViewerId: randomUUID() };
+    const hub = new Hub({ ownerId: '111111111111111111' });
+    hub.clock = { now: () => clock };
+    hub.access = { isMember: () => true, refresh: async () => true };
+    const plex = {
+      json: async () => ({ machineIdentifier: 'fixture-plex' }),
+      prepare: async id => ({
+        id,
+        title: 'Fixture',
+        duration: 100,
+        kind: 'plex',
+        format: 'file',
+        resources: new Map(),
+      }),
+      stop: async () => {},
+    };
+    const watch = wireRooms(hub, plex, new Watch(hub, plex, undefined, registry));
+    clearInterval(watch.roomState.timer);
+    t.after(async () => {
+      await watch.close();
+      hub.close();
+      await registry.close();
+    });
+    const roomId = await watch.roomState.create(host, { name: 'Clock regression', keepEmpty: true });
+    const room = watch.rooms.get(roomId),
+      viewerId = host.watchViewerId;
+    watch.join(room, host, viewerId, { alive: async () => true, quality: 'direct' });
+    assert.equal(
+      (await hub.dispatch(host, { roomId, action: 'media.load', args: { mediaId: '100', quality: 'direct' } })).status,
+      'applied',
+    );
+    await watch.prepareViewer(room, host, viewerId);
+    room.initialGate = false;
+    room.state.paused = false;
+    room.manualPaused = false;
+    room.position = 96;
+    room.changedAt = clock;
+    room.startAt = room.pauseAt = undefined;
+    const operations = watchOperations({
+      config: hub.config,
+      hub,
+      watch,
+      registry,
+      throttle: () => true,
+      authorized: async () => ({ actor: host }),
+      login: async () => host,
+    });
+    const viewer = room.viewers.get(viewerId);
+    let sequence = 0;
+    const observe = async (position, state = 'playing') => {
+      sequence++;
+      const response = await operations.observe(
+        { headers: {} },
+        {
+          roomId,
+          viewerId,
+          observation: {
+            epoch: room.epoch,
+            mediaVersion: room.mediaVersion,
+            streamVersion: viewer.streamVersion,
+            observationEpoch: viewer.observationEpoch,
+            sequence,
+            sampleAt: sequence * 1000,
+            observedAt: clock,
+            position,
+            state,
+            frames: sequence * 30,
+            rate: 1,
+            discontinuity: 0,
+          },
+        },
+      );
+      assert.equal(response.status, 200, JSON.stringify(response.value));
+      return response;
+    };
+    await observe(96);
+    const startedAt = wall;
+    wall += wallStep;
+    for (const position of [97, 98, 99]) {
+      clock += 1000;
+      wall += 1000;
+      const result = await observe(position);
+      assert.equal(result.value.credit.reason, 'credited');
+      assert.equal(result.value.watchedSeconds, position - 96);
+      watch.tracking.expire(viewer);
+      assert.ok(viewer.tracking, 'a wall step cannot expire live observations');
+    }
+    clock += 1000;
+    wall += 1000;
+    await observe(100, 'ended');
+    assert.equal(room.media, undefined, 'natural completion archives and unloads the media');
+    const history = (await watch.tracking.history(host.userId)).sessions;
+    assert.equal(history.length, 1);
+    assert.equal(history[0].startedAt, startedAt);
+    assert.equal(history[0].lastReceivedAt, wall);
+    assert.equal(history[0].endedAt, wall);
+    assert.equal(history[0].watchedSeconds, 3);
+  });
+}
