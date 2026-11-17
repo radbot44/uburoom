@@ -1255,3 +1255,55 @@ test('a Plex outage keeps admitted viewers in the room, admits nobody new and ne
   viewer.syncQuality = { status: 'playing' };
   assert.equal(watch.view(room, a, viewerId).providerNotice, false);
 });
+
+test('an item-unavailable viewer releases initial and shared-seek readiness without the timeout', async t => {
+  const hub = new Hub({ ownerId: 'host' });
+  hub.access = { isMember: () => true, refresh: async () => true };
+  const provider = {
+    principal: 'host',
+    json: async () => ({ machineIdentifier: 'fixture' }),
+    stop: async () => {},
+    prepare: async id => ({ id, kind: 'plex', format: 'file', duration: 120, title: 'Fixture', resources: new Map() }),
+    availability: async ids => new Map(ids.map(id => [id, true])),
+  };
+  const { watch, registry, actor, open } = liveWatch(hub, provider);
+  t.after(async () => {
+    await watch.close();
+    hub.close();
+    await registry.close();
+  });
+  const host = actor('Host'),
+    guest = actor('Guest'),
+    room = await open(host);
+  const h = randomUUID(),
+    g = randomUUID();
+  host.watchViewerId = h;
+  guest.watchViewerId = g;
+  const guestProvider = {
+    ...provider,
+    principal: 'guest',
+    availability: async ids => new Map(ids.map(id => [id, false])),
+  };
+  hub.mediaFor = async actor => (actor.userId === guest.userId ? guestProvider : provider);
+  watch.join(room, host, h, { alive: async () => true });
+  watch.join(room, guest, g, { alive: async () => true });
+  const dispatch = (action, args) => hub.dispatch(host, { roomId: room.roomId, action, args });
+  assert.equal((await dispatch('media.load', { mediaId: '1', quality: 'direct' })).status, 'applied');
+  await Promise.all([...room.viewers.values()].map(viewer => viewer.streamWork));
+  const unavailable = room.viewers.get(g);
+  assert.equal(unavailable.media.format, 'unavailable');
+  assert.ok(unavailable.streamVersion);
+  assert.equal(room.initialViewers.has(g), false);
+  const previousStream = unavailable.streamVersion;
+  for (const seek of [false, true]) {
+    if (seek) {
+      assert.equal((await dispatch('media.seek.absolute', { seconds: 30 })).status, 'applied');
+      await watch.prepareStream(room, guest, g);
+      assert.notEqual(unavailable.streamVersion, previousStream);
+    }
+    await watch.ready(room, host, h, room.mediaVersion, true, room.readinessVersion);
+    assert.equal(watch.view(room, host, h).state.waitingForReady, false);
+    assert.equal(room.readinessTimedOut, false);
+    assert.equal(room.state.paused, false, 'the healthy viewer starts without waiting ten seconds');
+  }
+});

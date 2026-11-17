@@ -843,3 +843,116 @@ test('cancelled library work releases admission and stalled discovery cannot blo
     await f.close();
   }
 });
+
+async function pushedWithin(predicate, message) {
+  const deadline = performance.now() + 1500;
+  while (!predicate()) {
+    assert.ok(performance.now() < deadline, message);
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+}
+
+test('local delivery pushes a fresh viewer lane after delayed auto-queue corpus work', tls, async t => {
+  const f = await fixture(t),
+    identity = await f.login('host'),
+    client = await f.connect(identity);
+  t.after(() => client.ws.terminate());
+  const id = (await client.call('/api/watch/rooms', {})).value.id,
+    viewerId = randomUUID();
+  assert.equal((await client.call('/api/watch/rooms/' + id + '?viewer=' + viewerId + '&delivery=local')).status, 200);
+  const watch = f.app.watch,
+    room = watch.rooms.get(id),
+    viewer = room.viewers.get(viewerId);
+  await watch.roomState.queue.configureAuto(id, viewer.userId, {
+    mode: 'following',
+    scope: { type: 'show', id: '50', serverId: 'local-demo' },
+  });
+  const corpus = Promise.withResolvers();
+  let entered = false;
+  t.mock.method(watch, 'autoCorpus', async () => {
+    entered = true;
+    return corpus.promise;
+  });
+  t.after(() => corpus.resolve(undefined));
+  let outcome;
+  const loading = client
+    .call('/api/watch/rooms/' + id + '/command', {
+      viewerId,
+      epoch: room.epoch,
+      expiresAt: watch.clock.now() + 2500,
+      command: { action: 'media.load', args: { mediaId: 'demo', quality: 'direct' } },
+    })
+    .then(result => {
+      outcome = result;
+      return result;
+    });
+  await pushedWithin(() => entered || outcome, 'load never reached delayed auto-queue corpus');
+  assert.ok(entered, JSON.stringify(outcome));
+  await pushedWithin(
+    () => client.events.some(event => event.type === 'viewer' && event.state.mediaVersion === room.mediaVersion),
+    'adopted generation was not published while corpus was pending',
+  );
+  const boundary = client.events.length;
+  const stream = Promise.withResolvers();
+  const scope = watch.streamScope.bind(watch);
+  let preparing = false;
+  t.mock.method(watch, 'streamScope', async (...args) => {
+    preparing = true;
+    await stream.promise;
+    return scope(...args);
+  });
+  t.after(() => stream.resolve());
+  corpus.resolve(undefined);
+  assert.equal((await loading).value.status, 'applied');
+  await pushedWithin(() => preparing, 'local viewer never started preparing');
+  // Let the command publication read the unchanged, still-empty viewer lane.
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  stream.resolve();
+  await pushedWithin(
+    () =>
+      client.events
+        .slice(boundary)
+        .some(
+          event =>
+            event.type === 'viewer' &&
+            event.state.format === 'local' &&
+            event.state.streamVersion === viewer.streamVersion,
+        ),
+    'local stream was not pushed after corpus resolution',
+  );
+  assert.equal(viewer.media.format, 'local');
+  assert.ok(viewer.streamVersion);
+});
+
+test('stream preparation failure and recovery publish promptly without a resync request', tls, async t => {
+  const f = await fixture(t),
+    client = await f.connect(await f.login('host'));
+  t.after(() => client.ws.terminate());
+  const id = (await client.call('/api/watch/rooms', {})).value.id,
+    viewerId = randomUUID();
+  await client.call('/api/watch/rooms/' + id + '?viewer=' + viewerId);
+  const watch = f.app.watch,
+    room = watch.rooms.get(id),
+    viewer = room.viewers.get(viewerId);
+  const original = watch.prepareViewer.bind(watch);
+  let fail = true;
+  t.mock.method(watch, 'prepareViewer', (...args) => {
+    if (fail) throw Object.assign(new Error('Fixture preparation failed'), { status: 503 });
+    return original(...args);
+  });
+  const boundary = client.events.length;
+  await watch.prepareStream(room, viewer.actor, viewerId);
+  await pushedWithin(
+    () => client.events.slice(boundary).some(event => event.type === 'error' && event.code === 'unavailable'),
+    'preparation failure was not pushed',
+  );
+  const recovery = client.events.length;
+  fail = false;
+  await watch.prepareStream(room, viewer.actor, viewerId);
+  await pushedWithin(
+    () => client.events.slice(recovery).some(event => event.type === 'room'),
+    'recovery was not pushed',
+  );
+  assert.equal(viewer.streamFailure, undefined);
+});

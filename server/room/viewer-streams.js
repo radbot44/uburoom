@@ -212,20 +212,25 @@ module.exports = {
           void this.reporting?.end(viewer, 'media-unavailable');
           await this.providers.stop(viewer.media);
         }
-        if (room.mediaVersion !== version || room.viewers.get(viewerId) !== viewer) return;
-        viewer.media = {
-          id: room.media.id,
-          title: room.media.title,
-          duration: room.media.duration,
-          kind: room.media.kind,
-          format: 'unavailable',
-          resources: new Map(),
-          unavailable: true,
-          playbackError: room.media.title + ' is unavailable.',
-        };
-        viewer.mediaVersion = version;
-        viewer.ready = false;
-        return viewer.media;
+        return this.inRoom(room, () => {
+          if (room.mediaVersion !== version || room.viewers.get(viewerId) !== viewer) return;
+          viewer.media = {
+            id: room.media.id,
+            title: room.media.title,
+            duration: room.media.duration,
+            kind: room.media.kind,
+            format: 'unavailable',
+            resources: new Map(),
+            unavailable: true,
+            playbackError: room.media.title + ' is unavailable.',
+          };
+          viewer.mediaVersion = version;
+          viewer.streamVersion = randomUUID();
+          viewer.ready = false;
+          this.coordinator.run(room, { type: 'stream', viewerId, available: false });
+          this.changed(room);
+          return viewer.media;
+        });
       }
       if (viewer.media?.unavailable) viewer.media = undefined;
     }
@@ -238,25 +243,30 @@ module.exports = {
         (!viewer.media.principal || viewer.media.principal === provider.principal)
       )
         return viewer.media;
-      this.tracking.end(viewer, 'stream-changed');
-      void this.reporting?.end(viewer, 'stream-changed');
-      if (viewer.media) void this.providers.stop(viewer.media);
-      viewer.directDelivery = undefined;
-      viewer.media = {
-        id: room.media.id,
-        title: room.media.title,
-        duration: room.media.duration,
-        kind: room.media.kind,
-        format: 'local',
-        principal: provider.principal,
-        resources: new Map(),
-        chapters: room.media.chapters || [],
-        markers: room.media.markers || [],
-      };
-      viewer.mediaVersion = version;
-      viewer.streamVersion = randomUUID();
-      viewer.ready = false;
-      return viewer.media;
+      return this.inRoom(room, () => {
+        if (room.mediaVersion !== version || room.viewers.get(viewerId) !== viewer) return;
+        this.tracking.end(viewer, 'stream-changed');
+        void this.reporting?.end(viewer, 'stream-changed');
+        if (viewer.media) void this.providers.stop(viewer.media);
+        viewer.directDelivery = undefined;
+        viewer.media = {
+          id: room.media.id,
+          title: room.media.title,
+          duration: room.media.duration,
+          kind: room.media.kind,
+          format: 'local',
+          principal: provider.principal,
+          resources: new Map(),
+          chapters: room.media.chapters || [],
+          markers: room.media.markers || [],
+        };
+        viewer.mediaVersion = version;
+        viewer.streamVersion = randomUUID();
+        viewer.ready = false;
+        this.coordinator.run(room, { type: 'stream', viewerId, available: true });
+        this.changed(room);
+        return viewer.media;
+      });
     }
     if (!viewer.localDelivery && viewer.media?.format === 'local') viewer.media = undefined;
     const background =
@@ -491,12 +501,16 @@ module.exports = {
       .then(() => this.prepareViewer(room, actor, viewerId))
       .then(
         () => {
+          const changed = viewer.streamFailure !== undefined;
           viewer.streamFailure = undefined;
+          if (changed) this.changed(room);
           this.keepTranscodes(room);
         },
         error => {
           // Shown to this viewer until a retry succeeds, as the old once-a-second poll did.
+          const changed = !viewer.streamFailure || viewer.streamFailure.message !== error.message;
           viewer.streamFailure = error;
+          if (changed) this.changed(room);
           this.retryStream(room, viewerId, 1000);
         },
       );
