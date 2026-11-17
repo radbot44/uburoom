@@ -7,6 +7,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { PlaybackError, classifyHdr } = require('./av1');
 const Tracks = require('./media-tracks');
 const { LocalIndex } = require('./local/index');
+const { LocalArt } = require('./local/art');
 const { prepareStream } = require('./media-delivery');
 const { runOperation, currentSignal } = require('./operation');
 
@@ -65,11 +66,16 @@ function decodeText(bytes) {
  * See server/media-provider.js for the contract.
  */
 class LocalMedia {
-  /** @param {{id: string, name: string, paths: string[], parseNames?: boolean}[]} libraries @param {{pipeline: any, logger?: any}} services */
-  constructor(libraries, { pipeline, logger }) {
+  /**
+   * @param {{id: string, name: string, paths: string[], parseNames?: boolean}[]} libraries
+   * @param {{pipeline: any, logger?: any, artDirectory?: string}} services `artDirectory` holds the pictures
+   *   made for local videos; without one, local videos have none.
+   */
+  constructor(libraries, { pipeline, logger, artDirectory }) {
     this.libraries = libraries;
     this.pipeline = pipeline;
     this.index = new LocalIndex(libraries, { logger });
+    this.art = artDirectory ? new LocalArt({ directory: artDirectory, tools: () => pipeline.av1, logger }) : undefined;
   }
   get kind() {
     return 'local';
@@ -86,6 +92,8 @@ class LocalMedia {
   // Catalog
   item(entry) {
     const info = this.index.known(entry);
+    // With FFmpeg every video has a frame to show; a picture file beside it is used first.
+    const frames = !!this.art?.available;
     return {
       id: entry.token,
       section: entry.library,
@@ -105,8 +113,10 @@ class LocalMedia {
       episodeCount: 0,
       showTitle: '',
       parentTitle: '',
-      hasPoster: false,
-      hasLandscape: false,
+      hasPoster: frames,
+      hasLandscape: frames,
+      hasBackdrop: frames,
+      hasLogo: frames && !!entry.art.logo,
       summary: '',
     };
   }
@@ -291,8 +301,10 @@ class LocalMedia {
     }
     return items;
   }
-  async artwork() {
-    throw failure('Artwork unavailable', 404);
+  async artwork(id, kind = 'poster') {
+    if (!this.art) throw failure('Artwork unavailable', 404);
+    const entry = await this.entry(id);
+    return this.art.picture(entry, kind, () => this.described(entry));
   }
   async allows(id) {
     await this.index.refresh();
@@ -458,6 +470,7 @@ class LocalMedia {
   }
   close() {
     this.index.close();
+    this.art?.close();
   }
 }
 
@@ -469,7 +482,7 @@ class LocalMedia {
 function localProvider({ config, pipeline, logger }) {
   const libraries = config.localMedia?.libraries || [];
   if (!libraries.length) return;
-  const local = new LocalMedia(libraries, { pipeline, logger });
+  const local = new LocalMedia(libraries, { pipeline, logger, artDirectory: config.localMedia.artDirectory });
   return { kind: 'local', root: local, identity: async () => LOCAL_SERVER, scopeFor: async () => local };
 }
 

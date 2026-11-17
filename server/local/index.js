@@ -8,6 +8,32 @@ const { filmName, sortTitle } = require('./names');
 const VIDEO = new Set(['.mkv', '.mp4', '.m4v', '.webm', '.mov', '.avi', '.ts', '.m2ts', '.mpg', '.mpeg', '.wmv']);
 /** Sidecar subtitle extensions and the codec each holds. */
 const SIDECAR = { '.srt': 'subrip', '.vtt': 'webvtt', '.ass': 'ass', '.ssa': 'ssa', '.sup': 'pgs', '.sub': 'vobsub' };
+/** Pictures beside a video, as media servers name them, by the kind each one is. */
+const IMAGE = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+const ART = {
+  // `Film-poster.jpg` or `Film.jpg` beside it; in a film's own folder also `poster.jpg` and the rest.
+  poster: { own: ['-poster', ''], shared: ['poster', 'folder', 'cover', 'movie'] },
+  landscape: { own: ['-landscape', '-thumb'], shared: ['landscape', 'thumb'] },
+  backdrop: { own: ['-fanart', '-backdrop', '-background'], shared: ['fanart', 'backdrop', 'background', 'art'] },
+  logo: { own: ['-logo', '-clearlogo'], shared: ['logo', 'clearlogo'] },
+};
+/**
+ * The picture files for one video, from the names already read in its folder.
+ * @param {Map<string, string>} images Lowercased stem to file name.
+ * @param {string} stem @param {boolean} alone @param {string} directory
+ */
+function artFiles(images, stem, alone, directory) {
+  /** @type {{[kind: string]: string}} */
+  const found = {};
+  const lower = stem.toLowerCase();
+  for (const [kind, names] of Object.entries(ART)) {
+    const name = [...names.own.map(suffix => lower + suffix), ...(alone ? names.shared : [])].find(candidate =>
+      images.has(candidate),
+    );
+    if (name) found[kind] = path.join(directory, images.get(name));
+  }
+  return found;
+}
 const MAX_FILES = 20000,
   MAX_DEPTH = 12,
   RESCAN_MS = 60000,
@@ -50,7 +76,7 @@ function named(file, folder, alone, parse) {
  * folder can move to another drive and keep its queues and resume positions, and
  * when two folders hold a file at the same place the first listed is used.
  * @typedef {{token: string, library: string, relative: string, path: string, title: string, sortTitle: string,
- *   year: number, edition: string, folder: string}} LocalEntry
+ *   year: number, edition: string, folder: string, art: {[kind: string]: string}}} LocalEntry
  */
 class LocalIndex {
   /**
@@ -112,6 +138,11 @@ class LocalIndex {
         // A folder holding one video may name it: `Heat (1995)/movie.mkv`.
         const alone = rows.filter(isVideo).length === 1,
           own = depth ? path.basename(directory) : '';
+        const images = new Map(
+          rows
+            .filter(row => row.isFile() && !row.isSymbolicLink() && IMAGE.has(path.extname(row.name).toLowerCase()))
+            .map(row => [row.name.slice(0, -path.extname(row.name).length).toLowerCase(), row.name]),
+        );
         for (const row of rows) {
           if (row.name.startsWith('.') || row.isSymbolicLink()) continue;
           const inside = relative ? relative + '/' + row.name : row.name;
@@ -130,6 +161,8 @@ class LocalIndex {
               relative: inside,
               path: path.join(directory, row.name),
               ...named(row.name, own, alone, library.parseNames !== false),
+              // The folder's own picture names count only in a film's own folder, not at the top of a library.
+              art: artFiles(images, row.name.slice(0, -path.extname(row.name).length), alone && depth > 0, directory),
               folder: relative.split('/').filter(Boolean).join(' / ').slice(0, 200),
             };
             entries.set(id, entry);

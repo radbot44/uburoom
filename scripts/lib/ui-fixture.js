@@ -124,7 +124,11 @@ async function startFixtureServer({ localLibrary = false } = {}) {
       );
     localFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-fixture-film-'));
     fs.copyFileSync(path.join(root, 'assets/demo/sync-test.mp4'), path.join(localFolder, 'Local Film.mp4'));
-    config.localMedia = { libraries: [{ id: 'film', name: 'Film', paths: [localFolder] }] };
+    config.localMedia = {
+      // Pictures go beside the fixture folder, not inside it, as they do beside the media in a real library.
+      artDirectory: localFolder + '-art',
+      libraries: [{ id: 'film', name: 'Film', paths: [localFolder] }],
+    };
   }
   const app = createApp(config, { plexFetch, oauthFetch: fixture.discordFetch, plexDemo: fixture });
   if (localFolder) {
@@ -132,6 +136,7 @@ async function startFixtureServer({ localLibrary = false } = {}) {
     app.close = async () => {
       await close();
       fs.rmSync(localFolder, { recursive: true, force: true });
+      fs.rmSync(localFolder + '-art', { recursive: true, force: true });
     };
   }
   app.access.connect({

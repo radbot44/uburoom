@@ -473,6 +473,25 @@ function classifyHdr(video = {}) {
   };
 }
 
+/**
+ * The CPU filters that turn an HDR picture into SDR BT.709, or none for SDR. Dolby Vision
+ * Profile 5 uses proprietary IPTPQc2 color reshaping without an HDR10 base layer; CPU
+ * zscale cannot decode IPTPQc2 and must use libplacebo, so it gets none here either.
+ * @param {ReturnType<typeof classifyHdr>} hdrInfo
+ */
+function cpuTonemap(hdrInfo) {
+  return hdrInfo.hdr && !hdrInfo.doviP5
+    ? [
+        `setparams=color_primaries=bt2020:color_trc=${hdrInfo.transfer}:colorspace=bt2020nc`,
+        'zscale=t=linear:npl=100',
+        'format=gbrpf32le',
+        'zscale=p=bt709',
+        'tonemap=tonemap=hable:desat=0',
+        'zscale=t=bt709:m=bt709:r=tv',
+      ]
+    : [];
+}
+
 function outputSpec(info, quality, maxQuality = QUALITIES[1]) {
   const video = info.streams?.find(s => s.codec_type === 'video');
   if (!video || !(video.width > 0 && video.height > 0))
@@ -489,19 +508,7 @@ function outputSpec(info, quality, maxQuality = QUALITIES[1]) {
   const hdr = hdrInfo.hdr;
   // Keep constant-rate source cadence. Forcing 30 fps duplicates film frames and
   // discards half of a 60 fps source, even when both decoder and encoder keep up.
-  // Dolby Vision Profile 5 uses proprietary IPTPQc2 color reshaping without an
-  // HDR10 base layer; CPU zscale cannot decode IPTPQc2 and must use libplacebo.
-  const tonemap =
-    hdr && !hdrInfo.doviP5
-      ? [
-          `setparams=color_primaries=bt2020:color_trc=${hdrInfo.transfer}:colorspace=bt2020nc`,
-          'zscale=t=linear:npl=100',
-          'format=gbrpf32le',
-          'zscale=p=bt709',
-          'tonemap=tonemap=hable:desat=0',
-          'zscale=t=bt709:m=bt709:r=tv',
-        ]
-      : [];
+  const tonemap = cpuTonemap(hdrInfo);
   const filters = ['setpts=PTS-STARTPTS', ...tonemap, `scale=${width}:${height}:out_color_matrix=bt709`, 'format=nv12'];
   const sourceBitrate = Number(info.format?.bit_rate) / 1000;
   const maxBitrate = ceiling.bitrate || 20000;
@@ -1344,6 +1351,7 @@ class AV1 {
 module.exports = {
   AV1,
   PlaybackError,
+  cpuTonemap,
   CHUNK,
   AUDIO_LEAD,
   fileIndex,

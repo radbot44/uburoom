@@ -303,6 +303,8 @@ function normalizeConfig(
   );
   if (new Set(folders).size !== folders.length) throw new Error('local_media.libraries must not repeat a folder');
   config.localMedia = {
+    // Pictures made for local videos live in the data folder, never beside the media.
+    artDirectory: path.join(resolveFile('storage.data_directory', 'data'), 'local-art'),
     libraries: libraries.map(library => ({
       id: library.id,
       name: library.name.trim(),
