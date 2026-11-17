@@ -167,3 +167,19 @@ test(
     assert.ok(Math.max(...sizes) > 20000, 'saved sizes ' + sizes.join(', '));
   },
 );
+
+test('pictures are made ahead of time after a scan, one video at a time', { skip: !ffmpeg || !ffprobe }, async t => {
+  const { local, art } = setup(t, { 'One.mp4': demo, 'Two.mp4': demo });
+  await local.browse({ section: 'film' });
+  // Nobody asks for a picture: each video's frame and poster are made in the background.
+  const deadline = Date.now() + 20000;
+  while ((fs.existsSync(art) ? fs.readdirSync(art).filter(name => !name.endsWith('.tmp')).length : 0) < 4) {
+    assert.ok(Date.now() < deadline, 'pictures made in time');
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  // Asked for now, a poster is already there.
+  const [item] = (await local.browse({ section: 'film' })).items;
+  const started = Date.now();
+  await local.artwork(item.id, 'poster');
+  assert.ok(Date.now() - started < 500, 'served from what was made ahead');
+});

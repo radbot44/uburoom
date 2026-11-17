@@ -76,6 +76,50 @@ class LocalMedia {
     this.pipeline = pipeline;
     this.index = new LocalIndex(libraries, { logger });
     this.art = artDirectory ? new LocalArt({ directory: artDirectory, tools: () => pipeline.av1, logger }) : undefined;
+    this.logger = logger;
+    /** Videos whose picture could not be made, not tried again until the server restarts. */
+    this.unpictured = new Set();
+    this.warming = undefined;
+    this.warmAgain = false;
+    // Pictures are made ahead of time from shortly after startup, not only when someone first browses.
+    if (this.art)
+      this.startup = setTimeout(
+        () =>
+          void this.index.refresh().then(
+            () => this.warm(),
+            () => {},
+          ),
+        30000,
+      );
+    this.startup?.unref?.();
+    this.index.onScanned = () => void this.warm();
+  }
+  /**
+   * Make each video's pictures ahead of time, newest first and one at a time, so a first browse does not
+   * wait on FFmpeg. The poster also keeps the video's chosen frame, from which the other kinds are made at
+   * once. Waits while a conversion for playback runs, and starts over after a rescan finds new files.
+   */
+  warm() {
+    if (!this.art?.available) return;
+    if (this.warming) {
+      this.warmAgain = true;
+      return;
+    }
+    this.warming = (async () => {
+      do {
+        this.warmAgain = false;
+        for (const entry of this.index.newest()) {
+          if (this.closed) return;
+          while (this.pipeline.busy && !this.closed) await new Promise(resolve => setTimeout(resolve, 30000).unref?.());
+          if (this.closed || this.unpictured.has(entry.token) || !this.index.get(entry.token)) continue;
+          await this.art
+            .picture(entry, 'poster', () => this.described(entry))
+            .catch(() => this.unpictured.add(entry.token));
+        }
+      } while (this.warmAgain && !this.closed);
+    })().finally(() => {
+      this.warming = undefined;
+    });
   }
   get kind() {
     return 'local';
@@ -501,6 +545,8 @@ class LocalMedia {
   }
   close() {
     this.index.close();
+    this.closed = true;
+    clearTimeout(this.startup);
     this.art?.close();
   }
 }

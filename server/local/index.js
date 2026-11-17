@@ -87,6 +87,8 @@ class LocalIndex {
     this.libraries = libraries;
     this.logger = logger;
     this.now = now;
+    /** @type {(() => void) | undefined} Told after each scan, so pictures can be made for new files. */
+    this.onScanned = undefined;
     /** @type {Map<string, LocalEntry>} */
     this.entries = new Map();
     /** @type {Map<string, LocalEntry[]>} */
@@ -188,6 +190,7 @@ class LocalIndex {
     this.byLibrary = byLibrary;
     this.scannedAt = this.now();
     for (const key of this.probes.keys()) if (!entries.has(key)) this.probes.delete(key);
+    this.onScanned?.();
   }
   /**
    * When each video was added: its file's creation time (on Windows, when it was copied there), or its

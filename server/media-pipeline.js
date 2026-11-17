@@ -55,6 +55,10 @@ class MediaPipeline {
     media.releaseConversion?.();
     media.releaseConversion = undefined;
   }
+  /** Whether a conversion for playback is running, so background work can wait for it. */
+  get busy() {
+    return this.av1.groups.size > 0 || this.hlsPool.groups.size > 0;
+  }
   /** The best quality a conversion may produce. */
   maxTranscodeQuality() {
     return this.qualityOptions.find(q => q.id !== 'direct') || QUALITIES[1];
