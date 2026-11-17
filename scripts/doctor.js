@@ -984,6 +984,60 @@ function checkLocalMedia(config) {
     remediation:
       !ffprobe || !ffmpeg ? 'Install FFmpeg (with FFprobe) on PATH or set tools.ffmpeg and tools.ffprobe.' : undefined,
   });
+  // Pictures for local videos: the filters their frames need (zscale and tonemap only for HDR), and the folder.
+  if (ffmpeg) {
+    let missing;
+    try {
+      const filters = cp.execFileSync(ffmpeg, ['-hide_banner', '-filters'], {
+        timeout: 4000,
+        encoding: 'utf8',
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      missing = ['thumbnail', 'boxblur', 'overlay', 'zscale', 'tonemap'].filter(
+        name => !new RegExp('^\\s*\\S+\\s+' + name + '\\s', 'm').test(filters),
+      );
+    } catch {
+      missing = undefined;
+    }
+    // zscale and tonemap only matter for HDR frames; the rest are needed for every picture.
+    const hdrOnly = !!missing?.length && missing.every(name => ['zscale', 'tonemap'].includes(name));
+    checks.push({
+      category: 'Local Media',
+      name: 'Pictures',
+      status: missing?.length === 0 ? 'pass' : 'warn',
+      message: !missing
+        ? 'Could not list FFmpeg filters; local videos may get no pictures.'
+        : missing.length
+          ? `FFmpeg lacks ${missing.join(', ')}: ${hdrOnly ? 'HDR videos' : 'local videos'} get no picture of their own.`
+          : 'FFmpeg can make pictures for local videos, HDR included.',
+      remediation: missing?.length
+        ? 'Use an FFmpeg build with zimg (for zscale), such as the gyan.dev or BtbN full builds.'
+        : undefined,
+    });
+  }
+  const art = config.localMedia?.artDirectory;
+  if (art) {
+    let bytes = 0,
+      files = 0;
+    try {
+      for (const name of fs.readdirSync(art)) {
+        const stat = fs.statSync(path.join(art, name));
+        if (stat.isFile()) {
+          bytes += stat.size;
+          files++;
+        }
+      }
+    } catch {
+      /* Not made yet: pictures are saved there once local videos are browsed. */
+    }
+    checks.push({
+      category: 'Local Media',
+      name: 'Picture folder',
+      status: 'pass',
+      message: `${files} pictures, ${(bytes / 1024 / 1024).toFixed(1)} MB of 256 MB in ${art}`,
+    });
+  }
   return checks;
 }
 
