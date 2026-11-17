@@ -113,3 +113,20 @@ test('local_media libraries take a list of folders, resolved beside the config, 
     /repeat a folder/,
   );
 });
+
+test('Recently added lists local videos newest first, by when each file arrived', async t => {
+  const films = folder(t, ['Old.mkv']);
+  const old = new Date(Date.now() - 86400000);
+  fs.utimesSync(path.join(films, 'Old.mkv'), old, old);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  fs.writeFileSync(path.join(films, 'New.mkv'), '');
+  const { LocalMedia } = require('../server/local-provider');
+  const local = new LocalMedia([{ id: 'film', name: 'Film', paths: [films] }], { pipeline: {} });
+  t.after(() => local.close());
+  const recent = await local.recentlyAdded();
+  assert.deepEqual(
+    recent.map(item => item.title),
+    ['New', 'Old'],
+  );
+  assert.ok(recent[0].addedAt >= recent[1].addedAt && recent[0].addedAt > 1e9, 'seconds since 1970, like Plex');
+});

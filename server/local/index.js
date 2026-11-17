@@ -76,7 +76,7 @@ function named(file, folder, alone, parse) {
  * folder can move to another drive and keep its queues and resume positions, and
  * when two folders hold a file at the same place the first listed is used.
  * @typedef {{token: string, library: string, relative: string, path: string, title: string, sortTitle: string,
- *   year: number, edition: string, folder: string, art: {[kind: string]: string}}} LocalEntry
+ *   year: number, edition: string, folder: string, art: {[kind: string]: string}, addedMs?: number}} LocalEntry
  */
 class LocalIndex {
   /**
@@ -183,10 +183,37 @@ class LocalIndex {
       );
       byLibrary.set(library.id, found);
     }
+    await this.dated(entries, signal);
     this.entries = entries;
     this.byLibrary = byLibrary;
     this.scannedAt = this.now();
     for (const key of this.probes.keys()) if (!entries.has(key)) this.probes.delete(key);
+  }
+  /**
+   * When each video was added: its file's creation time (on Windows, when it was copied there), or its
+   * modified time where there is none. Read once per file; a rescan keeps what it already knows.
+   * @param {Map<string, LocalEntry>} entries
+   */
+  async dated(entries, signal) {
+    const unknown = [];
+    for (const entry of entries.values()) {
+      const known = this.entries.get(entry.token);
+      if (known?.path === entry.path && known.addedMs) entry.addedMs = known.addedMs;
+      else unknown.push(entry);
+    }
+    for (let at = 0; at < unknown.length; at += 32) {
+      signal?.throwIfAborted();
+      await Promise.all(
+        unknown.slice(at, at + 32).map(async entry => {
+          const stat = await fs.stat(entry.path).catch(() => undefined);
+          entry.addedMs = stat?.birthtimeMs || stat?.mtimeMs || 0;
+        }),
+      );
+    }
+  }
+  /** Every video in every library, newest first. @returns {LocalEntry[]} */
+  newest() {
+    return [...this.entries.values()].sort((a, b) => (b.addedMs || 0) - (a.addedMs || 0));
   }
   /** @returns {LocalEntry | undefined} */
   get(id) {

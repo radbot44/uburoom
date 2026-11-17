@@ -106,7 +106,8 @@ class LocalMedia {
       edition: entry.edition,
       sortTitle: entry.sortTitle,
       contentRating: '',
-      addedAt: 0,
+      // In seconds, like Plex's.
+      addedAt: Math.floor((entry.addedMs || 0) / 1000),
       genres: [],
       genreIds: [],
       count: 0,
@@ -238,6 +239,14 @@ class LocalMedia {
       offset,
       nextOffset: offset + PAGE < entries.length ? offset + PAGE : null,
     };
+  }
+  /** Media Home's Recently added: the newest files across every local library. */
+  async recentlyAdded() {
+    await this.index.refresh();
+    return this.index
+      .newest()
+      .slice(0, 20)
+      .map(entry => this.item(entry));
   }
   async filters() {
     return { genres: [], years: [] };
