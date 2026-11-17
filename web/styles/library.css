@@ -1144,7 +1144,8 @@
   }
   .library-landing {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    /* Wide enough for a library card's Collections button to keep its label. */
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
     gap: var(--space-14);
     margin-top: var(--space-36);
   }
