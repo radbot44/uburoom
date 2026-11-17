@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2t
+# Config schema v2u
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -122,12 +122,14 @@ tools:
 # is admitted may watch them; they add no way in. Needs FFprobe, and FFmpeg for
 # files a browser cannot play as they are.
 local_media:
-  # Each entry: a short id, the name shown, and a folder (subfolders included).
-  # Keep an id for good: queues and resume positions are recorded under it, so a
-  # folder can move but a changed id forgets them. Example:
+  # Each entry: a short id, the name shown, and one or more folders (subfolders
+  # included), listed together as one library. Keep an id for good: queues and
+  # resume positions are recorded under it and a file's place inside its folder,
+  # so folders can move but a changed id forgets them. When two folders hold the
+  # same file at the same place, the first listed is used. Example:
   #   - id: 'films'
   #     name: 'Films'
-  #     path: 'D:\Media\Films'
+  #     paths: ['D:\Media\Films', 'E:\Films']
   libraries: []
 
 # Logging behavior

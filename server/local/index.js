@@ -33,11 +33,14 @@ function title(name) {
 
 /**
  * The videos under the configured library folders, held in memory and rebuilt from
- * the disk; nothing about them is stored. Symbolic links are not followed.
+ * the disk; nothing about them is stored. Symbolic links are not followed. A library
+ * may list several folders: a file is known by its place inside its folder, so a
+ * folder can move to another drive and keep its queues and resume positions, and
+ * when two folders hold a file at the same place the first listed is used.
  * @typedef {{token: string, library: string, relative: string, path: string, title: string, folder: string}} LocalEntry
  */
 class LocalIndex {
-  /** @param {{id: string, name: string, path: string}[]} libraries @param {{logger?: any, now?: () => number}} [options] */
+  /** @param {{id: string, name: string, paths: string[]}[]} libraries @param {{logger?: any, now?: () => number}} [options] */
   constructor(libraries, { logger, now = Date.now } = {}) {
     this.libraries = libraries;
     this.logger = logger;
@@ -74,7 +77,9 @@ class LocalIndex {
       byLibrary = new Map();
     for (const library of this.libraries) {
       const found = [];
-      const pending = [{ directory: library.path, relative: '', depth: 0 }];
+      let repeated = 0;
+      // Folders are walked in the order listed, so the first one holding a place keeps it.
+      const pending = library.paths.map(folder => ({ directory: folder, relative: '', depth: 0 })).reverse();
       while (pending.length && found.length < MAX_FILES) {
         signal?.throwIfAborted();
         const { directory, relative, depth } = pending.pop();
@@ -82,17 +87,23 @@ class LocalIndex {
         try {
           rows = await fs.readdir(directory, { withFileTypes: true });
         } catch (error) {
-          if (!depth) this.logger?.warn('Local', `Library "${library.name}" could not be read (${error.code})`);
+          if (!depth)
+            this.logger?.warn('Local', `Library "${library.name}" could not read ${directory} (${error.code})`);
           continue;
         }
+        const folders = [];
         for (const row of rows) {
           if (row.name.startsWith('.') || row.isSymbolicLink()) continue;
           const inside = relative ? relative + '/' + row.name : row.name;
           if (row.isDirectory()) {
             if (depth < MAX_DEPTH)
-              pending.push({ directory: path.join(directory, row.name), relative: inside, depth: depth + 1 });
+              folders.push({ directory: path.join(directory, row.name), relative: inside, depth: depth + 1 });
           } else if (row.isFile() && VIDEO.has(path.extname(row.name).toLowerCase()) && found.length < MAX_FILES) {
             const id = token(library.id, inside);
+            if (entries.has(id)) {
+              repeated++;
+              continue;
+            }
             const entry = {
               token: id,
               library: library.id,
@@ -105,7 +116,14 @@ class LocalIndex {
             found.push(entry);
           }
         }
+        // Finish one folder before starting the next listed one.
+        pending.push(...folders.reverse());
       }
+      if (repeated)
+        this.logger?.warn(
+          'Local',
+          `Library "${library.name}" has ${repeated} files at the same place in two folders; the first folder listed is used`,
+        );
       found.sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }));
       byLibrary.set(library.id, found);
     }

@@ -3,7 +3,7 @@ import * as uburoomIcons from './icons.js';
 import * as uburoomPopover from './watch-popover.js';
 import { mediaIdentity } from '../shared/room-protocol.mjs';
 import { pictureLoader } from './watch-library-pictures.js';
-import { libraryChoices } from './watch-library-choices.js';
+import { libraryChoices, sectionIcon } from './watch-library-choices.js';
 import { libraryScroll } from './watch-library-scroll.js';
 import { libraryDetails } from './watch-library-details.js';
 import { libraryShelves } from './watch-library-shelves.js';
@@ -16,7 +16,7 @@ function homeCards(items = []) {
       if (tab === 'collections' && section.collections === false) continue;
       const title =
         tab === 'library' ? section.title : (section.title === 'Movies' ? 'Movie' : section.title) + ' Collections';
-      const icon = tab === 'library' ? (section.mediaType === 'show' ? 'tv' : 'film') : 'layout-grid';
+      const icon = tab === 'library' ? sectionIcon(section) : 'layout-grid';
       cards.push({ id: section.id, tab, title, icon });
     }
   return cards;

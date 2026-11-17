@@ -275,27 +275,37 @@ function normalizeConfig(
         !library ||
         typeof library !== 'object' ||
         Array.isArray(library) ||
-        Object.keys(library).some(key => !['id', 'name', 'path'].includes(key)) ||
+        Object.keys(library).some(key => !['id', 'name', 'paths'].includes(key)) ||
         typeof library.id !== 'string' ||
         !/^[a-z][a-z0-9-]{0,31}$/.test(library.id) ||
         typeof library.name !== 'string' ||
         !library.name.trim() ||
         library.name.length > 100 ||
         /[\u0000-\u001f\u007f]/.test(library.name) ||
-        typeof library.path !== 'string' ||
-        !library.path,
+        !Array.isArray(library.paths) ||
+        !library.paths.length ||
+        library.paths.length > 16 ||
+        library.paths.some(folder => typeof folder !== 'string' || !folder),
     )
   )
     throw new Error(
-      'local_media.libraries requires up to 32 entries with a quoted id (lowercase letters, digits and hyphens, starting with a letter), name and path',
+      'local_media.libraries requires up to 32 entries with a quoted id (lowercase letters, digits and hyphens, starting with a letter), name and paths (a list of 1-16 folders)',
     );
   if (new Set(libraries.map(library => library.id)).size !== libraries.length)
     throw new Error('local_media.libraries must not repeat an id');
+  // Windows paths ignore case, so 'F:/Film' and 'f:/film' are the same folder there.
+  const folders = libraries.flatMap(library =>
+    library.paths.map(folder => {
+      const resolved = path.resolve(base, folder);
+      return platform === 'win32' ? resolved.toLowerCase() : resolved;
+    }),
+  );
+  if (new Set(folders).size !== folders.length) throw new Error('local_media.libraries must not repeat a folder');
   config.localMedia = {
     libraries: libraries.map(library => ({
       id: library.id,
       name: library.name.trim(),
-      path: path.resolve(base, library.path),
+      paths: library.paths.map(folder => path.resolve(base, folder)),
     })),
   };
   // One Jellyfin server, seen through one of its users. Blank url leaves it out.

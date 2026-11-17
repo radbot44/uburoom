@@ -757,7 +757,7 @@ const glyphs = Object.freeze({
     ['path', { d: 'M9 16a5 5 0 1 1 6 0a3.5 3.5 0 0 0 -1 3a2 2 0 0 1 -4 0a3.5 3.5 0 0 0 -1 -3' }],
     ['path', { d: 'M9.7 17l4.6 0' }],
   ],
-    "folder": [["path",{"d":"M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"}]]
+  folder: [['path', { d: 'M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2' }]],
 });
 const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 function resolveName(name, seekSeconds = 15) {

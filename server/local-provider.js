@@ -63,7 +63,7 @@ function decodeText(bytes) {
  * See server/media-provider.js for the contract.
  */
 class LocalMedia {
-  /** @param {{id: string, name: string, path: string}[]} libraries @param {{pipeline: any, logger?: any}} services */
+  /** @param {{id: string, name: string, paths: string[]}[]} libraries @param {{pipeline: any, logger?: any}} services */
   constructor(libraries, { pipeline, logger }) {
     this.libraries = libraries;
     this.pipeline = pipeline;
@@ -188,6 +188,7 @@ class LocalMedia {
         title: library.name,
         type: 'library',
         mediaType: 'movie',
+        source: 'folder',
         collections: false,
         filters: false,
         autoQueue: false,

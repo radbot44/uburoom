@@ -955,20 +955,21 @@ function checkLocalMedia(config) {
   const checks = [];
   const libraries = config.localMedia?.libraries || [];
   if (!libraries.length) return checks;
-  for (const library of libraries) {
-    let status = 'pass',
-      message = `"${library.name}" (${library.id}) reads ${library.path}`,
-      remediation;
-    try {
-      if (!fs.statSync(library.path).isDirectory()) throw new Error('not a folder');
-      fs.accessSync(library.path, fs.constants.R_OK);
-    } catch {
-      status = 'fail';
-      message = `"${library.name}" (${library.id}) cannot read ${library.path}`;
-      remediation = 'Point local_media.libraries path at a folder the uburoom account can read.';
+  for (const library of libraries)
+    for (const folder of library.paths) {
+      let status = 'pass',
+        message = `"${library.name}" (${library.id}) reads ${folder}`,
+        remediation;
+      try {
+        if (!fs.statSync(folder).isDirectory()) throw new Error('not a folder');
+        fs.accessSync(folder, fs.constants.R_OK);
+      } catch {
+        status = 'fail';
+        message = `"${library.name}" (${library.id}) cannot read ${folder}`;
+        remediation = 'Point each local_media.libraries path at a folder the uburoom account can read.';
+      }
+      checks.push({ category: 'Local Media', name: 'Library folder', status, message, remediation });
     }
-    checks.push({ category: 'Local Media', name: 'Library folder', status, message, remediation });
-  }
   const ffprobe = config.ffprobePath || findOnPath('ffprobe'),
     ffmpeg = config.ffmpegPath || findOnPath('ffmpeg');
   checks.push({

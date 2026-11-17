@@ -152,13 +152,13 @@ Original files play as they are, and files a browser cannot play need FFmpeg and
 
 ## Local media
 
-`local_media.libraries` lists folders of videos on the server's own disk. Each appears as a card on Libraries home beside the Plex libraries and opens one title-sorted list of every video beneath it, subfolders included.
+`local_media.libraries` lists libraries of videos in folders on the server's own disk. Each appears as a card on Libraries home beside the Plex libraries and opens one title-sorted list of every video beneath it, subfolders included.
 
 | Setting | Behavior |
 | --- | --- |
 | `id` | Short permanent name (lowercase letters, digits and hyphens, starting with a letter). Queue entries and resume positions are recorded under it: the folder may move, but a changed `id` forgets them. |
 | `name` | The card's title. |
-| `path` | The folder. Relative paths resolve beside `config.yaml`. Symbolic links are not followed. |
+| `paths` | One or more folders (up to 16), shown together as one library. Relative paths resolve beside `config.yaml`. Symbolic links are not followed. A file is known by its place inside its folder, so a folder can move to another drive and keep its queues and resume positions; when two folders hold a file at the same place, the first listed is used. |
 
 Local media has no accounts of its own: everyone uburoom admits, including guests in their room, may browse and watch it, and it never becomes another way in. `access.require_plex` keeps its meaning as an entry rule. Viewers name a file only by an opaque token, never a path.
 

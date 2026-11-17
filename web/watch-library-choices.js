@@ -6,6 +6,11 @@ import * as uburoomIcons from './icons.js';
 
 const MENU_FILTER_AT = 10;
 
+/** A library's icon: a folder for local folders, so they stand apart from Plex and Jellyfin movie libraries. */
+export function sectionIcon(section) {
+  return section.source === 'folder' ? 'folder' : section.mediaType === 'show' ? 'tv' : 'film';
+}
+
 /**
  * @param {{doc: Document, parent: Element, menuParent: Element, header?: Element|null, headerRight?: Element|null,
  *   node: Function, button: Function, onChoose: (sectionId: string) => void}} options
@@ -40,7 +45,7 @@ export function libraryChoices({ doc, parent, menuParent, header, headerRight, n
     for (const section of overflowSections) {
       const b = button(choiceList, section.title, undefined, 'library-choice-item');
       b.setAttribute('role', 'menuitem');
-      controls.content(b, { label: section.title, icon: section.mediaType === 'show' ? 'tv' : 'film' });
+      controls.content(b, { label: section.title, icon: sectionIcon(section) });
       b.dataset.section = section.id;
       if (section.id === current) b.setAttribute('aria-current', 'page');
       b.hidden = !!term && !section.title.toLowerCase().includes(term);
@@ -114,7 +119,7 @@ export function libraryChoices({ doc, parent, menuParent, header, headerRight, n
       const text = section ? section.title : 'More';
       controls.content(choiceMore, {
         label: text,
-        icon: section ? (section.mediaType === 'show' ? 'tv' : 'film') : undefined,
+        icon: section ? sectionIcon(section) : undefined,
       });
       // It keeps its name at every width (truncating when it must) rather than collapsing to an icon.
       choiceMore.classList.remove('watch-control-responsive');
@@ -160,7 +165,7 @@ export function libraryChoices({ doc, parent, menuParent, header, headerRight, n
     choices.hidden = !show;
     sections.forEach(section => {
       const b = button(choices, section.title, undefined, 'library-key library-choice');
-      controls.content(b, { label: section.title, icon: section.mediaType === 'show' ? 'tv' : 'film' });
+      controls.content(b, { label: section.title, icon: sectionIcon(section) });
       // Library buttons keep their names at every width: what does not fit goes into the More menu.
       b.classList.remove('watch-control-responsive');
       b.dataset.section = section.id;

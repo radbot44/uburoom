@@ -124,7 +124,7 @@ async function startFixtureServer({ localLibrary = false } = {}) {
       );
     localFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-fixture-film-'));
     fs.copyFileSync(path.join(root, 'assets/demo/sync-test.mp4'), path.join(localFolder, 'Local Film.mp4'));
-    config.localMedia = { libraries: [{ id: 'film', name: 'Film', path: localFolder }] };
+    config.localMedia = { libraries: [{ id: 'film', name: 'Film', paths: [localFolder] }] };
   }
   const app = createApp(config, { plexFetch, oauthFetch: fixture.discordFetch, plexDemo: fixture });
   if (localFolder) {
