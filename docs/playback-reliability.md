@@ -142,6 +142,7 @@ Direct delivery makes uburoom the access and timeline coordinator while Plex str
 
 ### Preparation and sharing
 
+- Copied-picture HLS shares a source/audio producer only within its room/media generation. Each viewer lease tracks its own segment cursor; the producer retains at most 64 segments, including a pinned segment-zero timestamp anchor. Outstanding requests keep their segments until opened, and response bodies read from those open file handles so eviction cannot invalidate an in-flight read. A replacement run promptly rejects skipped requests for retry.
 - Select direct intent **before** pool acquisition or cache warm-up. Direct preparation must never fetch video or audio bytes, including speculative probes. Metadata, playback decisions, track selection, keepalive/stop, and bounded playlist text are control traffic.
 - Keep separate direct and proxy pools. Share only matching room, media, source, quality, audio, and burn outputs under independent viewer authority and existing capacity reservations.
 - Capture the initial playlist while selected Plex track preferences are locked; do not restart negotiation after restoring preferences.

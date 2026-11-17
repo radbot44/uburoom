@@ -142,7 +142,7 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
       pipeline.conversionPolicy.copy();
       if (choices.authorized && !(await choices.authorized()))
         throw new PlaybackError('Viewing access or track selection expired.');
-      await pipeline.remux.acquire(media, audio);
+      await pipeline.remux.acquire(media, audio, choices.shareKey);
       media.compatible = compatible;
     } catch (error) {
       const failure = new PlaybackError(

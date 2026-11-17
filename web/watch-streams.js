@@ -60,7 +60,7 @@ function prepare(next, { target, seconds = 1, hlsConfig }) {
           cache.segments.delete(url);
           cache.bytes -= bytes.byteLength;
         }
-        if (cache.windows.get(url)?.end < target()) {
+        if (url !== 0 && cache.windows.get(url)?.end < target()) {
           cache.segments.delete(url);
           cache.windows.delete(url);
           cache.bytes -= bytes.byteLength;

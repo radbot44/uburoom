@@ -34,7 +34,8 @@ export function mount(host, deps) {
     }
     if (uburoomPlayback.localFormat(store.room.state.format))
       store.stream.localFallbackAttempts.add(store.room.state.format);
-    if (store.room.state.format === 'hls') store.stream.localFallbackAttempts.add('provider');
+    if (store.room.state.format === 'hls')
+      store.stream.localFallbackAttempts.add(store.room.state.compatible ? 'provider' : 'audio');
     const localCandidates = uburoomPlayback.fallbackCodecs(
       store.identity.config.localFormats || ['av1'],
       store.stream.localFallbackAttempts,

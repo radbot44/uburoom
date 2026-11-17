@@ -735,3 +735,86 @@ test('HLS media recovery refills after quiet period, classifies quota/append err
   );
   assert.equal(rows[4].category, 'network');
 });
+
+test('HLS preparation retains timestamp-anchor segment zero when the target has advanced to 120s', t => {
+  const streams = require('../web/watch-streams.js');
+  class Hls {
+    static isSupported() {
+      return true;
+    }
+    static Events = { ERROR: 'error', FRAG_LOADED: 'loaded', FRAG_BUFFERED: 'buffered' };
+    on() {}
+    loadSource() {}
+    attachMedia() {}
+    destroy() {}
+  }
+  const context = mountModule(
+    { mount: () => ({}) },
+    {
+      Hls,
+      document: {
+        createElement: () => ({
+          readyState: 0,
+          buffered: { length: 0 },
+          addEventListener() {},
+          removeAttribute() {},
+          load() {},
+        }),
+      },
+    },
+  );
+  t.after(context.restore);
+  const prepared = streams.prepare(
+    { format: 'hls', mediaUrl: '/stream' },
+    { target: () => 120, hlsConfig: () => ({}) },
+  );
+  const { cache } = prepared;
+  for (const [index, end, size] of [
+    [0, 6, 4],
+    [1, 12, 5],
+    [20, 126, 6],
+  ]) {
+    cache.segments.set(index, new ArrayBuffer(size));
+    cache.windows.set(index, { end });
+    cache.bytes += size;
+  }
+  prepared.ahead();
+  assert.deepEqual([...cache.segments.keys()], [0, 20]);
+  assert.equal(cache.windows.has(0), true);
+  assert.equal(cache.bytes, 10);
+  prepared.close(true);
+  assert.equal(cache.segments.has(0), true, 'the adopted foreground player keeps its anchor');
+});
+
+test('a copied-picture HLS failure still tries provider video conversion with compatible=true', async t => {
+  const delivery = require('../web/watch/delivery.js');
+  const commands = [];
+  const context = mountModule(delivery, {
+    selected: 'room',
+    state: {
+      mediaId: '1',
+      mediaVersion: 'media',
+      mediaUrl: '/copied',
+      format: 'hls',
+      compatible: false,
+      videoCodec: 'h264',
+      quality: 'direct',
+    },
+    config: { localFormats: [], outputs: ['provider'] },
+    playerPreferences: {},
+    video: { canPlayType: () => 'probably', pause() {} },
+    execute: async command => commands.push(command),
+    stopHls() {},
+    diagnosticSample() {},
+    fail() {},
+  });
+  t.after(context.restore);
+  await context.api.compatibleFallback('Copied HLS failed');
+  assert.equal(commands.length, 1);
+  assert.equal(commands[0].args.fallback, 'provider');
+  assert.equal(commands[0].args.compatible, true);
+  assert.ok(context.view.localFallbackAttempts.has('audio'));
+  context.view.state = { ...context.view.state, compatible: true };
+  await context.api.compatibleFallback('Converted HLS failed');
+  assert.equal(commands.length, 1, 'a failed video conversion is not retried indefinitely');
+});

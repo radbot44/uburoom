@@ -30,6 +30,7 @@ const SEARCHES = { local: 1, bridged: 6 };
 const REMEMBERED = 20; // Files whose boundaries are kept.
 const AHEAD = 8; // Segments produced beyond the newest one asked for.
 const BEHIND = 6; // Segments kept behind the oldest recent request.
+const MAX_SEGMENTS = 64;
 const IDLE_MS = 45000;
 const TIMESCALE = 90000;
 const COPYABLE = /^(h264|avc1|hevc|h265|hvc1|hev1)$/i;
@@ -122,6 +123,9 @@ class RemuxSession {
     this.segments = new Map();
     /** @type {Map<number, {resolve: Function, reject: Function}[]>} */
     this.waiters = new Map();
+    this.cursors = new Map();
+    this.opening = new Map();
+    this.runs = new Set();
     this.requested = 0;
     this.requestedAt = Date.now();
     this.abort = new AbortController();
@@ -173,10 +177,24 @@ class RemuxSession {
   }
   /** Start FFmpeg at a segment, replacing any run in progress. */
   start(index) {
+    if (this.closed) return;
     this.stop();
+    // The new run cannot produce earlier segments. Let their callers retry now.
+    const skipped = Object.assign(failure('The copied stream moved; retry this segment.'), { status: 503 });
+    for (const [pending, list] of this.waiters)
+      if (pending < index) {
+        this.waiters.delete(pending);
+        for (const waiter of list) waiter.reject(skipped);
+      }
     const { av1 } = this.owner,
       controller = new AbortController(),
-      run = (this.run = /** @type {any} */ ({ first: index, head: index, controller, paused: false }));
+      run = (this.run = /** @type {any} */ ({
+        id: randomUUID(),
+        first: index,
+        head: index,
+        controller,
+        paused: false,
+      }));
     const hevc = !/^(h264|avc1)$/i.test(this.source.videoCodec || '');
     const args = url => [
       '-hide_banner',
@@ -223,8 +241,10 @@ class RemuxSession {
         for (const waiter of this.initWaiters.splice(0)) waiter.reject(reason);
       })
       .finally(() => {
+        this.runs.delete(run.done);
         if (this.run === run) this.run = undefined;
       });
+    this.runs.add(run.done);
   }
   produce(run, args) {
     return new Promise((resolve, reject) => {
@@ -266,7 +286,9 @@ class RemuxSession {
                 // A seek that passed the segment asked for cannot fill it: begin earlier.
                 if (index > run.first && run.first > 0) {
                   const earlier = Math.max(0, run.first - 1);
-                  queueMicrotask(() => this.start(earlier));
+                  queueMicrotask(() => {
+                    if (this.run === run && !run.controller.signal.aborted) this.start(earlier);
+                  });
                   return;
                 }
               }
@@ -288,7 +310,7 @@ class RemuxSession {
       child.on('error', reject);
       child.on('close', code => {
         run.controller.signal.removeEventListener('abort', kill);
-        if (run.controller.signal.aborted) return resolve(undefined);
+        if (run.controller.signal.aborted) return void writing.then(resolve, reject);
         if (code !== 0) return reject(failure('FFmpeg could not copy this video: ' + stderr.trim().slice(0, 300)));
         // The source ended, so the segment being collected is whole.
         flush();
@@ -302,9 +324,14 @@ class RemuxSession {
   }
   async store(run, index, bytes) {
     if (this.closed || run.controller.signal.aborted) return;
-    const file = path.join(this.directory, `seg-${index}.m4s`);
+    if (this.segments.has(index)) {
+      run.head = index + 1;
+      this.pace();
+      return;
+    }
+    const file = path.join(this.directory, `seg-${index}-${run.id}.m4s`);
     await fs.promises.writeFile(file, bytes);
-    if (this.closed) return void fs.promises.rm(file, { force: true }).catch(() => {});
+    if (this.closed || run.controller.signal.aborted) return void fs.promises.rm(file, { force: true }).catch(() => {});
     this.segments.set(index, { file, size: bytes.length });
     run.head = index + 1;
     for (const waiter of this.waiters.get(index) || []) waiter.resolve();
@@ -314,17 +341,35 @@ class RemuxSession {
   /** Hold FFmpeg once it is far enough ahead of what viewers ask for, and drop what is far behind. */
   pace() {
     const run = this.run;
+    const now = Date.now();
+    for (const [lease, cursor] of this.cursors) if (now - cursor.at > IDLE_MS) this.cursors.delete(lease);
+    const cursors = [...this.cursors.values()].map(cursor => cursor.index);
+    const requests = [...cursors, ...this.waiters.keys()];
+    const newest = requests.length ? Math.max(...requests) : this.requested;
+    const oldest = requests.length ? Math.min(...requests) : this.requested;
     if (run?.child) {
-      const far = run.head > this.requested + AHEAD;
+      const far = run.head > newest + AHEAD;
       if (far && !run.paused) run.child.stdout.pause();
       else if (!far && run.paused) run.child.stdout.resume();
       run.paused = far;
     }
-    for (const [index, segment] of this.segments)
-      if (index < this.requested - BEHIND || index > this.requested + AHEAD * 3) {
+    const drop = index => {
+      const segment = this.segments.get(index);
+      if (segment) {
         this.segments.delete(index);
         void fs.promises.rm(segment.file, { force: true }).catch(() => {});
       }
+    };
+    for (const index of this.segments.keys())
+      if (index !== 0 && !this.opening.has(index) && (index < oldest - BEHIND || index > newest + AHEAD * 2))
+        drop(index);
+    // Widely separated viewers cannot retain an entire film between them.
+    const distance = index =>
+      Math.min(...(cursors.length ? cursors : [this.requested]).map(at => Math.abs(index - at)));
+    const expendable = [...this.segments.keys()]
+      .filter(index => index !== 0 && !this.opening.has(index))
+      .sort((a, b) => distance(b) - distance(a));
+    while (this.segments.size > MAX_SEGMENTS && expendable.length) drop(expendable.shift());
   }
   stop() {
     this.run?.controller.abort();
@@ -334,7 +379,13 @@ class RemuxSession {
     this.requestedAt = Date.now();
     clearTimeout(this.idle);
     // Nobody is fetching: stop converting, but keep what is on disk for their return.
-    this.idle = setTimeout(() => this.stop(), IDLE_MS);
+    this.idle = setTimeout(() => {
+      this.stop();
+      const reason = failure('The copied stream is idle; retry the request.');
+      for (const list of this.waiters.values()) for (const waiter of list) waiter.reject(reason);
+      this.waiters.clear();
+      for (const waiter of this.initWaiters.splice(0)) waiter.reject(reason);
+    }, IDLE_MS);
     this.idle.unref?.();
   }
   async initSegment(signal) {
@@ -345,34 +396,62 @@ class RemuxSession {
   }
   wait(list, signal) {
     return new Promise((resolve, reject) => {
-      const cancel = () => reject(failure('The request was cancelled.'));
-      if (signal?.aborted) return cancel();
-      signal?.addEventListener('abort', cancel, { once: true });
-      list.push({
+      const cancel = () => {
+        const index = list.indexOf(waiter);
+        if (index >= 0) list.splice(index, 1);
+        reject(failure('The request was cancelled.'));
+      };
+      const waiter = {
         resolve: value => (signal?.removeEventListener('abort', cancel), resolve(value)),
         reject: error => (signal?.removeEventListener('abort', cancel), reject(error)),
-      });
+      };
+      if (signal?.aborted) return cancel();
+      signal?.addEventListener('abort', cancel, { once: true });
+      list.push(waiter);
     });
   }
-  async segment(index, signal) {
+  async segment(index, signal, lease = this) {
     await this.ready;
     if (this.closed) throw failure('This stream was replaced.');
     if (!Number.isSafeInteger(index) || index < 0 || index >= this.boundaries.length) throw failure('Invalid segment.');
+    // Every HLS viewer first needs the timestamp anchor, even when joining mid-film.
+    if (index !== 0 && !this.segments.has(0)) {
+      const anchor = await this.segment(0, signal, lease);
+      await anchor.handle.close();
+    }
+    if (signal?.aborted) throw failure('The request was cancelled.');
+    if (index !== 0 || !this.cursors.has(lease)) this.cursors.set(lease, { index, at: Date.now() });
     this.requested = index;
     this.touch();
-    if (!this.segments.has(index)) {
-      const run = this.run;
-      // A run reaches a segment only by producing every one before it.
-      // One it already passed and has since dropped has to be produced again.
-      if (!run || index < run.head || index > run.head + AHEAD) this.start(index);
-      else this.pace();
-      const list = this.waiters.get(index) || [];
-      this.waiters.set(index, list);
-      await this.wait(list, signal);
-    } else this.pace();
-    const segment = this.segments.get(index);
-    if (!segment) throw failure('This segment is no longer available; retry.');
-    return segment;
+    if (index !== 0 && !this.opening.has(index) && this.opening.size >= MAX_SEGMENTS - 1)
+      throw Object.assign(failure('Too many copied segments are pending; retry shortly.'), { status: 503 });
+    this.opening.set(index, (this.opening.get(index) || 0) + 1);
+    try {
+      if (!this.segments.has(index)) {
+        const run = this.run;
+        // A run reaches a segment only by producing every one before it.
+        // One it already passed and has since dropped has to be produced again.
+        if (!run || index < run.head || index > run.head + AHEAD) this.start(index);
+        else this.pace();
+        const list = this.waiters.get(index) || [];
+        this.waiters.set(index, list);
+        await this.wait(list, signal);
+      }
+      const segment = this.segments.get(index);
+      if (!segment) throw failure('This segment is no longer available; retry.');
+      const handle = await fs.promises.open(segment.file, 'r');
+      if (signal?.aborted) {
+        await handle.close();
+        throw failure('The request was cancelled.');
+      }
+      return { ...segment, handle };
+    } finally {
+      const pending = this.opening.get(index) - 1;
+      if (pending) this.opening.set(index, pending);
+      else this.opening.delete(index);
+      if (this.waiters.get(index)?.length === 0) this.waiters.delete(index);
+      this.pace();
+    }
   }
   async close() {
     if (this.closed) return;
@@ -384,6 +463,7 @@ class RemuxSession {
     for (const list of this.waiters.values()) for (const waiter of list) waiter.reject(reason);
     this.waiters.clear();
     for (const waiter of this.initWaiters.splice(0)) waiter.reject(reason);
+    await Promise.all([...this.runs]);
     await fs.promises.rm(this.directory, { recursive: true, force: true }).catch(() => {});
   }
 }
@@ -487,8 +567,8 @@ class Remux {
    * Join the copy of this source with this audio track, starting one if there is none.
    * The prepared media object becomes an HLS stream answered by this object.
    */
-  async acquire(media, audio) {
-    const key = JSON.stringify([media.sourceKey, audio?.id ?? null]);
+  async acquire(media, audio, shareKey) {
+    const key = JSON.stringify([media.sourceKey, audio?.id ?? null, shareKey || null]);
     let session = this.sessions.get(key);
     if (!session) {
       session = new RemuxSession(
@@ -507,6 +587,8 @@ class Remux {
       release: () => {
         if (released) return;
         released = true;
+        session.cursors.delete(lease);
+        session.pace();
         if (--session.users > 0) return;
         this.sessions.delete(key);
         this.byId.delete(session.id);
@@ -522,7 +604,14 @@ class Remux {
     media.format = 'hls';
     media.transcodeId = session.id;
     media.start = session.url;
-    media.hlsProvider = this;
+    media.hlsProvider = {
+      url: value => this.url(value),
+      sessionHeaders: () => ({}),
+      request: (value, options) => {
+        if (released) throw failure('This stream was replaced.');
+        return this.request(value, options, lease);
+      },
+    };
     media.audioCodec = audio ? 'aac' : undefined;
     media.remuxLease = lease;
     return lease;
@@ -538,11 +627,12 @@ class Remux {
   }
   /** Answers a playlist, the initialization segment or one segment, as a provider would. */
   /** @param {string} value @param {{signal?: AbortSignal, method?: string, [key: string]: any}} [options] */
-  async request(value, { signal, method } = {}) {
+  async request(value, { signal, method } = {}, lease = undefined) {
     const url = this.url(value),
       match = /^\/([a-f0-9-]{36})\/(index\.m3u8|init\.mp4|seg-(\d{1,7})\.m4s)$/.exec(url.pathname),
       session = match && this.byId.get(match[1]);
     if (!session) throw Object.assign(new Error('Copied stream unavailable'), { status: 410 });
+    if (lease && lease.session !== session) throw failure('Invalid copied-stream lease.');
     if (match[2] === 'index.m3u8') {
       await session.ready;
       return new Response(session.playlist(), { headers: { 'Content-Type': 'application/vnd.apple.mpegurl' } });
@@ -553,8 +643,10 @@ class Remux {
         headers: { 'Content-Type': 'video/mp4', 'Content-Length': String(bytes.length) },
       });
     }
-    const segment = await session.segment(Number(match[3]), signal);
-    const body = method === 'HEAD' ? null : /** @type {any} */ (Readable.toWeb(fs.createReadStream(segment.file)));
+    const segment = await session.segment(Number(match[3]), signal, lease);
+    let body = null;
+    if (method === 'HEAD') await segment.handle.close();
+    else body = /** @type {any} */ (Readable.toWeb(segment.handle.createReadStream({ signal })));
     return new Response(body, {
       headers: { 'Content-Type': 'video/iso.segment', 'Content-Length': String(segment.size) },
     });
