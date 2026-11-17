@@ -104,6 +104,8 @@ module.exports = {
   admit(room, command, declared, actor, ticket) {
     const { action, args } = command;
     if (!this.hub.current(ticket)) return expired();
+    if (room.frozen && !action.startsWith('queue.'))
+      return { status: 'unavailable', message: 'Rejoin the room before controlling playback.' };
     // Owner decision 4: while a durable transition is committing, commands are answered, not queued.
     if (room.transition?.commit)
       return { status: 'unavailable', message: 'Wait for the current queue transition to finish.' };

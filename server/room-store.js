@@ -346,7 +346,7 @@ class RoomStore {
     // never includes elapsed downtime or an autoplay intent.
     return { ...room, paused: true };
   }
-  async edit(id, userId, revision, change) {
+  checkEdit(id, userId, revision, change) {
     const room = this.get(id);
     userId = this.account(userId);
     if (!change || typeof change !== 'object' || Array.isArray(change)) throw error('Invalid room change');
@@ -388,6 +388,11 @@ class RoomStore {
       throw error('Room permission required', 403);
     if (!Number.isSafeInteger(revision) || revision !== room.revision)
       throw error('Room changed; refresh before editing', 409);
+    return room;
+  }
+  async edit(id, userId, revision, change) {
+    const room = this.checkEdit(id, userId, revision, change);
+    userId = this.account(userId);
     const at = this.now();
     const clearPendingForUser = targetId => {
       for (const ident of this.registry.identities(targetId)) {

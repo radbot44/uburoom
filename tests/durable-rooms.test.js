@@ -1797,3 +1797,199 @@ test('missing queue media remains removable, blocks raw additions and restores w
   assert.equal(removed.body.status, 'applied');
   assert.deepEqual((await client.call(root + '?viewer=' + viewer)).body.unavailableMedia, []);
 });
+
+for (const [singleRoom, ending] of [false, true].flatMap(single =>
+  ['close', 'reconnect', 'restart'].map(ending => [single, ending]),
+)) {
+  test(
+    `frozen ${singleRoom ? 'single' : 'standard'} rooms keep queue fences and reconnect grace through ${ending}`,
+    tls,
+    async t => {
+      const f = await fixture(t, ending === 'restart', { singleRoom }),
+        creator = await f.login('host');
+      const id = singleRoom
+        ? (await creator.call('/api/watch/rooms')).body.rooms[0].id
+        : (await creator.call('/api/watch/rooms', { keepEmpty: true })).body.id;
+      const viewerId = randomUUID();
+      await command(creator, id, viewerId, 'media.load', { mediaId: 'demo', quality: 'direct' });
+      const watch = f.app.watch,
+        room = watch.rooms.get(id),
+        viewer = room.viewers.get(viewerId);
+      room.position = 20;
+      room.changedAt = watch.clock.now();
+      room.state.paused = true;
+      viewer.trackChoice = { audioId: 'fixture-audio', subtitleId: 'off' };
+      viewer.at = watch.clock.now() - 10001;
+      watch.review(room);
+      await room.saving;
+      assert.equal(room.frozen, true);
+      assert.equal(f.app.hub.rooms.get(id), room);
+      const saved = room.disconnectedViewers.get(viewerId),
+        version = room.mediaVersion,
+        media = room.media;
+      assert.ok(saved);
+      assert.equal(
+        (await f.app.hub.dispatch(viewer.actor, { roomId: id, action: 'media.play' })).status,
+        'unavailable',
+      );
+      const item = { serverId: 'local-demo', mediaId: 'demo', type: 'movie', title: 'Fixture', duration: 60 };
+      const add = await creator.call('/api/watch/rooms/' + id + '/queue', { action: 'add', item });
+      assert.equal(add.status, 200, JSON.stringify(add.body));
+      const selected = await creator.call('/api/watch/rooms/' + id + '/queue', { action: 'playNow', item });
+      assert.equal(selected.status, 200, JSON.stringify(selected.body));
+      assert.equal(room.frozen, true);
+      assert.equal(room.media, media);
+      assert.equal(room.mediaVersion, version);
+      assert.equal(room.disconnectedViewers.get(viewerId), saved);
+      assert.deepEqual(saved.trackChoice, { audioId: 'fixture-audio', subtitleId: 'off' });
+      assert.equal(watch.roomState.store.get(id).bookmark.position, 0);
+      assert.equal(watch.roomState.store.get(id).bookmark.mediaId, 'demo');
+      assert.equal(room.viewers.size, 0);
+      assert.equal((await creator.call('/api/watch/rooms')).status, 200);
+      watch.review(room);
+      assert.equal(
+        watch.roomState.savedSelectionChanged(room),
+        true,
+        'repeated review retains the old occurrence fence',
+      );
+      if (ending === 'reconnect') {
+        const recorded = watch.providers.recorded;
+        const entered = Promise.withResolvers(),
+          gate = Promise.withResolvers();
+        t.after(() => gate.resolve(false));
+        watch.providers.recorded = async () => {
+          entered.resolve();
+          return gate.promise;
+        };
+        const attempt = creator.call('/api/watch/rooms/' + id + '?viewer=' + viewerId);
+        await entered.promise;
+        assert.equal(room.disconnectedViewers.get(viewerId), saved, 'preparation retains old-media grace');
+        assert.equal(room.viewers.size, 0);
+        const competing = await creator.call('/api/watch/rooms/' + id + '/queue', { action: 'playNow', item });
+        assert.equal(competing.status, 409, JSON.stringify(competing.body));
+        gate.resolve(false);
+        assert.equal((await attempt).status, 409);
+        assert.equal(room.disconnectedViewers.get(viewerId), saved, 'failed preparation keeps the reservation');
+        assert.equal(room.mediaVersion, version);
+        watch.providers.recorded = recorded;
+        const joined = await creator.call('/api/watch/rooms/' + id + '?viewer=' + viewerId);
+        assert.equal(joined.status, 200, JSON.stringify(joined.body));
+        assert.equal(watch.rooms.get(id), room);
+        assert.equal(room.frozen, false);
+        assert.notEqual(room.mediaVersion, version, 'same video selected as a fresh queue occurrence');
+        assert.equal(room.position, 0);
+        assert.equal(room.manualPaused, true);
+        assert.equal(room.disconnectedViewers.size, 0);
+        assert.notEqual(room.viewers.get(viewerId).trackChoice?.audioId, 'fixture-audio');
+      } else if (ending === 'restart') {
+        await f.restart();
+        const returning = await f.login('host');
+        assert.equal(f.app.watch.roomState.store.get(id).bookmark.position, 0);
+        if (!singleRoom) {
+          const reopened = await returning.call('/api/watch/rooms/' + id + '/reopen', {});
+          assert.equal(reopened.status, 200, JSON.stringify(reopened.body));
+        }
+        const joined = await returning.call('/api/watch/rooms/' + id + '?viewer=' + viewerId);
+        assert.equal(joined.status, 200, JSON.stringify(joined.body));
+        assert.equal(f.app.watch.rooms.get(id).position, 0);
+        return;
+      }
+      // A later close must not overwrite the durable bookmark selected while frozen.
+      await watch.remove(id);
+      assert.equal(watch.roomState.store.get(id).bookmark.position, 0);
+    },
+  );
+}
+
+test('deleting a recovery-window room clears its reservation before the row disappears', tls, async t => {
+  const f = await fixture(t, true),
+    creator = await f.login('host');
+  const id = (await creator.call('/api/watch/rooms', { keepEmpty: true })).body.id;
+  await command(creator, id, randomUUID(), 'media.load', { mediaId: 'demo', quality: 'direct' });
+  await f.restart();
+  const returning = await f.login('host'),
+    state = f.app.watch.roomState;
+  assert.equal(state.recoveries.has(id), true);
+  let record = state.store.get(id);
+  assert.equal(
+    (
+      await returning.call('/api/watch/rooms/' + id + '/settings', {
+        revision: record.revision - 1,
+        change: { action: 'delete' },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(state.recoveries.has(id), true, 'stale deletion cannot erase recovery');
+  const deleted = await returning.call('/api/watch/rooms/' + id + '/settings', {
+    revision: record.revision,
+    change: { action: 'delete' },
+  });
+  assert.equal(deleted.status, 200, JSON.stringify(deleted.body));
+  assert.equal(state.recoveries.has(id), false);
+  assert.equal((await returning.call('/api/watch/rooms')).status, 200);
+  await state.maintain();
+  await state.deleteEmpty(id);
+});
+
+test('a saved selection in an empty open room loads on its first join', tls, async t => {
+  const f = await fixture(t),
+    creator = await f.login('host');
+  const id = (await creator.call('/api/watch/rooms', { keepEmpty: true })).body.id;
+  const room = f.app.watch.rooms.get(id);
+  const chosen = await creator.call('/api/watch/rooms/' + id + '/queue', {
+    action: 'playNow',
+    item: { serverId: 'local-demo', mediaId: 'demo', type: 'movie', title: 'Fixture', duration: 60 },
+  });
+  assert.equal(chosen.status, 200, JSON.stringify(chosen.body));
+  assert.equal(room.media, null);
+  await f.app.watch.roomState.save(room);
+  assert.equal(f.app.watch.roomState.store.get(id).bookmark.mediaId, 'demo');
+  const joined = await creator.call('/api/watch/rooms/' + id + '?viewer=' + randomUUID());
+  assert.equal(joined.status, 200, JSON.stringify(joined.body));
+  assert.equal(room.media.id, 'demo');
+  assert.equal(room.position, 0);
+});
+
+test('room deletion waits for media cleanup while preserving the row and a healthy lobby', tls, async t => {
+  const f = await fixture(t),
+    creator = await f.login('host');
+  const id = (await creator.call('/api/watch/rooms', { keepEmpty: true })).body.id,
+    viewerId = randomUUID();
+  await command(creator, id, viewerId, 'media.load', { mediaId: 'demo', quality: 'direct' });
+  const watch = f.app.watch,
+    record = watch.roomState.store.get(id);
+  const gate = Promise.withResolvers();
+  let stopping = false,
+    finished = false;
+  const stop = watch.providers.stop.bind(watch.providers);
+  t.mock.method(watch.providers, 'stop', async media => {
+    if (media) {
+      stopping = true;
+      await gate.promise;
+    }
+    return stop(media);
+  });
+  t.after(() => gate.resolve());
+  const deleting = creator
+    .call('/api/watch/rooms/' + id + '/settings', { revision: record.revision, change: { action: 'delete' } })
+    .then(value => {
+      finished = true;
+      return value;
+    });
+  const deadline = performance.now() + 2000;
+  while (!stopping) {
+    assert.ok(performance.now() < deadline);
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.equal(finished, false);
+  assert.equal(watch.roomState.store.get(id).id, id);
+  assert.equal((await creator.call('/api/watch/rooms')).status, 200);
+  await watch.roomState.maintain();
+  gate.resolve();
+  assert.equal((await deleting).status, 200);
+  assert.throws(() => watch.roomState.store.get(id), /unavailable/);
+  assert.equal(watch.rooms.has(id), false);
+  assert.equal(f.app.hub.rooms.has(id), false);
+  assert.equal((await creator.call('/api/watch/rooms')).status, 200);
+});

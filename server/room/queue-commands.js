@@ -337,6 +337,7 @@ module.exports = {
       { action, args } = command,
       declared = /** @type {NonNullable<ReturnType<typeof Engine.command>>} */ (Engine.command(action)),
       queue = this.roomState.queue;
+    let activeRoom;
     if (['queue.suggest', 'queue.suggestion.dismiss', 'queue.suggestion.agree'].includes(action)) {
       return this.suggestionCommand(id, command, actor, ticket);
     }
@@ -379,6 +380,7 @@ module.exports = {
     let revision = args.expectedRevision;
     // Reserve the room in its mailbox: one queue or media transition at a time.
     const reserve = () => {
+      activeRoom = room && !room.frozen && room.viewers.size > 0 ? room : undefined;
       if (revision === undefined) revision = queue.room(id).queueRevision;
       queue.assertRevision(queue.room(id), revision);
       if (room?.transition) throw Object.assign(new Error('Wait for the current queue operation'), { status: 409 });
@@ -408,6 +410,7 @@ module.exports = {
         acceptedSuggestion.status = 'accepting';
       }
       if (room) {
+        if (!activeRoom && room.retainedEntryId === undefined) room.retainedEntryId = queue.current(id)?.id || null;
         room.transition = { kind: 'queue' };
         if (room.media) {
           this.cancelAutoplay(room);
@@ -428,7 +431,7 @@ module.exports = {
         queue.assertAllowed(queue.room(id), actor.userId, 'chooseMedia');
         if (args.advance && !this.nextCandidate(id))
           throw Object.assign(new Error('No next video is available'), { status: 409 });
-        if (room) {
+        if (activeRoom) {
           if (room.transition?.kind === 'queue') room.transition = undefined;
           return this.changeQueueMedia(room, command, actor, ticket);
         }
@@ -451,7 +454,7 @@ module.exports = {
           suggestionSettled = true;
           await this.inRoom(room, () => this.settleSuggestion(room, acceptedSuggestion.id), undefined);
         };
-        if (room && (playNow || (!room.media && wasEmptyQueue))) {
+        if (activeRoom && (playNow || (!room.media && wasEmptyQueue))) {
           if (room.transition?.kind === 'queue') room.transition = undefined;
           const outcome = await this.changeQueueMedia(
             room,
@@ -465,13 +468,13 @@ module.exports = {
           if (outcome?.status === 'applied') await settle();
           return outcome;
         }
-        value =
-          action === 'queue.playNow'
-            ? await queue.playNow(id, actor.userId, item)
-            : await queue.add(id, actor.userId, item, { expectedRevision: revision });
+        value = playNow
+          ? await queue.playNow(id, actor.userId, item, queue.current(id)?.position || 0)
+          : await queue.add(id, actor.userId, item, { expectedRevision: revision });
         await settle();
       } else if (action === 'queue.offer.start') {
-        if (!room) throw Object.assign(new Error('Room unavailable'), { status: 404 });
+        if (!activeRoom)
+          throw Object.assign(new Error('Rejoin the room before starting an episode offer'), { status: 409 });
         if (!this.hub.authorize(actor, room, 'addQueue').ok || !this.hub.authorize(actor, room, 'playPause').ok) {
           throw Object.assign(new Error('Room permission required'), { status: 403 });
         }
@@ -499,7 +502,7 @@ module.exports = {
         );
       } else if (action === 'queue.playEntry' || action === 'queue.skipTo') {
         const skipPrevious = action === 'queue.skipTo' || !!args.skipPrevious;
-        if (room) {
+        if (activeRoom) {
           if (room.transition?.kind === 'queue') room.transition = undefined;
           return this.changeQueueMedia(
             room,
@@ -526,7 +529,7 @@ module.exports = {
           items.map(item => this.queueItem(item, serverId)),
           { expectedRevision: revision, unfinished: args.unfinished },
         );
-        if (room && !room.media && wasEmptyQueue && value.addedCount) {
+        if (activeRoom && !room.media && wasEmptyQueue && value.addedCount) {
           if (room.transition?.kind === 'queue') room.transition = undefined;
           return this.changeQueueMedia(
             room,
@@ -570,7 +573,7 @@ module.exports = {
           };
         }
         if (
-          room &&
+          activeRoom &&
           !room.media &&
           !queue.current(id) &&
           !queue.pending(id).length &&
@@ -605,7 +608,7 @@ module.exports = {
           next: verified.next,
           queueRevision: this.roomState.store.get(id).queueRevision,
         };
-        if (room && !room.media && wasEmptyQueue && value.added && this.roomState.store.get(id).autoplay) {
+        if (activeRoom && !room.media && wasEmptyQueue && value.added && this.roomState.store.get(id).autoplay) {
           if (room.transition?.kind === 'queue') room.transition = undefined;
           return this.changeQueueMedia(
             room,
@@ -616,7 +619,7 @@ module.exports = {
           );
         }
       } else if (action === 'queue.auto.playNow') {
-        if (room) {
+        if (activeRoom) {
           if (room.transition?.kind === 'queue') room.transition = undefined;
           return this.changeQueueMedia(
             room,
@@ -644,7 +647,7 @@ module.exports = {
       else if (action === 'queue.shuffle') value = await queue.shuffle(id, actor.userId, revision);
       else if (action === 'queue.history.clear') value = await queue.historyClear(id, actor.userId);
       else if (action === 'queue.history.replay' || action === 'queue.history.goBack') {
-        if (room) {
+        if (activeRoom) {
           if (room.transition?.kind === 'queue') room.transition = undefined;
           return this.changeQueueMedia(room, command, actor, ticket);
         }
@@ -675,7 +678,7 @@ module.exports = {
           () => {
             const latest = this.roomState.store.get(id);
             this.roomState.apply(room, latest);
-            if (!priorCountdown || room.media) return;
+            if (!activeRoom || !priorCountdown || room.media) return;
             const afterNext = this.nextCandidate(id);
             const afterKey = afterNext ? afterNext.id || afterNext.serverId + ':' + afterNext.mediaId : null;
             if (!afterNext) this.cancelAutoplay(room);
@@ -699,7 +702,7 @@ module.exports = {
             this.changed(room);
             room.autoQueueError = undefined;
             // The queue changed: check its availability and everyone's stream again.
-            this.prepareStreams(room);
+            if (activeRoom) this.prepareStreams(room);
           },
           undefined,
         );

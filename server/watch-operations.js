@@ -406,6 +406,7 @@ function watchOperations({
       async (auth, room) => {
         if (!UUID.test(viewerId || '')) throw new Error('Invalid viewer');
         const { authenticated, alive } = signedIn(context, auth);
+        await watch.roomState.restoreSavedSelection(room, auth.actor, alive, context.signal);
         const viewer = admit(room, auth, context, viewerId, preferences, alive, authenticated);
         const attempt = {};
         joining.set(viewer, attempt);

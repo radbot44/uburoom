@@ -122,6 +122,7 @@
  * @property {number} [playbackIntent] - Generation of the latest explicit play/pause intent.
  * @property {boolean} [closed] - Set by the room core once the room is closing.
  * @property {boolean} [frozen] - Empty, waiting for its host's tab within the reconnect grace.
+ * @property {string|null} [retainedEntryId] - Queue occurrence retained by the frozen playback snapshot.
  * @property {{kind: 'media'|'queue', commit?: Promise<any>}} [transition] - The one media change or queue edit in flight; commit is set while its durable queue write runs.
  * @property {boolean} [waitingForHost] - Playback is held until a host returns.
  * @property {string} [endedVersion] - Media generation whose natural end has been handled.

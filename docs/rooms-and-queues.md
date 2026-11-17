@@ -19,6 +19,10 @@ Empty-room retention, inactivity/capacity defaults and single-room reset are def
 
 Previously open rooms reserve recovery slots, return paused and admit original participants with fresh authorization. Auto-resume requires prior playing intent, all expected accounts back before expiry, fresh readiness and a present authorized controller; otherwise remain paused. No old stream or countdown is restored.
 
+An empty room awaiting its host within reconnect grace retains its command mailbox and reservations, including in single-room mode and during lobby refresh. Playback controls require rejoining; permitted queue edits update saved state without loading streams or consuming reservations. If an edit changes the current occurrence, the saved selection survives Close or restart and replaces the retained playback snapshot when the host reconnects. Prepare and reauthorize that selection before adoption; failure preserves the reservation for retry. Adoption starts the new occurrence paused with fresh media state and clears old-media reservations and track choices. Queue edits that leave the current occurrence unchanged preserve ordinary reconnect behavior.
+
+Deletion validates permission and room revision before clearing recovery reservations, waits for live-room cleanup, then removes the durable row. It preserves separately scheduled Discord events.
+
 Verified natural completion belongs to the room once accepted: canceling its observation request or disconnecting that viewer does not cancel completion. The completion marker is committed with unloading the finished media, after the durable queue write. An aborted pre-commit attempt leaves the loaded media eligible for a later completion. Configured auto-queue continuation uses the continuing viewer's permitted playback authority and publishes its generated successor even when autoplay is off.
 
 ## Roles and permissions

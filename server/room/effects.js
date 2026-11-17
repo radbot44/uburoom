@@ -252,8 +252,12 @@ module.exports = {
         if (room.saving || room.transition || room.frozen) return;
         return void this.roomState.save(room).catch(() => {});
       case 'hide':
-        return void this.hub.rooms.delete(room.roomId);
+        // Frozen rooms retain their mailbox and command fences until actual close.
+        if (room.retainedEntryId === undefined)
+          room.retainedEntryId = this.roomState.queue.current(room.roomId)?.id || null;
+        return;
       case 'reveal':
+        delete room.retainedEntryId;
         return void this.hub.rooms.set(room.roomId, room);
       case 'remove':
         return void this.removeRoom(room, effect.save).catch(() => {});

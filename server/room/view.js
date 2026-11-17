@@ -122,7 +122,13 @@ module.exports = {
     if (this.roomState)
       for (const [id, recovery] of this.roomState.recoveries) {
         if (this.rooms.has(id) || recovery.until <= this.clock.now()) continue;
-        const record = this.roomState.store.get(id);
+        let record;
+        try {
+          record = this.roomState.store.get(id);
+        } catch (error) {
+          if (error.status === 404) continue;
+          throw error;
+        }
         if (!this.hub.authorize(actor, record, 'room.view').ok) continue;
         if (record.bookmark) {
           try {

@@ -199,7 +199,13 @@ class WatchRooms {
   }
   async deleteEmpty(id) {
     if (this.stopped || this.watch.rooms.has(id) || this.recoveries.has(id) || this.opening.has(id)) return;
-    const record = this.store.get(id);
+    let record;
+    try {
+      record = this.store.get(id);
+    } catch (error) {
+      if (error.status === 404) return;
+      throw error;
+    }
     if (!this.reason(record)) await this.store.destroy(id);
   }
   async eligible(actor, current = async () => true) {
@@ -543,12 +549,17 @@ class WatchRooms {
       actor.guestRoomId
     )
       throw failure('Guests can’t change the room invite', 403);
+    if (change?.action === 'delete') {
+      this.store.checkEdit(id, actor.userId, revision, change);
+      this.recoveries.delete(id);
+      if (room) await this.watch.remove(id, false);
+      await this.eligible(actor, current);
+    }
     const record = await this.store.edit(id, actor.userId, revision, change);
     // Removing guests or revoking an invite takes effect at once, through the kick notice.
     if (change.action === 'guests.removeAll') await this.watch.hub.endGuestSessions(id);
     if (change.action === 'invite.revoke') await this.removeFromRoom(id, [this.store.account(change.userId)]);
     if (change.action === 'delete') {
-      if (room) this.watch.remove(id, false);
       return { deleted: true };
     }
     if (room && this.watch.rooms.get(id) === room) {
@@ -663,10 +674,6 @@ class WatchRooms {
         record = this.store.get(id);
         if (this.recoveries.has(id) && !this.watch.rooms.has(id)) await this.recover(id, actor);
         for (const other of [...this.watch.rooms.keys()]) if (other !== id) await this.watch.remove(other);
-        if (this.watch.rooms.get(id)?.frozen) {
-          await this.watch.remove(id);
-          record = this.store.get(id);
-        }
         if (!this.watch.rooms.has(id)) {
           this.watch.create(actor, record.visibility, record);
           const room = this.watch.rooms.get(id);
@@ -793,6 +800,101 @@ class WatchRooms {
     this.apply(room, this.store.get(id));
     this.watch.coordinator.run(room, { type: 'roles', invalidate: false });
   }
+  savedSelectionChanged(room) {
+    return room.retainedEntryId !== undefined && room.retainedEntryId !== (this.queue.current(room.roomId)?.id || null);
+  }
+  // Queue edits keep the old source and reconnect reservations until a host actually
+  // returns. Prepare its new saved selection before replacing that retained snapshot.
+  async restoreSavedSelection(room, actor, current, signal) {
+    if (!room.viewers.size && room.transition) throw failure('Wait for the current queue operation');
+    if (!this.savedSelectionChanged(room)) {
+      delete room.retainedEntryId;
+      return;
+    }
+    const watch = this.watch;
+    const work = await watch.inRoom(
+      room,
+      () => {
+        if (room.viewers.size || (room.frozen && actor.userId !== room.hostId))
+          throw failure('Room unavailable or private', 403);
+        if (room.transition) throw failure('Wait for the current queue operation');
+        room.transition = { kind: 'media' };
+        return watch.startMediaWork(
+          room,
+          async work => {
+            const record = this.store.get(room.roomId),
+              saved = record.bookmark;
+            let media,
+              adopted = false;
+            try {
+              if (saved) {
+                if (!(await watch.providers.recorded(saved))) throw failure('The saved media server changed');
+                if (saved.mediaId === 'demo') {
+                  if (!watch.demoMedia) throw failure('The saved test video is unavailable');
+                  media = { ...watch.demoMedia, id: 'demo', resources: new Map() };
+                } else {
+                  const provider = await watch.hub.mediaFor(actor, saved.serverId);
+                  media = await this.savedSource(provider, saved);
+                  if ((await watch.hub.mediaFor(actor, saved.serverId)).principal !== provider.principal)
+                    throw failure('Media access changed', 403);
+                }
+                if (Math.abs(media.duration - saved.duration) > 0.5 || (media.type && media.type !== saved.type))
+                  throw failure('The saved video changed; choose it again');
+                media.roomServerId = saved.serverId;
+              }
+              await this.eligible(actor, current);
+              if (!(await watch.canView(room, actor))) throw failure('Room access changed', 403);
+              work.signal.throwIfAborted();
+              const applied = await watch.inRoom(
+                room,
+                () => {
+                  const latest = this.store.get(room.roomId);
+                  if (
+                    room.closed ||
+                    room.viewers.size ||
+                    latest.revision !== record.revision ||
+                    latest.checkpointRevision !== record.checkpointRevision ||
+                    latest.queueRevision !== record.queueRevision ||
+                    (room.frozen && actor.userId !== room.hostId)
+                  )
+                    throw failure('The saved selection changed; reconnect again');
+                  work.signal.throwIfAborted();
+                  if (media) {
+                    watch.adoptQueueMedia(room, {
+                      prepared: media,
+                      args: { position: saved.position },
+                      old: room.media,
+                      actor,
+                    });
+                    room.manualPaused = true;
+                  } else watch.unloadQueueMedia(room);
+                  // The new generation has no participants yet. Clearing old-media
+                  // grace must not let an already armed presence timer close it
+                  // between adoption and the returning tab's admission.
+                  room.hadViewers = false;
+                  room.lastActivity = watch.clock.now();
+                  delete room.retainedEntryId;
+                  room.disconnectedWasPlaying = false;
+                  this.apply(room, latest);
+                  adopted = true;
+                  return true;
+                },
+                false,
+              );
+              if (!applied) throw failure('Room is closing');
+            } finally {
+              if (media && !adopted) await watch.providers.stop(media);
+              if (room.transition?.kind === 'media') room.transition = undefined;
+            }
+          },
+          { kind: 'transition', signal },
+        );
+      },
+      undefined,
+    );
+    if (!work) throw failure('Room is closing');
+    await work.promise;
+  }
   capture(room, { closing = false, at = this.watch.clock.now() } = {}) {
     const media = room.media;
     const bookmark = media
@@ -817,12 +919,14 @@ class WatchRooms {
       : room.recovery || {
           viewers,
           wasPlaying:
-            !room.state.paused ||
-            (room.initialGate && !room.manualPaused) ||
-            (room.frozen && !!room.disconnectedWasPlaying),
+            !this.savedSelectionChanged(room) &&
+            (!room.state.paused ||
+              (room.initialGate && !room.manualPaused) ||
+              (room.frozen && !!room.disconnectedWasPlaying)),
         };
     return {
       bookmark,
+      preserveSelection: this.savedSelectionChanged(room),
       live: live ? { viewers: [...live.viewers], wasPlaying: live.wasPlaying } : null,
       active: !!room.viewers.size,
     };
@@ -835,7 +939,7 @@ class WatchRooms {
     const saving = previous
       .then(async () => {
         if (!final && this.watch.rooms.get(room.roomId) !== room) return;
-        const { bookmark, live, active } = captured || this.capture(room, { closing });
+        const { bookmark, preserveSelection, live, active } = captured || this.capture(room, { closing });
         const record = this.store.get(room.roomId);
         const saved = this.registry.transaction(() => {
           repositories(this.store.db).rooms.saveLiveState(
@@ -845,6 +949,7 @@ class WatchRooms {
             record.id,
           );
           if (active) this.store.touch(record.id);
+          if (preserveSelection) return this.store.get(record.id);
           if (bookmark) this.queue.checkpoint(record.id, bookmark.position);
           return this.store.writeCheckpoint(record.id, record.checkpointRevision, bookmark);
         });
