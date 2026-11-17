@@ -180,11 +180,20 @@ function createApp(config, options = {}) {
       hub.close();
       files.close();
       untapLogger?.();
-      closing = Promise.allSettled([
-        mediaClosed,
-        diagnosticLog?.close(),
-        new Promise(resolve => (server.listening ? server.close(resolve) : resolve())),
-      ]).then(async results => {
+      const serverClosed = server.listening
+        ? new Promise(resolve => {
+            const nudge = () => server.closeIdleConnections?.();
+            // Re-nudge briefly while draining so keep-alive sockets finishing in-flight work cannot stall WAL checkpoint.
+            const timer = setInterval(nudge, 100);
+            timer.unref();
+            server.close(() => {
+              clearInterval(timer);
+              resolve();
+            });
+            nudge();
+          })
+        : Promise.resolve();
+      closing = Promise.allSettled([mediaClosed, diagnosticLog?.close(), serverClosed]).then(async results => {
         try {
           await registry.close();
         } catch (error) {

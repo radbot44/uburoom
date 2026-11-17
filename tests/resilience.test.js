@@ -1,6 +1,13 @@
 'use strict';
 const test = require('node:test'),
   assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const crypto = require('node:crypto');
+const https = require('node:https');
+const { DatabaseSync } = require('node:sqlite');
+const { createApp } = require('../server/app');
 const { CircuitBreaker, resilientFetch } = require('../server/resilience');
 const { Plex } = require('../server/plex');
 const { run } = require('../server/av1');
@@ -344,4 +351,71 @@ test('tool runner drains stderr, bounds output and kills timed-out or over-budge
     (await require('../server/process-memory').processMemory(process.pid)) > 0,
     'native process inspection reports actual memory',
   );
+});
+
+test('app.close closes idle HTTPS keep-alive sockets promptly and checkpoints SQLite WAL', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-shutdown-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const keyFile = path.join(dir, 'credentials.key');
+  const dbFile = path.join(dir, 'accounts.sqlite');
+  fs.writeFileSync(keyFile, crypto.randomBytes(32));
+  const cert = fs.readFileSync(path.join(__dirname, '../certs/server-cert.pem'));
+  const key = fs.readFileSync(path.join(__dirname, '../certs/server-key.pem'));
+  const app = createApp({
+    cert,
+    key,
+    publicUrl: 'https://localhost:0',
+    accountFile: dbFile,
+    credentialKeyFile: keyFile,
+    ownerId: 'owner-1',
+    clientId: '100000000000000010',
+    clientSecret: 'fixture-secret',
+    guildId: 'guild',
+    channels: ['commands'],
+    unifiedAccounts: true,
+  });
+  const agent = new https.Agent({ keepAlive: true, keepAliveMsecs: 60000, ca: cert });
+  t.after(async () => {
+    agent.destroy();
+    await app.close().catch(() => {});
+  });
+  app.registry.meta('shutdownDrain', 'ok');
+  await app.registry.flush();
+  await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+  const { port } = app.server.address();
+  await new Promise((resolve, reject) => {
+    const req = https.request({ hostname: 'localhost', port, path: '/health', method: 'GET', agent, ca: cert }, res => {
+      res.resume();
+      res.on('end', () => {
+        try {
+          assert.equal(res.statusCode, 200);
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(
+    Object.values(agent.freeSockets).flat().length,
+    1,
+    'keep-alive client socket should remain open and idle before shutdown',
+  );
+  const started = performance.now();
+  await app.close();
+  const elapsedMs = performance.now() - started;
+  assert.ok(elapsedMs < 2000, `expected prompt close with idle keep-alive socket, took ${elapsedMs.toFixed(1)} ms`);
+  await app.close();
+  const walFile = dbFile + '-wal';
+  assert.ok(!fs.existsSync(walFile) || fs.statSync(walFile).size === 0, 'WAL should be checkpointed and truncated');
+  const ro = new DatabaseSync(dbFile, { readOnly: true });
+  try {
+    const row = ro.prepare('SELECT value FROM meta WHERE key = ?').get('shutdownDrain');
+    assert.equal(row?.value, 'ok');
+  } finally {
+    ro.close();
+  }
 });

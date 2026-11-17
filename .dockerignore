@@ -4,7 +4,15 @@ personal/
 artifacts/
 data/
 certs/
+secrets/
+.uburoom-config-*/
 *.key
+**/*.key
+**/*.pem
+**/*.pfx
+**/*.p12
+**/*.sqlite*
+**/*.db
 config.yaml
 *.log
 tests/

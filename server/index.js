@@ -44,12 +44,35 @@ async function main() {
     retry,
     stopped = false;
   async function stop() {
+    if (stopped) return;
     stopped = true;
     clearTimeout(retry);
-    await bot?.destroy();
-    await app.close();
-    await logger.close();
-    process.exit(0);
+    // Hard-exit beyond Watch.close()'s 35s mediaDrainMs so a stuck dependency cannot wedge shutdown forever.
+    const forceExit = setTimeout(() => {
+      process.exit(1);
+    }, 40000);
+    forceExit.unref();
+    let exitCode = 0;
+    try {
+      try {
+        await bot?.destroy();
+      } catch (error) {
+        exitCode = 1;
+        logger.error('Discord', 'Bot shutdown failed: ' + (error?.message || error));
+      }
+      await app.close();
+    } catch (error) {
+      exitCode = 1;
+      logger.error('Server', 'Shutdown failed: ' + (error?.message || error));
+    } finally {
+      try {
+        await logger.close();
+      } catch {
+        exitCode = 1;
+      }
+      clearTimeout(forceExit);
+      process.exit(exitCode);
+    }
   }
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);

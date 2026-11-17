@@ -127,6 +127,7 @@ services:
     build: .
     container_name: uburoom
     restart: unless-stopped
+    stop_grace_period: 45s
     ports:
       - "5756:5756"
     volumes:
@@ -216,6 +217,7 @@ services:
     build: .
     container_name: uburoom
     restart: unless-stopped
+    stop_grace_period: 45s
     expose:
       - "5756"
     volumes:

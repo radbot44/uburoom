@@ -508,3 +508,47 @@ test('discord.rich_presence validates boolean configuration and defaults enabled
   assert.equal(boot(normalizeConfig({})).discordRichPresence, true);
   assert.equal(boot(normalizeConfig({ discord: { rich_presence: false } })).discordRichPresence, false);
 });
+
+test('.dockerignore excludes secrets, keys, databases and config backups while keeping runtime build files', () => {
+  const raw = fs.readFileSync(path.join(ROOT, '.dockerignore'), 'utf8');
+  const patterns = raw
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#') && !line.startsWith('!'))
+    .map(pattern => pattern.replace(/\/+$/, ''));
+  const ignored = candidate => {
+    const parts = candidate.split('/');
+    const prefixes = parts.map((_, index) => parts.slice(0, index + 1).join('/'));
+    return patterns.some(pattern => prefixes.some(prefix => path.posix.matchesGlob(prefix, pattern)));
+  };
+  for (const sensitive of [
+    'secrets/credentials.key',
+    '.uburoom-config-20261117/original.yaml',
+    'root.key',
+    'nested/dir/private.key',
+    'certs/server-cert.pem',
+    'nested/tls/cert.pem',
+    'nested/cert.pfx',
+    'nested/cert.p12',
+    'data/accounts.sqlite',
+    'backup/accounts.sqlite-wal',
+    'backup/archive.db',
+    'config.yaml',
+  ]) {
+    assert.equal(ignored(sensitive), true, `expected .dockerignore to exclude ${sensitive}`);
+  }
+  for (const required of [
+    'package.json',
+    'package-lock.json',
+    'server/index.js',
+    'shared/engine.mjs',
+    'web/index.html',
+    'diagnostics/report.js',
+    'assets/demo/sync-test.mp4',
+    'scripts/doctor.js',
+    'config.example.yaml',
+    'LICENSE',
+  ]) {
+    assert.equal(ignored(required), false, `expected .dockerignore to preserve ${required}`);
+  }
+});
