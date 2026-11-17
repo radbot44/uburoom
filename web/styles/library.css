@@ -1243,17 +1243,25 @@
   .library-shelf-row.poster > .library-tile {
     flex: 0 0 132px;
   }
+  /* Libraries home: the icon at the top, the name and its server at the bottom, and a Collections button in the
+     corner of a library that has them. The whole card opens the library; the corner button sits above it. */
+  .library-home-item {
+    position: relative;
+    min-width: 0;
+    container-type: inline-size;
+  }
   .library-home-card {
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: var(--radius-12);
+    width: 100%;
     min-width: 0;
     min-height: 144px;
-    padding: var(--space-20);
+    padding: var(--space-16) var(--space-20) var(--space-16) var(--space-16);
     display: flex;
-    align-items: flex-start;
-    justify-content: center;
     flex-direction: column;
+    justify-content: space-between;
+    align-items: flex-start;
     gap: var(--space-16);
     color: var(--text);
     text-align: left;
@@ -1261,30 +1269,84 @@
   .library-home-card:hover {
     background: var(--elevated);
   }
-  .library-home-card > svg {
+  .library-home-icon {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-10);
+    background: var(--elevated);
     color: var(--muted);
   }
-  .library-home-title,
-  .library-other h3 {
+  .library-home-card:hover .library-home-icon {
+    background: var(--hover);
+  }
+  .library-home-icon > svg {
+    width: 22px;
+    height: 22px;
+  }
+  .library-home-text {
+    display: grid;
+    gap: var(--space-4);
+    min-width: 0;
+    max-width: 100%;
+  }
+  .library-home-title {
     font-size: var(--font-size-16);
     font-weight: 600;
-    margin: 0;
     overflow-wrap: anywhere;
   }
-  .library-other {
-    gap: var(--space-10);
-    justify-content: flex-start;
+  .library-home-source {
+    display: flex;
+    align-items: center;
+    gap: var(--space-6);
+    min-width: 0;
+    color: var(--muted);
+    font-size: var(--font-size-12);
   }
-  .library-other:hover {
-    background: var(--elevated);
+  .library-home-source > img {
+    flex: none;
+    width: 16px;
+    height: 16px;
   }
-  .library-other .library-key {
-    width: 100%;
-    justify-content: flex-start;
-    text-align: left;
+  .library-home-source > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .library-other .library-key span {
-    overflow-wrap: anywhere;
+  .library-home-collections {
+    position: absolute;
+    top: var(--space-16);
+    right: var(--space-16);
+    display: flex;
+    align-items: center;
+    gap: var(--space-6);
+    height: 32px;
+    padding: 0 var(--space-10);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-8);
+    background: transparent;
+    color: var(--muted);
+    font-size: var(--font-size-12);
+  }
+  .library-home-collections:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .library-home-collections > svg {
+    width: 16px;
+    height: 16px;
+  }
+  /* A narrow card keeps the button to its icon, so it never crowds the library's own. */
+  @container (max-width: 220px) {
+    .library-home-collections {
+      width: 32px;
+      padding: 0;
+      justify-content: center;
+    }
+    .library-home-collections > span {
+      display: none;
+    }
   }
   @container plex-library (max-width:1120px) {
     .library-toolbar {

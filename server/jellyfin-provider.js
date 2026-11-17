@@ -5,6 +5,7 @@ const Tracks = require('./media-tracks');
 const { prepareStream } = require('./media-delivery');
 const { resilientFetch } = require('./resilience');
 const { runOperation } = require('./operation');
+const { serverName } = require('./media-providers');
 const { version } = require('../package.json');
 
 const GUID = /^[a-f0-9]{32}$/i;
@@ -166,7 +167,8 @@ class Jellyfin {
   identity() {
     if (!this.identifying) {
       this.identifying = (async () => {
-        const id = (await this.json('System/Info/Public')).Id,
+        const info = await this.json('System/Info/Public');
+        const id = info.Id,
           pinned = this.registry?.meta('jellyfinServerId');
         if (typeof id !== 'string' || !GUID.test(id) || (pinned && id !== pinned))
           throw failure('The configured Jellyfin server identity changed', 503);
@@ -174,6 +176,7 @@ class Jellyfin {
           this.registry.meta('jellyfinServerId', id);
           await this.registry.flush();
         }
+        this.serverName = serverName(info.ServerName);
         return id;
       })();
       this.identifying.catch(() => {
@@ -726,7 +729,15 @@ class Jellyfin {
 function jellyfinProvider({ config, pipeline, registry, logger, fetcher }) {
   if (!config.jellyfin?.url) return;
   const jellyfin = new Jellyfin(config.jellyfin, { pipeline, registry, logger, fetcher });
-  return { kind: 'jellyfin', root: jellyfin, identity: () => jellyfin.identity(), scopeFor: async () => jellyfin };
+  return {
+    kind: 'jellyfin',
+    root: jellyfin,
+    identity: () => jellyfin.identity(),
+    get serverName() {
+      return jellyfin.serverName || '';
+    },
+    scopeFor: async () => jellyfin,
+  };
 }
 
 module.exports = { Jellyfin, jellyfinProvider, jellyfinIdentity };

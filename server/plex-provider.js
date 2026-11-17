@@ -2,6 +2,7 @@
 const { plexReconnectError } = require('./plex-auth');
 const { PlexDelivery } = require('./plex/delivery');
 const { PlexReporting } = require('./plex-reporting');
+const { serverName } = require('./media-providers');
 
 const failure = (message, status = 409) => Object.assign(new Error(message), { status });
 
@@ -21,6 +22,8 @@ function plexProvider({ plex, config = {}, registry, plexAuth, entryPolicy }) {
     reporting: services => new PlexReporting({ config, plexAuth, registry, ...services }),
     // Direct credentials are personal, so there is no direct path without the services that know people.
     direct: plexAuth ? new PlexDelivery(config, plex, plexAuth, actor => provider.scopeFor(actor)) : undefined,
+    /** The server's own name (Plex's friendlyName), known once `identity()` has answered. */
+    serverName: '',
     // The machine identifier, pinned the first time it is seen so a different
     // server behind the same address is refused rather than mistaken for this one.
     identity() {
@@ -35,6 +38,7 @@ function plexProvider({ plex, config = {}, registry, plexAuth, entryPolicy }) {
             registry.meta('plexMachineIdentifier', id);
             await registry.flush();
           }
+          provider.serverName = serverName(info.friendlyName);
           return id;
         })();
         identifying.catch(() => {

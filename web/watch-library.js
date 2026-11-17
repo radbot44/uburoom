@@ -9,18 +9,39 @@ import { libraryDetails } from './watch-library-details.js';
 import { libraryShelves } from './watch-library-shelves.js';
 
 /* One safe-DOM library browser for the website, fullscreen drawer and Activity. */
+
+/** Each media server's own mark, shown beside its name on its libraries' cards. */
+const SERVER_MARKS = {
+  plex: { label: 'Plex', logo: '/assets/plex-icon.png' },
+  jellyfin: { label: 'Jellyfin', logo: '/assets/jellyfin-icon.svg' },
+};
+/**
+ * One card per library on Libraries home, described once for the server's first paint and the page's own
+ * render: its icon, its name, the server it is on (that server's mark and name, or "Local folders"), and
+ * whether it has a Collections page, which opens from a button on the card.
+ * @returns {{id: string, title: string, icon: string, collections: boolean,
+ *   source?: {text: string, logo?: string, label?: string}}[]}
+ */
 function homeCards(items = []) {
-  const cards = [];
-  for (const tab of ['library', 'collections'])
-    for (const section of items) {
-      if (tab === 'collections' && section.collections === false) continue;
-      const title =
-        tab === 'library' ? section.title : (section.title === 'Movies' ? 'Movie' : section.title) + ' Collections';
-      const icon = tab === 'library' ? sectionIcon(section) : 'layout-grid';
-      cards.push({ id: section.id, tab, title, icon });
-    }
-  return cards;
+  return items.map(section => {
+    const mark = SERVER_MARKS[section.serverKind];
+    const source =
+      section.source === 'folder'
+        ? { text: 'Local folders' }
+        : mark
+          ? { text: section.serverName || mark.label, logo: mark.logo, label: mark.label }
+          : undefined;
+    return {
+      id: section.id,
+      title: section.title,
+      icon: sectionIcon(section),
+      collections: section.collections !== false,
+      ...(source ? { source } : {}),
+    };
+  });
 }
+/** The synchronization test video's card, shown on Libraries home only in Admin mode. */
+const SYNC_CARD = { title: 'Sync test video', icon: 'play', source: { text: 'Admin mode' } };
 function mount(
   host,
   {
@@ -35,6 +56,7 @@ function mount(
     suggestMedia,
     agreeSuggestion,
     initialLibrary,
+    isAdmin = () => false,
   },
 ) {
   const doc = host.ownerDocument;
@@ -931,21 +953,44 @@ function mount(
     loadShelves();
     renderShelves();
     for (const card of homeCards(sections)) {
-      const b = button(landing, card.title, card.icon, 'library-home-card');
-      b.dataset.section = card.id;
-      b.dataset.tab = card.tab;
-      b.append(node('span', null, card.title, 'library-home-title'));
-      b.onclick = () => void chooseLibrary(card.id, card.tab);
+      const { item, open } = homeCard(card);
+      open.dataset.section = card.id;
+      open.dataset.tab = 'library';
+      open.onclick = () => void chooseLibrary(card.id, 'library');
+      if (card.collections) {
+        const more = button(item, card.title + ' collections', 'layout-grid', 'library-home-collections');
+        more.append(node('span', null, 'Collections'));
+        more.dataset.section = card.id;
+        more.dataset.tab = 'collections';
+        more.onclick = () => void chooseLibrary(card.id, 'collections');
+      }
     }
-    if (testVideo) {
-      const other = node('article', landing, undefined, 'library-home-card library-other');
-      node('h3', other, 'Other');
-      const b = button(other, 'Play synchronization video', 'play');
-      b.dataset.action = 'play';
-      b.dataset.play = 'demo';
-      b.append(node('span', null, 'Synchronization video'));
-      b.onclick = () => void play(demoItem);
+    if (testVideo && isAdmin()) {
+      const { open } = homeCard(SYNC_CARD);
+      open.dataset.action = 'play';
+      open.dataset.play = 'demo';
+      open.onclick = () => void play(demoItem);
     }
+  }
+  /** A card's frame and its main button: the icon at the top, the name and server at the bottom. */
+  function homeCard(card) {
+    const item = node('div', landing, undefined, 'library-home-item');
+    const open = button(item, card.title, undefined, 'library-home-card');
+    node('span', open, undefined, 'library-home-icon').append(uburoomIcons.icon(doc, card.icon));
+    const text = node('span', open, undefined, 'library-home-text');
+    node('span', text, card.title, 'library-home-title');
+    if (card.source) {
+      const source = node('span', text, undefined, 'library-home-source');
+      if (card.source.logo) {
+        const logo = node('img', source);
+        logo.src = card.source.logo;
+        logo.alt = card.source.label;
+        logo.width = 16;
+        logo.height = 16;
+      }
+      node('span', source, card.source.text);
+    }
+    return { item, open };
   }
   function renderResults(reuseImages = false) {
     if (reuseImages) pictures.reuse(host.querySelectorAll('.library-art img, .library-detail-backdrop img'));
@@ -1458,6 +1503,11 @@ function mount(
     refreshShelves: () => {
       if (screen?.kind === 'home') loadShelves();
     },
+    /** Admin mode shows or hides the sync test video's card on Libraries home. */
+    refreshAdmin: () => {
+      const shown = !!landing.querySelector('[data-play="demo"]');
+      if (screen?.kind === 'home' && testVideo && shown !== isAdmin()) renderResults(true);
+    },
   };
 }
-export { mount, homeCards };
+export { mount, homeCards, SYNC_CARD };

@@ -210,9 +210,17 @@ async function captureBrowser(name, out, only) {
     await capture(host, 'room-empty', {});
 
     // Synchronization video, paused at a fixed position, with two queued items.
-    await until(host, shown('.library-key[data-play=demo]'), 'Synchronization video');
-    await run(host, dom.q('.library-key[data-play=demo]') + '.click();true');
+    // The sync test video is on Libraries home only in Admin mode.
+    await run(host, pressId('admin-mode'));
+    await until(
+      host,
+      attr('#admin-mode', 'aria-checked') + '==="true" && ' + shown('.library-home-card[data-play=demo]'),
+      'Synchronization video',
+    );
+    await run(host, dom.q('.library-home-card[data-play=demo]') + '.click();true');
     await until(host, attr('#player-play', 'aria-label') + '==="Pause"', 'Media plays');
+    await run(host, pressId('admin-mode'));
+    await until(host, attr('#admin-mode', 'aria-checked') + '==="false"', 'Admin mode off');
     await run(host, pressId('player-play'));
     await until(host, attr('#player-play', 'aria-label') + '==="Play"', 'Media paused');
     await run(host, choose('timeline', '17'));

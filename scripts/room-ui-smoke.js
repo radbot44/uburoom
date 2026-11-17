@@ -97,10 +97,20 @@ async function main() {
       await browser.viewport(host, 1360, 1000);
       await closeSettings();
 
-      await until(shown('.library-key[data-play=demo]'), 'Synchronization video in Media');
-      await run(press('.library-key[data-play=demo]'));
+      // The sync test video is on Libraries home only in Admin mode.
+      await run(pressId('admin-mode'));
+      await until(
+        attr('#admin-mode', 'aria-checked') + '==="true" && ' + shown('.library-home-card[data-play=demo]'),
+        'Sync test video in Admin mode',
+      );
+      await run(press('.library-home-card[data-play=demo]'));
       await until(text('#title') + '==="uburoom synchronization test"', 'Media load');
       await until(attr('#player-play', 'aria-label') + '==="Pause"', 'Media plays');
+      await run(pressId('admin-mode'));
+      await until(
+        attr('#admin-mode', 'aria-checked') + '==="false" && !' + shown('.library-home-card[data-play=demo]'),
+        'Admin mode off hides the sync test video',
+      );
       await run(pressId('player-play'));
       await until(attr('#player-play', 'aria-label') + '==="Play"', 'Paused');
       await run(seekTo(17));
@@ -366,7 +376,7 @@ async function main() {
           ';' +
           pressId('library-home') +
           ';' +
-          press('.library-home-card[data-section="1"][data-tab=collections]'),
+          press('.library-home-collections[data-section="1"]'),
       );
       await until(text('.library-title') + '==="Queue fixture collection"', 'Collection catalog');
       await run(press('.library-open'));

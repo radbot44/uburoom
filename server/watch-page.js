@@ -1,7 +1,7 @@
 'use strict';
 
 const { svgMarkup, spriteMarkup } = require('../web/icons');
-const { homeCards } = require('../web/watch-library');
+const { homeCards, SYNC_CARD } = require('../web/watch-library');
 
 const escapeText = value =>
   String(value ?? '').replace(
@@ -116,32 +116,60 @@ function watchPage(source, initial, scrollbarStyleNonce) {
     }
     if (initial.library?.status === 200) {
       const lib = initial.library.value;
-      const cards = homeCards(lib.items || []).map(card => {
+      // The same cards the page renders itself (web/watch-library.js homeCard), so nothing moves when it takes over.
+      const homeCard = (card, attributes, extra = '') => {
         const title = escapeText(card.title);
+        const source = card.source
+          ? '<span class="library-home-source">' +
+            (card.source.logo
+              ? '<img src="' +
+                card.source.logo +
+                '" alt="' +
+                escapeText(card.source.label) +
+                '" width="16" height="16">'
+              : '') +
+            '<span>' +
+            escapeText(card.source.text) +
+            '</span></span>'
+          : '';
         return (
-          '<button type="button" class="library-home-card" aria-label="' +
+          '<div class="library-home-item"><button type="button" class="library-home-card" aria-label="' +
           title +
           '" title="' +
           title +
-          '" data-section="' +
-          escapeText(card.id) +
-          '" data-tab="' +
-          card.tab +
-          '">' +
+          '" ' +
+          attributes +
+          '><span class="library-home-icon">' +
           svgMarkup(card.icon) +
-          '<span class="library-home-title">' +
+          '</span><span class="library-home-text"><span class="library-home-title">' +
           title +
-          '</span></button>'
+          '</span>' +
+          source +
+          '</span></button>' +
+          extra +
+          '</div>'
+        );
+      };
+      const cards = homeCards(lib.items || []).map(card => {
+        const id = escapeText(card.id),
+          more = escapeText(card.title + ' collections');
+        return homeCard(
+          card,
+          'data-section="' + id + '" data-tab="library"',
+          card.collections
+            ? '<button type="button" class="library-home-collections" aria-label="' +
+                more +
+                '" title="' +
+                more +
+                '" data-section="' +
+                id +
+                '" data-tab="collections">' +
+                svgMarkup('layout-grid') +
+                '<span>Collections</span></button>'
+            : '',
         );
       });
-      if (lib.testVideo) {
-        const other =
-          '<article class="library-home-card library-other"><h3>Other</h3>' +
-          '<button type="button" class="library-key" aria-label="Play synchronization video" title="Play synchronization video" data-action="play" data-play="demo">' +
-          svgMarkup('play') +
-          '<span>Synchronization video</span></button></article>';
-        cards.push(other);
-      }
+      if (lib.testVideo && me.adminMode) cards.push(homeCard(SYNC_CARD, 'data-action="play" data-play="demo"'));
       page.content('id', 'library-content', '<div class="library-landing">' + cards.join('') + '</div>');
     }
     if (!initial.targetRoom && !initial.inviteCode && !me.guestRoomId) {

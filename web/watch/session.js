@@ -58,6 +58,7 @@ export function mount(host, deps) {
     if (typeof deps.updateAccountButton === 'function') deps.updateAccountButton();
     deps.roomUI.render();
     deps.library.refreshShelves();
+    deps.library.refreshAdmin();
   }
   function stopBrowserHandoff(cancel = false) {
     deps.time.clearTimeout(store.identity.browserHandoffTimer);

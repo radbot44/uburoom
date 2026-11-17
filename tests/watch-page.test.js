@@ -109,21 +109,43 @@ test('watchPage renders authenticated and unauthenticated bootstrap data safely 
   assert.equal(text(directRoomWithMediaHtml, 'title'), 'The &#39;High Sign&#39;', 'player title on first paint');
   assert.equal(text(directRoomWithMediaHtml, 'details'), '1921');
   assert.equal(attr(directRoomWithMediaHtml, 'watch-body', 'class'), '', 'direct room with media leaves no body state');
+  // One card per library, naming its server by that server's mark and own name; collections open from the card.
   assert.deepEqual(
     homeCards([
-      { id: '1', title: 'Movies', mediaType: 'movie' },
-      { id: '2', title: 'TV Shows', mediaType: 'show' },
+      { id: '1', title: 'Movies', mediaType: 'movie', serverKind: 'plex', serverName: 'VIGRID' },
+      { id: '2', title: 'TV Shows', mediaType: 'show', serverKind: 'jellyfin' },
+      { id: 'film', title: 'Film', mediaType: 'movie', source: 'folder', collections: false, serverKind: 'local' },
     ]),
     [
-      { id: '1', tab: 'library', title: 'Movies', icon: 'film' },
-      { id: '2', tab: 'library', title: 'TV Shows', icon: 'tv' },
-      { id: '1', tab: 'collections', title: 'Movie Collections', icon: 'layout-grid' },
-      { id: '2', tab: 'collections', title: 'TV Shows Collections', icon: 'layout-grid' },
+      {
+        id: '1',
+        title: 'Movies',
+        icon: 'film',
+        collections: true,
+        source: { text: 'VIGRID', logo: '/assets/plex-icon.png', label: 'Plex' },
+      },
+      {
+        id: '2',
+        title: 'TV Shows',
+        icon: 'tv',
+        collections: true,
+        source: { text: 'Jellyfin', logo: '/assets/jellyfin-icon.svg', label: 'Jellyfin' },
+      },
+      { id: 'film', title: 'Film', icon: 'folder', collections: false, source: { text: 'Local folders' } },
     ],
   );
   assert.ok(directRoomHtml.includes('<span class="library-home-title">Movies</span>'));
-  assert.ok(directRoomHtml.includes('<span class="library-home-title">Movie Collections</span>'));
-  assert.ok(directRoomHtml.includes('<span>Synchronization video</span>'));
+  assert.ok(directRoomHtml.includes('class="library-home-collections" aria-label="Movies collections"'));
+  // The sync test video is shown in Admin mode only.
+  assert.ok(directRoomHtml.includes('data-play="demo"'));
+  const withoutAdmin = watchPage(template, {
+    config: { unifiedAccounts: true },
+    me: { status: 200, value: { name: 'Alice', durableRooms: true, adminEligible: true, adminMode: false } },
+    rooms: { status: 200, value: { rooms: [] } },
+    library: { status: 200, value: { items: [{ id: '1', title: 'Movies', mediaType: 'movie' }], testVideo: true } },
+  });
+  assert.ok(withoutAdmin.includes('<span class="library-home-title">Movies</span>'));
+  assert.ok(!withoutAdmin.includes('data-play="demo"'));
   const usedIcons = [...directRoomHtml.matchAll(/<use href="#icon-([^"]+)"><\/use>/g)].map(m => m[1]);
   assert.ok(usedIcons.length > 0);
   for (const iconId of usedIcons) {

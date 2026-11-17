@@ -289,6 +289,7 @@ const library = uburoomLibrary.mount($('library-content'), {
   autoQueue: source => queueUI.openAuto(source),
   close: (...args) => deps.returnToVideo(...args),
   getPlayer: () => store.room.state,
+  isAdmin: () => !!store.identity.me?.adminMode,
 });
 deps.library = library;
 // Errors go to the menu's error line. In fullscreen they never take over the screen:

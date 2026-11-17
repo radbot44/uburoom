@@ -91,7 +91,8 @@ function accountFixture() {
       return response({}, 404);
     }
     if (token === 'fixture-owner') {
-      if (url.pathname === '/') return response({ MediaContainer: { machineIdentifier: 'fixture-machine' } });
+      if (url.pathname === '/')
+        return response({ MediaContainer: { machineIdentifier: 'fixture-machine', friendlyName: 'Fixture Plex' } });
     }
     const profile = tokenProfile(token);
     if (token !== 'fixture-owner' && (!profile || revoked.has(profile.id))) return response({}, 401);

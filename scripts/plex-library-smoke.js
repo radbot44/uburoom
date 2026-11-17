@@ -268,7 +268,7 @@ async function main(name) {
     await evaluate(context, 'document.getElementById("create").click()');
     await until(context, 'document.getElementById("room-dialog").open', 'room chooser');
     await evaluate(context, 'document.getElementById("room-create").click()');
-    await until(context, 'document.querySelectorAll(".library-home-card").length===5', 'Libraries home');
+    await until(context, 'document.querySelectorAll(".library-home-card").length===2', 'Libraries home');
     // Phone layouts show one section at a time (Room first in a saved room); these checks browse Media.
     await evaluate(context, act.selectSection('media'));
     await until(
@@ -625,7 +625,7 @@ async function main(name) {
     assert.equal(await evaluate(context, 'getComputedStyle(document.querySelector(".library-copy")).opacity'), '1');
     await evaluate(
       context,
-      'document.getElementById("library-home").click();document.querySelector(".library-home-card[data-tab=collections]").click()',
+      'document.getElementById("library-home").click();document.querySelector(".library-home-collections").click()',
     );
     await until(context, 'document.querySelector(".library-title")?.textContent==="Sample collection"', 'collections');
     await evaluate(context, 'document.querySelector(".library-open").click()');
@@ -1041,7 +1041,7 @@ async function main(name) {
     await until(activity, 'document.querySelector("#rooms button")', 'Activity rooms');
     await evaluate(activity, 'document.querySelector("#rooms button").click()');
     // Joining resets Media to the room's Libraries home, and a press during that is lost: press until it opens.
-    await until(activity, '!!selected && document.querySelectorAll(".library-home-card").length===5', 'Activity home');
+    await until(activity, '!!selected && document.querySelectorAll(".library-home-card").length===2', 'Activity home');
     await until(
       activity,
       act.pressUntil('.library-home-card[data-tab=library]', 'document.querySelectorAll(".library-tile").length===48'),
@@ -1065,7 +1065,7 @@ async function main(name) {
     await evaluate(activity, 'document.getElementById("close-room").click()');
     await until(
       activity,
-      '!selected && !document.getElementById("library-panel").hidden && document.querySelectorAll(".library-home-card").length===5',
+      '!selected && !document.getElementById("library-panel").hidden && document.querySelectorAll(".library-home-card").length===2',
       'Leave restores lobby catalog',
     );
     await evaluate(activity, 'history.back()');

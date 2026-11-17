@@ -200,10 +200,6 @@
   .library-error {
     color: var(--error);
   }
-  .library-home-card > svg {
-    width: 30px;
-    height: 30px;
-  }
   @media (prefers-reduced-motion: reduce) {
     .library-art:after,
     .library-copy,
@@ -279,6 +275,7 @@
       .player-settings-menu,
       .volume-panel,
       .library-home-card,
+      .library-home-collections,
       .library-tile,
       .saved-rooms > li,
       .lobby-event,
