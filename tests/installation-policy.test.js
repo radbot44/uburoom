@@ -4,7 +4,7 @@ const test = require('node:test'),
   fs = require('node:fs'),
   path = require('node:path'),
   https = require('node:https');
-const { randomBytes } = require('node:crypto');
+const { randomBytes, randomUUID } = require('node:crypto');
 const { createApp } = require('../server/app');
 const { accountFixture } = require('../scripts/account-fixture');
 const { ConversionPolicy } = require('../server/transcoding-policy');
@@ -192,11 +192,19 @@ test('Plex-required admission supports pending Discord identity and linking, and
   assert.equal((await denied.request('/api/watch/me')).status, 401);
 });
 
-test('open-entry fallback accepts confirmed nonmembership, can be disabled or configured, and respects denials', async t => {
+test('standalone Plex requires PMS membership while Discord members retain configured fallback', async t => {
   const f = await fixture(t),
-    browser = f.browser();
+    standalone = await fixture(t),
+    browser = standalone.browser();
   await browser.plex('denied');
-  const me = (await browser.request('/api/watch/me')).body;
+  assert.equal((await browser.request('/api/watch/me')).status, 401);
+  const admission = (await browser.request('/api/watch/admission')).body;
+  assert.equal(admission.identity, true);
+  assert.equal(admission.admitted, false);
+  const member = f.browser();
+  await member.discord('guest');
+  await member.plex('denied');
+  const me = (await member.request('/api/watch/me')).body;
   assert.ok(me.account);
   assert.equal((await f.app.hub.mediaFor({ userId: me.account.id })).principal, 'discord-shared');
   f.provider.revoked.add('103');
@@ -212,6 +220,9 @@ test('open-entry fallback accepts confirmed nonmembership, can be disabled or co
   // Fallback can be disabled or use a separate configured token without becoming personal identity
   f.provider.revoked.delete('103');
   f.app.plexAuth.clear();
+  f.config.plexFallback = { enabled: false, token: '' };
+  assert.equal((await member.request('/api/watch/me')).status, 200, 'guild admission is independent of sponsorship');
+  await assert.rejects(f.app.hub.mediaFor({ userId: me.account.id }), /fallback is disabled/);
   const discordUser = f.browser();
   await discordUser.discord();
   const dMe = (await discordUser.request('/api/watch/me')).body;
@@ -948,4 +959,201 @@ test('provider removal rejects leaving only a disabled login provider; owner exc
   assert.equal(resOwner.status, 200, 'owner can remove Plex when Discord auth is available via /auth/owner');
   assert.equal(fDiscordOff.app.registry.identities(uOwner.id).length, 1);
   assert.equal(fDiscordOff.app.registry.identities(uOwner.id)[0].provider, 'discord');
+});
+
+// Room passes must not turn a nonmember's verified identity into server-wide standing.
+test('Plex nonmembers can verify identity for a signed-in room invite without standalone admission', async t => {
+  const f = await fixture(t, {
+    guests: { enabled: true, requireSignIn: true, maxPerRoom: 10, sessionHours: 1 },
+    plexFallback: { enabled: false, token: '' },
+  });
+  const host = f.browser();
+  await host.discord();
+  const id = (await host.post('/api/watch/rooms', {})).body.id;
+  const store = f.app.watch.roomState.store;
+  let record = store.get(id);
+  record = await store.edit(id, record.creatorId, record.revision, { action: 'guests.allow', enabled: true });
+  const visitor = f.browser();
+  assert.equal((await visitor.plex('denied')).status, 302);
+  assert.equal((await visitor.request('/api/watch/me')).status, 401);
+  const joined = await visitor.request('/api/watch/invite', { action: 'join', code: record.inviteCode });
+  assert.equal(joined.status, 200);
+  assert.equal(joined.body.guest, true);
+  const me = await visitor.request('/api/watch/me');
+  assert.equal(me.status, 200);
+  assert.equal(me.body.guestRoomId, id);
+  f.config.plexFallback.enabled = true;
+  assert.equal((await f.app.hub.mediaFor({ userId: me.body.account.id, guestRoomId: id })).principal, 'discord-shared');
+});
+
+test('room guests cannot authorize native clients, escape to former rooms or browse after close', async t => {
+  const f = await fixture(t, {
+    guests: { enabled: true, requireSignIn: false, maxPerRoom: 10, sessionHours: 1 },
+  });
+  const host = f.browser(),
+    former = f.browser();
+  await host.discord();
+  const hostId = (await host.request('/api/watch/me')).body.account.id;
+  const shared = await f.app.hub.mediaFor({ userId: hostId });
+  t.mock.method(shared, 'artwork', async () => ({ type: 'image/png', bytes: Buffer.from('fixture-art') }));
+  await former.discord('guest');
+  const formerId = (await former.request('/api/watch/me')).body.account.id;
+  const otherId = (await former.post('/api/watch/rooms', { name: 'Former room' })).body.id;
+  const id = (await host.post('/api/watch/rooms', { name: 'Guest room' })).body.id;
+  const store = f.app.watch.roomState.store;
+  let record = store.get(id);
+  record = await store.edit(id, record.creatorId, record.revision, { action: 'guests.allow', enabled: true });
+  // Former server members can hold room passes after losing guild membership.
+  f.members.delete(f.provider.subjects.guest);
+  const now = Date.now();
+  t.mock.method(Date, 'now', () => now + 301000);
+  const anonymous = f.browser();
+  for (const visitor of [former, anonymous]) {
+    const joined = await visitor.request('/api/watch/invite', { action: 'join', code: record.inviteCode });
+    assert.equal(joined.status, 200);
+    assert.equal(joined.body.guest, true);
+    assert.equal((await visitor.request('/api/watch/me')).status, 200);
+    for (const action of ['claim', 'approve']) {
+      const denied = await visitor.request('/api/watch/handoff/native/' + action, {});
+      assert.equal(denied.status, 403);
+      assert.match(denied.body.error, /Guests cannot authorize/);
+    }
+    assert.equal((await visitor.request('/api/watch/library')).status, 200, 'open-room library remains available');
+    assert.equal((await visitor.request('/api/watch/library?room=' + otherId)).status, 403);
+    assert.equal((await visitor.request('/api/watch/library/art?item=1')).status, 200, 'art defaults to guest room');
+  }
+  for (const part of ['settings', 'queue'])
+    assert.equal((await former.request('/api/watch/rooms/' + otherId + '/' + part)).status, 403);
+  for (const part of ['reopen', 'settings', 'queue', 'close'])
+    assert.equal((await former.post('/api/watch/rooms/' + otherId + '/' + part, {})).status, 403);
+  assert.equal((await former.post('/api/watch/rooms/' + id + '/settings', {})).status, 403);
+  assert.equal((await former.request('/api/watch/rooms/' + id + '?viewer=' + randomUUID())).status, 200);
+  const suggestion = await former.post('/api/watch/rooms/' + id + '/queue', {
+    action: 'suggest',
+    item: { id: '1' },
+  });
+  assert.equal(suggestion.status, 200, JSON.stringify(suggestion.body));
+  assert.equal(store.get(otherId).creatorId, formerId);
+  record = store.get(id);
+  await store.edit(id, record.creatorId, record.revision, { action: 'keepEmpty', enabled: true });
+  await f.app.watch.remove(id);
+  for (const visitor of [former, anonymous]) {
+    assert.equal((await visitor.request('/api/watch/library')).status, 403);
+    assert.equal(
+      (await visitor.post('/api/watch/rooms/' + id + '/queue', { action: 'add', item: { id: '1' } })).status,
+      403,
+    );
+  }
+});
+
+test('same-account Activity handoff replaces a browser room-pass cookie with full admission', async t => {
+  const f = await fixture(t, { guests: { enabled: true, requireSignIn: true, maxPerRoom: 10, sessionHours: 1 } });
+  const host = f.browser(),
+    visitor = f.browser(),
+    activity = f.browser();
+  await host.discord();
+  await visitor.discord('guest');
+  const id = (await host.post('/api/watch/rooms', {})).body.id;
+  const store = f.app.watch.roomState.store;
+  let record = store.get(id);
+  record = await store.edit(id, record.creatorId, record.revision, { action: 'guests.allow', enabled: true });
+  f.members.delete(f.provider.subjects.guest);
+  const now = Date.now();
+  t.mock.method(Date, 'now', () => now + 301000);
+  assert.equal(
+    (await visitor.request('/api/watch/invite', { action: 'join', code: record.inviteCode })).body.guest,
+    true,
+  );
+  assert.equal((await visitor.request('/api/watch/me')).body.guestRoomId, id);
+  f.members.add(f.provider.subjects.guest);
+  const headers = { Origin: 'https://' + f.config.clientId + '.discordsays.com' };
+  const issued = await activity.request('/api/watch/activity-login', { code: 'guest' }, headers);
+  headers.Authorization = 'Bearer ' + issued.body.token;
+  const handoff = (await activity.request('/api/watch/handoff', {}, headers)).body;
+  await visitor.request('/auth/handoff');
+  const proof = randomBytes(32).toString('hex');
+  const claim = await visitor.request('/api/watch/handoff/claim', { code: new URL(handoff.url).hash.slice(1), proof });
+  assert.equal(claim.status, 200);
+  assert.equal(claim.body.switchRequired, false);
+  assert.equal(
+    (
+      await activity.request(
+        '/api/watch/handoff/action',
+        {
+          id: handoff.id,
+          action: 'approve',
+          verification: claim.body.verification,
+        },
+        headers,
+      )
+    ).status,
+    200,
+  );
+  const redeemed = await visitor.request('/api/watch/handoff/redeem', { id: handoff.id, proof });
+  assert.equal(redeemed.status, 200);
+  assert.ok(redeemed.headers['set-cookie'].some(value => value.startsWith('uburoom=')));
+  const me = await visitor.request('/api/watch/me');
+  assert.equal(me.status, 200);
+  assert.equal(me.body.guestRoomId, undefined);
+});
+
+test('SSR and canonical redirects reveal private room metadata only to authorized viewers', async t => {
+  const f = await fixture(t, { guests: { enabled: true, requireSignIn: false, maxPerRoom: 10, sessionHours: 1 } });
+  const host = f.browser(),
+    member = f.browser(),
+    anonymous = f.browser(),
+    guest = f.browser();
+  await host.discord();
+  await member.discord('guest');
+  const id = (await host.post('/api/watch/rooms', { name: 'Private screening', visibility: 'private' })).body.id;
+  const store = f.app.watch.roomState.store,
+    room = f.app.watch.rooms.get(id);
+  const slug = room.slug,
+    oldSlug = 'private-earlier-address';
+  room.previousSlugs = new Set([oldSlug]);
+  const guestRoomId = (await host.post('/api/watch/rooms', { name: 'Guest screening' })).body.id;
+  let record = store.get(guestRoomId);
+  record = await store.edit(guestRoomId, record.creatorId, record.revision, { action: 'guests.allow', enabled: true });
+  assert.equal(
+    (await guest.request('/api/watch/invite', { action: 'join', code: record.inviteCode })).body.guest,
+    true,
+  );
+  room.media = {
+    id: '1',
+    title: 'Private film title',
+    subtitle: 'Private film subtitle',
+    duration: 60,
+    resources: new Map(),
+  };
+  const bootstrap = html =>
+    JSON.parse(/<script id="watch-bootstrap" type="application\/json">(.*?)<\/script>/.exec(html)[1]);
+  try {
+    for (const browser of [anonymous, member, guest]) {
+      for (const route of ['/room/' + slug, '/?room=' + id, '/room/' + oldSlug]) {
+        const page = await browser.request(route);
+        assert.equal(page.status, 200);
+        assert.equal(bootstrap(page.body).targetRoom, undefined);
+        for (const secret of [slug, 'Private screening', 'Private film title', 'Private film subtitle'])
+          assert.equal(page.body.includes(secret), false, route + ' leaked ' + secret);
+      }
+      const legacy = await browser.request('/watch?room=' + id);
+      assert.equal(legacy.status, 302);
+      assert.equal(legacy.headers.location, '/?room=' + id);
+    }
+    const memberId = (await member.request('/api/watch/me')).body.account.id;
+    const invited = await store.invite(id, memberId);
+    f.app.watch.roomState.apply(room, invited);
+    for (const browser of [host, member]) {
+      for (const route of ['/room/' + slug, '/?room=' + id]) {
+        const target = bootstrap((await browser.request(route)).body).targetRoom;
+        assert.equal(target.id, id);
+        assert.equal(target.slug, slug);
+        assert.equal(target.media.title, 'Private film title');
+      }
+      assert.equal((await browser.request('/watch?room=' + id)).headers.location, '/room/' + slug);
+      assert.equal((await browser.request('/room/' + oldSlug)).headers.location, '/room/' + slug);
+    }
+  } finally {
+    room.media = undefined;
+  }
 });

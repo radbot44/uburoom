@@ -378,7 +378,7 @@ class RoomStore {
     const host = this.isAdmin(userId) === true || Policy.role(room, userId) !== 'viewer';
     if (
       capability === 'leader'
-        ? userId !== room.creatorId
+        ? userId !== room.creatorId || Boolean(room.guests?.includes(userId))
         : capability === 'self'
           ? !room.hosts.includes(userId)
           : capability === 'host'

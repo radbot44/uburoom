@@ -59,7 +59,7 @@ Sign-in, permission to enter uburoom, Plex media access, and server administrati
 
 | Setting | Behavior |
 | --- | --- |
-| `access.plex` / `access.discord` | Enable Plex and/or Discord login; both default to `true`. Discord login checks membership in the configured guild. |
+| `access.plex` / `access.discord` | Enable Plex and/or Discord login; both default to `true`. Discord login checks membership in the configured guild; standalone Plex login checks access to the pinned Plex server. Outside visitors without either membership need a `/join/<code>` room invite with `guests.enabled: true`. |
 | `access.require_plex: true` | Require each viewer's own access to the pinned Plex server and a library. Neither a password nor shared fallback satisfies this. |
 | `access.require_plex_in_activity: false` | Exempt **verified Discord Activities** from the personal-Plex entry requirement, not web visits or browser handoff. |
 | `secrets.entry_password` | Optional extra entry password alongside provider rules. Access lasts 12 hours and resets on restart; it does not grant admin access. |
@@ -92,7 +92,7 @@ See [accounts and access](accounts-and-access.md) for the authorization model.
 
 ## Shared Plex fallback
 
-`plex.fallback_enabled` is **true by default**. An eligible viewer without a linked Plex account, or with confirmed lack of server membership, can use a fallback account's media access. **That may expose libraries or items beyond the viewer's personal Plex permissions.**
+`plex.fallback_enabled` is **true by default**. With `access.require_plex: false`, admitted Discord members and room guests without a linked Plex account, or with confirmed lack of server membership, can use a fallback account's media access. Fallback does not grant standalone Plex admission. **That may expose libraries or items beyond the viewer's personal Plex permissions.**
 
 - Set `plex.fallback_enabled: false` to require personal media entitlement.
 - Leave it enabled only if you intend to share the fallback account's scope.

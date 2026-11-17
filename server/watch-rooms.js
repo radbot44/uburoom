@@ -336,6 +336,7 @@ class WatchRooms {
     }
   }
   async reopen(id, actor, current) {
+    if (actor.guestRoomId) throw failure('Guests cannot reopen rooms', 403);
     if (this.watch.hub.config.singleRoom) {
       const selected = await this.ensureSingle(actor, current);
       if (id !== selected) throw failure('Only the configured shared room is available', 403);
@@ -490,7 +491,7 @@ class WatchRooms {
       viewers: [...new Set([...(room?.viewers.values() || [])].map(viewer => viewer.userId))].map(person),
       actorId: actor.userId,
       allHosts: !!record.permissions.allHosts,
-      canSetAllHosts: record.creatorId === actor.userId,
+      canSetAllHosts: record.creatorId === actor.userId && !actor.guestRoomId,
       pendingHosts: this.store.pendingHosts(id),
       role: Policy.role(record, actor.userId),
       permissions: record.permissions,
@@ -511,6 +512,7 @@ class WatchRooms {
     };
   }
   async edit(id, actor, revision, change, current) {
+    if (actor.guestRoomId) throw failure('Guests cannot edit room settings', 403);
     await this.eligible(actor, current);
     if (this.watch.hub.config.singleRoom) {
       if (id !== this.registry.meta('singleRoomId')) throw failure('Only the configured shared room is available', 403);
@@ -587,12 +589,14 @@ class WatchRooms {
     };
   }
   async metadata(id, actor) {
+    if (actor.guestRoomId && actor.guestRoomId !== id) throw failure('Room unavailable', 403);
     const record = this.store.get(id);
     if (Policy.assigned(record, actor.userId) || this.watch.hub.isAdmin(actor)) return;
     const room = this.watch.rooms.get(id);
     if (!room || !(await this.watch.canView(room, actor))) throw failure('Room unavailable', 403);
   }
   async closeRoom(id, actor, epoch, current) {
+    if (actor.guestRoomId) throw failure('Guests cannot close rooms', 403);
     if (this.watch.hub.config.singleRoom) throw failure('Use Reset room in single-room mode', 403);
     await this.eligible(actor, current);
     await this.metadata(id, actor);

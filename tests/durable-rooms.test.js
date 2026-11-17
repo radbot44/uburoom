@@ -1095,8 +1095,8 @@ test(
         })
         .on('error', reject);
     });
-    assert.equal(redirect.status, 302);
-    assert.equal(redirect.location, '/room/moderated-name');
+    assert.equal(redirect.status, 200, 'unauthenticated requests cannot resolve a private room rename');
+    assert.equal(redirect.location, undefined);
     assert.equal((await admin.call('/api/watch/admin-mode', { enabled: false })).body.adminMode, false);
     assert.equal((await admin.call('/api/watch/rooms/saved')).body.total, 0);
     await admin.call('/api/watch/admin-mode', { enabled: true });

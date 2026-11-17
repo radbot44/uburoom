@@ -47,8 +47,12 @@
         return;
       }
       if (value.destination) {
-        // Server provides only its fixed watch path and an optional room UUID.
-        if (!/^(?:\/auth\/plex|\/watch(?:\?(?:account=1|room=[a-f0-9-]{36}))?)$/.test(value.destination))
+        // Accept only the server's local account, room and Plex-link destinations.
+        if (
+          !/^(?:\/(?:\?account=1)?|\/room\/[a-z0-9-]+|\/auth\/plex(?:\?return=%2Froom%2F[a-z0-9-]+)?)$/i.test(
+            value.destination,
+          )
+        )
           throw new Error('Invalid sign-in destination');
         stopped = true;
         location.replace(value.destination);

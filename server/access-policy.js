@@ -131,7 +131,7 @@ class AccessPolicy {
       if (answer) return true;
     }
     if (this.settings.plex && plex) {
-      const viaPlex = await this.plexAnswer(account.id, true);
+      const viaPlex = await this.plexAnswer(account.id, false);
       if (viaPlex || viaPlex === undefined) return viaPlex;
     }
     return answer;

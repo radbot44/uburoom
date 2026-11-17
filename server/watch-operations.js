@@ -183,7 +183,7 @@ function watchOperations({
       context.signal?.throwIfAborted();
       watch.roomState.people.enter(auth.actor.userId);
       if (context.controlSocket) hub.directory.connected(context.controlSocket, auth.actor.userId);
-      await watch.roomState.claimHosts(auth.actor.userId);
+      if (!auth.actor.guestRoomId) await watch.roomState.claimHosts(auth.actor.userId);
       await hub.refreshAdmin(auth.actor);
       const current = async () =>
         !context.signal?.aborted &&
@@ -579,8 +579,11 @@ function watchOperations({
   }
 
   async function library(op, { context, auth, args }) {
-    const room = watch.rooms.get(args.room);
-    const lobbyScope = args.room === undefined && args.session === undefined;
+    if (auth.actor.guestRoomId && args.room !== undefined && args.room !== auth.actor.guestRoomId)
+      return result(403, { error: 'Room unavailable or private' });
+    const targetRoomId = auth.actor.guestRoomId || args.room;
+    const room = watch.rooms.get(targetRoomId);
+    const lobbyScope = !auth.actor.guestRoomId && args.room === undefined && args.session === undefined;
     const eligible = async () =>
       !context.signal?.aborted &&
       (lobbyScope || (room && watch.rooms.get(room.roomId) === room && (await watch.canView(room, auth.actor)))) &&
@@ -658,9 +661,12 @@ function watchOperations({
   }
   /** A page of a saved room's queue or history, or one change to it through the command engine. */
   async function queued(kind, write, { auth, current, roomId, args }) {
+    if (auth.actor.guestRoomId && auth.actor.guestRoomId !== roomId)
+      return result(403, { error: 'Room unavailable or private' });
     await savedRoom(roomId, auth, current);
     if (!(await current())) return result(403, { error: 'Room access changed' });
     const room = watch.rooms.get(roomId);
+    if (write && auth.actor.guestRoomId && !room) return result(403, { error: 'Room unavailable or private' });
     if (room && !(await watch.canView(room, auth.actor))) return result(403, { error: 'Room unavailable or private' });
     if (!write) {
       const page = { offset: Number(args.offset || 0), limit: Number(args.limit || 50) };

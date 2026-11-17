@@ -46,10 +46,12 @@ function pageRoutes({ config, rooms, watchRoutes, sessions, files }) {
       name: 'renamed room',
       methods: ['GET'],
       path: ROOM_PAGE,
-      handle({ res, url }, match) {
+      async handle({ req, res, url }, match) {
         const requested = match[1].toLowerCase();
         const open = [...rooms().rooms.values()].find(room => room.previousSlugs?.has(requested));
         if (!open || !open.slug || open.slug === requested) return false;
+        const auth = await watchRoutes().authorized(req);
+        if (!auth || !rooms().hub.authorize(auth.actor, open, 'room.view').ok) return false;
         return redirect(res, withQuery('/room/' + encodeURIComponent(open.slug), url.searchParams.toString()));
       },
     },
@@ -57,12 +59,16 @@ function pageRoutes({ config, rooms, watchRoutes, sessions, files }) {
       name: 'legacy watch address',
       methods: ['GET'],
       path: '/watch',
-      handle({ res, url }) {
+      async handle({ req, res, url }) {
         const requested = url.searchParams.get('room');
-        if (requested) {
+        const auth = requested && (await watchRoutes().authorized(req));
+        if (auth) {
           try {
             const record = rooms().roomState.store.get(requested);
-            if (record?.slug) {
+            if (
+              record?.slug &&
+              rooms().hub.authorize(auth.actor, rooms().rooms.get(record.id) || record, 'room.view').ok
+            ) {
               url.searchParams.delete('room');
               return redirect(res, withQuery('/room/' + encodeURIComponent(record.slug), url.searchParams.toString()));
             }

@@ -2,7 +2,18 @@
 const { clientAddress } = require('../../client-address');
 
 /** What the watch page is given before it opens a connection: public configuration and its first reads. */
-function pageBootstrap({ config, watch, hub, registry, entryPolicy, diagnosticLog, rawLogin, login, operations }) {
+function pageBootstrap({
+  config,
+  watch,
+  hub,
+  registry,
+  entryPolicy,
+  diagnosticLog,
+  rawLogin,
+  login,
+  webActor,
+  operations,
+}) {
   const publicConfig = () => ({
     watchVersion: 19,
     keepDiagnostics: diagnosticLog ? config.diagnostics.keepDays : 0,
@@ -76,10 +87,14 @@ function pageBootstrap({ config, watch, hub, registry, entryPolicy, diagnosticLo
       }
       const roomMatch = /^\/room\/([a-z0-9-]+)$/i.exec(reqUrl.pathname);
       const requested = roomMatch ? roomMatch[1] : reqUrl.searchParams.get('room');
-      if (requested) {
+      if (initial.me.status === 200 && requested) {
+        const identity = await login(req);
+        const actor = identity && webActor(identity);
+        let record;
         let roomId, roomSlug, roomName;
         try {
           const room = watch.roomState.store.getBySlug(requested);
+          record = room;
           roomId = room.id;
           roomSlug = room.slug;
           roomName = room.name;
@@ -99,9 +114,9 @@ function pageBootstrap({ config, watch, hub, registry, entryPolicy, diagnosticLo
             roomName = activeRoom.name;
           }
         }
-        if (roomId) {
+        const active = watch.rooms?.get(roomId);
+        if (roomId && actor && hub.authorize(actor, active || record, 'room.view').ok) {
           initial.targetRoom = { id: roomId, slug: roomSlug, name: roomName };
-          const active = watch.rooms?.get(roomId);
           if (active?.media?.title) {
             initial.targetRoom.media = {
               title: active.media.title,

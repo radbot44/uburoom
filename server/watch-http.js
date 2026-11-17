@@ -78,7 +78,18 @@ function watchHttp({
     clockEpoch,
     validGrant: id => validGrant(grants.get(id)),
   });
-  const page = pageBootstrap({ config, watch, hub, registry, entryPolicy, diagnosticLog, rawLogin, login, operations });
+  const page = pageBootstrap({
+    config,
+    watch,
+    hub,
+    registry,
+    entryPolicy,
+    diagnosticLog,
+    rawLogin,
+    login,
+    webActor,
+    operations,
+  });
   const { publicConfig, admissionStatus, bootstrap } = page;
   async function route(req, res, url) {
     if (!url.pathname.startsWith('/api/watch/')) return false;
@@ -187,6 +198,10 @@ function watchHttp({
           json(res, 401, { error: 'Sign in to approve native client', loginUrl: '/auth/discord' });
           return true;
         }
+        if (identity.guestRoom || registry.isGuest(identity.userId)) {
+          json(res, 403, { error: 'Guests cannot authorize native clients' });
+          return true;
+        }
         const data = await body(req);
         const attempt = handoff.claimNative(data.code, identity);
         if (!attempt) {
@@ -210,6 +225,10 @@ function watchHttp({
         const identity = await login(req);
         if (!identity) {
           json(res, 401, { error: 'Sign in to approve native client' });
+          return true;
+        }
+        if (identity.guestRoom || registry.isGuest(identity.userId)) {
+          json(res, 403, { error: 'Guests cannot authorize native clients' });
           return true;
         }
         const data = await body(req);
@@ -333,7 +352,7 @@ function watchHttp({
             json(res, 410, { error: 'Activity sign-in expired or was cancelled' });
             return true;
           }
-          if (existing?.userId !== attempt.source.userId) browserLogin(res, attempt.source);
+          if (existing?.userId !== attempt.source.userId || existing?.guestRoom) browserLogin(res, attempt.source);
           else res.setHeader('Set-Cookie', 'uburoom_handoff=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
           const target = roomId ? (room?.slug ? '/room/' + room.slug : '/room/' + roomId) : '/';
           json(res, 200, {

@@ -386,3 +386,58 @@ test('native client handoff bearer token succeeds when a server entry password i
   assert.equal(me.status, 200);
   assert.equal(me.body.name, 'Demo host');
 });
+
+test('browser handoff accepts current local destinations and rejects external or retired routes', async () => {
+  const vm = require('node:vm');
+  const source = fs.readFileSync(path.join(__dirname, '../web/handoff.js'), 'utf8');
+  for (const destination of [
+    '/',
+    '/?account=1',
+    '/room/movie-night',
+    '/auth/plex',
+    '/auth/plex?return=%2Froom%2Fmovie-night',
+    '//evil.example',
+    'https://evil.example',
+    '/watch',
+    '/room/movie-night?unsafe=1',
+  ]) {
+    const nodes = new Map();
+    let replaced;
+    const node = id => {
+      if (!nodes.has(id)) nodes.set(id, { addEventListener() {} });
+      return nodes.get(id);
+    };
+    await vm.runInNewContext(source, {
+      document: { getElementById: node },
+      location: {
+        hash: '#' + secret(),
+        replace: value => {
+          replaced = value;
+        },
+      },
+      history: { replaceState() {} },
+      crypto: require('node:crypto').webcrypto,
+      window: { addEventListener() {} },
+      AbortSignal,
+      clearTimeout,
+      setTimeout: () => {
+        throw new Error('Unexpected polling retry');
+      },
+      fetch: async route => ({
+        ok: true,
+        json: async () =>
+          route.endsWith('/claim') ? { id: 'attempt', expires: Date.now() + 60000, name: 'Viewer' } : { destination },
+      }),
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    if (
+      destination.startsWith('//') ||
+      destination.startsWith('https:') ||
+      destination === '/watch' ||
+      destination.includes('unsafe')
+    ) {
+      assert.equal(replaced, undefined);
+      assert.equal(node('error').textContent, 'Invalid sign-in destination');
+    } else assert.equal(replaced, destination);
+  }
+});

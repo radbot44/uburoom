@@ -141,3 +141,37 @@ test('removeUnusedGuests deletes watch_room_invites rows before removing the gue
   assert.equal(f.registry.canonical(guest), undefined);
   assert.deepEqual(f.store.get(room.id).invited, []);
 });
+
+test('guest login never records server-password standing for anonymous or signed-in room passes', async t => {
+  const { AccessPolicy } = require('../server/access-policy');
+  const { watchIdentity } = require('../server/http/watch/identity');
+  const f = fixture(t);
+  const room = await f.store.create(f.creator, { name: 'Guest room' });
+  const policy = new AccessPolicy({ accessPolicy: { password: 'secret' } }, f.registry, {}, () => undefined, {
+    guests: { admits: id => id === room.id },
+  });
+  for (const userId of [f.viewer, f.registry.createGuest('Anonymous guest')]) {
+    const identity = { userId, guestRoom: room.id };
+    const service = watchIdentity({
+      config: { publicUrl: 'https://fixture.invalid', accessPolicy: { publicWeb: true } },
+      hub: {},
+      user: async () => identity,
+      webActor: value => value,
+      entryPolicy: policy,
+      validIdentity: () => true,
+    });
+    assert.equal(await service.login({ headers: {} }), identity);
+    assert.equal(policy.entryUsers.has(userId), false);
+    assert.equal(await policy.admit(userId), false, 'room pass never satisfies standalone password admission');
+  }
+});
+
+test('a creator holding a guest pass cannot change creator-only All hosts settings', async t => {
+  const f = fixture(t);
+  const room = await f.store.create(f.creator, { name: 'Former creator' });
+  f.guests.add(f.creator);
+  await assert.rejects(
+    f.store.edit(room.id, f.creator, room.revision, { action: 'allHosts', enabled: true }),
+    /permission/,
+  );
+});

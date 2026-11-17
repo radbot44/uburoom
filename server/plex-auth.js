@@ -98,7 +98,7 @@ class PlexAuth {
       if (!(
         this.config.accessPolicy &&
         !this.config.accessPolicy.requirePlex &&
-        this.config.plexFallback?.enabled &&
+        (this.config.plexFallback?.enabled || this.config.guests?.enabled) &&
         error.noServerAccess
       ))
         throw error;

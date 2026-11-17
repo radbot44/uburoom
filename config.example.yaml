@@ -86,7 +86,8 @@ operator:
 
 access:
   # Choose sign-in methods. Both false allows anonymous guests (not guest passes).
-  # Discord sign-in requires guild membership. Plex proves the account identity.
+  # Discord sign-in requires guild membership; standalone Plex sign-in requires
+  # access to the pinned Plex server. Outside visitors need a room guest invite.
   discord: true
   plex: true
   # Require confirmed personal access to THIS Plex server, before any entry.
