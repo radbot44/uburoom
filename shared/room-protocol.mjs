@@ -162,6 +162,7 @@ function event(a, action) {
  * - `prepares`: may wait on media preparation, so its deadline is extended:
  *   always (true), only when personal ('personal') or only while the room is idle ('idle').
  * - `preparesSaved`: its deadline is extended when queued on a room that is not open.
+ * - `loadsFirstItem`: can start playback when adding the first item to an empty room.
  * - `service`: runs through the Discord publication or scheduled-event service.
  * - `handler`: the personal player handler that applies it.
  * - `persists`: moves the shared timeline, so it cancels autoplay and saves the room.
@@ -170,7 +171,8 @@ function event(a, action) {
  * - `liveOnly`: requires an open live room (never runs against a closed saved room).
  * @typedef {{args?: (a: any, action: string) => Record<string, any>, scope: 'room'|'personal',
  *   capability: string|null, host?: boolean, idle?: string, also?: string, hostless?: boolean,
- *   prepares?: true|'personal'|'idle', preparesSaved?: boolean, service?: 'publish'|'unpublish'|'event',
+ *   prepares?: true|'personal'|'idle', preparesSaved?: boolean, loadsFirstItem?: boolean,
+ *   service?: 'publish'|'unpublish'|'event',
  *   handler?: 'quality'|'tracks'|'stream'|'player'|'reporting', persists?: boolean, roomLocal?: boolean,
  *   refillsAutoQueue?: boolean, liveOnly?: boolean}} Command
  */
@@ -333,6 +335,7 @@ const COMMANDS = Object.freeze({
     refillsAutoQueue: true,
     capability: 'addQueue',
     preparesSaved: true,
+    loadsFirstItem: true,
     args: queueItem,
   },
   'queue.suggest': {
@@ -346,6 +349,7 @@ const COMMANDS = Object.freeze({
     scope: 'room',
     refillsAutoQueue: true,
     capability: 'addQueue',
+    loadsFirstItem: true,
     liveOnly: true,
     args: suggestion,
   },

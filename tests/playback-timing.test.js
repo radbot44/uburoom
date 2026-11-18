@@ -223,6 +223,10 @@ test('late rejoins and failures cannot overwrite a newer authorized state', asyn
 });
 test('command deadlines use fresh mapped time and never queue controls without a clock', async () => {
   const sent = [];
+  const send = async (id, data, options) => {
+    sent.push({ id, data, options });
+    return { status: 'applied' };
+  };
   let valid = true;
   const { view: ctx } = mountModule(commands, {
     switchingRoom: false,
@@ -242,12 +246,7 @@ test('command deadlines use fresh mapped time and never queue controls without a
     diagnosticSample() {},
     diagnostics: { record() {} },
     fail() {},
-    roomLink: {
-      command: async (id, data) => {
-        sent.push({ id, data });
-        return { status: 'applied' };
-      },
-    },
+    roomLink: { command: send },
     refreshState: async () => {},
     renderLibrary() {},
     renderVisibility() {},
@@ -257,6 +256,7 @@ test('command deadlines use fresh mapped time and never queue controls without a
   await ctx.execute({ action: 'media.pause' });
   assert.equal(sent[0].data.expiresAt, 102500);
   assert.equal(sent[0].data.epoch, 'current');
+  assert.deepEqual(sent[0].options, {});
   valid = false;
   await assert.rejects(ctx.execute({ action: 'media.pause' }), /timing is refreshing/);
   assert.equal(sent.length, 1);
@@ -280,6 +280,24 @@ test('command deadlines use fresh mapped time and never queue controls without a
   releases[1]({ status: 'applied' });
   await shared;
   assert.equal(ctx.pending, false);
+
+  ctx.roomLink.command = send;
+  ctx.state.durable = true;
+  for (const [action, mediaUrl, timeoutMs] of [
+    ['media.tracks.set', 'fixture', 35000],
+    ['media.stream.refresh', 'fixture', 35000],
+    ['queue.bulk', 'fixture', 35000],
+    ['media.play', 'fixture', undefined],
+    ['media.play', undefined, 35000],
+    ['queue.add', 'fixture', undefined],
+    ['queue.add', undefined, 35000],
+    ['queue.suggestion.accept', undefined, 35000],
+  ]) {
+    ctx.state.mediaUrl = mediaUrl;
+    await ctx.execute({ action });
+    assert.equal(sent.at(-1).options.timeoutMs, timeoutMs, action);
+    assert.equal(sent.at(-1).data.expiresAt, 102500, action);
+  }
 });
 
 test('ordinary unlocked resume does not play a probe before its shared deadline', async () => {

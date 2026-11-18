@@ -60,28 +60,11 @@ export function mount(host, deps) {
       const timing = deps.time.clock.read();
       if (!timing.valid)
         throw new Error('Playback timing is refreshing. Retry the control after the next room update.');
+      const { prepares, loadsFirstItem } = uburoom.command(command.action) || {};
+      // A missing viewer URL can mean the room is idle. Allow the longer wait in that case.
+      const possiblyIdle = store.room.state?.durable && !store.room.state.mediaUrl;
       const preparing =
-        qualityChange ||
-        ['media.load'].includes(command.action) ||
-        (store.room.state?.durable &&
-          ([
-            'media.next',
-            'media.previous',
-            'queue.history.replay',
-            'queue.history.goBack',
-            'queue.playNow',
-            'queue.suggestion.playNow',
-            'queue.playEntry',
-            'queue.skipTo',
-            'queue.auto.playNow',
-            'queue.offer.start',
-            'queue.bulk',
-            'queue.auto',
-            'queue.auto.skip',
-            'queue.auto.pin',
-          ].includes(command.action) ||
-            (!store.room.state?.mediaUrl &&
-              ['media.play', 'media.toggle', 'queue.add', 'queue.suggestion.accept'].includes(command.action))));
+        prepares === true || prepares === 'personal' || (possiblyIdle && (prepares === 'idle' || loadsFirstItem));
       const result = await deps.roomLink.command(
         id,
         { viewerId: store.identity.viewerId, epoch, expiresAt: timing.serverTime + 2500, command },
