@@ -340,6 +340,8 @@ Object.assign(deps, room.mount(document, deps));
 Object.assign(deps, commands.mount(document, deps));
 Object.assign(deps, roomResync.mount(document, deps));
 Object.assign(deps, lobby.mount($('room-lobby'), deps));
+// The controller captures the player and transport callbacks before the session can join a room.
+deps.initializeSync();
 deps.renderVisibility();
 deps.renderTransport();
 deps.start().catch(error => {

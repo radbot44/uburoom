@@ -258,7 +258,7 @@ test('Room participants include disconnected sessions during reconnect grace but
 });
 
 test('automatic hard corrections are observed, while startup and intentional shared seeks are excluded', async () => {
-  const { createSync } = await import('../web/watch-sync.mjs');
+  const { createSync } = await import('../shared/sync/client-sync.mjs');
   async function scenario({ eligible = true, suppress = false } = {}) {
     const corrections = [],
       state = {

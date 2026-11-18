@@ -2,7 +2,7 @@
 const timing = require('../../shared/sync/timing.mjs');
 const playback = require('../../web/playback-policy');
 async function install(context) {
-  const { createSync } = await import('../../web/watch-sync.mjs');
+  const { createSync } = await import('../../shared/sync/client-sync.mjs');
   const until = context.hlsPreparationUntil || 0,
     timeline = context.hlsTimelinePending || false;
   const noop = () => {};

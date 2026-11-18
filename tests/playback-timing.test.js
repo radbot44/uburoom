@@ -1,5 +1,4 @@
 'use strict';
-const { install } = require('./helpers/watch-sync');
 const test = require('node:test'),
   assert = require('node:assert/strict');
 const { mountModule } = require('./helpers/watch-module');
@@ -7,7 +6,7 @@ const syncWiring = require('../web/watch/sync-wiring.js');
 const syncQualityReport = require('../web/watch/sync-quality.js');
 const commands = require('../web/watch/commands.js');
 const roomResync = require('../web/watch/room-resync.js');
-const { clock, target, presentation, controlSignal, correction } = require('../shared/sync/timing.mjs');
+const { clock, target, presentation, controlSignal } = require('../shared/sync/timing.mjs');
 const { create } = require('../web/playback-diagnostics');
 const { compare } = require('../scripts/sync-report');
 function fixture() {
@@ -125,61 +124,62 @@ test('shared target removes response-arrival bias and follows pause, seek, repla
   assert.equal(target({ ...state, state: { position: 0, duration: 5, paused: true } }, 101000), 0);
   assert.equal(target(state, undefined), undefined);
 });
-test('player uses the mapped server target and tolerates clock loss without drift corrections', async () => {
+test('watch sync starts playback with the mounted player and reacquires the target after clock loss', async t => {
   let valid = true,
-    serverTime = 100300;
-  const ctx = {
+    renders = 0;
+  const {
+    view: ctx,
+    api,
+    restore,
+  } = mountModule(syncWiring, {
+    selected: 'room',
+    mediaSource: 'fixture',
     state: {
       mediaUrl: 'fixture',
+      mediaVersion: 'media',
       format: 'file',
       serverNow: 100000,
       state: { position: 10, duration: 60, paused: false, volume: 50, muted: false },
     },
-    playbackClock: { read: () => ({ valid, serverTime: valid ? serverTime : undefined }) },
-    uburoomTiming: { target },
-    receivedAt: 100,
-    performance: { now: () => 100 },
     document: { visibilityState: 'visible' },
-    syncCorrectionMode: 'speed',
-    pauseAlarm: { cancel() {} },
-    driftCorrection: correction(),
-    startKey: () => 'fixture',
-    presentationTiming: presentation(),
-    playerWaiting: false,
-    uburoomPlayback: require('../web/playback-policy'),
+    time: {
+      clock: { read: () => ({ valid, serverTime: valid ? 100300 : undefined }) },
+      presentation: presentation(),
+      target: state => target(state, valid ? 100300 : undefined),
+    },
     video: {
       currentTime: 10.3,
+      duration: 60,
       readyState: 4,
       seeking: false,
       playbackRate: 1,
-      paused: false,
+      paused: true,
       buffered: { length: 0 },
+      async play() {
+        this.paused = false;
+      },
     },
-    hlsPreparationUntil: 0,
-    hlsTimelinePending: false,
-    syncSeekPending: false,
-    probing: false,
-    playbackError: '',
-    hlsNetworkFailure: undefined,
-    autoplayBlocked: false,
-    diagnosticSample() {},
-    renderTransport() {},
-    checkVideoFrames() {},
-  };
-  // The page's own expected(): the shared target at the one time base's server time, none without a clock.
-  const time = { target: state => target(state, valid ? serverTime : undefined), mono: () => 100 };
-  ctx.expected = mountModule(syncWiring, { time, state: ctx.state }).api.expected;
-  await install(ctx);
-  assert.equal(ctx.expected(), 10.3);
-  await ctx.synchronize();
+  });
+  t.after(() => {
+    ctx.sync?.close();
+    restore();
+  });
+  // The transport is mounted after sync wiring registers its event handlers.
+  ctx.renderTransport = () => renders++;
+  api.initializeSync();
+  assert.equal(api.expected(), 10.3);
+  await ctx.sync.synchronize();
+  assert.equal(ctx.video.paused, false);
+  assert.equal(ctx.readyVersion, 'media');
+  assert.equal(renders, 1);
   assert.equal(ctx.video.playbackRate, 1);
   valid = false;
   ctx.video.currentTime = 5;
-  await ctx.synchronize();
+  await ctx.sync.synchronize();
   assert.equal(ctx.video.currentTime, 5);
   assert.equal(ctx.video.playbackRate, 1);
   valid = true;
-  await ctx.synchronize();
+  await ctx.sync.synchronize();
   assert.equal(ctx.video.currentTime, 10.3, 'fresh clock permits meaningful catch-up');
 });
 test('late rejoins and failures cannot overwrite a newer authorized state', async () => {

@@ -1,10 +1,11 @@
 import * as uburoomPlayback from '../playback-policy.js';
+import { createSync } from '../../shared/sync/client-sync.mjs';
 import * as uburoomTiming from '../../shared/sync/timing.mjs';
 import { store } from './store.js';
 
 /* Sync controller wiring: the shared client-sync controller on this page's player, the sync-quality measurements this viewer reports, playback observations and readiness. */
 export function mount(host, deps) {
-  const syncReady = import('../watch-sync.mjs').then(({ createSync }) => {
+  function initializeSync() {
     store.player.sync = createSync({
       video: deps.video,
       timing: uburoomTiming,
@@ -52,7 +53,7 @@ export function mount(host, deps) {
       repeat: (callback, delay) => deps.every(delay, callback),
       cancelRepeat: stop => stop(),
     });
-  });
+  }
   // Where the room's timeline is now, from the one time base. Undefined while the room clock is unusable and
   // the timeline moves: the player holds instead of guessing from when the last state arrived.
   function expected() {
@@ -192,5 +193,5 @@ export function mount(host, deps) {
       }
     }
   }
-  return { expected, reportObservation, reportReadiness, syncReady };
+  return { expected, reportObservation, reportReadiness, initializeSync };
 }

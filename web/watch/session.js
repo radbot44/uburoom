@@ -334,7 +334,6 @@ export function mount(host, deps) {
       }
     }
     $('diagnostic-actions').hidden = !deps.controlProbe && !deps.soakMode;
-    await deps.syncReady;
     let bootstrap;
     async function enterDirectRoom() {
       if (store.identity.me?.guestRoomId) {
