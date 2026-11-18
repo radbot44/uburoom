@@ -842,10 +842,165 @@
   /* Host-only viewer sync spread, at the end of the roster heading. */
   .room-sync-spread {
     margin-inline-start: auto;
-    color: var(--muted);
+    min-height: 40px;
+    padding-inline: var(--space-10);
+    font-size: var(--font-size-12);
     font-weight: 500;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+  }
+  .watch-dialog.room-sync-dialog {
+    --sync-blue: #82bbff;
+    --sync-orange: #ffad71;
+    --sync-teal: #72dbc1;
+    --sync-purple: #c2a1ff;
+    --sync-rose: #ff9ac5;
+
+    width: min(820px, calc(100vw - 32px));
+  }
+  :root[data-theme='light'] .room-sync-dialog {
+    --sync-blue: #1563a8;
+    --sync-orange: #99440a;
+    --sync-teal: #086f5d;
+    --sync-purple: #7044a4;
+    --sync-rose: #9b3464;
+  }
+  .room-sync-dialog > header {
+    margin-bottom: var(--space-4);
+  }
+  .room-sync-video {
+    margin: 0 0 var(--space-20);
+    overflow-wrap: anywhere;
+  }
+  .room-sync-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: var(--space-8);
+    margin-bottom: var(--space-16);
+  }
+  .room-sync-controls label {
+    display: grid;
+    gap: var(--space-4);
+    min-width: 0;
+    color: var(--muted);
+    font-size: var(--font-size-12);
+  }
+  .room-sync-controls select {
+    max-width: min(240px, 100%);
+    min-height: 40px;
+  }
+  .room-sync-controls button {
+    margin-inline-start: auto;
+  }
+  .room-sync-plot {
+    padding: var(--space-14);
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-14);
+  }
+  .room-sync-plot-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-4) var(--space-12);
+  }
+  .room-sync-plot h3,
+  .room-sync-roster h3 {
+    margin: 0;
+    font-size: var(--font-size-16);
+  }
+  #room-sync-coverage,
+  .room-sync-roster small {
+    color: var(--muted);
+    font-size: var(--font-size-12);
+    font-variant-numeric: tabular-nums;
+  }
+  #room-sync-chart {
+    display: block;
+    width: 100%;
+    height: 265px;
+  }
+  #room-sync-chart[hidden] {
+    display: none;
+  }
+  .room-sync-inspector {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    color: var(--muted);
+    font-size: var(--font-size-12);
+  }
+  .room-sync-inspector[hidden] {
+    display: none;
+  }
+  .room-sync-inspector input {
+    flex: 1;
+    min-width: 0;
+    min-height: 32px;
+    accent-color: var(--primary);
+  }
+  #room-sync-status {
+    margin: var(--space-20) 0;
+  }
+  #room-sync-caption {
+    margin: var(--space-4) 0 0;
+    line-height: 1.45;
+  }
+  .room-sync-roster {
+    margin-top: var(--space-20);
+  }
+  .room-sync-roster ul {
+    margin: var(--space-8) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .room-sync-roster li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0 var(--space-8);
+    align-items: center;
+    border-top: 1px solid var(--border);
+    padding: var(--space-4) 0;
+  }
+  .room-sync-roster li[hidden] {
+    display: none;
+  }
+  .room-sync-roster button {
+    display: flex;
+    align-items: center;
+    justify-self: start;
+    min-width: 0;
+    gap: var(--space-8);
+    text-align: start;
+    overflow-wrap: anywhere;
+  }
+  .room-sync-roster button::before {
+    content: '';
+    width: 9px;
+    height: 9px;
+    flex: none;
+    border-radius: var(--radius-round);
+    background: var(--sync-series);
+  }
+  .room-sync-roster li > span {
+    font-variant-numeric: tabular-nums;
+  }
+  .room-sync-roster small {
+    grid-column: 1 / -1;
+    padding: 0 var(--space-12) var(--space-4);
+  }
+  @media (max-width: 600px) {
+    .watch-dialog.room-sync-dialog {
+      padding: var(--space-16);
+    }
+    #room-sync-chart {
+      height: 210px;
+    }
+    .room-sync-controls button {
+      margin-inline-start: 0;
+    }
   }
   .room-roster-heading {
     box-sizing: border-box;

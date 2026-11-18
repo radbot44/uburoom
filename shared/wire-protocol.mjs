@@ -52,6 +52,7 @@ const CALLS = Object.freeze({
   'room.close': { room: true, write: true },
   'room.people': { room: true },
   'room.settings': { room: true },
+  'room.sync': { room: true },
   'room.settings.edit': { room: true, write: true },
   'room.events': { room: true },
   'room.events.command': { room: true, write: true },

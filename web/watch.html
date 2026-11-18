@@ -1303,7 +1303,10 @@
                 <section class="room-participant-column" aria-label="Viewers">
                   <div class="room-panel-roster-frame room-roster-frame" id="room-roster-frame">
                     <h3 class="room-control-row room-roster-heading">
-                      <span>Viewers</span><span id="room-sync-spread" class="room-sync-spread" hidden></span>
+                      <span>Viewers</span
+                      ><button id="room-sync-spread" class="room-sync-spread quiet" type="button" hidden>
+                        Room sync
+                      </button>
                     </h3>
                     <div
                       id="room-participants"
@@ -1958,6 +1961,48 @@
         </form>
       </dialog>
 
+      <dialog id="room-sync-dialog" class="room-sync-dialog watch-dialog" aria-labelledby="room-sync-title">
+        <header>
+          <h2 id="room-sync-title">Room sync</h2>
+          <button id="room-sync-close" class="icon-button" type="button" aria-label="Close" autofocus></button>
+        </header>
+        <p id="room-sync-video" class="room-sync-video"></p>
+        <div class="room-sync-controls">
+          <label
+            >Time range
+            <select id="room-sync-window">
+              <option value="1">Last minute</option>
+              <option value="5" selected>Last 5 minutes</option>
+              <option value="15">Last 15 minutes</option>
+            </select>
+          </label>
+          <label
+            >Show
+            <select id="room-sync-view">
+              <option value="spread">Room spread</option>
+              <option value="all">All viewers</option>
+            </select>
+          </label>
+          <button id="room-sync-freeze" class="quiet" type="button" aria-pressed="false">Freeze</button>
+        </div>
+        <section class="room-sync-plot" aria-labelledby="room-sync-chart-title">
+          <div class="room-sync-plot-heading">
+            <h3 id="room-sync-chart-title">Room spread</h3>
+            <span id="room-sync-coverage"></span>
+          </div>
+          <canvas id="room-sync-chart" role="img" aria-describedby="room-sync-caption" hidden></canvas>
+          <label id="room-sync-inspector" class="room-sync-inspector" hidden>
+            Inspect time
+            <input id="room-sync-time" type="range" min="0" max="300" step="5" value="300" />
+          </label>
+          <p id="room-sync-status" role="status">Loading room sync…</p>
+          <p id="room-sync-caption" class="hint"></p>
+        </section>
+        <section class="room-sync-roster" aria-labelledby="room-sync-viewers-title">
+          <h3 id="room-sync-viewers-title">Viewers</h3>
+          <ul id="room-sync-viewers"></ul>
+        </section>
+      </dialog>
       <dialog id="room-settings-dialog" class="room-settings-dialog watch-dialog" aria-labelledby="room-settings-title">
         <header>
           <div class="room-settings-heading">

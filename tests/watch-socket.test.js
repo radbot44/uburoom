@@ -368,6 +368,9 @@ test(
     room.syncSpread = { mediaVersion, samples: [], taken: 12, summary: { p50Ms: 5, p95Ms: 9 } };
     assert.deepEqual((await host.call(path + '?viewer=' + hostViewer)).value.syncSpread, { p50Ms: 5, p95Ms: 9 });
     assert.equal(Object.hasOwn((await guest.call(path + '?viewer=' + guestViewer)).value, 'syncSpread'), false);
+    const syncRequest = { type: 'call', op: 'room.sync', roomId, args: { minutes: 5 } };
+    assert.deepEqual((await host.send(syncRequest)).value.samples, []);
+    assert.equal((await guest.send(syncRequest)).status, 403, 'an admitted viewer cannot read room sync history');
     // Telemetry already in flight when a viewer leaves must not cost the socket.
     host.ws.send(
       JSON.stringify({

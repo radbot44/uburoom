@@ -3,6 +3,7 @@
 const { WebSocketServer } = require('ws');
 const { clientAddress } = require('./client-address');
 const { runOperation, waitFor } = require('./operation');
+const { sampleRoomSync } = require('./room/sync-history');
 const {
   validateSyncQualityMessage,
   reduceViewerSyncQuality,
@@ -349,6 +350,7 @@ function watchSockets({
     // here and shown at the next one, never published on its own.
     const spread = sampleSyncSpread(room.syncSpread, room, now);
     room.syncSpread = spread.tracker;
+    sampleRoomSync(room, now);
     const logSpread = (summary, label) =>
       hub.logger.info(
         'Sync',

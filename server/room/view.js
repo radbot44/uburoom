@@ -11,6 +11,7 @@ const { fromProvider } = require('../media-provider');
 
 const Engine = require('../../shared/engine.mjs');
 const { isHost, sameVoice, canWatch } = require('../core');
+const { recordRoomSyncTimeline } = require('./sync-history');
 const Tracks = require('../media-tracks');
 const RoomPolicy = require('../room-policy');
 const {
@@ -172,7 +173,10 @@ module.exports = {
   },
   // Every publication passes here: the room's version rises before its subscribers are woken.
   announce(room, change) {
-    if (room) this.roomVersions.set(room, ++this.publicationCount);
+    if (room) {
+      this.roomVersions.set(room, ++this.publicationCount);
+      recordRoomSyncTimeline(room, this.clock.now());
+    }
     this.onPublish?.(room, change);
   },
   /** Identifies what the lobby lists for a room: its name, video, visibility, host and who is in it. */

@@ -3,6 +3,7 @@ import * as uburoomControls from './watch-controls.js';
 import * as uburoomDialogs from './watch-dialogs.js';
 import * as uburoomIcons from './icons.js';
 import * as uburoomPopover from './watch-popover.js';
+import { mountRoomSync } from './watch-room-sync.js';
 import { CAPABILITIES, PRESET_NAMES, preset } from '../shared/sync/policy.mjs';
 import * as uburoomSyncQuality from '../shared/sync/quality.mjs';
 
@@ -55,6 +56,7 @@ function sortPeople(people, selfId) {
 }
 function mount({
   request,
+  every,
   getState,
   getMe,
   join,
@@ -72,6 +74,7 @@ function mount({
   const $ = id => document.getElementById(id),
     dialog = $('room-settings-dialog');
   const controls = uburoomControls;
+  const roomSync = mountRoomSync({ request, every, getState });
   $('room-bar').classList.add('watch-control-group');
   for (const id of ['switch-room', 'create', 'reopen', 'admin-end-room', 'close-room']) {
     const control = $(id);
@@ -772,24 +775,8 @@ function mount({
     }
     renderHumanCheckButton();
     renderPeople($('room-participants'), state?.participants || [], state || {});
-    renderSyncSpread(state?.syncSpread);
+    roomSync.render(state);
     updateRosterSize();
-  }
-  // Hosts see how far apart the players are. The figure is what players report about
-  // themselves, so the copy says what it leaves out.
-  function renderSyncSpread(spread) {
-    const label = $('room-sync-spread');
-    const known = !!spread && Number.isFinite(spread.p50Ms) && Number.isFinite(spread.p95Ms);
-    label.hidden = !known;
-    if (!known) return;
-    label.textContent = 'Spread ' + spread.p50Ms + ' ms · p95 ' + spread.p95Ms + ' ms';
-    const description =
-      'Viewer sync spread this video: half the time within ' +
-      spread.p50Ms +
-      ' ms, 95% within ' +
-      spread.p95Ms +
-      ' ms. Reported by the players themselves; screen and speaker delay are not included.';
-    label.title = description;
   }
   let openedFromSaved = false,
     draftRecord;

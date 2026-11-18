@@ -15,6 +15,7 @@ const { clientAddress } = require('./client-address');
 const { REJOIN } = require('./watch');
 const { waitFor } = require('./operation');
 const { CALLS, splitView } = require('../shared/wire-protocol.mjs');
+const { roomSyncHistory } = require('./room/sync-history');
 
 function applyRoomProgress(watch, roomId, items = []) {
   if (!roomId || !items.length) return;
@@ -813,6 +814,15 @@ function watchOperations({
       if (latest.revision !== room.revision) return result(409, { error: 'Room changed; search again' });
       return result(200, found);
     },
+    'room.sync': ({ context, roomId, args }) =>
+      inRoom(context, roomId, (auth, room) => {
+        if (!hub.authorize(auth.actor, room, 'roomSettings').ok)
+          return result(403, { error: 'Room sync is available to people who can change room settings' });
+        if (!throttle('room-sync:' + auth.actor.userId, 60))
+          return result(429, { error: 'Wait a moment before refreshing room sync' });
+        const minutes = [1, 5, 15].includes(args.minutes) ? args.minutes : 5;
+        return result(200, roomSyncHistory(room, watch.clock.now(), minutes));
+      }),
     async 'room.settings'({ auth, current, roomId }) {
       await savedRoom(roomId, auth, current);
       if (!(await current())) return result(403, { error: 'Room access changed' });
@@ -922,7 +932,8 @@ function watchOperations({
       return Promise.resolve(result(400, { error: 'Invalid command data' }));
     if (spec.room && !UUID.test(roomId || '')) return Promise.resolve(result(404, { error: 'Room unavailable' }));
     // The room's own calls sign in through inRoom.
-    if (op === 'room.check' || op === 'room.delivery') return calls[op]({ context, roomId, args });
+    if (op === 'room.check' || op === 'room.delivery' || op === 'room.sync')
+      return calls[op]({ context, roomId, args });
     return asked(context, !!spec.write, (auth, current) => {
       if (spec.room && foreignRoom(roomId)) return result(403, ONLY_SHARED);
       return calls[op]({ context, auth, current, roomId, args });

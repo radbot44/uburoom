@@ -11,6 +11,8 @@
 const { EVIDENCE } = require('./lib/evidence');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
+const { recordRoomSyncTimeline, sampleRoomSync } = require('../server/room/sync-history');
 const { playbackBrowser, pause } = require('./lib/playback-browser');
 const { startFixtureServer, openPage, dom, act } = require('./lib/ui-fixture');
 
@@ -296,8 +298,44 @@ async function main() {
       hostPresence.syncQuality = undefined;
       await run('refreshState()');
       if (process.argv.includes('--sync-quality-only')) {
+        seedRoomSyncHistory(app.watch, room);
+        await run(pressId('room-sync-spread'));
+        await until(shown('#room-sync-chart') + ' && ' + count('#room-sync-viewers li') + '===4', 'Room sync history');
+        await shot('room-sync-spread');
+        await browser.viewport(host, 390, 844);
+        await run(
+          choose('room-sync-view', 'all') +
+            ';' +
+            byId('room-sync-window') +
+            '.focus({preventScroll:true});' +
+            byId('room-sync-dialog') +
+            '.scrollTop=60',
+        );
+        const scrollTop = await run(byId('room-sync-dialog') + '.scrollTop');
+        assert.ok(scrollTop > 0, 'phone dialog can be scrolled while inspecting the graph');
+        const readout = await run(text('#room-sync-caption'));
+        await until(text('#room-sync-caption') + '!==' + JSON.stringify(readout), 'Live room sync refresh');
+        assert.equal(await run('document.activeElement.id'), 'room-sync-window');
+        assert.equal(await run(byId('room-sync-view') + '.value'), 'all');
+        assert.equal(await run(byId('room-sync-dialog') + '.scrollTop'), scrollTop);
+        await run(pressId('room-sync-freeze'));
+        await run(choose('room-sync-window', '1') + ';' + choose('room-sync-time', '25'));
+        await until(
+          shown('#room-sync-chart') + ' && ' + hasText('#room-sync-coverage', '35s ago · 4 of 4 reporting'),
+          'Viewer offsets',
+        );
+        await run(byId('room-sync-dialog') + '.scrollTop=0');
+        assert.equal(
+          await run(byId('room-sync-dialog') + '.scrollWidth <= ' + byId('room-sync-dialog') + '.clientWidth'),
+          true,
+          'room sync fits at phone width',
+        );
+        await shot('room-sync-phone');
+        await run(pressId('room-sync-close'));
+        await until('!' + isOpen('#room-sync-dialog'), 'Room sync closed');
         console.log(
-          name + ': Room sync-quality levels, retained grey state, alignment, themes and settings exclusion passed',
+          name +
+            ': Room sync-quality levels, history, live refresh, phone layout, themes and settings exclusion passed',
         );
         continue;
       }
@@ -854,6 +892,49 @@ async function main() {
       await browser?.close();
       await app.close();
     }
+  }
+}
+
+function seedRoomSyncHistory(watch, room) {
+  // Illustrative telemetry on the real modal and wire path, without waiting five minutes to fill its history.
+  const { media, viewers, state, feedback, startAt, pauseAt } = room;
+  const now = watch.clock.now();
+  const alex = randomUUID();
+  const tabs = [
+    { name: 'Demo host', userId: randomUUID() },
+    { name: 'Demo guest', userId: randomUUID() },
+    { name: 'Alex', userId: alex },
+    { name: 'Alex', userId: alex },
+  ].map(tab => ({ ...tab, id: randomUUID(), streamVersion: randomUUID(), watchSocket: { readyState: 1 } }));
+  try {
+    room.media = null;
+    recordRoomSyncTimeline(room, now);
+    room.media = media;
+    room.startAt = room.pauseAt = undefined;
+    room.viewers = new Map(tabs.map(tab => [tab.id, tab]));
+    for (let index = 0; index <= 56; index++) {
+      const at = now - (56 - index) * 5000;
+      room.state = { ...state, paused: index >= 16 && index <= 18 };
+      if (index === 36) room.feedback = { action: 'media.seek.absolute' };
+      if (index === 48) tabs[3].watchSocket = { readyState: 1 };
+      if (index === 47) tabs[3].watchSocket.readyState = 3;
+      for (const [number, tab] of tabs.entries()) {
+        const stalled = number === 1 && index >= 25 && index <= 28;
+        const recovery = number === 1 ? 255 * Math.exp(-((index - 30) ** 2) / 9) : 0;
+        tab.syncQuality = {
+          mediaVersion: room.mediaVersion,
+          streamVersion: tab.streamVersion,
+          updatedAt: at,
+          measuredAt: at,
+          status: room.state.paused ? 'paused' : stalled ? 'buffering' : 'playing',
+          confidence: 'confident',
+          health: { offsetMs: Math.round((number - 1.5) * 24 + Math.sin(index * 0.51 + number) * 32 + recovery) },
+        };
+      }
+      sampleRoomSync(room, at);
+    }
+  } finally {
+    Object.assign(room, { media, viewers, state, feedback, startAt, pauseAt });
   }
 }
 

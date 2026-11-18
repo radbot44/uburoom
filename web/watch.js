@@ -210,6 +210,7 @@ const roomShare = uburoomShare.mount({
 deps.roomShare = roomShare;
 const roomUI = uburoomRoomUI.mount({
   request: (...args) => deps.call(...args),
+  every: deps.every,
   command: (id, envelope) => deps.roomLink.command(id, envelope),
   getState: () => store.room.state,
   getMe: () => store.identity.me,

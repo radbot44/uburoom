@@ -1,4 +1,5 @@
 'use strict';
+const { recordRoomSyncTimeline, sampleRoomSync, roomSyncHistory } = require('../server/room/sync-history');
 const test = require('node:test'),
   assert = require('node:assert/strict');
 const { syncQualityParticipants } = require('../server/watch');
@@ -255,6 +256,72 @@ test('Room participants include disconnected sessions during reconnect grace but
     ['owner', 'offline'],
   );
   assert.equal(people[1].present, false);
+});
+
+test('room sync history separates viewer tabs, preserves gaps and expires with the current video', () => {
+  const tab = (name, offset) => ({
+    name,
+    userId: 'account',
+    streamVersion: 'stream',
+    watchSocket: { readyState: 1 },
+    syncQuality: {
+      mediaVersion: 'one',
+      streamVersion: 'stream',
+      updatedAt: 1000,
+      measuredAt: 1000,
+      status: 'playing',
+      confidence: 'confident',
+      health: { offsetMs: offset },
+    },
+  });
+  const first = tab('Alex', -35),
+    second = tab('Alex', 45);
+  const room = {
+    media: { title: 'Fixture' },
+    mediaVersion: 'one',
+    state: { paused: false },
+    viewers: new Map([
+      ['first', first],
+      ['second', second],
+    ]),
+  };
+  sampleRoomSync(room, 1000);
+  sampleRoomSync(room, 2000);
+  second.watchSocket.readyState = 3;
+  sampleRoomSync(room, 6000);
+  second.watchSocket = { readyState: 1 };
+  first.syncQuality.updatedAt = 11000;
+  second.syncQuality.updatedAt = 11000;
+  second.syncQuality.measuredAt = 11000;
+  sampleRoomSync(room, 11000);
+  room.state.paused = true;
+  recordRoomSyncTimeline(room, 12000);
+  room.feedback = { action: 'media.seek.absolute' };
+  recordRoomSyncTimeline(room, 13000);
+
+  const snapshot = roomSyncHistory(room, 13000, 5);
+  assert.deepEqual(snapshot.samples, [
+    [1000, 80, 2, 2],
+    [6000, null, 1, 2],
+    [11000, null, 1, 2],
+  ]);
+  assert.deepEqual(
+    snapshot.viewers.map(viewer => viewer.id),
+    ['first', 'second'],
+  );
+  assert.deepEqual(snapshot.viewers[0].points.at(-1), [11000, null, 'playing', false]);
+  assert.deepEqual(snapshot.viewers[1].points.slice(-2), [
+    [6000, null, 'reconnecting', false],
+    [11000, 45, 'playing', true],
+  ]);
+  assert.deepEqual(snapshot.events, [
+    [1000, 'video'],
+    [12000, 'pause'],
+    [13000, 'seek'],
+  ]);
+  assert.deepEqual(roomSyncHistory(room, 72000, 1).samples, []);
+  room.mediaVersion = 'two';
+  assert.deepEqual(roomSyncHistory(room, 14000, 15).viewers, []);
 });
 
 test('automatic hard corrections are observed, while startup and intentional shared seeks are excluded', async () => {

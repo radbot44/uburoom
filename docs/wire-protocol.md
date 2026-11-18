@@ -54,6 +54,8 @@ Each connection holds one joined room/viewer pair. A successful join to another 
 
 A tab reporting `ready: false` may include `blocker: { id, streamVersion, reason }`. The reason is `preparing` or `timing`. The server accepts the detail from the tab's current socket for the active readiness ID and stream, and sends it to people who can choose how playback continues. The reason is advisory.
 
+`room.sync` reads the live room's in-memory sync history for the current video. It requires the room settings capability and accepts `minutes` of 1, 5, or 15. A null offset or spread means the server lacked reliable timing for that sample.
+
 A `command` is a room command from the shared command table ([`shared/room-protocol.mjs`](../shared/room-protocol.mjs)), fenced by the room `epoch` the sender last saw and an `expiresAt` in server time.
 
 `call` covers what is neither a room command nor room state. `op` is one of the names in `CALLS`: `me`, `profile.rename`, `admin.mode`, `library.browse`, `library.item`, `library.availability`, `library.filters`, `library.shelves`, `playback.history`, `rooms.list`, `rooms.saved`, `rooms.create`, `events.list`, `events.schedule`, and for one room (`roomId` required) `room.reopen`, `room.close`, `room.people`, `room.settings`, `room.settings.edit`, `room.events`, `room.events.command`, `room.share`, `room.share.command`, `room.queue`, `room.queue.command`, `room.history`, `room.history.command`, `room.check`, `room.delivery`.
