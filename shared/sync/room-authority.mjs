@@ -1349,7 +1349,7 @@ export function createRoomCoordinator(options) {
         throw error;
       });
   };
-  const refused = message => ({ error: failure(message), effects: [] });
+  const refused = (message, status = undefined) => ({ error: failure(message, status), effects: [] });
 
   // Deadlines are acted on at the timer resolution, as one periodic sweep would.
   function align(at, current) {
@@ -1412,7 +1412,7 @@ export function createRoomCoordinator(options) {
     return result;
   }
   // Reduces one event; returns its result, or a promise of it while persisting.
-  function process(room, event) {
+  function process(room, event, syncOnly) {
     if (event.type === PUBLISH) {
       options.onPublish?.(room, event.change);
       return { effects: [] };
@@ -1449,6 +1449,7 @@ export function createRoomCoordinator(options) {
       checkpointMs: options.checkpointMs,
     });
     if (!result.persist || !options.onPersist) return finish(room, result, event.type);
+    if (syncOnly) return refused('Room event requires asynchronous persistence', 409);
     const persisting = options.onPersist(cloneRoomState(result.state, keys), {
       event: event.type,
       reason: result.persist,
@@ -1461,7 +1462,7 @@ export function createRoomCoordinator(options) {
   }
   function drain(room, mailbox) {
     while (!mailbox.busy && mailbox.queue.length) {
-      const { event, settle: resolve } = mailbox.queue.shift();
+      const { event, settle: resolve, syncOnly } = mailbox.queue.shift();
       if (rooms.get(room.roomId) !== room) {
         resolve(refused('Room unavailable'));
         continue;
@@ -1469,30 +1470,32 @@ export function createRoomCoordinator(options) {
       mailbox.busy = true;
       let outcome;
       try {
-        outcome = process(room, event);
+        outcome = process(room, event, syncOnly);
       } catch (error) {
         mailbox.busy = false;
         resolve({ error, effects: [] });
         continue;
       }
       if (typeof outcome?.then === 'function') {
-        outcome.then(result => {
+        const settle = result => {
           mailbox.busy = false;
           resolve(result);
           drain(room, mailbox);
-        });
+        };
+        outcome.then(settle, error => settle({ error, effects: [] }));
         return;
       }
       mailbox.busy = false;
       resolve(outcome);
     }
   }
-  function submit(room, event) {
+  function submit(room, event, syncOnly = false) {
     const mailbox = mailboxFor(room);
     const entry = { done: false, result: undefined, promise: undefined };
     entry.promise = new Promise(resolve => {
       mailbox.queue.push({
         event,
+        syncOnly,
         settle: value => {
           entry.done = true;
           entry.result = value;
@@ -1531,12 +1534,21 @@ export function createRoomCoordinator(options) {
     /**
      * Reduces an event and returns its result at once when the room's mailbox is free and
      * nothing has to be persisted first; otherwise returns a promise of the result.
+     * Existing callers may use this mixed return contract. Prefer runSync or dispatch.
      */
     run(idOrRoom, event) {
       const room = resolveRoom(idOrRoom);
       if (!room || rooms.get(room.roomId) !== room) return refused('Room unavailable');
       const entry = submit(room, event);
       return entry.done ? entry.result : entry.promise;
+    },
+    /** Runs an event immediately, or refuses it if the mailbox is busy or persistence would be required. */
+    runSync(idOrRoom, event) {
+      const room = resolveRoom(idOrRoom);
+      if (!room || rooms.get(room.roomId) !== room) return refused('Room unavailable');
+      const mailbox = mailboxFor(room);
+      if (mailbox.busy || mailbox.queue.length) return refused('Room is busy; retry shortly', 409);
+      return submit(room, event, true).result;
     },
     /**
      * Runs a host step on the live room inside its mailbox, in order with its events.

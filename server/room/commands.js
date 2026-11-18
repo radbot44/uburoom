@@ -74,7 +74,7 @@ module.exports = {
         return { status: 'forbidden', message: 'You cannot kick this participant.' };
       const viewers = [...room.viewers.entries()].filter(([, viewer]) => viewer.userId === userId);
       if (!viewers.length) return { status: 'unavailable', message: 'This participant has already left.' };
-      this.coordinator.run(room, { type: 'kick', userId });
+      void this.coordinator.dispatch(room, { type: 'kick', userId });
       return { record, viewers };
     });
     if (!admitted.viewers) return admitted;
@@ -220,7 +220,7 @@ module.exports = {
         });
         const reply = await this.inRoom(room, () => {
           this.roomState.apply(room, record);
-          this.coordinator.run(room, { type: 'visibility' });
+          void this.coordinator.dispatch(room, { type: 'visibility' });
           return this.applyCommand(room, command, actor);
         });
         return this.acknowledge(room, declared, reply);

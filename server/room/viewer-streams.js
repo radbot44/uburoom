@@ -227,7 +227,7 @@ module.exports = {
           viewer.mediaVersion = version;
           viewer.streamVersion = randomUUID();
           viewer.ready = false;
-          this.coordinator.run(room, { type: 'stream', viewerId, available: false });
+          void this.coordinator.dispatch(room, { type: 'stream', viewerId, available: false });
           this.changed(room);
           return viewer.media;
         });
@@ -263,7 +263,7 @@ module.exports = {
         viewer.mediaVersion = version;
         viewer.streamVersion = randomUUID();
         viewer.ready = false;
-        this.coordinator.run(room, { type: 'stream', viewerId, available: true });
+        void this.coordinator.dispatch(room, { type: 'stream', viewerId, available: true });
         this.changed(room);
         return viewer.media;
       });
@@ -467,7 +467,7 @@ module.exports = {
         }
         // A viewer with no stream can never report ready, so the room stops waiting for them
         // until they have one again.
-        this.coordinator.run(room, { type: 'stream', viewerId, available: media.format !== 'unavailable' });
+        void this.coordinator.dispatch(room, { type: 'stream', viewerId, available: media.format !== 'unavailable' });
         if (current && current !== media) {
           SubtitleResources.transfer(current, media);
           void this.providers.stop(current);

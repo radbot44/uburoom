@@ -317,7 +317,7 @@ module.exports = {
       return;
     if (!usable) {
       (room.passedOverHosts ||= new Set()).add(viewerId);
-      this.coordinator.run(room, { type: 'elect', exclude: [...room.passedOverHosts] });
+      void this.coordinator.dispatch(room, { type: 'elect', exclude: [...room.passedOverHosts] });
       return;
     }
     room.passedOverHosts = undefined;

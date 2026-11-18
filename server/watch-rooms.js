@@ -228,7 +228,7 @@ class WatchRooms {
         this.apply(room, this.store.get(id));
         room.revision++;
         this.watch.changed(room);
-        this.watch.coordinator.run(room, { type: 'roles' });
+        void this.watch.coordinator.dispatch(room, { type: 'roles' });
       }
     }
   }
@@ -582,7 +582,7 @@ class WatchRooms {
       this.watch.changed(room);
       if (change.action === 'autoplay') this.watch.cancelAutoplay(room);
       else if (!['rename', 'keepEmpty', 'maxMembers', 'auto.reset'].includes(change.action)) {
-        this.watch.coordinator.run(room, { type: 'roles' });
+        void this.watch.coordinator.dispatch(room, { type: 'roles' });
       }
     }
     return this.summary(id, actor);
@@ -813,7 +813,7 @@ class WatchRooms {
     room.autoQueueError = undefined;
     room.saveError = undefined;
     this.apply(room, this.store.get(id));
-    this.watch.coordinator.run(room, { type: 'roles', invalidate: false });
+    void this.watch.coordinator.dispatch(room, { type: 'roles', invalidate: false });
   }
   savedSelectionChanged(room) {
     return room.retainedEntryId !== undefined && room.retainedEntryId !== (this.queue.current(room.roomId)?.id || null);

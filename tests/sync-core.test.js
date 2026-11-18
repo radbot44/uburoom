@@ -662,6 +662,54 @@ test('the coordinator serializes each room, commits only after persistence and a
   assert.equal(room.frozen, true, 'its host may still come back within the grace');
 });
 
+test('a pending room write holds queued events and publications without partially admitting a synchronous join', async t => {
+  const write = Promise.withResolvers();
+  const changes = [];
+  let writes = 0;
+  const coordinator = Sync.createRoomCoordinator({
+    authorize: Sync.policyAuthorize,
+    onPersist: () => {
+      writes++;
+      return write.promise;
+    },
+    onChange: (room, type) => changes.push([type, room.state.paused, [...room.viewers.keys()]]),
+    onPublish: (room, type) => changes.push([type, room.state.paused, [...room.viewers.keys()]]),
+  });
+  t.after(() => {
+    write.resolve();
+    coordinator.close();
+  });
+  const room = coordinator.add(
+    Sync.createRoomState({ roomId: 'pending', creatorId: 'host', media: { id: 'm', duration: 60 } }),
+  );
+  const host = { userId: 'host' };
+  const join = viewerId => ({ type: 'join', actor: host, viewerId });
+  const play = { type: 'command', actor: host, command: { action: 'media.play' } };
+  assert.equal(coordinator.runSync(room, join('host-tab')).value, 'host-tab');
+  changes.length = 0;
+  assert.match(coordinator.runSync(room, play).error.message, /persistence/);
+  assert.equal(writes, 0);
+  assert.equal(room.state.paused, true);
+
+  const playing = coordinator.dispatch(room, play);
+  const joining = coordinator.dispatch(room, join('queued-tab'));
+  assert.equal(coordinator.publish(room, 'publish'), true);
+  assert.equal(coordinator.runSync(room, join('sync-tab')).error.status, 409);
+  assert.equal(writes, 1);
+  assert.equal(room.state.paused, true);
+  assert.deepEqual([...room.viewers.keys()], ['host-tab']);
+  assert.deepEqual(changes, []);
+
+  write.resolve();
+  assert.equal((await playing).error, undefined);
+  assert.equal((await joining).value, 'queued-tab');
+  assert.deepEqual(changes, [
+    ['command', false, ['host-tab']],
+    ['join', false, ['host-tab', 'queued-tab']],
+    ['publish', false, ['host-tab', 'queued-tab']],
+  ]);
+});
+
 test('reducing and committing an event for a 30-viewer room stays well under a millisecond', () => {
   const room = Sync.createRoomState({ roomId: 'big', creatorId: 'host', now: 0 });
   const context = { now: 1, monoNow: 1, authorize: Sync.policyAuthorize };

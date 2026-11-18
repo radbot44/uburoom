@@ -199,11 +199,11 @@ class Watch extends WatchParts {
   async leave(room, actor, viewerId, reason = 'left') {
     if (room.transition?.commit) await room.transition?.commit.catch(() => {});
     if (this.rooms.get(room.roomId) !== room) return;
-    this.coordinator.run(room, { type: 'leave', actor, viewerId, reason });
+    await this.coordinator.dispatch(room, { type: 'leave', actor, viewerId, reason });
     if (room.closed) await room.removal;
   }
   async ready(room, actor, viewerId, version, ready, readinessVersion) {
-    const result = this.coordinator.run(room, {
+    const result = await this.coordinator.dispatch(room, {
       type: 'ready',
       actor,
       viewerId,
@@ -224,7 +224,7 @@ class Watch extends WatchParts {
    */
   join(room, actor, viewerId, { alive, quality, preferences, rtts } = {}) {
     if (this.shuttingDown || room.closed || this.rooms.get(room.roomId) !== room) throw new Error('Room unavailable');
-    const result = this.coordinator.run(room, { type: 'join', actor, viewerId, quality, preferences, rtts });
+    const result = this.coordinator.runSync(room, { type: 'join', actor, viewerId, quality, preferences, rtts });
     if (result.error) throw result.error;
     const viewer = room.viewers.get(viewerId);
     if (alive) viewer.alive = alive;
@@ -234,7 +234,7 @@ class Watch extends WatchParts {
   disconnected(socket, planned, roomId, viewerId) {
     const room = this.rooms.get(roomId);
     if (room?.viewers.get(viewerId)?.watchSocket === socket)
-      this.coordinator.run(room, { type: 'disconnect', viewerId, planned });
+      void this.coordinator.dispatch(room, { type: 'disconnect', viewerId, planned });
   }
   /**
    * Presence for one tab from its own connection (its clock exchanges and pongs).
@@ -249,10 +249,10 @@ class Watch extends WatchParts {
   }
 
   /** Closes a room: an event in its mailbox, whose effect is removeRoom. */
-  remove(id, save = true) {
+  async remove(id, save = true) {
     const room = this.rooms.get(id);
     if (!room) return;
-    if (!room.removal) this.coordinator.run(room, { type: 'close', save });
+    if (!room.removal) await this.coordinator.dispatch(room, { type: 'close', save });
     return room.removal;
   }
   // The server's half of closing a room: drain its media work, save it and let it go.

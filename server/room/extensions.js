@@ -28,7 +28,7 @@ module.exports = {
   /** Rechecks a room's lifecycle after a change made outside its mailbox (a command, new media). */
   review(room) {
     if (this.rooms.get(room.roomId) !== room) return;
-    return this.coordinator.run(room, { type: 'review' });
+    return this.coordinator.dispatch(room, { type: 'review' });
   },
   /** A validated observation can hold the shared timeline only for the stream that reported it. */
   async holdForBuffering(room, viewer, data) {
@@ -129,7 +129,7 @@ module.exports = {
    */
   touch(room, viewer, rtts) {
     if (this.rooms.get(room.roomId) !== room || room.viewers.get(viewer.viewerId) !== viewer) return;
-    this.coordinator.run(room, { type: 'touch', viewerId: viewer.viewerId, rtts });
+    void this.coordinator.dispatch(room, { type: 'touch', viewerId: viewer.viewerId, rtts });
     if (viewer.accessChecking || this.clock.now() - (viewer.access?.at ?? -Infinity) < ACCESS_RECHECK_MS) return;
     viewer.accessChecking = true;
     void this.checkAccess(room, viewer).finally(() => {
@@ -150,6 +150,7 @@ module.exports = {
   },
   /** A person's display name changed. */
   renamed(userId, name) {
-    for (const room of [...this.rooms.values()]) this.coordinator.run(room, { type: 'identity', userId, name });
+    for (const room of [...this.rooms.values()])
+      void this.coordinator.dispatch(room, { type: 'identity', userId, name });
   },
 };
