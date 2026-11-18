@@ -239,6 +239,14 @@
       margin-left: auto;
     }
   }
+  /* Toasts are portaled outside the stage in page layouts. Keep the isolated stage
+     above them while a readiness card needs input, and below the drawer. */
+  .stage:has(> .readiness-choice:not([hidden])) {
+    z-index: var(--z-local-2);
+  }
+  body:has(.stage > .readiness-choice:not([hidden])) .watch-toast-region {
+    z-index: var(--z-local-1);
+  }
   .readiness-choice {
     position: absolute;
     z-index: var(--z-local-6);

@@ -202,7 +202,7 @@ class Watch extends WatchParts {
     await this.coordinator.dispatch(room, { type: 'leave', actor, viewerId, reason });
     if (room.closed) await room.removal;
   }
-  async ready(room, actor, viewerId, version, ready, readinessVersion) {
+  async ready(room, actor, viewerId, version, ready, readinessVersion, blocker = undefined) {
     const result = await this.coordinator.dispatch(room, {
       type: 'ready',
       actor,
@@ -210,6 +210,7 @@ class Watch extends WatchParts {
       mediaVersion: version,
       ready,
       readinessVersion,
+      blocker,
     });
     if (result.error) throw result.error;
   }

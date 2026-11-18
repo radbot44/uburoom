@@ -3,6 +3,8 @@ import * as uburoomPlayback from '../playback-policy.js';
 import { $ } from './page.js';
 import { store } from './store.js';
 
+const readinessReasons = Object.freeze({ preparing: 'preparing video', timing: 'lining up playback' });
+
 /* The transport bar: play state and labels, volume, the timeline with chapters and skip markers, and keyboard shortcuts. */
 export function mount(host, deps) {
   function dropVolume() {
@@ -60,7 +62,10 @@ export function mount(host, deps) {
     deps.glyph('join-playback', store.player.autoplayBlocked || paused ? 'play' : 'pause');
     $('join-playback').setAttribute('aria-label', centerLabel);
     $('join-playback').title = centerLabel;
-    $('ready-status').textContent = store.room.state?.waitingForReady
+    const readiness = store.room.state?.readiness;
+    const blockers = readiness?.blockers || [];
+    const reasonText = index => readinessReasons[readiness?.reasons?.[index]];
+    let readyStatus = store.room.state?.waitingForReady
       ? store.player.autoplayBlocked
         ? 'Press Play to join playback'
         : store.room.state?.readiness?.buffering
@@ -72,16 +77,17 @@ export function mount(host, deps) {
             !(deps.time.serverNow() >= store.room.state.startAt)
           ? 'Starting together…'
           : '';
-    if (store.room.state?.readiness?.blockers.length)
-      $('ready-status').textContent = 'Waiting for ' + store.room.state.readiness.blockers.join(', ') + '…';
-    if (store.room.state?.readiness?.timedOut)
-      $('ready-status').textContent = (
-        store.room.state.durable ? store.room.state.capabilities?.chooseMedia : store.room.state.canManage
-      )
+    if (blockers.length)
+      readyStatus =
+        blockers.length === 1 && reasonText(0)
+          ? blockers[0] + ' is ' + reasonText(0) + '…'
+          : 'Waiting for ' + blockers.join(', ') + '…';
+    if (readiness?.timedOut)
+      readyStatus = (store.room.state.durable ? store.room.state.capabilities?.chooseMedia : store.room.state.canManage)
         ? 'Some viewers need more time. Choose how to continue.'
         : 'Waiting for the host to choose how to continue.';
-    if (store.room.state?.waitingForHost)
-      $('ready-status').textContent = 'Playback is paused until a room leader or host joins.';
+    if (store.room.state?.waitingForHost) readyStatus = 'Playback is paused until a room leader or host joins.';
+    if ($('ready-status').textContent !== readyStatus) $('ready-status').textContent = readyStatus;
     $('room-recovery').hidden = !store.room.state?.recovery;
     const serverNow = deps.time.serverNow();
     // Without a usable room clock the countdown holds its last value.
@@ -99,12 +105,13 @@ export function mount(host, deps) {
       !store.room.state?.readiness?.timedOut ||
       (!!store.room.state.mediaError && !store.room.state.readiness.canStart) ||
       !(store.room.state.durable ? store.room.state.capabilities?.chooseMedia : store.room.state.canManage);
-    $('readiness-title').textContent = store.room.state?.readiness?.blockers.length
-      ? 'Some viewers need more time'
-      : 'Ready to continue?';
-    $('readiness-message').textContent = store.room.state?.readiness?.blockers.length
-      ? 'Waiting for ' + store.room.state.readiness.blockers.join(', ') + '. Start with ready viewers, or wait.'
+    $('readiness-title').textContent = blockers.length ? 'Some viewers need more time' : 'Ready to continue?';
+    const readinessMessage = blockers.length
+      ? (readiness.reasons?.some(Boolean)
+          ? blockers.map((name, index) => name + ' is ' + (reasonText(index) || 'still getting ready') + '.').join(' ')
+          : 'Waiting for ' + blockers.join(', ') + '.') + ' Start with ready viewers, or wait.'
       : 'Everyone is ready. Playback stays paused until you choose.';
+    if ($('readiness-message').textContent !== readinessMessage) $('readiness-message').textContent = readinessMessage;
     $('ready-start').disabled = store.room.pending || !store.room.state?.readiness?.canStart;
     $('ready-wait').disabled = $('ready-cancel').disabled = store.room.pending;
     if (store.room.state?.readiness?.timedOut) $('player-play').disabled = true;

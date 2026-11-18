@@ -601,11 +601,49 @@ async function main() {
           video +
           '.dispatchEvent(new Event("waiting"));true',
       );
-      await until(video + '.paused && ' + hasText('#ready-status', 'Waiting for Demo guest'), 'Host pauses for guest');
+      await until(
+        video + '.paused && ' + hasText('#ready-status', 'Demo guest is preparing video'),
+        'Host sees which viewer is preparing video',
+      );
       await browser.until(guest, video + '.paused', 'Buffering viewer holds at the shared position');
+      room.readinessDeadline = performance.now() - 1;
+      await app.watch.review(room);
+      await until(
+        shown('#readiness-choice') + ' && ' + hasText('#readiness-message', 'Demo guest is preparing video'),
+        'Preparation reason stays visible in the host choice',
+      );
+      await shot('readiness-preparing');
+      // Simulate a warm player whose local position has not caught up to the room yet.
       await browser.evaluate(
         guest,
-        'delete ' + video + '.readyState;' + video + '.dispatchEvent(new Event("canplay"))',
+        '(()=>{const v=' +
+          video +
+          ';const behind=Math.max(0,v.currentTime-3);' +
+          'Object.defineProperty(v,"readyState",{configurable:true,get:()=>4});' +
+          'Object.defineProperty(v,"currentTime",{configurable:true,get:()=>behind,set:()=>{}});return true;})()',
+      );
+      await run(byId('ready-wait') + '.focus()');
+      await until(
+        hasText('#readiness-message', 'Demo guest is lining up playback'),
+        'Host sees the updated timing reason',
+      );
+      assert.equal(await run('document.activeElement.id'), 'ready-wait');
+      assert.equal(await browser.evaluate(guest, hidden('#readiness-choice')), true);
+      await shot('readiness-timing');
+      await browser.viewport(host, 390, 844);
+      await shot('readiness-timing-phone');
+      await browser.viewport(host, 1360, 1000);
+      await run(pressId('ready-wait'));
+      await until(hidden('#readiness-choice'), 'Host extends the wait');
+      await browser.evaluate(
+        guest,
+        'delete ' +
+          video +
+          '.readyState;delete ' +
+          video +
+          '.currentTime;' +
+          video +
+          '.dispatchEvent(new Event("canplay"))',
       );
       await until('!' + video + '.paused', 'Host resumes after the guest buffers');
       await browser.until(guest, '!' + video + '.paused', 'Guest resumes together with host');

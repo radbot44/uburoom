@@ -240,6 +240,19 @@ test('timeout names blockers, latches despite late readiness, and only the host 
   await f.ready(f.h);
   f.advance(3000);
   assert.deepEqual(f.watch.view(f.room, f.host, f.h).readiness.blockers, ['Guest']);
+  await f.watch.prepareViewer(f.room, f.guest, f.g);
+  const blocker = { id: f.room.readinessId, streamVersion: f.room.viewers.get(f.g).streamVersion, reason: 'timing' };
+  const report = detail =>
+    f.watch.ready(f.room, f.guest, f.g, f.room.mediaVersion, false, f.room.readinessVersion, detail);
+  await report({ ...blocker, streamVersion: randomUUID() });
+  assert.notEqual(f.watch.view(f.room, f.host, f.h).readiness.reasons?.[0], 'timing');
+  await report({ ...blocker, id: randomUUID() });
+  assert.notEqual(f.watch.view(f.room, f.host, f.h).readiness.reasons?.[0], 'timing');
+  await report(blocker);
+  assert.deepEqual(f.watch.view(f.room, f.host, f.h).readiness.reasons, ['timing']);
+  assert.equal(f.watch.view(f.room, f.guest, f.g).readiness.reasons, undefined);
+  await report({ ...blocker, streamVersion: randomUUID(), reason: 'preparing' });
+  assert.deepEqual(f.watch.view(f.room, f.host, f.h).readiness.reasons, ['timing']);
   f.advance(7000);
   const id = f.room.readinessId;
   assert.equal(f.room.readinessTimedOut, true);

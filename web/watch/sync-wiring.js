@@ -149,7 +149,10 @@ export function mount(host, deps) {
           !store.stream.probing,
       );
     });
-  deps.every(1000, () => void reportObservation());
+  deps.every(1000, () => {
+    void reportObservation();
+    if (store.room.state?.readiness) void reportReadiness();
+  });
 
   async function reportReadiness() {
     if (!store.room.selected || !store.room.state?.mediaUrl) return;
@@ -159,22 +162,33 @@ export function mount(host, deps) {
     }
     const id = store.room.selected,
       version = store.room.state.mediaVersion,
-      readinessVersion = store.room.state.readinessVersion;
+      readinessVersion = store.room.state.readinessVersion,
+      readinessId = store.room.state.readiness?.id,
+      streamVersion = store.room.state.streamVersion;
     const target = expected();
     const { duration, ceiling } = uburoomTiming.nearEndBounds(store.room.state.state.duration, deps.video.duration);
     const readyTarget = Math.max(0, Math.min(target, ceiling));
+    const aligned =
+      !deps.video.seeking &&
+      Math.abs(deps.video.currentTime - readyTarget) <= (readyTarget === 0 ? 0.25 : readinessVersion ? 0.15 : 0.65);
     const bufferedReady =
       !store.room.state.state.paused ||
-      (!deps.video.seeking &&
-        Math.abs(deps.video.currentTime - readyTarget) <= (readyTarget === 0 ? 0.25 : readinessVersion ? 0.15 : 0.65) &&
-        uburoomPlayback.readinessBuffered(deps.video.buffered, readyTarget, duration));
-    const ready =
-      bufferedReady &&
-      deps.video.readyState >= 3 &&
-      deps.decodedFrames() > 0 &&
-      store.stream.readyVersion === version &&
-      !store.player.playbackError;
-    const key = id + ':' + version + ':' + readinessVersion + ':' + ready;
+      (aligned && uburoomPlayback.readinessBuffered(deps.video.buffered, readyTarget, duration));
+    const hasFrames = deps.video.readyState >= 3 && deps.decodedFrames() > 0;
+    const ready = bufferedReady && hasFrames && store.stream.readyVersion === version && !store.player.playbackError;
+    let blocker;
+    if (!ready && readinessId && streamVersion && !store.player.playbackError && !store.player.autoplayBlocked) {
+      const reason =
+        store.stream.probing || !hasFrames
+          ? 'preparing'
+          : !aligned
+            ? 'timing'
+            : !bufferedReady
+              ? 'preparing'
+              : undefined;
+      if (reason) blocker = { id: readinessId, streamVersion, reason };
+    }
+    const key = [id, version, readinessVersion, readinessId, streamVersion, ready, blocker?.reason].join(':');
     if (
       store.stream.readinessSent === key ||
       (!store.room.state.readiness && !store.room.state.waitingForReady && !ready)
@@ -182,7 +196,12 @@ export function mount(host, deps) {
       return;
     store.stream.readyPending = true;
     try {
-      await deps.roomLink.ready(id, { mediaVersion: version, ready, readinessVersion });
+      await deps.roomLink.ready(id, {
+        mediaVersion: version,
+        ready,
+        readinessVersion,
+        ...(blocker ? { blocker } : {}),
+      });
       store.stream.readinessSent = key;
     } catch {
     } finally {

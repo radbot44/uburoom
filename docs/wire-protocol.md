@@ -41,7 +41,7 @@ A request carries an `id` the client chooses (a non-negative integer, unique amo
 | `join` | `roomId`, `viewerId`, optional `preferences` | Both lanes of the tab's view (below), `timing` |
 | `leave` | `roomId`, `viewerId` | `{ ok: true }` |
 | `command` | `roomId`, `viewerId?`, `epoch`, `expiresAt`, `command: { action, args? }` | The command's outcome: `{ status: "applied" \| …, message? }` |
-| `ready` | `roomId`, `viewerId`, `mediaVersion`, `ready`, `readinessVersion` | `{ ok: true }` |
+| `ready` | `roomId`, `viewerId`, `mediaVersion`, `ready`, `readinessVersion`, optional `blocker` | `{ ok: true }` |
 | `observe` | `roomId`, `viewerId`, `observation: { … }` | The credit the observation earned |
 | `call` | `op`, `roomId?`, `args?` | Depends on `op` |
 | `resync` | none | `{ serverNow }`, after the lanes were sent again |
@@ -51,6 +51,8 @@ A request carries an `id` the client chooses (a non-negative integer, unique amo
 Each connection holds one joined room/viewer pair. A successful join to another room or viewer ID releases its preceding viewer. Failed or canceled joins remove their provisional viewer, preparation retries and readiness participation; an older abandoned join cannot detach a newer successful attachment of the same viewer. Successfully joined viewers retain the ordinary reconnect grace after an unexpected connection loss.
 
 `preferences` (all optional): `quality`, `delivery` (`auto` or `local`), `subtitles` (`browser`), `codecs`, `volume`, `muted`, `plexReporting`, `plexWatchState`, `subtitlePreference`, `subtitleMode`, `audioPreference`.
+
+A tab reporting `ready: false` may include `blocker: { id, streamVersion, reason }`. The reason is `preparing` or `timing`. The server accepts the detail from the tab's current socket for the active readiness ID and stream, and sends it to people who can choose how playback continues. The reason is advisory.
 
 A `command` is a room command from the shared command table ([`shared/room-protocol.mjs`](../shared/room-protocol.mjs)), fenced by the room `epoch` the sender last saw and an `expiresAt` in server time.
 

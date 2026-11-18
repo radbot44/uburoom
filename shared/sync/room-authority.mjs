@@ -284,7 +284,11 @@ export function invalidateEpoch(room, { createId = defaultCreateId } = {}) {
   return next;
 }
 
-export function recordViewerReadiness(room, { userId, viewerId, mediaVersion, ready, readinessVersion }, options = {}) {
+export function recordViewerReadiness(
+  room,
+  { userId, viewerId, mediaVersion, ready, readinessVersion, blocker = undefined },
+  options = {},
+) {
   const now = options.now ?? Date.now();
   const monoNow = options.monoNow ?? defaultMonoNow();
   settle(room, now, monoNow);
@@ -299,6 +303,16 @@ export function recordViewerReadiness(room, { userId, viewerId, mediaVersion, re
     throw new Error('Invalid readiness');
   }
   if (ready === true) viewer.readinessBypassedVersion = undefined;
+  if (ready || !blocker) viewer.readinessBlocker = undefined;
+  else if (
+    room.readinessId &&
+    blocker.id === room.readinessId &&
+    blocker.streamVersion &&
+    blocker.streamVersion === viewer.streamVersion &&
+    ['preparing', 'timing'].includes(blocker.reason)
+  ) {
+    viewer.readinessBlocker = { id: blocker.id, streamVersion: blocker.streamVersion, reason: blocker.reason };
+  }
   viewer.ready = ready;
   viewer.version = mediaVersion;
   viewer.at = now;
@@ -313,7 +327,8 @@ export function areInitialViewersReady(room) {
   return viewers.every(v => v.ready && v.version === room.mediaVersion);
 }
 
-export function snapshotReadiness(room, monoNow = defaultMonoNow()) {
+/** @param {any} room @param {number} [monoNow] @param {(viewer: any) => string | undefined} [reasonFor] */
+export function snapshotReadiness(room, monoNow = defaultMonoNow(), reasonFor) {
   const waitingForReady = Boolean(room.initialGate && !room.manualPaused && !room.readinessTimedOut);
   if (!room.initialGate || room.manualPaused) {
     return { waitingForReady, readiness: undefined };
@@ -325,10 +340,10 @@ export function snapshotReadiness(room, monoNow = defaultMonoNow()) {
       : buffering && room.initialViewers.has(room.bufferingViewerId)
         ? [room.bufferingViewerId]
         : [];
-  const blockers = blockingIds
+  const blockingViewers = blockingIds
     .map(id => room.viewers.get(id))
-    .filter(v => v && (!v.ready || v.version !== room.mediaVersion))
-    .map(v => v.name);
+    .filter(v => v && (!v.ready || v.version !== room.mediaVersion));
+  const reasons = reasonFor && blockingViewers.map(viewer => reasonFor(viewer) ?? null);
   const canStart = [...room.initialViewers].some(id => {
     const v = room.viewers.get(id);
     return Boolean(v?.ready && v.version === room.mediaVersion);
@@ -338,7 +353,8 @@ export function snapshotReadiness(room, monoNow = defaultMonoNow()) {
     readiness: {
       id: room.readinessId,
       timedOut: !!room.readinessTimedOut,
-      blockers,
+      blockers: blockingViewers.map(v => v.name),
+      ...(reasons?.some(Boolean) ? { reasons } : {}),
       canStart,
       ...(buffering ? { buffering: true } : {}),
     },
@@ -564,6 +580,7 @@ export const VIEWER_STATE_KEYS = Object.freeze([
   'joinedAt',
   'ready',
   'version',
+  'readinessBlocker',
   'readinessBypassedVersion',
   'observationEpoch',
   'streamVersion',
@@ -1124,7 +1141,10 @@ const EVENTS = {
   /** A tab's connection closed: a planned close leaves now, any other when presence lapses. */
   disconnect(room, { viewerId, planned }, ctx) {
     const viewer = room.viewers.get(viewerId);
-    if (viewer) viewer.at = planned ? ctx.now - PRESENCE_TIMEOUT_MS - 1 : ctx.now;
+    if (viewer) {
+      viewer.at = planned ? ctx.now - PRESENCE_TIMEOUT_MS - 1 : ctx.now;
+      viewer.readinessBlocker = undefined;
+    }
     if (room.bufferingViewerId && room.initialViewers.delete(viewerId)) room.revision++;
     review(room, ctx);
   },
@@ -1136,11 +1156,11 @@ const EVENTS = {
     if (rtts) viewer.rtts = rtts.map(sample => ({ ...sample }));
     return true;
   },
-  ready(room, { actor, viewerId, mediaVersion, ready, readinessVersion }, ctx) {
+  ready(room, { actor, viewerId, mediaVersion, ready, readinessVersion, blocker }, ctx) {
     try {
       recordViewerReadiness(
         room,
-        { userId: actor.userId, viewerId, mediaVersion, ready, readinessVersion },
+        { userId: actor.userId, viewerId, mediaVersion, ready, readinessVersion, blocker },
         { now: ctx.now, monoNow: ctx.monoNow },
       );
     } catch (error) {

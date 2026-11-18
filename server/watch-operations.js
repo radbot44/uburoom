@@ -530,7 +530,7 @@ function watchOperations({
   /**
    * `ready`: the tab reports whether it has buffered the room's current video.
    * @param {Context} context
-   * @param {{roomId: string, viewerId: string, mediaVersion?: string, ready?: boolean, readinessVersion?: any}} message
+   * @param {{roomId: string, viewerId: string, mediaVersion?: string, ready?: boolean, readinessVersion?: any, blocker?: unknown}} message
    */
   const ready = (context, message) =>
     inRoom(context, message.roomId, async (auth, room) => {
@@ -541,6 +541,9 @@ function watchOperations({
         message.mediaVersion,
         message.ready,
         message.readinessVersion,
+        context.controlSocket && room.viewers.get(message.viewerId)?.watchSocket === context.controlSocket
+          ? message.blocker
+          : undefined,
       );
       return result(200, { ok: true });
     });

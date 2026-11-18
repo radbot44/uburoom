@@ -261,7 +261,19 @@ module.exports = {
     if (!owner)
       for (const person of participants)
         for (const session of person.syncQuality?.sessions || []) delete session.health;
-    const { waitingForReady, readiness } = snapshotReadiness(timeline);
+    const canChooseReadiness = this.hub.authorize(actor, room, 'media.ready.start').ok;
+    const { waitingForReady, readiness } = snapshotReadiness(
+      timeline,
+      undefined,
+      canChooseReadiness
+        ? tab => {
+            const report = tab.readinessBlocker;
+            if (report?.id === timeline.readinessId && report?.streamVersion === tab.streamVersion)
+              return report?.reason;
+            if (tab.preparing || tab.media?.bootstrapFallback) return 'preparing';
+          }
+        : undefined,
+    );
     return {
       id: room.roomId,
       epoch: room.epoch,
