@@ -3,13 +3,11 @@
 // do not fit, the button alone names it. Past ten libraries the menu starts with a filter box.
 import * as uburoomControls from './watch-controls.js';
 import * as uburoomIcons from './icons.js';
+import { sectionIcon } from '../shared/library-cards.mjs';
+
+export { sectionIcon };
 
 const MENU_FILTER_AT = 10;
-
-/** A library's icon: a folder for local folders, so they stand apart from Plex and Jellyfin movie libraries. */
-export function sectionIcon(section) {
-  return section.source === 'folder' ? 'folder' : section.mediaType === 'show' ? 'tv' : 'film';
-}
 
 /**
  * @param {{doc: Document, parent: Element, menuParent: Element, header?: Element|null, headerRight?: Element|null,

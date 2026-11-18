@@ -4,7 +4,7 @@ const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { randomBytes } = require('node:crypto');
 const { PlaybackError, CHUNK, AUDIO_LEAD, AUDIO_MIME } = require('../../av1');
-const Playback = require('../../../web/playback-policy');
+const Playback = require('../../../shared/playback-policy.mjs');
 const Subtitles = require('../../subtitles');
 const SubtitleResources = require('../../subtitle-resources');
 

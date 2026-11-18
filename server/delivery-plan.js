@@ -1,6 +1,6 @@
 // @ts-check
 'use strict';
-const { localFormat } = require('../web/playback-policy');
+const { localFormat } = require('../shared/playback-policy.mjs');
 
 /**
  * @typedef {Object} DeliveryRequest

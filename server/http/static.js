@@ -4,7 +4,7 @@ const fsp = fs.promises;
 const path = require('node:path');
 const zlib = require('node:zlib');
 const { hash } = require('../core');
-const { spriteMarkup } = require('../../web/icons');
+const { spriteMarkup } = require('../../shared/icons-data.mjs');
 
 const ROOT = path.join(__dirname, '../..');
 const WEB = path.join(ROOT, 'web');

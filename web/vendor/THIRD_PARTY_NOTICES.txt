@@ -284,7 +284,7 @@ SOFTWARE.
 
 -----
 
-Tabler Icons (MIT) — selected outline SVGs in web/icons.js
+Tabler Icons (MIT) — selected outline SVGs in shared/icons-data.mjs
 https://github.com/tabler/tabler-icons
 
 MIT License

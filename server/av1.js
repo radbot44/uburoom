@@ -11,7 +11,7 @@ const { randomBytes, createHash } = require('node:crypto');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { QUALITIES, qualityDefinition, qualityId } = require('../shared/room-protocol.mjs');
-const Playback = require('../web/playback-policy');
+const Playback = require('../shared/playback-policy.mjs');
 const CHUNK = Playback.BUFFER.chunkSeconds;
 // Audio starts this early so Opus has settled before the chunk's first sample, and the
 // player keeps only the chunk's own window. 312 samples of encoder delay plus ten

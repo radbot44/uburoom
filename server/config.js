@@ -427,7 +427,7 @@ function normalizeConfig(
   if (!Number.isSafeInteger(maxJobs) || maxJobs < 1 || maxJobs > 32)
     throw new Error('transcoding.max_jobs must be an integer from 1 to 32');
   const outputs = list('transcoding.outputs') ?? ['av1', 'provider'];
-  const { localFormat } = require('../web/playback-policy');
+  const { localFormat } = require('../shared/playback-policy.mjs');
   if (outputs.some(output => output !== 'provider' && !localFormat(output)))
     throw new Error('transcoding.outputs supports av1, vp9, vp8 and provider');
   if (new Set(outputs).size !== outputs.length) throw new Error('transcoding.outputs must not repeat an output');

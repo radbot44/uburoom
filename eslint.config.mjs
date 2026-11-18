@@ -1,4 +1,4 @@
-// ESLint is limited to real defects: unused bindings and undeclared globals. Formatting belongs to Prettier.
+// ESLint checks defects and module boundaries. Formatting belongs to Prettier.
 import globals from 'globals';
 
 const defects = {
@@ -42,7 +42,24 @@ export default [
     rules: defects,
   },
   {
-    // Browser ES modules. Some are also required by the server and tests (Node's require of ES modules).
+    files: ['server/**/*.{js,mjs,cjs}'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: ['**/web', '**/web/**'] }],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'CallExpression[callee.name="require"][arguments.0.value=/(^|[\\x2f\\\\])web([\\x2f\\\\]|$)/]',
+          message: 'Move code used by both the server and browser to shared/.',
+        },
+        {
+          selector: 'ImportExpression[source.value=/(^|[\\x2f\\\\])web([\\x2f\\\\]|$)/]',
+          message: 'Move code used by both the server and browser to shared/.',
+        },
+      ],
+    },
+  },
+  {
+    // Browser ES modules. Cross-stack modules live in shared/.
     files: ['web/**/*.js'],
     ignores: classicWebFiles,
     languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...globals.browser, ...vendorGlobals } },

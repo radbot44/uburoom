@@ -1,7 +1,7 @@
 'use strict';
 
-const { svgMarkup, spriteMarkup } = require('../web/icons');
-const { homeCards, SYNC_CARD } = require('../web/watch-library');
+const { svgMarkup, spriteMarkup } = require('../shared/icons-data.mjs');
+const { homeCards, SYNC_CARD } = require('../shared/library-cards.mjs');
 
 const escapeText = value =>
   String(value ?? '').replace(

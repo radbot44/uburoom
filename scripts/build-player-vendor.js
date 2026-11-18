@@ -49,7 +49,7 @@ for (const name of [...new Set([...packages, 'hls.js', ...[...sdkLibraries.keys(
     `${scope}${name} ${pkg.version} (${pkg.license})\n${[...sourceNotices].join('\n')}\n${fs.readFileSync(license, 'utf8')}\n`,
   );
 }
-notices.push(`Tabler Icons (MIT) — selected outline SVGs in web/icons.js
+notices.push(`Tabler Icons (MIT) — selected outline SVGs in shared/icons-data.mjs
 https://github.com/tabler/tabler-icons
 
 MIT License

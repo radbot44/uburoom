@@ -3,7 +3,7 @@ const { randomBytes } = require('node:crypto');
 const { hash } = require('../../core');
 const { displayName } = require('../../accounts');
 const { clientAddress } = require('../../client-address');
-const Ubumfa = require('../../../web/ubumfa');
+const Ubumfa = require('../../../shared/ubumfa.mjs');
 const Policy = require('../../room-policy');
 
 /** Room invites: preview a room by code, join it, or enter it as a guest. */

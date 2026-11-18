@@ -6,7 +6,7 @@ const { randomUUID } = require('node:crypto');
 const Policy = require('./room-policy');
 const { validateAuto } = require('./room-queue');
 const { mediaIdentity } = require('../shared/room-protocol.mjs');
-const ubumfa = require('../web/ubumfa');
+const ubumfa = require('../shared/ubumfa.mjs');
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 
 function deduplicateSlug(db, baseSlug, currentRoomId) {

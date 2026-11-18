@@ -127,8 +127,8 @@ class Watch extends WatchParts {
     const slug =
       saved.slug ||
       (saved.name
-        ? require('../web/ubumfa').slugify(saved.name)
-        : require('../web/ubumfa').generateWord(6).toLowerCase());
+        ? require('../shared/ubumfa.mjs').slugify(saved.name)
+        : require('../shared/ubumfa.mjs').generateWord(6).toLowerCase());
     const room = {
       roomId: id,
       epoch: randomUUID(),
