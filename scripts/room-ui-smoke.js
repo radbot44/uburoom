@@ -32,6 +32,7 @@ const seekTo = seconds => choose('timeline', String(seconds));
 
 async function main() {
   const browsers = (process.argv.find(arg => arg.startsWith('--browsers='))?.slice(11) || 'chrome,firefox').split(',');
+  const playbackOnly = process.argv.includes('--playback-only');
   for (const name of browsers) {
     const { app, config, subjects } = await startFixtureServer();
     let browser, host, guest;
@@ -66,7 +67,7 @@ async function main() {
       );
       await run(pressId('create'));
       await until(isOpen('#room-dialog'), 'Create chooser');
-      await shot('chooser');
+      if (!playbackOnly) await shot('chooser');
       await run(
         choose('room-create-preset', 'play-pause') +
           ';' +
@@ -76,6 +77,11 @@ async function main() {
       );
       await until(text('#options-title') + '==="Friday room" && !' + isOpen('#room-dialog'), 'Named room');
       const id = roomIdByName('Friday room');
+      if (playbackOnly) {
+        await checkPlaybackReconnect(app.watch, id, run, until);
+        console.log(name + ': first decoded playback and same-tab reconnect passed');
+        continue;
+      }
       await run(pressId('room-settings-open'));
       await until(isOpen('#room-settings-dialog') + ' && ' + shown('#room-settings-content'), 'Lifecycle settings');
       assert.equal(await run(attr('#room-settings-nav [data-section=general]', 'aria-current')), 'true');
@@ -133,26 +139,7 @@ async function main() {
       await browser.viewport(host, 1360, 1000);
       await closeSettings();
 
-      // The sync test video is on Libraries home only in Admin mode.
-      await run(pressId('admin-mode'));
-      await until(
-        attr('#admin-mode', 'aria-checked') + '==="true" && ' + shown('.library-home-card[data-play=demo]'),
-        'Sync test video in Admin mode',
-      );
-      await run(press('.library-home-card[data-play=demo]'));
-      await until(text('#title') + '==="uburoom synchronization test"', 'Media load');
-      const playingVideo = '!' + byId('video') + '.paused && decodedFrames()>0 && ' + byId('video') + '.currentTime>';
-      await until(playingVideo + '0.25', 'First video frames play');
-      const lastPosition = await run(byId('video') + '.currentTime');
-      const [viewerId, viewer] = [...app.watch.rooms.get(id).viewers.entries()][0];
-      const originalSocket = viewer.watchSocket;
-      assert.ok(originalSocket, 'the playing tab is attached to a control socket');
-      originalSocket.terminate();
-      await waitFor(() => {
-        const socket = app.watch.rooms.get(id)?.viewers.get(viewerId)?.watchSocket;
-        return socket && socket !== originalSocket && socket.readyState === 1;
-      }, 'The same tab rejoins on a new socket');
-      await until('!reconnecting && ' + playingVideo + (lastPosition + 0.25), 'Video advances after reconnect');
+      await checkPlaybackReconnect(app.watch, id, run, until);
       await run(pressId('admin-mode'));
       await until(
         attr('#admin-mode', 'aria-checked') + '==="false" && !' + shown('.library-home-card[data-play=demo]'),
@@ -831,6 +818,30 @@ async function main() {
     }
   }
 }
+
+async function checkPlaybackReconnect(watch, id, run, until) {
+  // The sync test video is on Libraries home only in Admin mode.
+  await run(pressId('admin-mode'));
+  await until(
+    attr('#admin-mode', 'aria-checked') + '==="true" && ' + shown('.library-home-card[data-play=demo]'),
+    'Sync test video in Admin mode',
+  );
+  await run(press('.library-home-card[data-play=demo]'));
+  await until(text('#title') + '==="uburoom synchronization test"', 'Media load');
+  const playingVideo = '!' + byId('video') + '.paused && decodedFrames()>0 && ' + byId('video') + '.currentTime>';
+  await until(playingVideo + '0.25', 'First video frames play');
+  const lastPosition = await run(byId('video') + '.currentTime');
+  const [viewerId, viewer] = [...watch.rooms.get(id).viewers.entries()][0];
+  const originalSocket = viewer.watchSocket;
+  assert.ok(originalSocket, 'the playing tab is attached to a control socket');
+  originalSocket.terminate();
+  await waitFor(() => {
+    const socket = watch.rooms.get(id)?.viewers.get(viewerId)?.watchSocket;
+    return socket && socket !== originalSocket && socket.readyState === 1;
+  }, 'The same tab rejoins on a new socket');
+  await until('!reconnecting && ' + playingVideo + (lastPosition + 0.25), 'Video advances after reconnect');
+}
+
 // Wait until an element's vertical scroll position reads the same three times, 100 ms apart. Sampled from
 // the runner: Firefox throttles animation frames in this background tab, so a frame count never completes.
 async function settledScroll(browser, page, selector, timeout = 10000) {

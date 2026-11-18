@@ -38,6 +38,7 @@ Follow the [lean testing rules](../AGENTS.md#testing). Extend existing meaningfu
 | Decoded video/audio baseline | `npm run test:playback` |
 | UI smoke before a deploy (all four runners below, Chrome and Firefox) | `npm run smoke` (`node scripts/smoke.js`; `-- --browsers=chrome` for one browser, `-- --sequential` for one runner at a time with live output) |
 | Room lifecycle/permissions | `node scripts/room-ui-smoke.js --browsers=chrome,firefox` |
+| Quick first playback and same-tab reconnect in Chrome and Firefox | `node scripts/room-ui-smoke.js --playback-only` |
 | Queue / Media controls | `node scripts/queue-controls-smoke.js` / `node scripts/media-controls-smoke.js` |
 | Library browsing | `node scripts/plex-library-smoke.js` (Chrome and Firefox; `--browsers=` to choose) |
 | Scheduled controls | `node scripts/sync-controls-smoke.js --browser=chrome` |
