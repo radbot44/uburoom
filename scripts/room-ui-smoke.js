@@ -5,6 +5,7 @@
  *   refreshState()   - re-read room state after the runner changes server-side presence
  *   queueUI.add()    - queue an item without a library entry for the synchronization video
  *   execute()        - send a seek the viewer's disabled timeline cannot, to prove the server refuses it
+ *   decodedFrames()  - verify the player has actually decoded video on startup and after reconnect
  */
 'use strict';
 const { EVIDENCE } = require('./lib/evidence');
@@ -140,7 +141,18 @@ async function main() {
       );
       await run(press('.library-home-card[data-play=demo]'));
       await until(text('#title') + '==="uburoom synchronization test"', 'Media load');
-      await until(attr('#player-play', 'aria-label') + '==="Pause"', 'Media plays');
+      const playingVideo = '!' + byId('video') + '.paused && decodedFrames()>0 && ' + byId('video') + '.currentTime>';
+      await until(playingVideo + '0.25', 'First video frames play');
+      const lastPosition = await run(byId('video') + '.currentTime');
+      const [viewerId, viewer] = [...app.watch.rooms.get(id).viewers.entries()][0];
+      const originalSocket = viewer.watchSocket;
+      assert.ok(originalSocket, 'the playing tab is attached to a control socket');
+      originalSocket.terminate();
+      await waitFor(() => {
+        const socket = app.watch.rooms.get(id)?.viewers.get(viewerId)?.watchSocket;
+        return socket && socket !== originalSocket && socket.readyState === 1;
+      }, 'The same tab rejoins on a new socket');
+      await until('!reconnecting && ' + playingVideo + (lastPosition + 0.25), 'Video advances after reconnect');
       await run(pressId('admin-mode'));
       await until(
         attr('#admin-mode', 'aria-checked') + '==="false" && !' + shown('.library-home-card[data-play=demo]'),
