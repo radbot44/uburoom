@@ -419,6 +419,25 @@ test('single room fixes creator, assigns configured hosts and requires explicit 
     ).status,
     403,
   );
+  const { events, roomState } = f.app.watch;
+  const { inviteCode } = roomState.store.get(id);
+  assert.ok(inviteCode, 'the room has an invite code before reset');
+  const now = Date.now();
+  const watchNight = {
+    id: randomUUID(),
+    roomId: id,
+    creatorId: owner,
+    title: 'Scheduled watch night',
+    description: '',
+    start: new Date(now + 60 * 60 * 1000).toISOString(),
+    end: new Date(now + 2 * 60 * 60 * 1000).toISOString(),
+    timeZone: 'UTC',
+    state: 'scheduled',
+    createdAt: now,
+    updatedAt: now,
+    discord: null,
+  };
+  await events.save(watchNight);
   const result = await browser.post('/api/watch/rooms/' + id + '/settings', {
     revision: details.revision,
     change: { action: 'reset' },
@@ -427,6 +446,8 @@ test('single room fixes creator, assigns configured hosts and requires explicit 
   assert.equal(result.body.creator.id, owner);
   assert.equal(result.body.id, id);
   assert.equal(result.body.permissions.viewer.seek, false, 'reset restores server permission defaults');
+  assert.equal(roomState.store.get(id).inviteCode, inviteCode, 'reset preserves the room invite code');
+  assert.deepEqual(events.get(watchNight.id), watchNight, 'reset preserves the scheduled watch night');
   assert.equal((await browser.request('/api/watch/rooms')).body.rooms[0].id, id);
 });
 
