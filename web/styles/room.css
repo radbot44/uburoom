@@ -79,7 +79,7 @@
     align-items: center;
     gap: var(--space-6);
   }
-  :is(#lobby-reopen, #lobby-schedule, #lobby-create) > svg,
+  :is(#lobby-reopen, #lobby-schedule, #lobby-create, #room-chooser-new, #room-create-back) > svg,
   .room-actions button:not(.icon-button) > svg,
   #room-bar button:not(.icon-button) > svg,
   #close-room > svg,
