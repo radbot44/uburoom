@@ -246,7 +246,7 @@ async function main() {
           const stream = await evaluate(host, 'state.streamVersion');
           await evaluate(
             host,
-            'document.getElementById("tracks-open").click();if(!document.getElementById("tracks-dialog").open)document.getElementById("settings-more").click();document.getElementById("subtitle-track").value="10190";document.getElementById("subtitle-track").dispatchEvent(new Event("change",{bubbles:true}));true',
+            'document.getElementById("tracks-open").click();if(!document.getElementById("tracks-dialog").open)document.getElementById("settings-more").click();document.querySelector("[data-player-section=subtitles]").click();document.getElementById("subtitle-track").value="10190";document.getElementById("subtitle-track").dispatchEvent(new Event("change",{bubbles:true}));true',
           );
           await until(
             host,
@@ -343,7 +343,7 @@ async function main() {
           assert.equal(await evaluate(guest, '!state.tracks.subtitleId'), true, 'guest subtitles stay off');
           await evaluate(
             host,
-            'document.getElementById("tracks-open").click();if(!document.getElementById("tracks-dialog").open)document.getElementById("settings-more").click();true',
+            'document.getElementById("tracks-open").click();if(!document.getElementById("tracks-dialog").open)document.getElementById("settings-more").click();document.querySelector("[data-player-section=subtitles]").click();true',
           );
           assert.equal(await evaluate(host, 'document.getElementById("subtitle-offset").disabled'), true);
           assert.equal(
@@ -384,7 +384,7 @@ async function main() {
           await browser.screenshot(host, path.join(output, name + '-theater.png'));
           await evaluate(
             host,
-            'document.getElementById("tracks-open").click();if(!document.getElementById("tracks-dialog").open)document.getElementById("settings-more").click();true',
+            'document.getElementById("tracks-open").click();if(!document.getElementById("tracks-dialog").open)document.getElementById("settings-more").click();document.querySelector("[data-player-section=subtitles]").click();true',
           );
           await browser.viewport(host, 390, 1000);
           await until(host, 'captions.controlsHeight>0', 'Phone caption clearance');

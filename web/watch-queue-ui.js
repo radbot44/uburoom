@@ -346,8 +346,8 @@ function mount(
     bulkFilter.focus();
   }
 
-  const autoDialog = node('div', doc.getElementById('room-playback-controls'), undefined, 'queue-settings');
-  const settingsAutoplayLabel = node('label', autoDialog, undefined, 'watch-switch-label');
+  const playbackControls = doc.getElementById('room-playback-controls');
+  const settingsAutoplayLabel = node('label', playbackControls, undefined, 'watch-switch-label');
   const settingsAutoplay = node('input', settingsAutoplayLabel);
   settingsAutoplay.type = 'checkbox';
   settingsAutoplay.id = 'room-autoplay';
@@ -367,11 +367,11 @@ function mount(
       settingsAutoplay.disabled = !getSettingsState()?.capabilities?.autoplay;
     }
   });
+  const autoDialog = node('section', playbackControls, undefined, 'queue-settings settings-panel');
   autoDialog.id = 'queue-auto-dialog';
   autoDialog.setAttribute('aria-labelledby', 'queue-auto-title');
   node('h3', autoDialog, 'Auto-queue').id = 'queue-auto-title';
-  const autoModeLabel = node('label', autoDialog, 'Mode');
-  const autoMode = node('select', autoModeLabel);
+  const autoMode = node('select', autoDialog);
   autoMode.id = 'queue-auto-mode';
   autoMode.hidden = true;
   for (const [value, label] of [
@@ -387,7 +387,7 @@ function mount(
   autoModeGroup.id = 'queue-auto-mode-group';
   autoModeGroup.classList.add('queue-auto-mode-group');
   autoModeGroup.setAttribute('role', 'group');
-  autoModeGroup.setAttribute('aria-label', 'Mode');
+  autoModeGroup.setAttribute('aria-labelledby', 'queue-auto-title');
   const modeButtons = new Map();
   for (const [value, label] of [
     ['off', 'Off'],
@@ -468,14 +468,13 @@ function mount(
   }
   function chooseSource(scope, title) {
     ++autoTicket;
-    hasAutoDraft = true;
     draftScope = scope;
     sourceNames.set(sourceKey(scope), title);
     autoSource.textContent = title;
     if (scope.type !== 'show' && autoMode.value === 'following') autoMode.value = 'random';
     sourcePicker.hidden = true;
     sourceChange.focus();
-    updateAutoFields();
+    autoDraftChanged();
   }
   async function browseSources(query = {}, title = 'Libraries') {
     const ticket = ++sourceTicket,
@@ -543,6 +542,7 @@ function mount(
     }
   }
   function updateAutoFields() {
+    autoActions.hidden = !hasAutoDraft;
     const hideSource = autoMode.value === 'off' || autoMode.value === 'continue';
     autoSource.hidden = sourceChange.hidden = hideSource;
     autoSpecialLabel.hidden = hideSource || draftScope.type !== 'show';
@@ -550,10 +550,18 @@ function mount(
     if (hideSource) sourcePicker.hidden = true;
     syncAutoModeButtons();
   }
-  autoMode.addEventListener('change', () => {
-    hasAutoDraft = true;
+  function autoDraftChanged() {
+    const saved = getSettingsState()?.queueSummary?.autoQueue;
+    const usesSource = ['following', 'random'].includes(autoMode.value);
+    hasAutoDraft =
+      autoMode.value !== (saved?.mode || 'off') ||
+      (usesSource &&
+        (draftScope.type !== (saved?.scope?.type || 'show') ||
+          draftScope.id !== saved?.scope?.id ||
+          (draftScope.type === 'show' && autoSpecials.checked !== !!saved?.includeSpecials)));
     updateAutoFields();
-  });
+  }
+  autoMode.addEventListener('change', autoDraftChanged);
   const autoSpecialLabel = node('label', autoDialog, undefined, 'watch-switch-label');
   const autoSpecials = node('input', autoSpecialLabel);
   autoSpecials.type = 'checkbox';
@@ -561,19 +569,19 @@ function mount(
   autoSpecials.className = 'queue-auto-specials watch-switch';
   autoSpecials.setAttribute('role', 'switch');
   autoSpecialLabel.append(doc.createTextNode('Include Specials (Season 0)'));
-  autoSpecials.addEventListener('change', () => {
-    hasAutoDraft = true;
-  });
+  autoSpecials.addEventListener('change', autoDraftChanged);
   const autoNotice = node('p', autoDialog, '', 'hint');
   autoNotice.setAttribute('role', 'status');
   const autoActions = node('div', autoDialog, undefined, 'dialog-actions queue-settings-footer');
-  const autoCancel = button(autoActions, 'Reset changes', undefined, () => {
+  const autoCancel = button(autoActions, 'Discard changes', undefined, () => {
     hasAutoDraft = false;
     void openAuto();
+    modeButtons.get(autoMode.value)?.focus();
   });
   const autoSave = button(autoActions, 'Save auto-queue', undefined, undefined, false, 'primary');
   autoSave.id = 'queue-auto-save';
-  const autoReset = button(autoActions, 'Reset auto-queue progress', undefined, async () => {
+  const progressRow = node('div', autoDialog, undefined, 'queue-progress-row');
+  const autoReset = button(progressRow, 'Reset auto-queue progress', undefined, async () => {
     if (
       !(await confirm(
         'Reset auto-queue progress? Episode progress and repeat prevention will restart. Upcoming items and visible history stay unchanged.',
@@ -618,7 +626,7 @@ function mount(
     if (source?.title) sourceNames.set(sourceKey(draftScope, state), source.title);
     void sourceName(draftScope, state, ticket);
     sourcePicker.hidden = true;
-    autoReset.hidden = !!state.draft;
+    progressRow.hidden = autoReset.hidden = !!state.draft;
     autoReset.disabled = !state.capabilities?.editQueue;
     setAutoNotice('');
     autoSave.disabled = autoMode.disabled = autoSpecials.disabled = !state.capabilities?.editQueue;
@@ -650,6 +658,7 @@ function mount(
           },
         });
         hasAutoDraft = false;
+        updateAutoFields();
         setAutoNotice('Saved', true);
         await changed();
       } catch (error) {
@@ -662,6 +671,8 @@ function mount(
           autoSpecials.disabled =
           sourceChange.disabled =
             !getSettingsState()?.capabilities?.editQueue;
+        syncAutoModeButtons();
+        if (!hasAutoDraft && [doc.body, autoSave].includes(doc.activeElement)) modeButtons.get(autoMode.value)?.focus();
       }
     };
   }

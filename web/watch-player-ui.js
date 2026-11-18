@@ -180,26 +180,30 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     if (focus) cog.focus();
     layoutCaptions();
   }
+  const sectionNav = dialog.querySelector('.player-settings-nav');
+  function selectSettingsPage(id) {
+    for (const button of sectionNav.querySelectorAll('button')) {
+      const page = $(button.getAttribute('aria-controls'));
+      page.hidden = page.id !== id;
+      button.setAttribute('aria-current', String(!page.hidden));
+    }
+    dialog.querySelector('.player-settings-body').scrollTop = 0;
+  }
+  sectionNav.addEventListener('click', event => {
+    const button = event.target.closest('button');
+    if (button) selectSettingsPage(button.getAttribute('aria-controls'));
+  });
   function openDialog(focusId) {
     closeSettings();
     beforeSettings();
+    const requested = typeof focusId === 'string' ? $(focusId) : undefined;
+    selectSettingsPage(requested?.closest('.player-settings-grid')?.id || 'player-page-playback');
     uburoomDialogs.open(dialog, cog);
     stage.classList.add('settings-open');
     cog.setAttribute('aria-expanded', 'true');
-    const requested = typeof focusId === 'string' ? $(focusId) : undefined;
-    // Outside a room only the Notifications switch is shown.
-    const focusTarget = document.body.classList.contains('outside-room')
-      ? $('player-extras-notifications')
-      : requested && !requested.disabled
-        ? requested
-        : !$('quality').disabled
-          ? $('quality')
-          : !$('sync-correction').disabled
-            ? $('sync-correction')
-            : $('tracks-close');
-    focusTarget?.focus({ preventScroll: true });
-    if (requested && focusTarget === requested) focusTarget.scrollIntoView?.({ block: 'nearest' });
-    else dialog.scrollTop = 0;
+    const target = requested && !requested.disabled ? requested : $('tracks-close');
+    target.focus({ preventScroll: true });
+    if (requested) requested.scrollIntoView({ block: 'nearest' });
     showChrome();
   }
   function openSettings() {
@@ -592,7 +596,7 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
   const phone = matchMedia('(max-width: 600px)');
   const extras = document.createElement('section');
   extras.id = 'player-extras';
-  extras.className = 'settings-group player-extras';
+  extras.className = 'settings-group settings-panel player-extras';
   const extrasTitle = document.createElement('h3');
   extrasTitle.textContent = 'Player';
   const notifyLabel = document.createElement('label');
@@ -608,7 +612,7 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
   pipEntry.id = 'player-extras-pip';
   pipEntry.className = 'player-extras-pip quiet';
   extras.append(extrasTitle, notifyLabel, pipEntry);
-  dialog.querySelector('.player-settings-column')?.prepend(extras);
+  $('player-page-playback').prepend(extras);
   function mirrorExtras() {
     const bell = $('notifications-toggle'),
       pip = $('pip');

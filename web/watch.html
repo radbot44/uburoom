@@ -703,35 +703,62 @@
                     </svg>
                   </button>
                 </header>
-                <p class="hint">These choices apply only to your player.</p>
-                <div class="player-settings-grid">
-                  <div class="player-settings-column">
-                    <section class="settings-group">
-                      <h3>Playback</h3>
-                      <p id="quality-notice" class="quality-notice hint" role="status"></p>
-                      <label for="quality">Quality</label
-                      ><select id="quality" class="quality" aria-label="Playback quality">
-                        <option value="direct">Original</option>
-                        <option value="1080p20">1080p · 20 Mbps</option>
-                        <option value="1080p12">1080p · 12 Mbps</option>
-                        <option value="1080p8">1080p · 8 Mbps</option>
-                        <option value="720p4">720p · 4 Mbps</option>
-                        <option value="720p2">720p · 2 Mbps</option>
-                      </select>
-                      <p id="quality-detail" class="hint" hidden></p>
-                      <label for="hdr-mode">HDR</label
-                      ><select id="hdr-mode" hidden>
-                        <option value="auto">Auto</option>
-                        <option value="hdr">HDR</option>
-                        <option value="sdr">SDR</option>
-                      </select>
-                      <div id="hdr-mode-group" class="button-group watch-segmented" role="group" aria-label="HDR">
-                        <button type="button" class="group-button" data-value="auto" aria-pressed="true">Auto</button
-                        ><button type="button" class="group-button" data-value="hdr" aria-pressed="false">HDR</button
-                        ><button type="button" class="group-button" data-value="sdr" aria-pressed="false">SDR</button>
+                <nav class="player-settings-nav" aria-label="Player settings sections">
+                  <button
+                    type="button"
+                    data-player-section="playback"
+                    aria-controls="player-page-playback"
+                    aria-current="true"
+                  >
+                    Playback</button
+                  ><button
+                    type="button"
+                    data-player-section="subtitles"
+                    aria-controls="player-page-subtitles"
+                    aria-current="false"
+                  >
+                    Subtitles</button
+                  ><button
+                    type="button"
+                    data-player-section="media"
+                    aria-controls="player-page-media"
+                    aria-current="false"
+                  >
+                    Media information
+                  </button>
+                </nav>
+                <div class="player-settings-body">
+                  <div class="player-settings-grid" id="player-page-playback">
+                    <section class="settings-panel settings-group">
+                      <h3>Video</h3>
+                      <div class="settings-field">
+                        <p id="quality-notice" class="quality-notice hint" role="status"></p>
+                        <label for="quality">Quality</label
+                        ><select id="quality" class="quality" aria-label="Playback quality">
+                          <option value="direct">Original</option>
+                          <option value="1080p20">1080p · 20 Mbps</option>
+                          <option value="1080p12">1080p · 12 Mbps</option>
+                          <option value="1080p8">1080p · 8 Mbps</option>
+                          <option value="720p4">720p · 4 Mbps</option>
+                          <option value="720p2">720p · 2 Mbps</option>
+                        </select>
+                        <p id="quality-detail" class="hint" hidden></p>
                       </div>
-                      <p id="hdr-mode-hint" class="hint"></p>
-                      <div class="personal-sync">
+                      <div class="settings-field">
+                        <label for="hdr-mode">HDR</label
+                        ><select id="hdr-mode" hidden>
+                          <option value="auto">Auto</option>
+                          <option value="hdr">HDR</option>
+                          <option value="sdr">SDR</option>
+                        </select>
+                        <div id="hdr-mode-group" class="button-group watch-segmented" role="group" aria-label="HDR">
+                          <button type="button" class="group-button" data-value="auto" aria-pressed="true">Auto</button
+                          ><button type="button" class="group-button" data-value="hdr" aria-pressed="false">HDR</button
+                          ><button type="button" class="group-button" data-value="sdr" aria-pressed="false">SDR</button>
+                        </div>
+                        <p id="hdr-mode-hint" class="hint"></p>
+                      </div>
+                      <div class="personal-sync settings-field">
                         <label for="sync-correction">Sync correction</label
                         ><select id="sync-correction" aria-describedby="sync-correction-hint">
                           <option value="speed">Speed adjustments</option>
@@ -739,6 +766,41 @@
                         </select>
                         <p id="sync-correction-hint" class="hint"></p>
                       </div>
+                    </section>
+                    <section class="settings-panel settings-group">
+                      <h3>Audio</h3>
+                      <div class="settings-field">
+                        <label for="audio-track">Audio track</label
+                        ><select id="audio-track"></select>
+                        <p id="audio-track-name" class="hint" hidden></p>
+                        <p id="audio-track-status" class="audio-track-status hint"></p>
+                      </div>
+                      <div class="settings-field">
+                        <label for="audio-mode">Audio mode</label
+                        ><select id="audio-mode" hidden>
+                          <option value="normal" data-caption="Original dynamic range">Normal</option>
+                          <option value="dialogue" data-caption="Boosts speech clarity">Dialogue</option>
+                          <option value="night" data-caption="Levels peaks for quiet listening">Night</option>
+                        </select>
+                        <div
+                          id="audio-mode-group"
+                          class="button-group watch-segmented"
+                          role="group"
+                          aria-label="Audio mode"
+                        >
+                          <button type="button" class="group-button" data-value="normal" aria-pressed="true">
+                            Normal</button
+                          ><button type="button" class="group-button" data-value="dialogue" aria-pressed="false">
+                            Dialogue</button
+                          ><button type="button" class="group-button" data-value="night" aria-pressed="false">
+                            Night
+                          </button>
+                        </div>
+                        <p id="audio-mode-hint" class="hint">Original dynamic range and audio balance.</p>
+                      </div>
+                    </section>
+                    <section class="settings-panel settings-group player-activity">
+                      <h3>Activity sharing</h3>
                       <div id="plex-reporting-settings" hidden>
                         <label class="watch-switch-label"
                           ><input
@@ -774,211 +836,205 @@
                         </p>
                       </div>
                     </section>
-                    <section class="settings-group">
-                      <h3>Audio</h3>
-                      <label for="audio-track">Audio track</label
-                      ><select id="audio-track"></select>
-                      <p id="audio-track-name" class="hint" hidden></p>
-                      <p id="audio-track-status" class="audio-track-status hint"></p>
-                      <label for="audio-mode">Audio mode</label
-                      ><select id="audio-mode" hidden>
-                        <option value="normal" data-caption="Original dynamic range">Normal</option>
-                        <option value="dialogue" data-caption="Boosts speech clarity">Dialogue</option>
-                        <option value="night" data-caption="Levels peaks for quiet listening">Night</option>
-                      </select>
-                      <div
-                        id="audio-mode-group"
-                        class="button-group watch-segmented"
-                        role="group"
-                        aria-label="Audio mode"
-                      >
-                        <button type="button" class="group-button" data-value="normal" aria-pressed="true">
-                          Normal</button
-                        ><button type="button" class="group-button" data-value="dialogue" aria-pressed="false">
-                          Dialogue</button
-                        ><button type="button" class="group-button" data-value="night" aria-pressed="false">
-                          Night
-                        </button>
-                      </div>
-                      <p id="audio-mode-hint" class="hint">Original dynamic range and audio balance.</p>
-                    </section>
                   </div>
-                  <div class="player-settings-column">
-                    <section class="settings-group">
-                      <h3>Subtitles</h3>
-                      <label for="subtitle-track">Subtitle track</label
-                      ><select id="subtitle-track"></select>
-                      <p id="subtitle-track-name" class="hint" hidden></p>
-                      <label for="subtitle-mode">Rendering</label
-                      ><select id="subtitle-mode">
-                        <option value="auto">Automatic</option>
-                        <option value="burn">Burn-in</option></select
-                      ><label for="subtitle-offset">Subtitle delay (seconds)</label>
-                      <div class="subtitle-offset-row">
-                        <button
-                          id="subtitle-offset-back"
-                          class="quiet subtitle-offset-nudge"
-                          type="button"
-                          aria-label="Show subtitles 0.5 seconds earlier"
-                        >
-                          −0.5 s</button
-                        ><input
-                          id="subtitle-offset"
-                          class="subtitle-offset"
-                          aria-describedby="subtitle-delay-hint"
-                          type="number"
-                          min="-30"
-                          max="30"
-                          step="0.1"
-                          value="0"
-                        /><button
-                          id="subtitle-offset-forward"
-                          class="quiet subtitle-offset-nudge"
-                          type="button"
-                          aria-label="Show subtitles 0.5 seconds later"
-                        >
-                          +0.5 s</button
-                        ><button
-                          id="subtitle-offset-reset"
-                          class="quiet subtitle-offset-reset"
-                          type="button"
-                          aria-label="Reset subtitle delay"
-                        >
-                          Reset
-                        </button>
+                  <div class="player-settings-grid" id="player-page-subtitles" hidden>
+                    <section class="settings-panel settings-group">
+                      <h3>Track and timing</h3>
+                      <div class="settings-field">
+                        <label for="subtitle-track">Subtitle track</label
+                        ><select id="subtitle-track"></select>
+                        <p id="subtitle-track-name" class="hint" hidden></p>
                       </div>
-                      <p id="subtitle-delay-hint" class="hint">Select subtitles to adjust their timing.</p>
-                      <label for="subtitle-color-preset">Text color</label>
-                      <div class="subtitle-color-row">
-                        <select id="subtitle-color-preset" aria-label="Subtitle text color preset">
-                          <option value="#ffffff">White</option>
-                          <option value="#ffe600">Yellow</option>
-                          <option value="#38bdf8">Cyan</option>
-                          <option value="#4ade80">Green</option>
-                          <option value="custom">Custom…</option>
+                      <div class="settings-field">
+                        <label for="subtitle-mode">Rendering</label
+                        ><select id="subtitle-mode">
+                          <option value="auto">Automatic</option>
+                          <option value="burn">Burn-in</option>
                         </select>
-                        <div class="subtitle-color-custom">
-                          <input
-                            id="subtitle-color-hex"
-                            class="subtitle-color-hex hex-input"
-                            type="text"
-                            maxlength="7"
-                            value="#ffffff"
-                            placeholder="#ffffff"
-                            aria-label="Subtitle hex color"
-                            spellcheck="false"
-                            autocomplete="off"
-                          /><input
-                            id="subtitle-color-picker"
-                            class="subtitle-color-picker color-swatch-input"
-                            type="color"
-                            value="#ffffff"
-                            title="Pick color"
-                            aria-label="Pick color"
-                          />
+                      </div>
+                      <div class="settings-field">
+                        <label for="subtitle-offset">Subtitle delay (seconds)</label>
+                        <div class="subtitle-offset-row">
+                          <button
+                            id="subtitle-offset-back"
+                            class="quiet subtitle-offset-nudge"
+                            type="button"
+                            aria-label="Show subtitles 0.5 seconds earlier"
+                          >
+                            −0.5 s</button
+                          ><input
+                            id="subtitle-offset"
+                            class="subtitle-offset"
+                            aria-describedby="subtitle-delay-hint"
+                            type="number"
+                            min="-30"
+                            max="30"
+                            step="0.1"
+                            value="0"
+                          /><button
+                            id="subtitle-offset-forward"
+                            class="quiet subtitle-offset-nudge"
+                            type="button"
+                            aria-label="Show subtitles 0.5 seconds later"
+                          >
+                            +0.5 s</button
+                          ><button
+                            id="subtitle-offset-reset"
+                            class="quiet subtitle-offset-reset"
+                            type="button"
+                            aria-label="Reset subtitle delay"
+                          >
+                            Reset
+                          </button>
                         </div>
-                      </div>
-                      <label for="subtitle-size">Text size</label
-                      ><select id="subtitle-size" hidden>
-                        <option value="small">Small</option>
-                        <option value="medium">Medium</option>
-                        <option value="large">Large</option>
-                      </select>
-                      <div
-                        id="subtitle-size-group"
-                        class="button-group watch-segmented"
-                        role="group"
-                        aria-label="Text size"
-                      >
-                        <button type="button" class="group-button" data-value="small" aria-pressed="true">Small</button
-                        ><button type="button" class="group-button" data-value="medium" aria-pressed="false">
-                          Medium</button
-                        ><button type="button" class="group-button" data-value="large" aria-pressed="false">
-                          Large
-                        </button>
-                      </div>
-                      <label for="subtitle-position">Text position</label
-                      ><select id="subtitle-position" hidden>
-                        <option value="video">On video</option>
-                        <option value="player">On player</option>
-                      </select>
-                      <div
-                        id="subtitle-position-group"
-                        class="button-group watch-segmented"
-                        role="group"
-                        aria-label="Text position"
-                      >
-                        <button type="button" class="group-button" data-value="video" aria-pressed="true">
-                          On video</button
-                        ><button type="button" class="group-button" data-value="player" aria-pressed="false">
-                          On player
-                        </button>
-                      </div>
-                      <label for="subtitle-bg">Background style</label
-                      ><select id="subtitle-bg" hidden>
-                        <option value="shadow">Shadow</option>
-                        <option value="background">Background</option>
-                        <option value="off">Off</option>
-                      </select>
-                      <div
-                        id="subtitle-bg-group"
-                        class="button-group watch-segmented"
-                        role="group"
-                        aria-label="Background style"
-                      >
-                        <button type="button" class="group-button" data-value="shadow" aria-pressed="true">
-                          Shadow</button
-                        ><button type="button" class="group-button" data-value="background" aria-pressed="false">
-                          Background</button
-                        ><button type="button" class="group-button" data-value="off" aria-pressed="false">Off</button>
-                      </div>
-                      <label for="subtitle-brightness">Subtitle brightness</label>
-                      <div class="subtitle-slider-row">
-                        <input
-                          id="subtitle-brightness"
-                          type="range"
-                          min="20"
-                          max="100"
-                          step="5"
-                          value="100"
-                          aria-label="Subtitle brightness"
-                        /><span id="subtitle-brightness-value" class="subtitle-brightness-value slider-value"
-                          >100%</span
-                        >
+                        <p id="subtitle-delay-hint" class="hint">Select subtitles to adjust their timing.</p>
                       </div>
                       <p id="track-status" role="status" class="track-status hint"></p>
                       <button id="subtitle-retry" class="quiet" hidden>Retry subtitles</button>
                     </section>
+                    <section class="settings-panel settings-group">
+                      <h3>Appearance</h3>
+                      <div class="settings-field">
+                        <label for="subtitle-color-preset">Text color</label>
+                        <div class="subtitle-color-row">
+                          <select id="subtitle-color-preset" aria-label="Subtitle text color preset">
+                            <option value="#ffffff">White</option>
+                            <option value="#ffe600">Yellow</option>
+                            <option value="#38bdf8">Cyan</option>
+                            <option value="#4ade80">Green</option>
+                            <option value="custom">Custom…</option>
+                          </select>
+                          <div class="subtitle-color-custom">
+                            <input
+                              id="subtitle-color-hex"
+                              class="subtitle-color-hex hex-input"
+                              type="text"
+                              maxlength="7"
+                              value="#ffffff"
+                              placeholder="#ffffff"
+                              aria-label="Subtitle hex color"
+                              spellcheck="false"
+                              autocomplete="off"
+                            /><input
+                              id="subtitle-color-picker"
+                              class="subtitle-color-picker color-swatch-input"
+                              type="color"
+                              value="#ffffff"
+                              title="Pick color"
+                              aria-label="Pick color"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <div class="settings-field">
+                        <label for="subtitle-size">Text size</label
+                        ><select id="subtitle-size" hidden>
+                          <option value="small">Small</option>
+                          <option value="medium">Medium</option>
+                          <option value="large">Large</option>
+                        </select>
+                        <div
+                          id="subtitle-size-group"
+                          class="button-group watch-segmented"
+                          role="group"
+                          aria-label="Text size"
+                        >
+                          <button type="button" class="group-button" data-value="small" aria-pressed="true">
+                            Small</button
+                          ><button type="button" class="group-button" data-value="medium" aria-pressed="false">
+                            Medium</button
+                          ><button type="button" class="group-button" data-value="large" aria-pressed="false">
+                            Large
+                          </button>
+                        </div>
+                      </div>
+                      <div class="settings-field">
+                        <label for="subtitle-position">Text position</label
+                        ><select id="subtitle-position" hidden>
+                          <option value="video">On video</option>
+                          <option value="player">On player</option>
+                        </select>
+                        <div
+                          id="subtitle-position-group"
+                          class="button-group watch-segmented"
+                          role="group"
+                          aria-label="Text position"
+                        >
+                          <button type="button" class="group-button" data-value="video" aria-pressed="true">
+                            On video</button
+                          ><button type="button" class="group-button" data-value="player" aria-pressed="false">
+                            On player
+                          </button>
+                        </div>
+                      </div>
+                      <div class="settings-field">
+                        <label for="subtitle-bg">Background style</label
+                        ><select id="subtitle-bg" hidden>
+                          <option value="shadow">Shadow</option>
+                          <option value="background">Background</option>
+                          <option value="off">Off</option>
+                        </select>
+                        <div
+                          id="subtitle-bg-group"
+                          class="button-group watch-segmented"
+                          role="group"
+                          aria-label="Background style"
+                        >
+                          <button type="button" class="group-button" data-value="shadow" aria-pressed="true">
+                            Shadow</button
+                          ><button type="button" class="group-button" data-value="background" aria-pressed="false">
+                            Background</button
+                          ><button type="button" class="group-button" data-value="off" aria-pressed="false">Off</button>
+                        </div>
+                      </div>
+                      <div class="settings-field">
+                        <label for="subtitle-brightness">Subtitle brightness</label>
+                        <div class="subtitle-slider-row">
+                          <input
+                            id="subtitle-brightness"
+                            type="range"
+                            min="20"
+                            max="100"
+                            step="5"
+                            value="100"
+                            aria-label="Subtitle brightness"
+                          /><span id="subtitle-brightness-value" class="subtitle-brightness-value slider-value"
+                            >100%</span
+                          >
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                  <div class="player-settings-grid" id="player-page-media" hidden>
+                    <section class="settings-group settings-panel player-media-information">
+                      <div class="player-media-columns">
+                        <div>
+                          <h3>Source</h3>
+                          <p id="media-information" class="hint"></p>
+                        </div>
+                        <details>
+                          <summary>Technical details</summary>
+                          <p id="delivery-information" class="hint"></p>
+                          <p class="diagnostic-report">
+                            <button id="copy-diagnostics" type="button" class="copy-diagnostics quiet">
+                              Copy diagnostic report</button
+                            ><span id="diagnostic-report-hint" class="hint"
+                              >For bug reports. Copies the last 5 minutes of player activity, without links or sign-in
+                              details.</span
+                            >
+                          </p>
+                        </details>
+                      </div>
+                    </section>
+                    <section id="video-check" class="video-check settings-panel" hidden>
+                      <h3>Video check</h3>
+                      <ul id="video-check-items" class="video-check-items"></ul>
+                      <button id="video-check-refresh" type="button" class="video-check-refresh quiet">
+                        Check again
+                      </button>
+                    </section>
                   </div>
                 </div>
-                <section class="settings-group player-media-information">
-                  <h3>Media information</h3>
-                  <div class="player-media-columns">
-                    <div>
-                      <h4>Source</h4>
-                      <p id="media-information" class="hint"></p>
-                    </div>
-                    <details>
-                      <summary>Technical details</summary>
-                      <p id="delivery-information" class="hint"></p>
-                      <p class="diagnostic-report">
-                        <button id="copy-diagnostics" type="button" class="copy-diagnostics quiet">
-                          Copy diagnostic report</button
-                        ><span id="diagnostic-report-hint" class="hint"
-                          >For bug reports. Copies the last 5 minutes of player activity, without links or sign-in
-                          details.</span
-                        >
-                      </p>
-                    </details>
-                  </div>
-                  <div id="video-check" class="video-check" hidden>
-                    <h4>Video check</h4>
-                    <ul id="video-check-items" class="video-check-items"></ul>
-                    <button id="video-check-refresh" type="button" class="video-check-refresh quiet">
-                      Check again
-                    </button>
-                  </div>
-                </section>
               </dialog>
             </div>
           </section>
@@ -1905,7 +1961,11 @@
 
       <dialog id="room-settings-dialog" class="room-settings-dialog watch-dialog" aria-labelledby="room-settings-title">
         <header>
-          <h2 id="room-settings-title" class="room-settings-title">Room settings</h2>
+          <div class="room-settings-heading">
+            <h2 id="room-settings-title" class="room-settings-title">Room settings</h2>
+            <span id="room-settings-name" class="hint"></span>
+            <span id="room-role" class="hint"></span>
+          </div>
           <p id="room-settings-status" class="room-settings-status" role="status" aria-live="polite"></p>
           <button
             id="room-settings-refresh"
@@ -1959,7 +2019,7 @@
           <option value="people">Viewers</option>
           <option value="permissions">Permissions</option>
           <option value="playback">Playback &amp; queue</option>
-          <option value="manage">Manage</option>
+          <option value="manage">Room actions</option>
         </select>
         <div id="room-settings-content" class="room-settings-content" hidden>
           <div id="room-settings-navigation" class="room-settings-navigation">
@@ -1971,72 +2031,102 @@
                 <label for="room-rename">Room name</label>
                 <div class="room-actions">
                   <input id="room-rename" maxlength="100" /><button id="room-rename-save" class="quiet" type="button">
-                    Save name
+                    Save
                   </button>
                 </div>
               </div>
-              <p id="room-lifetime-details" class="hint"></p>
-              <label class="watch-switch-label"
-                ><input
-                  id="room-keep-empty"
-                  type="checkbox"
-                  role="switch"
-                  class="watch-switch"
-                  aria-label="Keep room when empty"
-                />Keep room when empty</label
-              >
-              <p class="hint">
-                Retains this room’s hosts, permissions and history when empty. Inactivity deletion still applies.
-              </p>
-              <label for="room-member-limit">Maximum people</label>
-              <div class="room-actions">
-                <input id="room-member-limit" type="number" min="1" /><button
-                  id="room-member-limit-save"
-                  type="button"
-                  class="quiet"
-                >
-                  Save capacity
-                </button>
+              <section class="settings-panel room-access">
+                <h3>Access</h3>
+                <div class="settings-row">
+                  <div>
+                    <span id="room-access-visibility">Visibility</span>
+                    <p id="room-visibility-details" class="hint"></p>
+                  </div>
+                  <select id="room-settings-visibility" hidden>
+                    <option value="public">Public</option>
+                    <option value="private">Private</option>
+                  </select>
+                  <div
+                    id="room-settings-visibility-group"
+                    class="button-group"
+                    role="group"
+                    aria-labelledby="room-access-visibility"
+                  >
+                    <button type="button" class="group-button" data-value="public" aria-pressed="true">Public</button
+                    ><button type="button" class="group-button" data-value="private" aria-pressed="false">
+                      Private
+                    </button>
+                  </div>
+                </div>
+                <div class="settings-row">
+                  <div>
+                    <label for="room-member-limit">Viewer limit</label>
+                    <p id="room-capacity-details" class="hint"></p>
+                  </div>
+                  <div class="room-actions">
+                    <input id="room-member-limit" type="number" min="1" /><button
+                      id="room-member-limit-save"
+                      type="button"
+                      class="quiet"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              </section>
+              <div class="settings-panel">
+                <div class="settings-row">
+                  <div>
+                    <label for="room-keep-empty">Keep room when empty</label>
+                    <p id="room-keep-hint" class="hint">
+                      Keeps hosts, permissions, and history after everyone leaves. Inactive rooms can still expire.
+                    </p>
+                  </div>
+                  <input
+                    id="room-keep-empty"
+                    type="checkbox"
+                    role="switch"
+                    class="watch-switch"
+                    aria-describedby="room-keep-hint"
+                  />
+                </div>
               </div>
-              <p id="room-capacity-details" class="hint"></p>
-              <label for="room-settings-visibility">Visibility</label
-              ><select id="room-settings-visibility" hidden>
-                <option value="public">Public</option>
-                <option value="private">Private · Hosts only</option>
-              </select>
-              <div id="room-settings-visibility-group" class="button-group" role="group" aria-label="Visibility">
-                <button type="button" class="group-button" data-value="public" aria-pressed="true">Public</button
-                ><button type="button" class="group-button" data-value="private" aria-pressed="false">
-                  Private · Hosts only
-                </button>
-              </div>
-              <p class="hint">Private rooms: room leader and hosts only.</p>
+              <details id="room-dates">
+                <summary>Room details</summary>
+                <p id="room-lifetime-details" class="hint"></p>
+              </details>
             </section>
             <section data-room-section="people" hidden>
-              <div id="room-invite" class="room-invite"></div>
-              <div id="room-host-search">
-                <label for="room-person-search">Add a host</label
-                ><input
-                  id="room-person-search"
-                  class="room-person-search"
-                  type="search"
-                  autocomplete="off"
-                  placeholder="Search people"
-                  role="combobox"
-                  aria-autocomplete="list"
-                  aria-expanded="false"
-                  aria-controls="room-person-results"
-                />
-                <div
-                  id="room-person-results"
-                  class="room-person-results"
-                  role="listbox"
-                  aria-label="People matching your search"
-                ></div>
-                <p id="room-person-search-status" class="hint" role="status"></p>
+              <div class="room-viewers-heading">
+                <h3 id="room-viewer-count">Viewers</h3>
+                <button id="room-settings-share" class="quiet" type="button" hidden>Share invite</button>
               </div>
-              <p id="room-role" class="room-role hint"></p>
               <div id="room-current-people"></div>
+              <details id="room-host-disclosure">
+                <summary>Add host</summary>
+                <div id="room-host-search">
+                  <label for="room-person-search">Find a host</label
+                  ><input
+                    id="room-person-search"
+                    class="room-person-search"
+                    type="search"
+                    autocomplete="off"
+                    placeholder="Search by name"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded="false"
+                    aria-controls="room-person-results"
+                  />
+                  <div
+                    id="room-person-results"
+                    class="room-person-results"
+                    role="listbox"
+                    aria-label="People matching your search"
+                  ></div>
+                  <p id="room-person-search-status" class="hint" role="status"></p>
+                </div>
+              </details>
+              <div id="room-invite" class="room-invite settings-panel"></div>
               <div id="room-invited-section" class="room-invited-section" hidden>
                 <h3>Invited</h3>
                 <p class="hint">
@@ -2092,7 +2182,6 @@
                 </table>
               </div>
               <p id="room-host-inheritance" class="hint">Hosts also receive viewer permissions.</p>
-              <p class="hint">Add hosts lets hosts appoint more hosts. It never allows removing another host.</p>
             </section>
             <section data-room-section="playback" hidden>
               <div id="room-buffering-setting" hidden>
@@ -2126,28 +2215,33 @@
               <div id="room-playback-controls" hidden></div>
             </section>
             <section data-room-section="manage" hidden>
-              <h3>Manage</h3>
-              <p class="hint">Ends live viewing and saves playback progress.</p>
-              <button id="room-settings-close-live" class="quiet" type="button">Close room for everyone</button>
-              <h4>Transfer room leadership</h4>
-              <label for="room-transfer-target">Transfer room leadership to an assigned host.</label>
-              <p id="room-transfer-empty" class="hint" hidden>
-                Assign a host in Viewers before transferring room leadership.
-              </p>
-              <div class="room-actions">
-                <select id="room-transfer-target" hidden></select>
-                <div
-                  id="room-transfer-target-group"
-                  class="button-group"
-                  role="group"
-                  aria-label="Transfer target"
-                ></div>
-                <button id="room-transfer" class="quiet" type="button">Transfer</button>
+              <div id="room-close-row" class="room-setting-action">
+                <p class="hint">Ends live viewing and saves playback progress.</p>
+                <button id="room-settings-close-live" class="quiet" type="button">Close room for everyone</button>
               </div>
-              <h4>Saved room</h4>
-              <div class="room-actions">
-                <button id="room-clear-video" class="quiet" type="button" hidden>Clear saved video</button
-                ><button id="room-settings-delete" class="danger-button" type="button">Delete room</button>
+              <div id="room-transfer-row" class="room-setting-action">
+                <div>
+                  <strong>Transfer leadership</strong>
+                  <p id="room-transfer-empty" class="hint">Assign a host first.</p>
+                </div>
+                <button id="room-transfer-add-host" type="button" class="quiet">Add a host</button>
+                <div class="room-actions">
+                  <select id="room-transfer-target" hidden></select>
+                  <div
+                    id="room-transfer-target-group"
+                    class="button-group"
+                    role="group"
+                    aria-label="Transfer target"
+                  ></div>
+                  <button id="room-transfer" class="quiet" type="button">Transfer</button>
+                </div>
+              </div>
+              <div class="room-setting-action">
+                <button id="room-clear-video" class="quiet" type="button" hidden>Clear saved video</button>
+              </div>
+              <div class="room-setting-action room-delete-row">
+                <p class="hint" id="room-delete-description"></p>
+                <button id="room-settings-delete" class="danger-button" type="button">Delete room</button>
               </div>
             </section>
           </div>

@@ -1,8 +1,5 @@
 /* Room settings, the viewers roster and viewer telemetry cards. Owned by web/watch-rooms-ui.js. */
 @layer components {
-  .room-settings-dialog h2 {
-    margin-right: auto;
-  }
   .room-settings-dialog label {
     display: block;
     margin: var(--space-12) 0 var(--space-6);
@@ -89,7 +86,7 @@
   }
   .room-settings-dialog {
     width: min(920px, calc(100vw - 32px));
-    height: min(780px, calc(100dvh - 64px));
+    height: min(630px, calc(100dvh - 64px));
     box-sizing: border-box;
     overflow: hidden;
     padding: var(--space-24);
@@ -137,6 +134,97 @@
   }
   .room-settings-status:empty {
     display: none;
+  }
+  .room-settings-heading {
+    display: flex;
+    align-items: baseline;
+    flex: 1;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: var(--space-4) var(--space-10);
+  }
+  .room-settings-heading .room-settings-title {
+    flex: none;
+    margin: 0;
+  }
+  #room-settings-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  #room-role:empty,
+  .room-setting-action:has(> #room-clear-video[hidden]) {
+    display: none;
+  }
+  #room-settings-nav button {
+    justify-content: flex-start;
+  }
+  [data-room-section='general'] > .settings-panel,
+  #queue-auto-dialog,
+  #room-invite {
+    margin-block-start: var(--space-16);
+  }
+  .room-access .room-actions {
+    justify-content: flex-end;
+  }
+  #room-settings-visibility-group {
+    width: min(100%, 16rem);
+  }
+  #room-settings-dialog .settings-row label {
+    margin: 0;
+  }
+  #room-settings-dialog .settings-row > .room-actions {
+    margin: 0;
+  }
+  @media (max-width: 720px) {
+    .room-access .settings-row:first-of-type {
+      flex-wrap: wrap;
+    }
+    .room-access .settings-row:first-of-type > div:first-child {
+      flex-basis: 100%;
+    }
+  }
+  #room-member-limit {
+    flex: 0 1 6rem;
+    width: 6rem;
+  }
+  #room-dates,
+  .queue-progress-row,
+  .room-setting-action + .room-setting-action {
+    border-top: 1px solid var(--border);
+    margin-block-start: var(--space-16);
+    padding-block-start: var(--space-12);
+  }
+  .room-setting-action,
+  .room-viewers-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-10);
+  }
+  .room-setting-action > .hint {
+    flex: 1 1 14rem;
+  }
+  .room-setting-action p,
+  .room-viewers-heading h3 {
+    margin: 0;
+  }
+  .room-setting-action > div > p {
+    margin-top: var(--space-4);
+  }
+  .room-setting-action .room-actions {
+    max-width: 100%;
+  }
+  #room-transfer-target-group {
+    flex-wrap: wrap;
+  }
+  .room-settings-panels .room-permission-table th[scope='col'] {
+    position: sticky;
+    top: 0;
+    background: var(--card);
+    z-index: 1;
   }
   .room-settings-section {
     margin: 0 0 var(--space-10);
@@ -342,6 +430,13 @@
   }
   .room-roster-frame.expanded .room-roster {
     height: calc(16 * var(--room-row-height, 40px));
+  }
+  #room-current-people {
+    height: auto;
+    max-height: calc(8 * var(--room-row-height));
+  }
+  .expanded > #room-current-people {
+    max-height: calc(16 * var(--room-row-height));
   }
   .room-roster-frame:has(> .room-roster-expand:not([hidden])) > .room-roster {
     padding-bottom: var(--watch-control-height);

@@ -47,7 +47,8 @@ Shared modal dialogs have a semantic header containing a heading, and follow one
 
 - **Small prompts and confirmations** (browser sign-in approval, account removal, room change): no close button; a footer with Cancel (quiet) on the left and the action (primary or destructive) on the right.
 - **Workspaces and settings** (player settings, account, rooms, room settings): a close button at the top right that takes initial focus. A Cancel button appears only when paired with an active counterpart (Submit, Create, Save, Schedule); browsing views have no footer and close from the header.
-  - Player settings groups related controls in two columns on wide screens and stacks them in reading order on narrow ones.
+  - Room and Player settings use a lightly tinted, outlined panel for related controls. Separate rows with fine dividers and keep each hint beside its setting. Lists and permission matrices keep their own structure.
+  - Player settings has Playback, Subtitles and Media information sections. Pair Video with Audio and Track and timing with Appearance on wide screens. Stack the panels on narrow screens.
   - The account dialog keeps Log out in a divided footer below the scrolling body.
   - The rooms dialog shows its footer (Cancel; Create room and Settings) only in New room mode.
   - Room settings uses section tabs that wrap onto a second row at phone width so every tab stays visible.

@@ -89,8 +89,43 @@ async function main() {
         byId('room-keep-empty') + '.checked && !' + isOpen('#room-confirm-dialog'),
         'Keep room warning cancelled',
       );
-      await run(byId('room-member-limit') + '.value="12";' + pressId('room-member-limit-save'));
-      await until(hasText('#room-capacity-details', '/ 12 people'), 'Room capacity saved');
+      assert.equal(await run(hidden('#room-member-limit-save')), true);
+      await run(choose('room-member-limit', '12'));
+      await run(byId('room-member-limit') + '.focus(); refreshState()');
+      await until(
+        shown('#room-member-limit-save') +
+          ' && document.activeElement.id==="room-member-limit" && ' +
+          byId('room-member-limit') +
+          '.value==="12"',
+        'Room refresh preserves the focused capacity draft',
+      );
+      await run(pressId('room-member-limit-save'));
+      await until(
+        hidden('#room-member-limit-save') + ' && ' + hasText('#room-settings-status', 'Saved'),
+        'Room capacity saved',
+      );
+      await run(pressId('room-settings-refresh'));
+      await until(
+        shown('#room-settings-content') + ' && ' + byId('room-member-limit') + '.value==="12"',
+        'Saved capacity survives refresh',
+      );
+      await run(settingsSection('manage') + ';' + pressId('room-transfer-add-host'));
+      await until('document.activeElement.id==="room-person-search"', 'Assign host shortcut opens roster search');
+      await until(
+        shown('#room-settings-share') + ' && ' + shown('#room-invite-reroll'),
+        'Roster shows invite controls',
+      );
+      await run(press('#room-host-disclosure summary'));
+      await shot('viewers');
+      await run(pressId('room-settings-share'));
+      await until(
+        shown('#room-share-url-input') + ' && ' + byId('room-share-url-input') + '.value.includes("/join/")',
+        'Share opens the current invite link',
+      );
+      await run(pressId('room-share-dismiss'));
+      await run(settingsSection('permissions'));
+      await shot('permissions');
+      await run(settingsSection('general'));
       await shot('lifecycle-desktop');
       await browser.viewport(host, 390, 844);
       await shot('lifecycle-phone');
@@ -189,10 +224,30 @@ async function main() {
       await run('refreshState()');
       await until(attr(icon, 'data-quality') + '==="excellent"', 'Excellent restored');
       await shot('sync-quality');
+      await run(pressId('tracks-open') + ';' + pressId('settings-more'));
+      await until(isOpen('#tracks-dialog') + ' && document.activeElement.id==="tracks-close"', 'Full Player settings');
+      await run(press('[data-player-section=subtitles]'));
+      await run(byId('subtitle-brightness') + '.focus();refreshState()');
+      await until(
+        shown('#player-page-subtitles') + ' && document.activeElement.id==="subtitle-brightness"',
+        'Player refresh preserves the subtitle section and focus',
+      );
+      await run(press('[data-player-section=media]'));
+      await until(shown('#media-information') + ' && ' + hidden('#player-page-subtitles'), 'Media information section');
+      await run(pressId('tracks-close'));
+
       await run(pressId('room-settings-open'));
       await until(isOpen('#room-settings-dialog') + ' && ' + shown('#room-settings-content'), 'Room settings');
       await run(settingsSection('playback'));
       await until(shown('#room-buffering-policy'), 'Room buffering setting');
+      assert.equal(await run(hidden('#queue-auto-save')), true);
+      await run(press('#queue-auto-mode-group [data-value=continue]'));
+      await until(shown('#queue-auto-save'), 'Auto-queue draft shows Save');
+      await run(press('#queue-auto-mode-group [data-value=off]'));
+      await until(
+        hidden('#queue-auto-save') + ' && ' + shown('#queue-auto-progress-reset'),
+        'Reverting auto-queue hides only the draft actions',
+      );
       await shot('buffering-settings');
       await browser.viewport(host, 390, 844);
       assert.equal(

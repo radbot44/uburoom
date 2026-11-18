@@ -11,8 +11,8 @@ const labels = {
   chooseMedia: 'Skip / replay',
   addQueue: 'Add to queue',
   suggestMedia: 'Suggest media',
-  editQueue: 'Edit queue',
-  autoplay: 'Manage auto-play',
+  editQueue: 'Reorder or remove queued videos',
+  autoplay: 'Manage auto-play and auto-queue',
   roomSettings: 'Room settings',
   closeRoom: 'Close room for everyone',
   deleteRoom: 'Permanently delete room',
@@ -21,19 +21,13 @@ const labels = {
   kickParticipants: 'Kick viewers',
 };
 const descriptions = {
-  playPause: 'Start or pause playback for the room.',
-  seek: 'Change the playback position for everyone.',
   chooseMedia: 'Skip to another video in the queue or replay a video from history.',
-  addQueue: 'Add videos to the room queue.',
   suggestMedia: 'Suggest videos for a host or queue editor to add.',
-  editQueue: 'Reorder or remove queued videos.',
-  autoplay: 'Change automatic playback and queue generation.',
   roomSettings: 'Edit the room’s name, visibility and capacity.',
   closeRoom: 'End live viewing and save playback progress.',
   deleteRoom: 'Permanently delete this room and its saved history.',
   addHosts: 'Appoint additional hosts; cannot remove other hosts.',
   kickParticipants: 'Remove viewers from the room; they may rejoin.',
-  continueWithoutHost: 'Keep watching when no host is present.',
   allHosts:
     'Everyone admitted uses host permissions, except guests. Only the leader can change this; explicit host assignments are kept.',
 };
@@ -628,6 +622,7 @@ function mount({
     const humanCheck = !inSettings ? value.humanCheck || null : null;
     const checkAnswers = humanCheck?.answers && typeof humanCheck.answers === 'object' ? humanCheck.answers : null;
     const signature = JSON.stringify([
+      value.id,
       peopleView,
       self,
       caps,
@@ -692,6 +687,7 @@ function mount({
       } else roleCell.append(uburoomIcons.icon(document, glyph));
       const nameCell = node('span', row, undefined, 'room-roster-name-cell');
       const username = node('span', nameCell, person.name, 'room-roster-name');
+      if (inSettings) node('small', nameCell, person.role === 'creator' ? 'Room leader' : roleName, 'hint');
       const answer = humanCheck && person.present && !person.pending ? checkAnswers?.[person.id] : undefined;
       if (answer === 'ready' || answer === 'hold') nameCell.append(humanCheckStatus(answer));
       username.title = person.name;
@@ -914,8 +910,12 @@ function mount({
     return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
   }
   async function open(id, targetSection = 'general') {
-    clearSearch();
-    $('room-person-search').value = '';
+    if (!dialog.open || details?.id !== id) {
+      $('room-settings-name').textContent = $('room-role').textContent = '';
+      $('room-host-disclosure').open = $('room-dates').open = false;
+      clearSearch();
+      $('room-person-search').value = '';
+    }
     selectSection(targetSection);
     const ticket = ++generation;
     details = undefined;
@@ -1140,8 +1140,8 @@ function mount({
     $('room-settings-status').textContent = '';
     $('room-settings-panels').setAttribute('aria-busy', String(busy));
     $('room-role').textContent = getMe()?.adminMode ? 'Admin mode' : '';
-    $('room-settings-title').textContent = value.name;
-    $('room-settings-title').title = value.name;
+    $('room-settings-name').textContent = value.name;
+    $('room-settings-name').title = value.name;
     $('room-name-fields').hidden = !!value.singleRoom;
     $('room-keep-empty').checked = !!value.keepEmpty || !!value.singleRoom;
     $('room-keep-empty').disabled = busy || !!value.singleRoom || !value.capabilities.roomSettings;
@@ -1155,17 +1155,19 @@ function mount({
         ' · Last active ' +
         new Date(value.lastAccessedAt).toLocaleString()
       : '';
-    $('room-capacity-details').textContent =
-      new Set(value.viewers.map(person => person.id)).size +
-      ' / ' +
-      (value.maxMembers || $('room-member-limit').max) +
-      ' people · Server maximum ' +
-      $('room-member-limit').max;
+    $('room-dates').hidden = !value.createdAt;
+    $('room-capacity-details').textContent = 'Server maximum ' + $('room-member-limit').max;
+    $('room-viewer-count').textContent = 'Viewers (' + new Set(value.viewers.map(person => person.id)).size + ')';
+    $('room-visibility-details').textContent =
+      value.visibility === 'private'
+        ? 'The leader, assigned hosts, and invited viewers can join.'
+        : 'Eligible viewers can find and join this room.';
+    updateFieldActions();
     if ($('room-rename').value !== renameDraft) $('room-rename').value = renameDraft;
     $('room-settings-visibility').value = value.visibility;
     for (const id of ['room-rename', 'room-rename-save', 'room-settings-visibility'])
       $(id).disabled = busy || !value.capabilities.roomSettings;
-    $('room-host-search').hidden = !!value.draft || !value.capabilities.addHosts;
+    $('room-host-disclosure').hidden = !!value.draft || !value.capabilities.addHosts;
     $('room-person-search').disabled = busy;
     if (!value.capabilities.addHosts) clearSearch();
     $('room-host-inheritance').textContent = value.permissions.allHosts
@@ -1173,13 +1175,12 @@ function mount({
       : 'Hosts also receive viewer permissions.';
     $('room-permission-custom').classList.toggle('all-hosts', !!value.permissions.allHosts);
     const roster = $('room-current-people');
-    delete roster.dataset.signature;
     const people = value.candidates.map(person => ({
       ...person,
       role:
         person.id === value.creator.id
           ? 'creator'
-          : value.hosts.some(host => host.id === person.id) || value.permissions.allHosts
+          : value.hosts.some(host => host.id === person.id) || (value.permissions.allHosts && !person.passGuest)
             ? 'host'
             : 'viewer',
       explicitHost: value.hosts.some(host => host.id === person.id),
@@ -1228,10 +1229,9 @@ function mount({
       control.disabled = $('room-transfer-target').disabled;
     if (transferGroup) controls.segmented(transferGroup);
     $('room-transfer').disabled = busy || !value.capabilities.transferCreator || !value.hosts.length;
-    $('room-transfer').closest('.room-actions').hidden = !!value.singleRoom;
-    const transferLabel = dialog.querySelector('label[for="room-transfer-target"]');
-    transferLabel.hidden = !!value.singleRoom;
-    transferLabel.previousElementSibling.hidden = !!value.singleRoom;
+    $('room-transfer-row').hidden = !!value.singleRoom;
+    $('room-transfer-add-host').hidden = !!value.hosts.length || $('room-host-disclosure').hidden;
+    $('room-transfer-add-host').disabled = busy;
     $('room-permission-preset').disabled = busy || !value.capabilities.managePermissions;
     const preset = presetName(value.permissions);
     $('room-permission-preset').value = preset;
@@ -1241,6 +1241,7 @@ function mount({
     }
     $('room-permission-preset').querySelector('[value=custom]').hidden = false;
     $('room-transfer-empty').hidden = !!value.singleRoom || !!value.hosts.length;
+    $('room-transfer').closest('.room-actions').hidden = !value.hosts.length;
     $('room-transfer-target').hidden = true;
     if (transferGroup) transferGroup.hidden = $('room-transfer').hidden = !value.hosts.length;
     $('room-playback-controls').hidden = false;
@@ -1273,6 +1274,7 @@ function mount({
       cell.scope = 'row';
       const title = node('span', cell, label, 'permission-name');
       title.dataset.permissionTitle = key;
+      if (!descriptions[key]) return;
       const caption = node('small', cell, descriptions[key], 'permission-caption');
       caption.id = 'permission-description-' + key;
       title.setAttribute('aria-describedby', caption.id);
@@ -1332,15 +1334,14 @@ function mount({
           });
           control.dataset.role = role;
           control.dataset.permission = key;
-          control.setAttribute('aria-describedby', 'permission-description-' + key);
+          if (descriptions[key]) control.setAttribute('aria-describedby', 'permission-description-' + key);
         }
       }
     }
-    $('room-settings-close-live').hidden = !value.hasLiveRoom;
-    if (value.singleRoom) $('room-settings-close-live').hidden = true;
-    $('room-settings-close-live').previousElementSibling.textContent = value.singleRoom
-      ? 'Reset clears playback, the queue and room history, and restores configured room defaults. The shared room and its fixed leader remain.'
-      : 'Ends live viewing and saves playback progress.';
+    $('room-close-row').hidden = !value.hasLiveRoom || !!value.singleRoom;
+    $('room-delete-description').textContent = value.singleRoom
+      ? 'Clears playback, queue, and history and restores room defaults. The room and fixed leader remain.'
+      : 'Permanently deletes this room and its saved history.';
     $('room-settings-close-live').disabled = busy || !value.capabilities.closeRoom;
     $('room-settings-delete').disabled = busy || !value.capabilities.deleteRoom;
     $('room-settings-delete').textContent = value.singleRoom ? 'Reset room' : 'Delete room';
@@ -1420,39 +1421,32 @@ function mount({
       }
     }
   }
-  // Room invite row at the top of People: Share, the code (hosts can reroll it),
-  // Allow guests (for people allowed to change it) and Remove all guests (hosts).
   // A private room then lists who joined by invite, with Revoke.
   function renderInvite(value) {
     const box = $('room-invite'),
       invite = !value.draft && value.invite;
     box.replaceChildren();
-    box.hidden = !invite;
     $('room-invited-section').hidden = true;
+    $('room-settings-share').hidden = !invite;
+    box.hidden = !invite;
     if (!invite) return;
+    node('h3', box, 'Invites');
     const row = node('div', box, undefined, 'room-invite-row');
-    row.append(
-      controls.button(document, {
-        label: 'Share',
-        icon: 'share',
-        action: () => void share?.({ code: invite.code, url: invite.url }, value.name, value.id),
-      }),
-    );
     const code = node('code', row, invite.code, 'room-invite-code');
     code.title = invite.url;
     if (invite.canManage) {
       const roll = controls.button(document, {
         label: 'New invite code',
         icon: 'arrows-shuffle',
-        iconOnly: true,
         disabled: busy,
         action: () => void edit({ action: 'invite.reroll' }),
       });
       roll.id = 'room-invite-reroll';
       row.append(roll);
     }
+    const guestRow = invite.guestsEnabled ? node('div', box, undefined, 'room-invite-row') : null;
     if (invite.guestsEnabled && invite.canAllowGuests) {
-      const toggle = node('label', row, undefined, 'watch-switch-label'),
+      const toggle = node('label', guestRow, undefined, 'watch-switch-label'),
         input = node('input', toggle);
       input.type = 'checkbox';
       input.setAttribute('role', 'switch');
@@ -1463,9 +1457,9 @@ function mount({
       node('span', toggle, 'Allow guests');
       input.addEventListener('change', () => void edit({ action: 'guests.allow', enabled: input.checked }));
     } else if (invite.guestsEnabled)
-      node('span', row, invite.allowGuests ? 'Guests allowed' : 'Guests not allowed', 'hint');
+      node('span', guestRow, invite.allowGuests ? 'Guests allowed' : 'Guests not allowed', 'hint');
     if (invite.guestsEnabled && invite.canManage) {
-      const remove = node('button', row, 'Remove all guests', 'danger-button');
+      const remove = node('button', guestRow, 'Remove all guests', 'quiet');
       remove.type = 'button';
       remove.disabled = busy;
       remove.id = 'room-remove-guests';
@@ -1517,7 +1511,7 @@ function mount({
     ['people', 'Viewers'],
     ['permissions', 'Permissions'],
     ['playback', 'Playback & queue'],
-    ['manage', 'Manage'],
+    ['manage', 'Room actions'],
   ]) {
     const control = button($('room-settings-nav'), label, () => selectSection(key));
     control.dataset.section = key;
@@ -1536,8 +1530,25 @@ function mount({
     buttons[next].focus();
     buttons[next].click();
   });
+  controls.content($('room-settings-share'), { icon: 'share', label: 'Share invite' });
+  $('room-settings-share').addEventListener('click', () => {
+    if (details?.invite) void share?.({ code: details.invite.code, url: details.invite.url }, details.name, details.id);
+  });
+  $('room-transfer-add-host').addEventListener('click', () => {
+    selectSection('people');
+    $('room-host-disclosure').open = true;
+    $('room-person-search').focus();
+  });
+  function updateFieldActions() {
+    $('room-rename-save').hidden = !details || renameDraft === details.name;
+    $('room-member-limit-save').hidden =
+      !details ||
+      capacityDraft === undefined ||
+      Number(capacityDraft) === Number(details.maxMembers || $('room-member-limit').max);
+  }
   $('room-member-limit').addEventListener('input', event => {
     capacityDraft = event.target.value;
+    updateFieldActions();
   });
   $('room-settings-section').addEventListener('change', event => selectSection(event.target.value));
   $('room-keep-empty').addEventListener('change', async () => {
@@ -1567,6 +1578,7 @@ function mount({
   });
   $('room-rename').addEventListener('input', event => {
     renameDraft = event.target.value;
+    updateFieldActions();
   });
   $('room-people-open').addEventListener('click', () => {
     if (getState()?.durable) void open(getState().id, 'people');

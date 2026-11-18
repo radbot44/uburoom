@@ -39,8 +39,7 @@ export function mount(host, deps) {
         action: {
           label: 'View',
           run: () => {
-            store.player.playerUI.openDialog();
-            $('video-check').scrollIntoView({ block: 'center' });
+            store.player.playerUI.openDialog('video-check-refresh');
           },
         },
       });

@@ -127,9 +127,6 @@
   #room-settings-dialog [hidden] {
     display: none;
   }
-  .room-settings-title {
-    margin: 0 auto 0 0;
-  }
   .queue-settings .watch-switch-label {
     display: flex;
   }

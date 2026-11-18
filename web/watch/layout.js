@@ -356,8 +356,7 @@ export function mount(host, deps) {
           action: {
             label: 'Burn-in settings',
             run: () => {
-              store.player.playerUI.openDialog();
-              $('subtitle-mode')?.focus();
+              store.player.playerUI.openDialog('subtitle-mode');
             },
           },
         });

@@ -334,7 +334,7 @@ export function mount(host, deps) {
   }
   const roomOptionHints = {
     public: 'Eligible viewers can find and join this room.',
-    private: 'Only the room leader and assigned hosts can join.',
+    private: 'The leader, assigned hosts, and invited viewers can join.',
     'host-control': 'Hosts control playback and the queue. Viewers have no controls.',
     'play-pause': 'Viewers can play and pause. Hosts control seeking, video choice and the queue.',
     queue: 'Viewers can use all playback and queue controls. Room management stays with hosts.',

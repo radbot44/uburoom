@@ -263,18 +263,23 @@ async function captureBrowser(name, out, only) {
     });
     await capture(host, 'room-settings-general', settings('general'));
     await capture(host, 'room-settings-permissions', settings('permissions'));
-    await capture(host, 'player-settings', {
+    const playerSettings = section => ({
       open: async () => {
         // Desktop opens the sliding menu first; More settings opens the full dialog.
         await run(host, pressId('tracks-open'));
         await run(host, 'if(!' + byId('tracks-dialog') + '.open)' + byId('settings-more') + '.click();true');
         await until(host, isOpen('#tracks-dialog'), 'Player settings');
+        await run(host, dom.q('[data-player-section=' + section + ']') + '.click();true');
+        await until(host, shown('#player-page-' + section), 'Player settings section');
       },
       close: async () => {
         await run(host, pressId('tracks-close'));
         await until(host, '!' + isOpen('#tracks-dialog'), 'Player settings closed');
       },
     });
+    await capture(host, 'player-settings', playerSettings('playback'));
+    await capture(host, 'player-subtitles', playerSettings('subtitles'));
+    await capture(host, 'player-media-information', playerSettings('media'));
     await capture(host, 'share-dialog', {
       open: async () => {
         await run(host, pressId('room-share'));

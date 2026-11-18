@@ -130,7 +130,7 @@ async function main() {
     await browsers[0].screenshot(pages[0], path.join(output, 'player.png'));
     await browsers[0].evaluate(
       pages[0],
-      'renderMediaInformation(state);document.getElementById("tracks-dialog").showModal();true',
+      'renderMediaInformation(state);document.getElementById("tracks-dialog").showModal();document.querySelector("[data-player-section=media]").click();true',
     );
     await browsers[0].screenshot(pages[0], path.join(output, 'settings.png'));
     await browsers[0].close();
