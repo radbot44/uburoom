@@ -9,7 +9,7 @@
 /** @typedef {{countdown: any, mediaId: string, startAt: number, viewers: Map<string, any>, work?: MediaWork, dropped?: boolean, media?: any, fallbackStream?: InstanceType<typeof import('../fallback-stream').FallbackStream>, source?: Promise<any>}} Preload */
 
 const Engine = require('../../shared/engine.mjs');
-const { beginReadiness, invalidateEpoch } = require('../../shared/sync');
+const { RoomAuthority, beginReadiness, invalidateEpoch } = require('../../shared/sync');
 const { ROOM_KEYS, PERSONAL_KEYS, ACCESS_RECHECK_MS } = require('./common');
 
 /**
@@ -29,6 +29,39 @@ module.exports = {
   review(room) {
     if (this.rooms.get(room.roomId) !== room) return;
     return this.coordinator.run(room, { type: 'review' });
+  },
+  /** A validated observation can hold the shared timeline only for the stream that reported it. */
+  async holdForBuffering(room, viewer, data) {
+    const { viewerId, epoch, mediaVersion, streamVersion, observationEpoch, observedAt, sequence } = data;
+    await this.inRoom(room, () => {
+      if (
+        !(room.saved.pauseOnBuffering ?? this.hub.config.pauseOnBuffering) ||
+        room.transition ||
+        room.epoch !== epoch ||
+        room.mediaVersion !== mediaVersion ||
+        observedAt < Math.max(room.changedAt, room.startAt || 0) ||
+        room.viewers.get(viewerId) !== viewer ||
+        viewer.streamVersion !== streamVersion ||
+        viewer.observationEpoch !== observationEpoch ||
+        viewer.observationSequence !== sequence ||
+        !this.canSee(room, viewer.actor, viewer)
+      )
+        return;
+      const now = this.clock.now();
+      const active = [...room.viewers.entries()]
+        .filter(([, tab]) => {
+          const report = tab.tracking?.previous;
+          return (
+            report?.state === 'playing' &&
+            report.epoch === epoch &&
+            report.mediaVersion === mediaVersion &&
+            report.streamVersion === tab.streamVersion &&
+            now - tab.tracking.lastObservedServerAt <= 3000
+          );
+        })
+        .map(([id]) => id);
+      if (RoomAuthority.pauseForBuffering(room, viewerId, active, now)) this.review(room);
+    });
   },
   /** The server's part of the room core: its own plain fields and lifecycle hooks. */
   roomExtensions() {

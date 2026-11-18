@@ -24,7 +24,7 @@ Room interactions and playback mutations route through an authenticated WebSocke
 
 Room state advances with monotonic revisions. The server owns the authoritative playback timeline: play, pause, seek, epoch calculation and stream readiness. Viewers maintain clock estimation against server time. Scheduled actions ensure coordinated playback transitions across distributed clients.
 
-Late-joining or seeking viewers pass through server readiness gates before playback begins, preventing desynchronized starts. Active synchronization uses proportional drift correction with Hybrid EMA filtering to maintain smooth frame pacing without audible pitch distortion or visual stutter. Buffer stalls and recovery remain strictly independent per viewer so struggling clients do not interrupt healthy playback. Personal preferences (volume, audio language, subtitle track and appearance) remain client-owned. See [sync core](docs/sync-core.md).
+Late-joining or seeking viewers pass through server readiness gates before playback begins, preventing desynchronized starts. Active synchronization uses proportional drift correction with Hybrid EMA filtering to maintain smooth frame pacing without audible pitch distortion or visual stutter. Buffer stalls recover independently by default. A room can opt into an immediate shared pause on an active viewer's stall and synchronized release after decoder readiness. Personal preferences (volume, audio language, subtitle track and appearance) remain client-owned. See [sync core](docs/sync-core.md).
 
 ## Boundaries
 

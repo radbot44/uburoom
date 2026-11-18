@@ -58,7 +58,7 @@ export function mount(host, deps) {
   function expected() {
     return deps.time.target(store.room.state);
   }
-  async function reportObservation() {
+  async function reportObservation(immediateStall = false) {
     if (
       !store.player.observing ||
       !store.room.selected ||
@@ -69,7 +69,9 @@ export function mount(host, deps) {
       store.player.observationQueued = false;
       return;
     }
-    if (store.player.observationPending) {
+    // A waiting event can get through while a periodic observation awaits its
+    // acknowledgement. Bound concurrency and let the server fence report order.
+    if (store.player.observationPending && (!immediateStall || store.player.observationPending >= 2)) {
       store.player.observationQueued = true;
       return;
     }
@@ -110,8 +112,9 @@ export function mount(host, deps) {
       frames: uburoomPlayback.observationFrames(deps.video, store.player.videoFrames),
       discontinuity: store.player.observationBreak,
       state: playerState,
+      ...(playerState === 'buffering' ? { stalled: !store.stream.probing } : {}),
     };
-    store.player.observationPending = true;
+    store.player.observationPending++;
     try {
       const result = await deps.roomLink.observe(id, data);
       if (result.credit && result.credit.reason !== 'credited')
@@ -119,8 +122,8 @@ export function mount(host, deps) {
     } catch {
       /* Never replay an observation after reconnect. The next sample is fresh. */
     } finally {
-      store.player.observationPending = false;
-      if (store.player.observationQueued) {
+      store.player.observationPending--;
+      if (!store.player.observationPending && store.player.observationQueued) {
         store.player.observationQueued = false;
         void reportObservation();
       }
@@ -136,7 +139,14 @@ export function mount(host, deps) {
       // Periodic samples include rate corrections; assigning playbackRate can
       // emit ratechange even when the rate is unchanged.
       if (event !== 'ended' && !(event === 'pause' && deps.video.ended)) store.player.observationBreak++;
-      void reportObservation();
+      void reportObservation(
+        event === 'waiting' &&
+          store.room.state?.pauseOnBuffering === true &&
+          store.room.state.state.paused === false &&
+          !deps.video.paused &&
+          !deps.video.seeking &&
+          !store.stream.probing,
+      );
     });
   deps.every(1000, () => void reportObservation());
 

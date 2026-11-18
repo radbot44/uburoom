@@ -3,7 +3,7 @@ const { repositories } = require('./repositories');
 // First-release baseline. Future published schemas add explicit forward migrations.
 // Never repair or upgrade an unpublished layout implicitly: earlier pre-release
 // layouts move forward only through reviewed, explicitly run transfer scripts.
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 const COLUMNS = Object.freeze({
   users: ['id', 'name', 'revision', 'retiredInto', 'signedInAt', 'guest'],
   identities: ['provider', 'subject', 'userId', 'name', 'verified', 'assigned'],
@@ -34,6 +34,7 @@ const COLUMNS = Object.freeze({
     'ubumfaWord',
     'inviteCode',
     'allowGuests',
+    'pauseOnBuffering',
   ],
   watch_room_hosts: ['roomId', 'userId'],
   watch_room_host_grants: ['roomId', 'provider', 'subject', 'name', 'issuerId', 'createdAt'],
@@ -121,7 +122,7 @@ function initializeSchema(db, { checkOnly = false } = {}) {
     CREATE TABLE browser_logins(id TEXT PRIMARY KEY,record TEXT NOT NULL);
     CREATE TABLE playback_history(id TEXT PRIMARY KEY,userId TEXT NOT NULL,at INTEGER NOT NULL,record TEXT NOT NULL);
     CREATE INDEX playback_history_user ON playback_history(userId,at);
-    CREATE TABLE watch_rooms(id TEXT PRIMARY KEY,creatorId TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,visibility TEXT NOT NULL,revision INTEGER NOT NULL,checkpointRevision INTEGER NOT NULL,queueRevision INTEGER NOT NULL DEFAULT 0,createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL,permissions TEXT NOT NULL,bookmark TEXT,autoQueue TEXT,autoplay INTEGER NOT NULL DEFAULT 1 CHECK(autoplay IN (0,1)),lastAccessedAt INTEGER NOT NULL,keepEmpty INTEGER NOT NULL DEFAULT 0 CHECK(keepEmpty IN (0,1)),maxMembers INTEGER,liveState TEXT,slug TEXT,ubumfaWord TEXT,inviteCode TEXT,allowGuests INTEGER NOT NULL DEFAULT 0 CHECK(allowGuests IN (0,1)));
+    CREATE TABLE watch_rooms(id TEXT PRIMARY KEY,creatorId TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,visibility TEXT NOT NULL,revision INTEGER NOT NULL,checkpointRevision INTEGER NOT NULL,queueRevision INTEGER NOT NULL DEFAULT 0,createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL,permissions TEXT NOT NULL,bookmark TEXT,autoQueue TEXT,autoplay INTEGER NOT NULL DEFAULT 1 CHECK(autoplay IN (0,1)),lastAccessedAt INTEGER NOT NULL,keepEmpty INTEGER NOT NULL DEFAULT 0 CHECK(keepEmpty IN (0,1)),maxMembers INTEGER,liveState TEXT,slug TEXT,ubumfaWord TEXT,inviteCode TEXT,allowGuests INTEGER NOT NULL DEFAULT 0 CHECK(allowGuests IN (0,1)),pauseOnBuffering INTEGER CHECK(pauseOnBuffering IN (0,1)));
     CREATE INDEX watch_rooms_accessed ON watch_rooms(lastAccessedAt,id);
     CREATE UNIQUE INDEX watch_rooms_slug ON watch_rooms(slug);
     CREATE TABLE watch_room_progress(roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,serverId TEXT NOT NULL,mediaId TEXT NOT NULL,PRIMARY KEY(roomId,serverId,mediaId));

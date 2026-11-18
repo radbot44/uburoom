@@ -191,6 +191,45 @@ async function main() {
       await shot('sync-quality');
       await run(pressId('room-settings-open'));
       await until(isOpen('#room-settings-dialog') + ' && ' + shown('#room-settings-content'), 'Room settings');
+      await run(settingsSection('playback'));
+      await until(shown('#room-buffering-policy'), 'Room buffering setting');
+      await shot('buffering-settings');
+      await browser.viewport(host, 390, 844);
+      assert.equal(
+        await run(byId('room-buffering-policy') + '.scrollWidth <= ' + byId('room-buffering-policy') + '.clientWidth'),
+        true,
+        'the buffering choices fit at phone width',
+      );
+      await shot('buffering-settings-phone');
+      await browser.viewport(host, 1360, 1000);
+      assert.equal(await run(count('#room-buffering-policy button')), 2);
+      assert.equal(await run(attr('#room-buffering-continue', 'aria-pressed')), 'true');
+      await run(byId('room-buffering-continue') + '.focus()');
+      await browser.key(host, 'End');
+      assert.equal(await run('document.activeElement.id'), 'room-buffering-pause');
+      assert.equal(await run(attr('#room-buffering-continue', 'aria-pressed')), 'true');
+      await browser.key(host, 'Enter');
+      await until(text('#room-settings-status') + '==="Saved"', 'Shared buffering setting saved');
+      await run('refreshState()');
+      await until(
+        attr('#room-buffering-pause', 'aria-pressed') + '==="true"',
+        'Shared buffering selection survives refresh',
+      );
+      await run(pressId('room-buffering-continue'));
+      await until(text('#room-settings-status') + '==="Saved"', 'Keep playing restored');
+      await closeSettings();
+      await run(pressId('theme-toggle'));
+      await until('document.documentElement.dataset.theme==="light"', 'Light theme for buffering settings');
+      await run(pressId('room-settings-open'));
+      await until(shown('#room-settings-content'), 'Light room settings');
+      await run(settingsSection('playback'));
+      await until(shown('#room-buffering-policy'), 'Light buffering settings');
+      await shot('buffering-settings-light');
+      await closeSettings();
+      await run(pressId('theme-toggle'));
+      await until('document.documentElement.dataset.theme==="dark"', 'Dark theme restored after buffering settings');
+      await run(pressId('room-settings-open'));
+      await until(shown('#room-settings-content'), 'Room settings reopened');
       await run(settingsSection('people'));
       await until(shown('#room-current-people'), 'Room people settings');
       assert.equal(
@@ -489,7 +528,41 @@ async function main() {
       );
       await waitFor(() => app.watch.rooms.get(id).viewers.size === 2, 'Both viewers');
       await run(pressId('room-settings-open'));
+      await until(shown('#room-settings-content'), 'Room settings for shared buffering');
+      await run(settingsSection('playback') + ';' + pressId('room-buffering-pause'));
+      await until(text('#room-settings-status') + '==="Saved"', 'Pause for everyone enabled');
+      await closeSettings();
+      await run(pressId('player-play'));
+      await waitFor(
+        () => [...room.viewers.values()].every(viewer => viewer.tracking?.previous?.state === 'playing'),
+        'Both players reporting playback',
+      );
+      // Inject a waiting event and keep the guest below the decoder-ready threshold until recovery.
+      const video = byId('video');
+      await browser.evaluate(
+        guest,
+        'Object.defineProperty(' +
+          video +
+          ',"readyState",{configurable:true,get:()=>2});' +
+          video +
+          '.dispatchEvent(new Event("waiting"));true',
+      );
+      await until(video + '.paused && ' + hasText('#ready-status', 'Waiting for Demo guest'), 'Host pauses for guest');
+      await browser.until(guest, video + '.paused', 'Buffering viewer holds at the shared position');
+      await browser.evaluate(
+        guest,
+        'delete ' + video + '.readyState;' + video + '.dispatchEvent(new Event("canplay"))',
+      );
+      await until('!' + video + '.paused', 'Host resumes after the guest buffers');
+      await browser.until(guest, '!' + video + '.paused', 'Guest resumes together with host');
+      await run(pressId('player-play'));
+      await until(attr('#player-play', 'aria-label') + '==="Play"', 'Two-viewer fixture paused');
+      await run(seekTo(17));
+      await until(pausedAt('0:17'), 'Two-viewer fixture restored to 0:17');
+      await run(pressId('room-settings-open'));
       await until(isOpen('#room-settings-dialog') + ' && ' + shown('#room-settings-content'), 'Room settings');
+      await run(settingsSection('playback') + ';' + pressId('room-buffering-continue'));
+      await until(text('#room-settings-status') + '==="Saved"', 'Shared buffering fixture restored');
       await run(settingsSection('manage'));
       await shot('settings');
       await run(

@@ -27,7 +27,7 @@ Follow the owner's current task and the repo's approved boundaries. [README.md](
 
 - Use **uburoom** and **room** for the product; reserve “session” for technical contexts. Do not restore retired room aliases.
 - Use the one validated command engine for every room/playback mutation: check actor, room, permissions, generation and expiry. Hide inaccessible rooms; use room IDs; do not replay stale commands or restore consent from disk.
-- The server owns the shared timeline, while viewers own quality, audio, subtitles and volume. Recovery and buffering are per-viewer and must not pause healthy viewers. Preserve per-viewer access and selected tracks across preparation, conversion and recovery; count jobs against shared capacity.
+- The server owns the shared timeline, while viewers own quality, audio, subtitles and volume. Keep recovery per-viewer. Only the explicit room buffering policy may pause healthy viewers for an active stall. Preserve per-viewer access and selected tracks across preparation, conversion and recovery; count jobs against shared capacity.
 - Errors must be truthful. A command ack or codec hint is not proof of decoded playback. Do not add production mock/demo fallbacks. Consult [playback reliability](docs/playback-reliability.md), [wire protocol](docs/wire-protocol.md) and [sync core](docs/sync-core.md) for changes touching those boundaries.
 
 ## Verification and repository hygiene

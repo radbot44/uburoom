@@ -63,7 +63,9 @@ export function mount(host, deps) {
     $('ready-status').textContent = store.room.state?.waitingForReady
       ? store.player.autoplayBlocked
         ? 'Press Play to join playback'
-        : 'Waiting for viewers…'
+        : store.room.state?.readiness?.buffering
+          ? 'Waiting for playback to buffer…'
+          : 'Waiting for viewers…'
       : store.player.autoplayBlocked
         ? 'Press Play to join playback'
         : store.room.state?.startAt > store.room.state?.serverNow &&

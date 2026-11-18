@@ -224,6 +224,7 @@ module.exports = {
     if (!room.media || room.autoplayCountdown || room.transition || room.endedVersion === room.mediaVersion) return;
     const endedVersion = room.mediaVersion;
     room.initialGate = false;
+    room.bufferingViewerId = undefined;
     room.readinessTimedOut = false;
     room.readinessVersion = randomUUID();
     room.readinessStartAt = room.pauseAt = room.startAt = undefined;
@@ -316,6 +317,7 @@ module.exports = {
     room.changedAt = this.clock.now();
     room.pauseAt = room.startAt = undefined;
     room.initialGate = false;
+    room.bufferingViewerId = undefined;
     room.manualPaused = true;
     room.readinessTimedOut = false;
     room.endedVersion = undefined;
@@ -354,6 +356,7 @@ module.exports = {
   ) {
     const id = room.roomId,
       queue = this.roomState.queue;
+    room.bufferingViewerId = undefined;
     room.pauseAt = room.startAt = undefined;
     if (removing && !advance) {
       this.cancelAutoplay(room);

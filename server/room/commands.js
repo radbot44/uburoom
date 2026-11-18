@@ -193,7 +193,11 @@ module.exports = {
       this.review(room);
       return { status: 'applied', message: outcome.message };
     }
-    if (room.readinessTimedOut && ['media.play', 'media.toggle', 'media.pause'].includes(action))
+    if (
+      room.readinessTimedOut &&
+      !room.bufferingViewerId &&
+      ['media.play', 'media.toggle', 'media.pause'].includes(action)
+    )
       return { status: 'unavailable', message: 'The host must choose whether to start, wait or cancel.' };
     if (declared.scope === 'personal') return this.personal(room, command, declared, actor, ticket);
     if (
@@ -221,7 +225,11 @@ module.exports = {
         });
         return this.acknowledge(room, declared, reply);
       };
-    if (['media.play', 'media.toggle'].includes(action) && room.media?.kind !== 'demo') {
+    if (
+      ['media.play', 'media.toggle'].includes(action) &&
+      !(action === 'media.toggle' && room.bufferingViewerId) &&
+      room.media?.kind !== 'demo'
+    ) {
       // The provider confirms the file outside the mailbox; the play applies only to the same video.
       const version = room.mediaVersion,
         media = room.media;

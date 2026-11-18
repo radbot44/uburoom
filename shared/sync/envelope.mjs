@@ -21,6 +21,7 @@ const COORDINATION_KEYS = Object.freeze([
   'serverNow',
   'startAt',
   'pauseAt',
+  'pauseOnBuffering',
   'waitingForReady',
   'readinessVersion',
   'readiness',

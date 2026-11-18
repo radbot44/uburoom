@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2u
+# Config schema v2v
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -193,6 +193,7 @@ rooms:
   # Enable single room to remove the ability to create and join rooms.
   # This means your uburoom will only have one shared queue.
   single_room: false # No create/delete/transfer.
+  pause_on_buffering: false # Default for rooms that have no override. Pause everyone when an active viewer buffers.
   # Optional Plex account ID for the fixed room leader.
   # Blank: Discord owner if Discord sign-in is on; otherwise the Plex token account.
   # With both sign-in methods off, the Discord owner stays the leader.

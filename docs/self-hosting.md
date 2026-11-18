@@ -41,6 +41,8 @@ Open `https://your-origin/watch`. The health endpoint is `/health`. For a config
 
 [`config.example.yaml`](../config.example.yaml) is the complete settings/default reference. Restart after config changes. Invalid, unknown or duplicate YAML keys fail startup. `config.yaml` is the only configuration authority; there are no `.env` or application environment overrides. Relative file paths resolve beside the selected YAML file.
 
+Set `rooms.pause_on_buffering: true` to pause playback for everyone when an active viewer stalls. The default is `false`. Room settings → Playback & queue shows the effective policy. People with room settings permission can set a room override.
+
 ## Network and deployment
 
 The server defaults to `127.0.0.1:5756`. Configure `server.host`/`server.port` for your deployment and set `server.public_url` to the exact external HTTPS origin.
@@ -205,7 +207,7 @@ A watch night is a scheduled event that belongs to one saved room. Hosts at or a
 
 The lobby's **Upcoming** list shows the next three events in rooms the viewer can see (a private room's events stay hidden from people outside it), with More for the rest. From its start time until its end time an event reads **Starting now**, and at its end time it leaves the list. **Join** enters an open room; when the room is closed, hosts get **Open room** and everyone else, including people arriving through the invite, sees "Starts 8:00 PM · Waiting for host" and joins automatically once a host opens it. uburoom never opens a room or starts playback by itself.
 
-An upcoming event keeps its room from empty-room and inactivity cleanup until the event ends. Events are stored in the SQLite database (schema 11) and survive closure and restart.
+An upcoming event keeps its room from empty-room and inactivity cleanup until the event ends. Events are stored in SQLite and survive closure and restart.
 
 ## Rooms and retention
 

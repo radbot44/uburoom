@@ -425,6 +425,7 @@ module.exports = {
         error: room.autoplayError || room.autoQueueError,
       },
       readinessVersion: room.readinessVersion,
+      pauseOnBuffering: !!(room.saved.pauseOnBuffering ?? this.hub.config.pauseOnBuffering),
       waitingForReady,
       readiness,
       humanCheck: RoomAuthority.snapshotHumanCheck(timeline, now) || null,

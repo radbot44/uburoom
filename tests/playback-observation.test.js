@@ -10,7 +10,8 @@ const { mountModule } = require('./helpers/watch-module');
 function client() {
   let mono = 1000,
     wall = 100000;
-  const sent = [];
+  const sent = [],
+    events = new Map();
   const clock = policy.observationClock();
   clock.update('epoch', 100000, 1000, 1000);
   const time = {
@@ -34,10 +35,11 @@ function client() {
       playbackRate: 1,
       readyState: 4,
       requestVideoFrameCallback() {},
-      addEventListener() {},
+      addEventListener: (name, run) => events.set(name, run),
       getVideoPlaybackQuality: () => ({ totalVideoFrames: 100, droppedVideoFrames: 0 }),
     },
     diagnostics: { record() {} },
+    syncQuality: { breakSample() {} },
     roomLink: {
       observe: async (_, data) => {
         sent.push(data);
@@ -49,6 +51,7 @@ function client() {
     ctx,
     time,
     sent,
+    events,
     tick(ms = 1000, wallMs = ms) {
       mono += ms;
       wall += wallMs;
@@ -73,7 +76,7 @@ test('observations keep monotonic duration through client wall steps and queue i
       resolveFlight = r;
     });
   const first = f.ctx.reportObservation();
-  assert.equal(f.ctx.observationPending, true);
+  assert.equal(f.ctx.observationPending, 1);
   f.ctx.video.ended = true;
   f.ctx.reportObservation();
   assert.equal(f.ctx.observationQueued, true);
@@ -93,6 +96,30 @@ test('observations keep monotonic duration through client wall steps and queue i
   await unanchored.ctx.reportObservation();
   assert.equal(unanchored.sent.length, 0);
   assert.equal(rows[0].creditReason, 'clock-unavailable');
+});
+
+test('a waiting event in a shared-buffering room sends while a playing observation awaits acknowledgement', async () => {
+  const f = client();
+  f.ctx.state.pauseOnBuffering = true;
+  f.ctx.state.state = { paused: false };
+  const playing = Promise.withResolvers();
+  f.ctx.roomLink.observe = async (_, data) => {
+    f.sent.push(data);
+    if (data.state === 'playing') await playing.promise;
+    return {};
+  };
+  const pending = f.ctx.reportObservation();
+  f.tick(1);
+  f.events.get('waiting')();
+  assert.deepEqual(
+    f.sent.map(report => report.state),
+    ['playing', 'buffering'],
+  );
+  assert.equal(f.sent[1].stalled, true);
+  assert.ok(f.sent[1].sequence > f.sent[0].sequence);
+  playing.resolve();
+  await pending;
+  assert.equal(f.ctx.observationPending, 0);
 });
 
 test('frame observation tracks advancing callbacks, freezes counters when callbacks stall, and falls back to native metrics', async () => {

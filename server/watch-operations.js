@@ -553,10 +553,22 @@ function watchOperations({
     inRoom(context, roomId, async (auth, room) => {
       const viewer = await ownViewer(room, auth, viewerId);
       if (!viewer) return result(403, { error: 'Playback viewer unavailable' });
+      /** @type {Record<string, any>} */
       const data = { ...observation, viewerId };
       try {
+        const previous = viewer.tracking?.previous;
         const observed = watch.tracking.observe(room, viewer, viewerId, data);
         watch.observed(room, viewer);
+        if (
+          (room.saved.pauseOnBuffering ?? config.pauseOnBuffering) &&
+          data.state === 'buffering' &&
+          data.stalled !== false &&
+          previous?.state === 'playing' &&
+          previous.epoch === data.epoch &&
+          previous.mediaVersion === data.mediaVersion &&
+          previous.streamVersion === data.streamVersion
+        )
+          await watch.holdForBuffering(room, viewer, data);
         await watch.reporting?.observe(room, viewer, viewerId, data, observed);
         await watch.observeEnd(room, viewer, data, observed);
         return result(200, observed);

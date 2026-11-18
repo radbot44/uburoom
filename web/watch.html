@@ -2094,7 +2094,37 @@
               <p id="room-host-inheritance" class="hint">Hosts also receive viewer permissions.</p>
               <p class="hint">Add hosts lets hosts appoint more hosts. It never allows removing another host.</p>
             </section>
-            <section data-room-section="playback" hidden><div id="room-playback-controls" hidden></div></section>
+            <section data-room-section="playback" hidden>
+              <div id="room-buffering-setting" hidden>
+                <label id="room-buffering-label">When someone buffers</label>
+                <div
+                  id="room-buffering-policy"
+                  class="button-group watch-segmented"
+                  role="group"
+                  aria-labelledby="room-buffering-label"
+                >
+                  <button
+                    id="room-buffering-continue"
+                    type="button"
+                    class="group-button"
+                    data-value="continue"
+                    aria-pressed="true"
+                  >
+                    Keep playing
+                  </button>
+                  <button
+                    id="room-buffering-pause"
+                    type="button"
+                    class="group-button"
+                    data-value="pause"
+                    aria-pressed="false"
+                  >
+                    Pause for everyone
+                  </button>
+                </div>
+              </div>
+              <div id="room-playback-controls" hidden></div>
+            </section>
             <section data-room-section="manage" hidden>
               <h3>Manage</h3>
               <p class="hint">Ends live viewing and saves playback progress.</p>

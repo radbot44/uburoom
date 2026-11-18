@@ -41,6 +41,7 @@ class RoomsRepo {
     );
     this.statements.updateRoomsSetKeepEmptyById = db.prepare('UPDATE watch_rooms SET keepEmpty=? WHERE id=?');
     this.statements.updateRoomsSetMaxMembersById = db.prepare('UPDATE watch_rooms SET maxMembers=? WHERE id=?');
+    this.statements.setPauseOnBuffering = db.prepare('UPDATE watch_rooms SET pauseOnBuffering=? WHERE id=?');
     this.statements.updateRoomsSetAutoQueueQueueRevisionById = db.prepare(
       'UPDATE watch_rooms SET autoQueue=?,queueRevision=queueRevision+1 WHERE id=?',
     );
@@ -128,7 +129,7 @@ class RoomsRepo {
       "UPDATE watch_rooms SET name='Room',slug='room',keepEmpty=1 WHERE id=?",
     );
     this.statements.resetRoom = db.prepare(
-      "UPDATE watch_rooms SET bookmark=NULL,checkpointRevision=checkpointRevision+1,queueRevision=queueRevision+1,revision=revision+1,autoplay=1,autoQueue=NULL,liveState=NULL,maxMembers=NULL,permissions=?,name=?,visibility='public' WHERE id=?",
+      "UPDATE watch_rooms SET bookmark=NULL,checkpointRevision=checkpointRevision+1,queueRevision=queueRevision+1,revision=revision+1,autoplay=1,autoQueue=NULL,liveState=NULL,maxMembers=NULL,pauseOnBuffering=NULL,permissions=?,name=?,visibility='public' WHERE id=?",
     );
     this.statements.saveLiveState = db.prepare('UPDATE watch_rooms SET liveState=? WHERE id=?');
     this.statements.findRoomEventsById = db.prepare('SELECT * FROM watch_room_events WHERE id=?');
@@ -331,6 +332,9 @@ class RoomsRepo {
   }
   resetRoom(...values) {
     return this.statements.resetRoom.run(...values);
+  }
+  setPauseOnBuffering(value, roomId) {
+    this.statements.setPauseOnBuffering.run(value, roomId);
   }
   saveLiveState(...values) {
     return this.statements.saveLiveState.run(...values);

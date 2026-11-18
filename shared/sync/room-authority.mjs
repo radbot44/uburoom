@@ -63,8 +63,49 @@ export function beginReadiness(room, now = Date.now(), waitMs = READINESS_WAIT_M
   room.readinessStartAt = now + (room.viewers.size > 1 ? INITIAL_START_LEAD_MS : 0);
 }
 
+// A mid-playback stall freezes the timeline at receipt. Reuse the decoder
+// readiness gate for the coordinated release, with only the already-playing tabs.
+export function pauseForBuffering(room, viewerId, activeViewers, now = Date.now(), monoNow = defaultMonoNow()) {
+  if (
+    !room.media ||
+    room.closed ||
+    room.frozen ||
+    room.initialGate ||
+    room.manualPaused ||
+    room.recovery ||
+    getPaused(room) ||
+    room.pauseAt ||
+    room.startAt > now ||
+    !room.viewers.has(viewerId) ||
+    position(room, now) >= getDuration(room) - 0.1
+  )
+    return false;
+  room.position = position(room, now);
+  room.changedAt = now;
+  room.startAt = undefined;
+  setPaused(room, true);
+  room.initialGate = true;
+  room.initialViewers = new Set(activeViewers);
+  room.initialViewers.add(viewerId);
+  room.readinessVersion = defaultCreateId();
+  room.bufferingViewerId = viewerId;
+  beginReadiness(room, now, READINESS_WAIT_MS, { monoNow });
+  // Only the normal synchronized release lead is needed after recovery.
+  room.readinessStartAt = undefined;
+  for (const viewer of room.viewers.values()) viewer.ready = false;
+  room.revision++;
+  return true;
+}
+
+function clearBufferingGate(room) {
+  room.bufferingViewerId = undefined;
+  room.initialGate = false;
+  room.readinessTimedOut = false;
+  room.readinessStartAt = undefined;
+}
+
 export function promoteGroupReadinessLead(room, now = Date.now()) {
-  if (room.viewers.size === 2 && room.initialGate) {
+  if (room.viewers.size === 2 && room.initialGate && !room.bufferingViewerId) {
     room.readinessStartAt = Math.max(room.readinessStartAt || 0, now + INITIAL_START_LEAD_MS);
   }
 }
@@ -265,9 +306,10 @@ export function recordViewerReadiness(room, { userId, viewerId, mediaVersion, re
 }
 
 export function areInitialViewersReady(room) {
-  if (!room.initialGate || room.manualPaused || room.readinessTimedOut) return false;
+  if (!room.initialGate || room.manualPaused || (room.bufferingViewerId ? room.waitingForHost : room.readinessTimedOut))
+    return false;
   const viewers = [...room.initialViewers].map(id => room.viewers.get(id)).filter(Boolean);
-  if (!viewers.length) return false;
+  if (!viewers.length) return !!room.bufferingViewerId && room.viewers.size > 0;
   return viewers.every(v => v.ready && v.version === room.mediaVersion);
 }
 
@@ -276,13 +318,17 @@ export function snapshotReadiness(room, monoNow = defaultMonoNow()) {
   if (!room.initialGate || room.manualPaused) {
     return { waitingForReady, readiness: undefined };
   }
-  const blockers =
+  const buffering = !!room.bufferingViewerId;
+  const blockingIds =
     monoNow - room.readinessSince >= READINESS_BLOCKER_REVEAL_MS
       ? [...room.initialViewers]
-          .map(id => room.viewers.get(id))
-          .filter(v => v && (!v.ready || v.version !== room.mediaVersion))
-          .map(v => v.name)
-      : [];
+      : buffering && room.initialViewers.has(room.bufferingViewerId)
+        ? [room.bufferingViewerId]
+        : [];
+  const blockers = blockingIds
+    .map(id => room.viewers.get(id))
+    .filter(v => v && (!v.ready || v.version !== room.mediaVersion))
+    .map(v => v.name);
   const canStart = [...room.initialViewers].some(id => {
     const v = room.viewers.get(id);
     return Boolean(v?.ready && v.version === room.mediaVersion);
@@ -294,6 +340,7 @@ export function snapshotReadiness(room, monoNow = defaultMonoNow()) {
       timedOut: !!room.readinessTimedOut,
       blockers,
       canStart,
+      ...(buffering ? { buffering: true } : {}),
     },
   };
 }
@@ -318,6 +365,7 @@ export function applyReadinessDecision(room, action, readinessId, options = {}) 
       }
     }
     room.initialViewers = new Set(ready);
+    room.bufferingViewerId = undefined;
     room.initialGate = false;
     room.readinessTimedOut = false;
     room.readinessStartAt = undefined;
@@ -330,10 +378,12 @@ export function applyReadinessDecision(room, action, readinessId, options = {}) 
   }
   if (action === 'media.ready.wait') {
     beginReadiness(room, now, READINESS_EXTEND_MS, { monoNow, createId });
+    if (room.bufferingViewerId) room.readinessStartAt = undefined;
     room.revision++;
     return { status: 'applied', message: 'Readiness choice applied.', checkAutoStart: true };
   }
   room.manualPaused = true;
+  if (room.bufferingViewerId) clearBufferingGate(room);
   room.readinessTimedOut = false;
   room.readinessStartAt = undefined;
   room.revision++;
@@ -355,8 +405,14 @@ const TIMELINE_ACTIONS = new Set([
  * `media.toggle`, `media.seek.*`) to an authoritative room state.
  */
 export function applyTimelineCommand(room, command, options = {}) {
-  const { action, args = {} } = command;
+  let { action } = command;
+  const { args = {} } = command;
   if (!TIMELINE_ACTIONS.has(action)) return false;
+  if (room.bufferingViewerId) {
+    if (action === 'media.toggle') action = 'media.pause';
+    if (action.startsWith('media.seek.')) room.bufferingViewerId = undefined;
+    else clearBufferingGate(room);
+  }
   const now = options.now ?? Date.now();
   const monoNow = options.monoNow ?? defaultMonoNow();
   const createId = options.createId || defaultCreateId;
@@ -472,6 +528,7 @@ export const ROOM_STATE_KEYS = Object.freeze([
   'media',
   'mediaVersion',
   'readinessVersion',
+  'bufferingViewerId',
   'readinessId',
   'readinessSince',
   'readinessDeadline',
@@ -707,7 +764,10 @@ function freeze(room, ctx, at = ctx.now, { keepStart = false } = {}) {
   room.changedAt = ctx.now;
   room.pauseAt = room.startAt = undefined;
   room.state.paused = true;
-  if (!(keepStart && startPending(room))) room.manualPaused = true;
+  if (!(keepStart && (startPending(room) || (room.bufferingViewerId && !room.manualPaused)))) {
+    if (room.bufferingViewerId) clearBufferingGate(room);
+    room.manualPaused = true;
+  }
   room.revision++;
 }
 
@@ -781,7 +841,8 @@ function autoStart(room, ctx) {
   if (!areInitialViewersReady(room)) return false;
   settle(room, ctx.now, ctx.monoNow);
   if (!areInitialViewersReady(room)) return false;
-  room.initialGate = false;
+  if (room.bufferingViewerId) clearBufferingGate(room);
+  else room.initialGate = false;
   ctx.emit('cancel-autoplay');
   ctx.extensions.starting?.(room, ctx);
   applyTimelineCommand(
@@ -944,7 +1005,7 @@ function join(room, event, ctx) {
   if (!oldViewer) {
     ctx.emit('viewer-joined', { viewerId });
     promoteGroupReadinessLead(room, now);
-    if (room.initialGate) room.initialViewers.add(viewerId);
+    if (room.initialGate && !room.bufferingViewerId) room.initialViewers.add(viewerId);
   }
   return viewerId;
 }
@@ -1064,6 +1125,7 @@ const EVENTS = {
   disconnect(room, { viewerId, planned }, ctx) {
     const viewer = room.viewers.get(viewerId);
     if (viewer) viewer.at = planned ? ctx.now - PRESENCE_TIMEOUT_MS - 1 : ctx.now;
+    if (room.bufferingViewerId && room.initialViewers.delete(viewerId)) room.revision++;
     review(room, ctx);
   },
   /** Presence from the tab's own connection (clock and pong), with its recent round trips. */
@@ -1089,8 +1151,9 @@ const EVENTS = {
   /** A viewer's stream became playable (`available`), or can never be played. */
   stream(room, { viewerId, available }, ctx) {
     if (!room.initialGate) return;
-    if (available) room.initialViewers.add(viewerId);
-    else room.initialViewers.delete(viewerId);
+    if (available) {
+      if (!room.bufferingViewerId) room.initialViewers.add(viewerId);
+    } else room.initialViewers.delete(viewerId);
     autoStart(room, ctx);
   },
   kick,

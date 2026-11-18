@@ -112,7 +112,8 @@ function runMigrations(db) {
   if (version < 11) throw new Error('Unsupported pre-release database; review a manual state transfer before starting');
   const pending = MIGRATIONS.filter(step => step.version > version);
   if (!pending.length) {
-    if (version !== SCHEMA_VERSION) throw new Error('Incomplete storage migration sequence');
+    if (version !== SCHEMA_VERSION)
+      throw new Error('Unsupported pre-release database; review a manual state transfer before starting');
     return;
   }
   db.exec('BEGIN IMMEDIATE');

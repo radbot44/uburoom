@@ -852,6 +852,125 @@ async function pushedWithin(predicate, message) {
   }
 }
 
+test('room buffering policy freezes on the first stall report and releases on current readiness', tls, async t => {
+  const f = await fixture(t);
+  const host = await f.connect(await f.login('host'));
+  const guestIdentity = await f.login('guest');
+  const guest = await f.connect(guestIdentity);
+  const late = await f.connect(guestIdentity);
+  t.after(() => [host, guest, late].forEach(client => client.ws.terminate()));
+  const roomId = (await host.call('/api/watch/rooms', { keepEmpty: true })).value.id;
+  const root = '/api/watch/rooms/' + roomId;
+  const hostId = randomUUID(),
+    guestId = randomUUID(),
+    lateId = randomUUID();
+  await host.call(root + '?viewer=' + hostId);
+  await guest.call(root + '?viewer=' + guestId);
+  const { watch } = f.app;
+  const room = watch.rooms.get(roomId);
+  const command = (action, args) =>
+    host.call(root + '/command', {
+      viewerId: hostId,
+      epoch: room.epoch,
+      expiresAt: watch.clock.now() + 2000,
+      command: { action, args },
+    });
+  const settings = async () => (await host.call(root + '/settings')).value;
+  const setPolicy = async (client, value) =>
+    client.call(root + '/settings', {
+      revision: (await settings()).revision,
+      change: { action: 'pauseOnBuffering', value },
+    });
+  assert.equal((await settings()).pauseOnBuffering, false);
+  assert.equal(watch.roomState.store.get(roomId).pauseOnBuffering, null);
+  assert.equal((await setPolicy(guest, true)).status, 403);
+  assert.equal((await command('media.load', { mediaId: 'demo', quality: 'direct' })).value.status, 'applied');
+  await Promise.all([...room.viewers.values()].map(viewer => viewer.streamWork));
+  const ready = (client, viewerId, readinessVersion = room.readinessVersion) =>
+    client.call(root + '/ready', { viewerId, mediaVersion: room.mediaVersion, readinessVersion, ready: true });
+  const waitForStart = () =>
+    new Promise(resolve => setTimeout(resolve, Math.max(0, room.startAt - watch.clock.now()) + 5));
+  const sequences = new Map();
+  const observe = (client, viewerId, state, extra = {}) => {
+    const viewer = room.viewers.get(viewerId);
+    const sequence = (sequences.get(viewerId) || 0) + 1;
+    sequences.set(viewerId, sequence);
+    return client.call(root + '/observe', {
+      viewerId,
+      epoch: room.epoch,
+      mediaVersion: room.mediaVersion,
+      streamVersion: viewer.streamVersion,
+      observationEpoch: viewer.observationEpoch,
+      sequence,
+      sampleAt: performance.now(),
+      observedAt: watch.clock.now(),
+      position: watch.position(room),
+      state,
+      frames: sequence * 10,
+      rate: 1,
+      discontinuity: 0,
+      ...extra,
+    });
+  };
+  assert.equal((await ready(host, hostId)).status, 200);
+  assert.equal((await ready(guest, guestId)).status, 200);
+  await waitForStart();
+  assert.equal((await observe(guest, guestId, 'playing')).status, 200);
+  assert.equal((await observe(guest, guestId, 'buffering')).status, 200);
+  assert.equal(room.state.paused, false, 'the default keeps playback moving');
+  assert.equal((await setPolicy(host, true)).value.pauseOnBuffering, true);
+  assert.equal(watch.roomState.store.get(roomId).pauseOnBuffering, true);
+
+  assert.equal((await observe(host, hostId, 'playing')).status, 200);
+  assert.equal((await observe(guest, guestId, 'playing')).status, 200);
+  assert.equal((await observe(guest, guestId, 'buffering', { stalled: false })).status, 200);
+  assert.equal(room.state.paused, false, 'stream preparation is not an active playback stall');
+  assert.equal((await observe(guest, guestId, 'playing')).status, 200);
+  assert.equal((await observe(guest, guestId, 'buffering', { epoch: randomUUID() })).status, 200);
+  assert.equal(room.state.paused, false, 'a previous room epoch cannot pause playback');
+  assert.equal((await observe(guest, guestId, 'playing')).status, 200);
+  const eventsBeforeStall = host.events.length;
+  assert.equal((await observe(guest, guestId, 'buffering')).status, 200);
+  assert.equal(room.state.paused, true);
+  assert.equal(room.pauseAt, undefined, 'buffering freezes immediately, with no scheduled pause lead');
+  const frozenPosition = room.position;
+  await pushedWithin(
+    () =>
+      host.events
+        .slice(eventsBeforeStall)
+        .some(event => event.type === 'room' && event.state.state.paused && event.state.readiness?.buffering),
+    'the healthy viewer did not receive the buffering pause',
+  );
+  assert.equal((await ready(guest, guestId, randomUUID())).status, 400, 'old readiness cannot release the hold');
+  await late.call(root + '?viewer=' + lateId);
+  assert.equal(room.initialViewers.has(lateId), false);
+  assert.equal((await ready(host, hostId)).status, 200);
+  assert.equal(room.state.paused, true, 'the stalled viewer still needs to buffer');
+  assert.equal(watch.position(room), frozenPosition);
+  await watch.inRoom(room, () => {
+    room.readinessDeadline = performance.now() - 1;
+    watch.review(room);
+  });
+  assert.equal(room.readinessTimedOut, true, 'the host can intervene after the readiness deadline');
+  assert.equal((await ready(guest, guestId)).status, 200);
+  assert.equal(room.state.paused, false, 'a recovered viewer still releases the room after the deadline');
+  assert.equal(room.position, frozenPosition);
+  assert.ok(room.startAt > room.changedAt, 'the room resumes together');
+
+  await waitForStart();
+  assert.equal((await observe(guest, guestId, 'playing')).status, 200);
+  assert.equal((await observe(guest, guestId, 'buffering')).status, 200);
+  assert.equal(room.state.paused, true);
+  assert.equal((await command('media.pause')).value.status, 'applied');
+  assert.equal((await ready(guest, guestId)).status, 200);
+  assert.equal(room.state.paused, true);
+  assert.equal(room.manualPaused, true, 'a manual pause survives buffering recovery');
+  f.config.pauseOnBuffering = true;
+  assert.equal((await setPolicy(host, false)).value.pauseOnBuffering, false);
+  assert.equal((await setPolicy(host, null)).value.pauseOnBuffering, true);
+  assert.equal(watch.roomState.store.get(roomId).pauseOnBuffering, null);
+});
+
 test('local delivery pushes a fresh viewer lane after delayed auto-queue corpus work', tls, async t => {
   const f = await fixture(t),
     identity = await f.login('host'),

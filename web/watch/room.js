@@ -497,7 +497,9 @@ export function mount(host, deps) {
     const sharedSeekRequested =
       !changed &&
       !store.player.sync.timelinePending &&
-      ((next.readinessVersion !== undefined && next.readinessVersion !== previousReadinessVersion) ||
+      ((next.readinessVersion !== undefined &&
+        next.readinessVersion !== previousReadinessVersion &&
+        !next.readiness?.buffering) ||
         (previousTarget !== undefined && Math.abs(nextTarget - previousTarget) > 1.5));
     if (sharedSeekRequested) {
       deps.choppyDetector.interrupt();

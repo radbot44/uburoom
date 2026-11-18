@@ -6,7 +6,7 @@ const fs = require('node:fs'),
   os = require('node:os');
 const { DatabaseSync } = require('node:sqlite');
 const { Accounts, credentialVault } = require('../server/accounts');
-const { loginStore } = require('../server/storage');
+const { loginStore, SCHEMA_VERSION } = require('../server/storage');
 
 function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-storage-'));
@@ -180,7 +180,8 @@ test('unsupported schemas fail without changing existing data or installing miss
   for (const [version, sql, message] of [
     [0, 'CREATE TABLE old_state(id TEXT);', 'pre-release'],
     [10, 'CREATE TABLE users(id TEXT);', 'pre-release'],
-    [12, 'CREATE TABLE future_state(id TEXT);', 'newer'],
+    [11, 'CREATE TABLE users(id TEXT);', 'pre-release'],
+    [SCHEMA_VERSION + 1, 'CREATE TABLE future_state(id TEXT);', 'newer'],
   ]) {
     const db = new DatabaseSync(':memory:');
     db.exec(sql + 'PRAGMA user_version=' + version);
@@ -231,7 +232,7 @@ test('matched offline SQLite and original-key backup restores UUIDs, credentials
   fs.copyFileSync(key, copyKey);
   const restored = new Accounts(copy, credentialVault(copyKey));
   try {
-    assert.equal(restored.db.prepare('PRAGMA user_version').get().user_version, 11);
+    assert.equal(restored.db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
     assert.equal(restored.identity('plex', '101').userId, user.id);
     assert.equal(restored.credential('101').token, 'private-restore-fixture');
     assert.equal(

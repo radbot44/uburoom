@@ -26,6 +26,7 @@ test('example YAML is usable, private inputs are absent and defaults preserve ex
   assert.equal(config.botToken, '');
   assert.deepEqual(config.channels, []);
   assert.deepEqual(config.roomPermissions, Policy.policy());
+  assert.equal(config.pauseOnBuffering, false);
   assert.deepEqual(config.roomAdministrators, { discord: [], plex: [], discordRoles: [] });
   assert.deepEqual(config.serverOperator, { discordId: '', plexId: '' });
   assert.equal(config.accountFile, path.join(ROOT, 'data/accounts.sqlite'));
@@ -34,6 +35,12 @@ test('example YAML is usable, private inputs are absent and defaults preserve ex
     normalizeConfig({}, { environment, platform: 'linux' }).credentialKeyFile,
     path.join(environment.HOME, '.local/share/uburoom/credentials.key'),
   );
+});
+
+test('room buffering policy defaults to keeping playback moving and accepts a boolean override', () => {
+  assert.equal(normalizeConfig({}).pauseOnBuffering, false);
+  assert.equal(normalizeConfig({ rooms: { pause_on_buffering: true } }).pauseOnBuffering, true);
+  assert.throws(() => normalizeConfig({ rooms: { pause_on_buffering: 'true' } }), /rooms\.pause_on_buffering/);
 });
 
 test('custom file, mount paths, native lists and quoted snowflakes survive from a different cwd', t => {

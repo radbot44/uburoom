@@ -1244,6 +1244,14 @@ function mount({
     $('room-transfer-target').hidden = true;
     if (transferGroup) transferGroup.hidden = $('room-transfer').hidden = !value.hosts.length;
     $('room-playback-controls').hidden = false;
+    $('room-buffering-setting').hidden = !!value.draft;
+    const bufferingValue = value.pauseOnBuffering ? 'pause' : 'continue';
+    const bufferingDisabled = busy || !value.capabilities.roomSettings;
+    for (const button of $('room-buffering-policy').querySelectorAll('button')) {
+      const pressed = String(button.dataset.value === bufferingValue);
+      if (button.getAttribute('aria-pressed') !== pressed) button.setAttribute('aria-pressed', pressed);
+      if (button.disabled !== bufferingDisabled) button.disabled = bufferingDisabled;
+    }
     document.dispatchEvent(new CustomEvent('room-playback-settings'));
     const launch = $('room-settings-primary');
     launch.hidden = !(value.draft || !value.active || (openedFromSaved && getState()?.id !== value.id));
@@ -1550,6 +1558,13 @@ function mount({
     'click',
     () => void edit({ action: 'maxMembers', value: Number($('room-member-limit').value) }),
   );
+  const bufferingPolicy = $('room-buffering-policy');
+  controls.segmented(bufferingPolicy);
+  bufferingPolicy.addEventListener('click', event => {
+    const button = event.target.closest('button');
+    if (button && button.getAttribute('aria-pressed') !== 'true')
+      void edit({ action: 'pauseOnBuffering', value: button.dataset.value === 'pause' });
+  });
   $('room-rename').addEventListener('input', event => {
     renameDraft = event.target.value;
   });

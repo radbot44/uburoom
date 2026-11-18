@@ -59,6 +59,7 @@ const KEYS = [
   'rooms.trusted_plex_ids',
   'rooms.trusted_discord_role_ids',
   'rooms.single_room',
+  'rooms.pause_on_buffering',
   'rooms.single_room_leader_plex_id',
   'guests.enabled',
   'guests.default_allow',
@@ -387,6 +388,7 @@ function normalizeConfig(
   )
     throw new Error('Direct fallback requires enabled sharing and a dedicated non-owner plex.fallback_token');
   config.singleRoom = boolean('rooms.single_room', false);
+  config.pauseOnBuffering = boolean('rooms.pause_on_buffering', false);
   config.directory = {
     discord: boolean('directory.expose_discord_members', true),
     plex: boolean('directory.expose_plex_members', false),

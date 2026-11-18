@@ -23,9 +23,9 @@ function deduplicateSlug(db, baseSlug, currentRoomId) {
 /** @typedef {{serverId:string,mediaId:string,type:'movie'|'episode',title:string,duration:number,position:number}} RoomBookmark */
 /**
  * A watch_rooms row as node:sqlite returns it.
- * @typedef {{id:string,creatorId:string,name:string,visibility:'public'|'private',revision:number,checkpointRevision:number,queueRevision:number,createdAt:number,updatedAt:number,permissions:string,bookmark:string|null,autoQueue:string|null,autoplay:number,lastAccessedAt:number,keepEmpty:number,maxMembers:number|null,liveState:string|null,slug:string|null,ubumfaWord:string|null,inviteCode:string|null,allowGuests:number}} RoomRow
+ * @typedef {{id:string,creatorId:string,name:string,visibility:'public'|'private',revision:number,checkpointRevision:number,queueRevision:number,createdAt:number,updatedAt:number,permissions:string,bookmark:string|null,autoQueue:string|null,autoplay:number,lastAccessedAt:number,keepEmpty:number,maxMembers:number|null,liveState:string|null,slug:string|null,ubumfaWord:string|null,inviteCode:string|null,allowGuests:number,pauseOnBuffering:number|null}} RoomRow
  */
-/** @typedef {{id:string,creatorId:string,hosts:string[],guests:string[],invited:string[],inviteCode:string,allowGuests:boolean,name:string,slug:string|null,ubumfaWord:string|null,visibility:'public'|'private',revision:number,checkpointRevision:number,queueRevision:number,createdAt:number,updatedAt:number,lastAccessedAt:number,keepEmpty:boolean,maxMembers:number|null,liveState:{viewers:string[],wasPlaying:boolean}|null,permissions:Object,bookmark:RoomBookmark|null,autoQueue:Object,autoplay:boolean}} SavedRoom */
+/** @typedef {{id:string,creatorId:string,hosts:string[],guests:string[],invited:string[],inviteCode:string,allowGuests:boolean,name:string,slug:string|null,ubumfaWord:string|null,visibility:'public'|'private',revision:number,checkpointRevision:number,queueRevision:number,createdAt:number,updatedAt:number,lastAccessedAt:number,keepEmpty:boolean,maxMembers:number|null,pauseOnBuffering:boolean|null,liveState:{viewers:string[],wasPlaying:boolean}|null,permissions:Object,bookmark:RoomBookmark|null,autoQueue:Object,autoplay:boolean}} SavedRoom */
 
 // A room invite is two six-letter ubumfa words. People may type it in any case,
 // with a hyphen, a space or nothing between the words.
@@ -167,6 +167,7 @@ class RoomStore {
       lastAccessedAt: row.lastAccessedAt,
       keepEmpty: !!row.keepEmpty,
       maxMembers: row.maxMembers,
+      pauseOnBuffering: row.pauseOnBuffering === null ? null : row.pauseOnBuffering === 1,
       liveState: row.liveState ? JSON.parse(row.liveState) : null,
       permissions: Policy.policy(JSON.parse(row.permissions)),
       bookmark: row.bookmark === null ? null : bookmark(JSON.parse(row.bookmark)),
@@ -353,6 +354,7 @@ class RoomStore {
     const capabilities = {
       keepEmpty: 'roomSettings',
       maxMembers: 'roomSettings',
+      pauseOnBuffering: 'roomSettings',
       'auto.reset': 'editQueue',
       rename: 'roomSettings',
       visibility: 'roomSettings',
@@ -441,6 +443,10 @@ class RoomStore {
         case 'maxMembers':
           this.validateMembers(change.value);
           repositories(this.db).rooms.updateRoomsSetMaxMembersById(change.value, id);
+          break;
+        case 'pauseOnBuffering':
+          if (change.value !== null && typeof change.value !== 'boolean') throw error('Invalid buffering policy');
+          repositories(this.db).rooms.setPauseOnBuffering(change.value === null ? null : Number(change.value), id);
           break;
         case 'auto.reset': {
           const auto = { ...room.autoQueue, used: [], cycle: 0, cursor: null, next: null };

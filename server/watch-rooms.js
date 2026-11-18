@@ -5,6 +5,7 @@ const { RoomStore } = require('./room-store');
 const { RoomQueue } = require('./room-queue');
 const Policy = require('./room-policy');
 const { canWatch } = require('./core');
+const { applyTimelineCommand } = require('../shared/sync');
 const failure = (message, status = 409) => Object.assign(new Error(message), { status });
 
 // Durable lifecycle decisions. Watch retains the player, viewers and live clock.
@@ -480,6 +481,7 @@ class WatchRooms {
       lastAccessedAt: record.lastAccessedAt,
       keepEmpty: record.keepEmpty,
       maxMembers: record.maxMembers,
+      pauseOnBuffering: !!(record.pauseOnBuffering ?? this.watch.hub.config.pauseOnBuffering),
       serverMaxMembers: this.limits.maxMembers,
       retentionReason: this.reason(record),
       singleRoom: !!this.watch.hub.config.singleRoom,
@@ -561,6 +563,18 @@ class WatchRooms {
     if (change.action === 'invite.revoke') await this.removeFromRoom(id, [this.store.account(change.userId)]);
     if (change.action === 'delete') {
       return { deleted: true };
+    }
+    if (room && change.action === 'pauseOnBuffering') {
+      await this.watch.inRoom(room, () => {
+        this.apply(room, record);
+        room.revision++;
+        if (room.bufferingViewerId && !(room.saved.pauseOnBuffering ?? this.watch.hub.config.pauseOnBuffering)) {
+          const action = room.waitingForHost ? 'media.pause' : 'media.play';
+          applyTimelineCommand(room, { action }, { now: this.watch.clock.now() });
+          this.watch.review(room);
+        }
+      });
+      return this.summary(id, actor);
     }
     if (room && this.watch.rooms.get(id) === room) {
       this.apply(room, record);
@@ -787,6 +801,7 @@ class WatchRooms {
     room.position = 0;
     room.mediaVersion = require('node:crypto').randomUUID();
     room.initialGate = false;
+    room.bufferingViewerId = undefined;
     room.state.seekable = false;
     room.readinessVersion = undefined;
     room.readinessStartAt = undefined;

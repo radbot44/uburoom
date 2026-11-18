@@ -113,7 +113,7 @@ export const store = {
     videoFrames: 0,
     frameCallback: undefined,
     pipWindow: null,
-    observationPending: false,
+    observationPending: 0,
     observationQueued: false,
     observationSequence: 0,
     observationBreak: 0,
