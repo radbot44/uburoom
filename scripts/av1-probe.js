@@ -4,7 +4,8 @@
 const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
-const { AV1, probeEncoder, run } = require('../server/av1');
+const { AV1, probeEncoder } = require('../server/av1');
+const { run } = require('../server/media-tools');
 
 // Only this synthetic, credential-free CLI prints FFmpeg diagnostics. The
 // server's media runner must continue suppressing stderr and private inputs.

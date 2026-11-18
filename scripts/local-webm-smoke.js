@@ -60,7 +60,7 @@ async function main() {
   let chunks = 0;
   manager.run = (binary, args, ...rest) => {
     if (failFirst && args.includes('libvpx-vp9'))
-      return Promise.reject(new (require('../server/av1').PlaybackError)('Injected unavailable VP9 encoder'));
+      return Promise.reject(new (require('../server/errors').PlaybackError)('Injected unavailable VP9 encoder'));
     if (args.includes('-ss')) chunks++;
     return run(binary, args, ...rest);
   };

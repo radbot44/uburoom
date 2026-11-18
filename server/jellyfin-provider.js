@@ -1,6 +1,7 @@
 'use strict';
 const { createHash, randomUUID } = require('node:crypto');
-const { PlaybackError, classifyHdr } = require('./av1');
+const { PlaybackError } = require('./errors');
+const { classifyHdr } = require('./media-tools');
 const Tracks = require('./media-tracks');
 const { prepareStream } = require('./media-delivery');
 const { resilientFetch } = require('./resilience');

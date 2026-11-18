@@ -1,5 +1,5 @@
 'use strict';
-const { PlaybackError } = require('./av1');
+const { PlaybackError } = require('./errors');
 const LIMIT = 4 * 1024 * 1024;
 function timestamp(value) {
   const m = /^(?:(\d{1,6}):)?(\d{2}):(\d{2})[.,](\d{3})$/.exec(value);

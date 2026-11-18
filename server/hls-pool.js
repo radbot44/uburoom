@@ -1,6 +1,6 @@
 'use strict';
 const { runOperation, waitFor, currentSignal } = require('./operation');
-const { PlaybackError } = require('./av1');
+const { PlaybackError } = require('./errors');
 // Only live, identical outputs in one authorized room/media generation are pooled.
 // A cached segment-zero anchor prevents a late join from rewinding the provider's encoder.
 class HLSPool {

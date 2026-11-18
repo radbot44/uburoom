@@ -1,7 +1,8 @@
 'use strict';
 const { randomUUID } = require('node:crypto');
 const { qualityId } = require('../../shared/engine.mjs');
-const { PlaybackError, classifyHdr } = require('../av1');
+const { PlaybackError } = require('../errors');
+const { classifyHdr } = require('../media-tools');
 const Tracks = require('../media-tracks');
 const PlexTracks = require('./tracks');
 const Output = require('../plex-output');

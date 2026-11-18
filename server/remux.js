@@ -6,7 +6,8 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { Readable } = require('node:stream');
-const { PlaybackError, run } = require('./av1');
+const { PlaybackError } = require('./errors');
+const { run } = require('./media-tools');
 
 /**
  * Keeps a file's picture and converts only its sound: the video stream is copied

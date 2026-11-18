@@ -11,7 +11,7 @@
 const { currentSignal } = require('../operation');
 const { randomUUID } = require('node:crypto');
 const { isHost } = require('../core');
-const { PlaybackError } = require('../av1');
+const { PlaybackError } = require('../errors');
 const { observePlaybackEnd, clearPlaybackEnd } = require('../playback-end');
 const { expired } = require('./common');
 

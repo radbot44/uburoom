@@ -1,7 +1,7 @@
 'use strict';
 const { randomBytes, randomUUID } = require('node:crypto');
 const { UUID, hash } = require('./core');
-const { PlaybackError } = require('./av1');
+const { PlaybackError } = require('./errors');
 const { Handoff, SECRET } = require('./handoff');
 const { watchOperations } = require('./watch-operations');
 const { CALLS } = require('../shared/wire-protocol.mjs');

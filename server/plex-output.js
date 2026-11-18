@@ -1,5 +1,5 @@
 'use strict';
-const { PlaybackError } = require('./av1');
+const { PlaybackError } = require('./errors');
 const selected = value => [true, 1, '1'].includes(value);
 
 // A request describes desired output; only the decision describes confirmed output.

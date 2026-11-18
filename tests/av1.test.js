@@ -1,7 +1,9 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { AV1, PlaybackError, classifyHdr, outputSpec, decodeRoute, cpuPlaceboRoute, run } = require('../server/av1');
+const { AV1, outputSpec, decodeRoute, cpuPlaceboRoute } = require('../server/av1');
+const { PlaybackError } = require('../server/errors');
+const { classifyHdr, run } = require('../server/media-tools');
 const { Plex } = require('../server/plex');
 const Engine = require('../shared/engine.mjs');
 

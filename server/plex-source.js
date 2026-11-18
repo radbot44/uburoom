@@ -1,5 +1,5 @@
 'use strict';
-const { PlaybackError } = require('./av1');
+const { PlaybackError } = require('./errors');
 const partId = part => String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key || '')?.[1] || '');
 const missing = value => value === false || value === 0 || value === '0';
 const partAvailable = part => !missing(part.exists) && !missing(part.accessible);

@@ -1,7 +1,7 @@
 // @ts-check
 'use strict';
 const { fromProvider } = require('./media-provider');
-const { run, codecMatches, classifyHdr } = require('./av1');
+const { run, codecMatches, classifyHdr } = require('./media-tools');
 
 // How a track list is named when its provider does not say.
 const LIBRARY = { name: 'The library', owner: "the library's", refresh: '' };

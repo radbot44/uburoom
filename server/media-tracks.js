@@ -1,5 +1,5 @@
 'use strict';
-const { PlaybackError } = require('./av1');
+const { PlaybackError } = require('./errors');
 const clean = value => (typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 200) : '');
 const id = value => (/^[A-Za-z0-9_-]{1,64}$/.test(String(value ?? '')) ? String(value) : undefined);
 const plain = new Set(['srt', 'subrip', 'webvtt', 'vtt', 'mov_text', 'text']);

@@ -5,7 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { findOnPath } = require('../server/media-tools');
-const { AV1, run } = require('../server/av1');
+const { AV1 } = require('../server/av1');
+const { run } = require('../server/media-tools');
 const { LocalMedia } = require('../server/local-provider');
 const { frameScore } = require('../server/local/art');
 

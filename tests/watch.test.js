@@ -1121,7 +1121,7 @@ test('superseded preparation retries for its waiting viewer instead of failing r
     chosenCalls++;
     chosenStarted();
     await gate;
-    throw Object.assign(new (require('../server/av1').PlaybackError)('Plex refused conversion'), { media });
+    throw Object.assign(new (require('../server/errors').PlaybackError)('Plex refused conversion'), { media });
   };
   const [first, second] = await Promise.all([
     watch.prepareViewer(room, host, viewerId),

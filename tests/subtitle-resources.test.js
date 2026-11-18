@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { PlaybackError } = require('../server/av1');
+const { PlaybackError } = require('../server/errors');
 const SubtitleResources = require('../server/subtitle-resources');
 
 test('read streams subtitle data and enforces response status and size limits', async () => {

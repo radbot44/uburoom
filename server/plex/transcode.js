@@ -1,7 +1,7 @@
 'use strict';
 const { randomUUID } = require('node:crypto');
 const { qualityId } = require('../../shared/engine.mjs');
-const { PlaybackError } = require('../av1');
+const { PlaybackError } = require('../errors');
 const Sources = require('../plex-source');
 const { plexIdentity } = require('./identity');
 const { runOperation, SharedTask } = require('../operation');

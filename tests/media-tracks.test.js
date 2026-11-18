@@ -1177,7 +1177,7 @@ test('embedded text stays client-rendered, so Original is not forced into a conv
 });
 
 test('codecMatches and trackItem handle PCM audio and embedded closed captions without false warnings', async () => {
-  const { fileIndex } = require('../server/av1');
+  const { fileIndex } = require('../server/media-tools');
   const { MediaChecks } = require('../server/media-check');
   const checks = new MediaChecks({});
 

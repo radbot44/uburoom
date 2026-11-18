@@ -10,7 +10,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { createApp } = require('../server/app');
 const { CircuitBreaker, resilientFetch } = require('../server/resilience');
 const { Plex } = require('../server/plex');
-const { run } = require('../server/av1');
+const { run } = require('../server/media-tools');
 const { runOperation, currentSignal, SharedTask } = require('../server/operation');
 
 test('work armed by a finished operation outlives that operation and its cancellation', async () => {

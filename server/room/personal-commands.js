@@ -11,7 +11,7 @@ const { fromProvider } = require('../media-provider');
 
 const { randomUUID } = require('node:crypto');
 const Engine = require('../../shared/engine.mjs');
-const { PlaybackError } = require('../av1');
+const { PlaybackError } = require('../errors');
 const Tracks = require('../media-tracks');
 const SubtitleResources = require('../subtitle-resources');
 const { expired } = require('./common');

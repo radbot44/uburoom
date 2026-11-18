@@ -1,4 +1,5 @@
 'use strict';
+const { PlaybackError } = require('./errors');
 
 // Whether a conversion may run, and how many run at once. `producer` is who would
 // convert: 'uburoom' locally or 'provider' for a provider's own transcoder.
@@ -11,7 +12,7 @@ class ConversionPolicy {
     this.waitMs = 8000;
   }
   failure(message) {
-    return Object.assign(new (require('./av1').PlaybackError)(message), { playbackPolicy: true });
+    return Object.assign(new PlaybackError(message), { playbackPolicy: true });
   }
   /**
    * @param {string} producer

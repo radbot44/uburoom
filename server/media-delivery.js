@@ -1,6 +1,6 @@
 'use strict';
 const { qualityId } = require('../shared/engine.mjs');
-const { PlaybackError } = require('./av1');
+const { PlaybackError } = require('./errors');
 const { planDelivery } = require('./delivery-plan');
 // Sound every current browser plays; anything else will likely come back as an "audio" fallback.
 const BROWSER_AUDIO = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac']);
