@@ -9,6 +9,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { Accounts, credentialVault } = require('../server/accounts');
 const { RoomStore } = require('../server/room-store');
 const Policy = require('../server/room-policy');
+const { presetPolicy, presetName } = require('../web/watch-rooms-ui.js');
 
 function fixture(t, { disk = false, defaults, isAdmin } = {}) {
   const directory = disk ? fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-room-core-')) : undefined;
@@ -300,6 +301,13 @@ test('explicit room presets preserve defaults, reject unknown names and protect 
   assert.equal(configured.permissions.viewer.deleteRoom, false);
   for (const name of ['host-control', 'play-pause', 'queue']) {
     let room = await f.store.create(f.creator, { permissionPreset: name });
+    const draft = presetPolicy(name);
+    assert.deepEqual(draft, room.permissions, 'the browser draft matches the saved preset');
+    draft.allHosts = true;
+    assert.equal(presetName(draft), name, 'All hosts is independent of the preset selection');
+    draft.viewer.continueWithoutHost = true;
+    assert.equal(presetName(draft), 'custom');
+    assert.equal(presetPolicy(name).viewer.continueWithoutHost, false, 'draft edits do not change the preset');
     assert.equal(room.permissions.viewer.playPause, name !== 'host-control');
     assert.equal(room.permissions.viewer.seek, name === 'queue');
     assert.equal(room.permissions.viewer.editQueue, name === 'queue');

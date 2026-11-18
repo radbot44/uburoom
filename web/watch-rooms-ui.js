@@ -3,6 +3,7 @@ import * as uburoomControls from './watch-controls.js';
 import * as uburoomDialogs from './watch-dialogs.js';
 import * as uburoomIcons from './icons.js';
 import * as uburoomPopover from './watch-popover.js';
+import { CAPABILITIES, PRESET_NAMES, preset } from '../shared/sync/policy.mjs';
 import * as uburoomSyncQuality from '../shared/sync/quality.mjs';
 
 const labels = {
@@ -32,26 +33,13 @@ const descriptions = {
     'Everyone admitted uses host permissions, except guests. Only the leader can change this; explicit host assignments are kept.',
 };
 function presetPolicy(name) {
-  return {
-    host: Object.fromEntries(Object.keys(labels).map(key => [key, !['deleteRoom', 'addHosts'].includes(key)])),
-    viewer: Object.fromEntries(
-      Object.keys(labels).map(key => [
-        key,
-        (name === 'play-pause' && ['playPause', 'suggestMedia'].includes(key)) ||
-          (name === 'queue' &&
-            ['playPause', 'seek', 'chooseMedia', 'addQueue', 'suggestMedia', 'editQueue', 'autoplay'].includes(key)),
-      ]),
-    ),
-    allHosts: false,
-  };
+  return preset(PRESET_NAMES.includes(name) ? name : 'host-control');
 }
 function presetName(permissions) {
   return (
-    ['host-control', 'play-pause', 'queue'].find(name => {
-      const policy = presetPolicy(name);
-      return ['host', 'viewer'].every(role =>
-        Object.keys(labels).every(key => permissions[role][key] === policy[role][key]),
-      );
+    PRESET_NAMES.find(name => {
+      const policy = preset(name);
+      return ['host', 'viewer'].every(role => CAPABILITIES.every(key => permissions[role][key] === policy[role][key]));
     }) || 'custom'
   );
 }

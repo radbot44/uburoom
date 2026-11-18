@@ -29,26 +29,24 @@ export const VIEWER_BLOCKED = Object.freeze([
 
 export const CREATOR_ONLY = Object.freeze(['manageHosts', 'transferCreator', 'managePermissions']);
 
+const VIEWER_PRESETS = {
+  'host-control': [],
+  'play-pause': ['playPause', 'suggestMedia'],
+  queue: ['playPause', 'seek', 'chooseMedia', 'addQueue', 'suggestMedia', 'editQueue', 'autoplay'],
+};
+export const PRESET_NAMES = Object.freeze(Object.keys(VIEWER_PRESETS));
+
 export const DEFAULTS = Object.freeze({
   host: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, !['deleteRoom', 'addHosts'].includes(key)]))),
-  viewer: Object.freeze(
-    Object.fromEntries(CAPABILITIES.map(key => [key, ['playPause', 'suggestMedia'].includes(key)])),
-  ),
+  viewer: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, VIEWER_PRESETS['play-pause'].includes(key)]))),
 });
 
 // Presets define editable controls; participant room management is always locked off.
 export function preset(name) {
-  if (!['host-control', 'play-pause', 'queue'].includes(name)) throw new Error('Unknown room permission preset');
+  if (!PRESET_NAMES.includes(name)) throw new Error('Unknown room permission preset');
   return {
     host: { ...DEFAULTS.host },
-    viewer: Object.fromEntries(
-      CAPABILITIES.map(key => [
-        key,
-        (name === 'play-pause' && ['playPause', 'suggestMedia'].includes(key)) ||
-          (name === 'queue' &&
-            ['playPause', 'seek', 'chooseMedia', 'addQueue', 'suggestMedia', 'editQueue', 'autoplay'].includes(key)),
-      ]),
-    ),
+    viewer: Object.fromEntries(CAPABILITIES.map(key => [key, VIEWER_PRESETS[name].includes(key)])),
     allHosts: false,
   };
 }
