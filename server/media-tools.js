@@ -67,10 +67,19 @@ async function run(
   timeout = 30000,
   maxOutput = 1024 * 1024,
   diagnostic,
-  { memoryLimit = 1024 * 1024 * 1024, memory = processMemory, memoryInterval = 1000, outputComplete, input } = {},
+  {
+    memoryLimit = 1024 * 1024 * 1024,
+    memory = processMemory,
+    memoryInterval = 1000,
+    outputComplete,
+    input,
+    stream = false,
+  } = {},
 ) {
   if (signal?.aborted) throw new PlaybackError('WebM preparation cancelled.');
-  const webm = args.includes('webm') && args.includes('pipe:1');
+  // `stream` keeps a single WebM output on stdout: one whose header is complete when written,
+  // such as live Opus, needs no file to seek back into.
+  const webm = !stream && args.includes('webm') && args.includes('pipe:1');
   // WebM outputs named pipe:1, pipe:3, pipe:4 ..., returned in that order; pipe:0 is the input.
   const pipes = webm
     ? [...new Set(args.filter(arg => /^pipe:\d+$/.test(arg) && arg !== 'pipe:0' && arg !== 'pipe:2'))]
@@ -212,6 +221,10 @@ async function run(
         );
       });
     });
+    if (stream && output.length < 100)
+      throw Object.assign(new PlaybackError('WebM output is empty or exceeded the supported limit.'), {
+        exitFailure: true,
+      });
     if (!webm) return output;
     const sizes = await Promise.all(files.map(file => fsp.stat(file).then(s => s.size)));
     if (sizes.some(size => size < 100) || sizes.reduce((a, b) => a + b, 0) > maxOutput)

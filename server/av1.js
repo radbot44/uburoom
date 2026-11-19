@@ -1743,6 +1743,8 @@ class AV1 {
               run.controller.signal,
               30000,
               4 * 1024 * 1024,
+              undefined,
+              { stream: true },
             ).then(audio => {
               if (k === current.start) current.firstSound = { seconds: (Date.now() - asked) / 1000, ...state };
               return audio;
@@ -1793,6 +1795,7 @@ class AV1 {
     if (!samples) return undefined;
     return this.run(this.ffmpeg, encodeCommand(), run.controller.signal, 30000, 4 * 1024 * 1024, undefined, {
       input: samples,
+      stream: true,
     });
   }
   async deliver(run, current, output, n, video) {

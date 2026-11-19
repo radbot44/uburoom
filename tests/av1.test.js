@@ -1353,6 +1353,17 @@ test('run feeds its input to a WebM encode on stdin and returns only the WebM ou
     },
   );
   assert.deepEqual(output, input);
+  // Streamed, the output is read from stdout as written, with no file.
+  const streamed = await run(
+    process.execPath,
+    ['-e', 'process.stdin.pipe(process.stdout)', '--', '-i', 'pipe:0', '-f', 'webm', 'pipe:1'],
+    undefined,
+    5000,
+    1 << 20,
+    undefined,
+    { input, stream: true },
+  );
+  assert.deepEqual(streamed, input);
 });
 
 test("a run's first chunk takes decoded sound only when the copy began early enough before it", async () => {
