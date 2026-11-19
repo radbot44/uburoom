@@ -7,7 +7,6 @@ const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const { createApp } = require('../server/app');
 const { AV1 } = require('../server/av1');
-const { run } = require('../server/media-tools');
 const { fixturePlex, installMeter } = require('./playback-baseline');
 const { playbackBrowser, pause } = require('./lib/playback-browser');
 const root = path.resolve(__dirname, '..');
@@ -75,30 +74,12 @@ async function main() {
       },
     });
     originalAV1 = app.watch.pipeline.av1;
-    app.watch.pipeline.av1 = new AV1(
-      app.watch.providers.primary.root,
-      { ffmpegPath: ffmpeg, ffprobePath: ffprobe },
-      async (binary, parameters, signal) => {
-        let actual = [...parameters];
-        if (actual.includes('av1_qsv')) {
-          actual = actual.map(v =>
-            v === 'av1_qsv'
-              ? 'libsvtav1'
-              : v === 'veryfast'
-                ? '12'
-                : v === 'nv12'
-                  ? 'yuv420p'
-                  : v.replaceAll('format=nv12', 'format=yuv420p'),
-          );
-          for (const flag of ['-maxrate', '-bufsize']) {
-            const index = actual.indexOf(flag);
-            if (index !== -1) actual.splice(index, 2);
-          }
-          actual.splice(actual.indexOf('-c:v'), 0, '-svtav1-params', 'lp=2:pred-struct=1:rc=2');
-        }
-        return run(binary, actual, signal, 30000, 48 * 1024 * 1024);
-      },
-    );
+    // Software conversion: this fixture has no GPU encoder to substitute.
+    app.watch.pipeline.av1 = new AV1({
+      ffmpegPath: ffmpeg,
+      ffprobePath: ffprobe,
+      transcoding: { encoder: 'software' },
+    });
     app.access.connect({
       refresh: async () => true,
       isMember: () => true,

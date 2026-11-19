@@ -3,10 +3,10 @@
 const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
-const { Readable } = require('node:stream');
+const { fileStream } = require('../server/file-stream');
 const { createApp } = require('../server/app');
-const { AV1 } = require('../server/av1');
-const { run } = require('../server/media-tools');
+const { AV1, CHUNK } = require('../server/av1');
+const { segments } = require('../server/media-tools');
 const { buildPlaybackFixtures, execute: executeTool } = require('./build-playback-fixtures');
 const { playbackBrowser, pause } = require('./lib/playback-browser');
 const { checkBuffering } = require('./lib/playback-buffering');
@@ -97,7 +97,7 @@ function fixturePlex(directory, manifest, control = {}) {
     }
     request.status = header ? 206 : 200;
     request.offeredBytes = options.method === 'HEAD' ? 0 : end - start + 1;
-    return new Response(options.method === 'HEAD' ? null : Readable.toWeb(fs.createReadStream(file, { start, end })), {
+    return new Response(options.method === 'HEAD' ? null : fileStream(file, { start, end }), {
       status: header ? 206 : 200,
       headers: {
         'Content-Type': type,
@@ -519,52 +519,41 @@ async function main() {
   // Substitute the encoder only in this fixture's instance. Production policy stays intact.
   const originalAV1 = app.watch.pipeline.av1;
   let encoded = 0;
+  // Conversion is software here; video comes from long-running runs through the segment
+  // muxer, so each converted chunk is recorded as its segment arrives.
   app.watch.pipeline.av1 = new AV1(
-    app.watch.providers.primary.root,
     { ffmpegPath: ffmpeg, ffprobePath: ffprobe, transcoding: { encoder: 'software' } },
-    async (binary, parameters, signal) => {
-      const encoding = parameters.includes('-c:v');
-      const av1Encoding = parameters.includes('libsvtav1');
-      let actual = [...parameters];
-      if (av1Encoding) {
-        actual = actual.map(value =>
-          value === 'av1_qsv'
-            ? 'libsvtav1'
-            : value === '10'
-              ? '12'
-              : value === 'nv12'
-                ? 'yuv420p'
-                : value.replaceAll('format=nv12', 'format=yuv420p'),
-        );
-        for (const flag of ['-maxrate', '-bufsize']) {
-          const index = actual.indexOf(flag);
-          if (index !== -1) actual.splice(index, 2);
-        }
-        actual.splice(actual.indexOf('-c:v'), 0, '-svtav1-params', 'lp=2:pred-struct=1:rc=2');
-      }
-      const bytes = await run(binary, actual, signal, 30000, 48 * 1024 * 1024);
-      if (encoding && actual.includes('-ss')) {
-        const file = path.join(output, 'encoded-' + ++encoded + '.webm');
-        fs.writeFileSync(file, bytes.video);
-        const info = JSON.parse(
-          executeTool(ffprobe, [
-            '-v',
-            'error',
-            '-count_frames',
-            '-show_entries',
-            'stream=r_frame_rate,avg_frame_rate,nb_read_frames:format=duration',
-            '-of',
-            'json',
-            file,
-          ]),
-        );
-        report.encodedVideo.push({
-          file: path.basename(file),
-          sourceStartSeconds: Number(actual[actual.indexOf('-ss') + 1]),
-          probe: info,
-        });
-      }
-      return bytes;
+    undefined,
+    undefined,
+    (binary, parameters, signal, options) => {
+      const runStart = Number(parameters[parameters.indexOf('-ss') + 1]);
+      return segments(binary, parameters, signal, {
+        ...options,
+        onSegment: async (outputIndex, n, bytes) => {
+          if (outputIndex === 0) {
+            const file = path.join(output, 'encoded-' + ++encoded + '.webm');
+            fs.writeFileSync(file, bytes);
+            const info = JSON.parse(
+              executeTool(ffprobe, [
+                '-v',
+                'error',
+                '-count_frames',
+                '-show_entries',
+                'stream=r_frame_rate,avg_frame_rate,nb_read_frames:format=duration',
+                '-of',
+                'json',
+                file,
+              ]),
+            );
+            report.encodedVideo.push({
+              file: path.basename(file),
+              sourceStartSeconds: runStart + n * CHUNK,
+              probe: info,
+            });
+          }
+          return options.onSegment(outputIndex, n, bytes);
+        },
+      });
     },
   );
   app.access.connect({
