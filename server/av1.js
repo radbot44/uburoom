@@ -1087,6 +1087,8 @@ class AV1 {
       codec = first.group.codec;
     await this.conversionPolicy?.video('uburoom', codec, first.source.provider);
     const releaseConversion = await this.conversionPolicy?.wait({ signal, background: run.priority.background });
+    // From here the run holds a conversion slot; waiting before this is waiting for a slot.
+    run.slotAt = Date.now();
     try {
       run.encoder ||= await this.selectEncoder(codec);
       const info = await this.sourceInfo(first.group, first.source, signal);
@@ -1197,6 +1199,7 @@ class AV1 {
       run.idleTimer = undefined;
       const now = Date.now();
       for (const entry of run.pending.get(run.next)?.values() || []) entry.began = now;
+      this.sounds(run, run.next);
       run.current?.stalled();
     } else {
       clearTimeout(run.stallTimer);
@@ -1452,8 +1455,16 @@ class AV1 {
         run.memoryWait = false;
         this.flow(run);
       }, 250);
-    for (const { output } of wanted) this.sound(run, current, output, k);
+    // Sound starts when the run goes ahead with this chunk; a run held here (a paused room)
+    // may stop before then, and its sound would be converted again by the next run.
+    if (!run.memoryWait && k <= run.target) this.sounds(run, k);
     this.flow(run);
+  }
+  sounds(run, k) {
+    const current = run.current;
+    if (!current) return;
+    for (const output of current.outputs)
+      if (run.pending.get(k)?.has(output.group)) this.sound(run, current, output, k);
   }
   // One sound process per chunk and audio choice, shared by members that chose the same.
   sound(run, current, output, k) {
@@ -1628,7 +1639,9 @@ class AV1 {
         this.prune(group, entry);
         // A chunk slower than real time means viewers will catch up and wait.
         const took = (Date.now() - entry.began) / 1000,
-          waited = (entry.began - entry.queued) / 1000;
+          // Only time before the run had a slot: a look-ahead chunk asked for early waits for
+          // the player to need it, which is not a shortage of slots.
+          waited = Math.max(0, Math.min(entry.began, entry.run?.slotAt ?? entry.began) - entry.queued) / 1000;
         // Picture and sound come from different processes; say which one was late.
         const parts = [
           ['video', entry.videoAt],
