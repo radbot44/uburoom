@@ -5,6 +5,8 @@ const { PlaybackError } = require('../errors');
 const Sources = require('../plex-source');
 const { plexIdentity } = require('./identity');
 const { runOperation, SharedTask } = require('../operation');
+// Above any Blu-ray remux (the UHD format peaks at 128 Mbps), in kbps.
+const COPY_BITRATE = 200000;
 const policyFailure = message => Object.assign(new PlaybackError(message), { playbackPolicy: true });
 
 // Transcode decision: offered qualities, Plex transcode parameters, audio and subtitle
@@ -57,10 +59,13 @@ class PlexTranscode {
   // beforehand whether it would.
   transcodeParams({ ratingKey, selected, original, quality, session, audio, burn, directStream }) {
     const maxTranscode = this.plex.maxTranscodeQuality();
+    // Plex takes the audio and container out of this budget before it compares the video
+    // stream, so the source's own bitrate is too small for a copy: Plex then quietly
+    // re-encodes the picture. A copy costs no encoding, so its cap must never bind.
     const maxBitrate =
       quality === 'direct'
         ? directStream
-          ? Math.max(20000, original.bitrate || 0)
+          ? Math.max(COPY_BITRATE, 2 * (Number(original.bitrate) || 0))
           : Math.min(maxTranscode?.bitrate || 20000, Math.max(2000, original.bitrate || maxTranscode?.bitrate || 20000))
         : this.plex.pipeline.qualityOptions.find(q => q.id === qualityId(quality))?.bitrate || 4000;
     const sourceVideo =

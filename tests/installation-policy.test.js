@@ -581,7 +581,7 @@ test('Plex requests opportunistic directStream when burn and fallback compatible
         return new Response(
           JSON.stringify({ MediaContainer: { Setting: [{ id: 'TranscoderCanOnlyRemuxVideo', value: '0' }] } }),
         );
-      if (url.pathname === '/library/metadata/901') {
+      if (url.pathname === '/library/metadata/901' || url.pathname === '/library/metadata/903') {
         return new Response(
           JSON.stringify({
             MediaContainer: {
@@ -652,9 +652,12 @@ test('Plex requests opportunistic directStream when burn and fallback compatible
       }
       if (url.pathname.endsWith('/decision')) {
         const burned = url.searchParams.get('subtitles') === 'burn';
+        // Plex re-encodes 903's picture even when asked to copy it, as a tight bitrate cap makes it do.
+        const reencoded = url.searchParams.get('path') === '/library/metadata/903';
         decisions.push({
           directStream: url.searchParams.get('directStream'),
           subtitles: url.searchParams.get('subtitles'),
+          maxVideoBitrate: url.searchParams.get('maxVideoBitrate'),
         });
         return new Response(
           JSON.stringify({
@@ -667,7 +670,7 @@ test('Plex requests opportunistic directStream when burn and fallback compatible
                       Part: [
                         {
                           Stream: [
-                            { streamType: 1, codec: 'h264', decision: 'copy' },
+                            { streamType: 1, codec: 'h264', decision: reencoded ? 'transcode' : 'copy' },
                             {
                               streamType: 2,
                               id: Number(url.searchParams.get('audioStreamID') || 11),
@@ -699,7 +702,18 @@ test('Plex requests opportunistic directStream when burn and fallback compatible
     assert.equal(decisions.at(-1).directStream, '1');
     assert.equal(normal.output.videoDecision, 'copy');
     assert.equal(normal.output.audioDecision, 'transcode');
+    assert.equal(
+      decisions.at(-1).maxVideoBitrate,
+      '200000',
+      'a copied original is never held to its own bitrate, which Plex shares with the audio',
+    );
     await plex.stop(normal);
+
+    await assert.rejects(
+      plex.prepare('903', 'direct', false, undefined, undefined, { subtitleId: 'off' }),
+      /re-encode the original video/,
+      'Original never accepts a full video transcode in place of a copy',
+    );
 
     const downscaled = await plex.prepare('1', '720p4', false, undefined, undefined, { subtitleId: 'off' });
     assert.equal(decisions.at(-1).directStream, '1');

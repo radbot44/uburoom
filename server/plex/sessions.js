@@ -175,22 +175,24 @@ class PlexSessions {
             directStream,
           });
           const decision = await this.plex.json('/video/:/transcode/universal/decision?' + params);
-          if (
-            copyOnly &&
-            (burn ||
-              !decision.Metadata?.[0]?.Media?.[0]?.Part?.[0]?.Stream?.some(
-                stream => Number(stream.streamType) === 1 && stream.decision === 'copy',
-              ) ||
-              decision.Metadata.some(item =>
-                item.Media?.some(output =>
-                  output.Part?.some(part =>
-                    part.Stream?.some(stream => Number(stream.streamType) === 1 && stream.decision !== 'copy'),
-                  ),
-                ),
-              ))
-          ) {
+          const videoDecisions = (decision.Metadata || []).flatMap(item =>
+            (item.Media || []).flatMap(output =>
+              (output.Part || []).flatMap(part =>
+                (part.Stream || []).filter(stream => Number(stream.streamType) === 1).map(stream => stream.decision),
+              ),
+            ),
+          );
+          const videoCopied = videoDecisions.length > 0 && videoDecisions.every(value => value === 'copy');
+          if (copyOnly && (burn || !videoCopied)) {
             throw new PlaybackError(
               'This media needs video transcoding, which Plex has disabled. Try Original playback or another compatible player.',
+            );
+          }
+          // Original through Plex keeps the picture and converts only the sound. A full
+          // re-encode of the original would load the server while still claiming Original.
+          if (quality === 'direct' && directStream && videoDecisions.some(value => value && value !== 'copy')) {
+            throw new PlaybackError(
+              'Plex would re-encode the original video instead of copying it. Choose a lower quality.',
             );
           }
           const preset =
