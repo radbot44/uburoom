@@ -67,12 +67,14 @@ async function run(
   timeout = 30000,
   maxOutput = 1024 * 1024,
   diagnostic,
-  { memoryLimit = 1024 * 1024 * 1024, memory = processMemory, memoryInterval = 1000, outputComplete } = {},
+  { memoryLimit = 1024 * 1024 * 1024, memory = processMemory, memoryInterval = 1000, outputComplete, input } = {},
 ) {
   if (signal?.aborted) throw new PlaybackError('WebM preparation cancelled.');
   const webm = args.includes('webm') && args.includes('pipe:1');
-  // WebM outputs named pipe:1, pipe:3, pipe:4 ..., returned in that order.
-  const pipes = webm ? [...new Set(args.filter(arg => /^pipe:\d+$/.test(arg) && arg !== 'pipe:2'))] : [];
+  // WebM outputs named pipe:1, pipe:3, pipe:4 ..., returned in that order; pipe:0 is the input.
+  const pipes = webm
+    ? [...new Set(args.filter(arg => /^pipe:\d+$/.test(arg) && arg !== 'pipe:0' && arg !== 'pipe:2'))]
+    : [];
   pipes.sort((a, b) => Number(a.slice(5)) - Number(b.slice(5)));
   const split = pipes.length === 2;
   let directory,
@@ -93,7 +95,12 @@ async function run(
     }
     const output = await new Promise((resolve, reject) => {
       if (signal?.aborted) return reject(new PlaybackError('WebM preparation cancelled.'));
-      const child = spawn(binary, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      // `input`, when given, is the tool's whole standard input.
+      const child = spawn(binary, args, { windowsHide: true, stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
+      if (input) {
+        child.stdin.on('error', () => {});
+        child.stdin.end(input);
+      }
       let size = 0,
         chunks = [],
         settled = false,
@@ -232,6 +239,10 @@ async function run(
 // opened, or when the process ends cleanly and `ended()` confirms its input really ended.
 // Finished segments are handed to onSegment in order, one at a time, then deleted; only
 // they reach the disk, never a download of the source.
+// With `sound`, the process also writes a copy of its source's sound to stdout, and one
+// FFmpeg per `sound.commands` entry decodes it from stdin: its output goes to
+// sound.onData(i, bytes), and sound.onEnd(i, ok) reports how it exited. A decoder that
+// fails never stops the process, and the call returns only once every decoder has exited.
 async function segments(
   binary,
   args,
@@ -245,6 +256,7 @@ async function segments(
     memoryInterval = 1000,
     poll = 100,
     failOn,
+    sound,
   } = {},
 ) {
   if (signal?.aborted) throw signal.reason || new PlaybackError('WebM preparation cancelled.');
@@ -283,9 +295,12 @@ async function segments(
         }
       }
     }));
+  let decoders = [];
   try {
     await new Promise((resolve, reject) => {
-      const child = spawn(binary, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+      const child = spawn(binary, args, { windowsHide: true, stdio: ['ignore', sound ? 'pipe' : 'ignore', 'pipe'] });
+      decoders = (sound?.commands || []).map((command, i) => decoder(binary, command, i, sound));
+      if (sound) tee(child.stdout, decoders);
       let failure,
         stderr = '',
         exited = false,
@@ -293,6 +308,7 @@ async function segments(
       const stop = error => {
         failure ||= error;
         child.kill('SIGKILL');
+        for (const each of decoders) each.child.kill('SIGKILL');
       };
       const cancel = () => stop(signal.reason || new PlaybackError('WebM preparation cancelled.'));
       const finish = error => {
@@ -350,10 +366,55 @@ async function segments(
         await scan(true).then(() => finish(), finish);
       });
     });
+  } catch (error) {
+    for (const each of decoders) each.child.kill('SIGKILL');
+    throw error;
   } finally {
     await scanning.catch(() => {});
+    await Promise.all(decoders.map(each => each.closed));
     await fsp.rm(directory, { recursive: true, force: true });
   }
+}
+// One sound decoder of `segments`, reading the copy from stdin.
+function decoder(binary, args, i, sound) {
+  const child = spawn(binary, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+  child.stdin.on('error', () => {});
+  child.stdout.on('data', bytes => sound.onData(i, bytes));
+  const closed = new Promise(resolve => {
+    let done = false;
+    const end = ok => {
+      if (done) return;
+      done = true;
+      sound.onEnd(i, ok);
+      resolve();
+    };
+    child.on('error', () => end(false));
+    child.on('close', code => end(code === 0));
+  });
+  return { child, closed };
+}
+// The process's stdout to every decoder still running, at the pace of the slowest, so the
+// copy never piles up in memory; with none left, the process's output is still drained.
+function tee(output, decoders) {
+  output.on('data', bytes => {
+    const full = decoders.filter(({ child }) => child.stdin.writable && !child.stdin.write(bytes));
+    if (!full.length) return;
+    output.pause();
+    let waiting = full.length;
+    for (const { child } of full) {
+      const resume = () => {
+        child.stdin.off('drain', resume);
+        child.stdin.off('close', resume);
+        if (!--waiting) output.resume();
+      };
+      child.stdin.on('drain', resume);
+      child.stdin.on('close', resume);
+    }
+  });
+  output.on('end', () => {
+    for (const { child } of decoders) child.stdin.end();
+  });
+  output.on('error', () => {});
 }
 
 const STREAM_CODECS = {

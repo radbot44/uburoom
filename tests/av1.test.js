@@ -468,7 +468,8 @@ test('AV1 isolates source audio and Plex scopes, maps the exact stream and refus
     await manager.chunk(b, 0, signal);
     assert.deepEqual(
       runs.started[0].filter((_, i) => runs.started[0][i - 1] === '-map'),
-      ['[v0]'],
+      ['[v0]', '0:4'],
+      'the process copies only the chosen sound out',
     );
     assert.deepEqual(sounds[0], ['0:4'], 'the sound process maps the chosen stream');
     await assert.rejects(manager.chunk(missing, 0, signal), /selected audio track/);
@@ -501,9 +502,10 @@ test('sound for fixed-frame codecs is cut on one sample-exact timeline, so chunk
     pcm = manager.acquire({ id: '1', duration: 60, start: 'http://fixture', audioIndex: 2 }, '720p4'),
     signal = new AbortController().signal;
   try {
-    await manager.chunk(lease, 0, signal);
+    // Chunk 1 first, so it is its process's first chunk and reads the source itself.
     await manager.chunk(lease, 1, signal);
     await manager.chunk(pcm, 1, signal);
+    await manager.chunk(lease, 0, signal);
     const filter = args => args[args.indexOf('-af') + 1];
     const dts = commands.filter(args => args.includes('0:a:0'));
     const second = dts.find(args => /atrim=start=5\.7935:/.test(filter(args)));
@@ -522,6 +524,58 @@ test('sound for fixed-frame codecs is cut on one sample-exact timeline, so chunk
   } finally {
     manager.release(lease);
     manager.release(pcm);
+    await manager.close();
+  }
+});
+
+test('a run decodes its sound once from its own read, and later chunks encode from it', async () => {
+  const encodes = [];
+  // The process stops handing sound over after chunk 2, as one stopped mid-run would.
+  const runs = fakeRuns({ decoded: (_args, n) => n < 3 });
+  const manager = manage(
+    {},
+    fakeTools(
+      {
+        streams: [
+          { codec_type: 'video', width: 640, height: 360 },
+          { index: 1, codec_type: 'audio', codec_name: 'dts' },
+        ],
+        format: { start_time: '0.042000' },
+      },
+      { audio: (args, _signal, input) => encodes.push({ args, input }) },
+    ),
+    runs,
+  );
+  const lease = manager.acquire({ id: '1', duration: 60, start: 'http://fixture' }, '720p4'),
+    signal = new AbortController().signal;
+  try {
+    for (const k of [0, 1, 2]) await manager.chunk(lease, k, signal);
+    const run = runs.started[0],
+      copy = run.slice(run.lastIndexOf('-map'));
+    assert.equal(run.filter(arg => arg === '-i').length, 1, 'the source is opened once');
+    assert.deepEqual(copy.slice(0, 2), ['-map', '0:a:0']);
+    assert.ok(copy.includes('copy') && copy.at(-1) === 'pipe:1');
+    assert.equal(copy[copy.indexOf('-output_ts_offset') + 1], '0.042', 'the copy keeps the source times');
+    const [decode] = runs.decoders[0];
+    assert.ok(decode.includes('-copyts') && decode.includes('pipe:0'));
+    assert.match(decode[decode.indexOf('-af') + 1], /^asetpts='\(round.*,atrim=start=5\.7935,/);
+    const decoded = encodes.filter(({ args }) => args.includes('pipe:0')),
+      read = encodes.filter(({ args }) => !args.includes('pipe:0'));
+    assert.equal(read.length, 1, "only the process's first chunk reads the source for its sound");
+    assert.equal(decoded.length, 2);
+    assert.ok(
+      decoded.every(({ input }) => input.length === 299832 * 8),
+      'each chunk encodes its window: the lead, six seconds and 40 ms',
+    );
+    await manager.chunk(lease, 3, signal);
+    const fallback = encodes.slice(3);
+    assert.ok(fallback.length && fallback.every(({ args }) => !args.includes('pipe:0')));
+    assert.ok(
+      fallback.some(({ args }) => /atrim=start=17\.7935:/.test(args[args.indexOf('-af') + 1])),
+      'sound the process never supplied reads the source',
+    );
+  } finally {
+    manager.release(lease);
     await manager.close();
   }
 });
@@ -873,8 +927,10 @@ test('qualities of one source asking together share one process that decodes onc
     assert.equal(shared.filter(arg => arg === '-i').length, 1, 'the picture opens the source once');
     assert.deepEqual(
       shared.filter((_, i) => shared[i - 1] === '-map'),
-      ['[v0]', '[v1]', '[v2]'],
+      ['[v0]', '[v1]', '[v2]', '0:a:0', '0:2'],
+      'each audio choice is copied out once, for one decode each',
     );
+    assert.equal(runs.decoders[0].length, 2);
     assert.ok(shared.includes('-force_key_frames') && shared.includes('segment'), 'chunks cut at forced keyframes');
     assert.deepEqual(
       chunks.map(bytes => bytes.video.length),
@@ -1247,4 +1303,52 @@ test('segments stops a process whose route quietly lost its hardware decoder', a
     error => error.exitFailure === true,
   );
   assert.ok(Date.now() - started < 5000);
+});
+
+test('segments hands its copied sound to every decoder, and a failed decoder does not stop it', async () => {
+  // Node stands in for FFmpeg: the process writes 4 MB to stdout, more than a pipe holds,
+  // one decoder counts what it reads, the other fails at once.
+  const decoded = [0, 0],
+    ends = [];
+  await segments(
+    process.execPath,
+    ['-e', 'const b=Buffer.alloc(1<<20,7);for(let i=0;i<4;i++)process.stdout.write(b)', 'segments:0'],
+    undefined,
+    {
+      onSegment() {},
+      poll: 10,
+      sound: {
+        commands: [
+          ['-e', "let n=0;process.stdin.on('data',d=>n+=d.length).on('end',()=>process.stdout.write(String(n)))"],
+          ['-e', 'process.exit(1)'],
+        ],
+        onData: (i, bytes) => (decoded[i] += Number(bytes.toString())),
+        onEnd: (i, ok) => ends.push([i, ok]),
+      },
+    },
+  );
+  assert.equal(decoded[0], 4 << 20, 'the working decoder read the whole copy');
+  assert.deepEqual(ends.sort(), [
+    [0, true],
+    [1, false],
+  ]);
+});
+
+test('run feeds its input to a WebM encode on stdin and returns only the WebM output', async () => {
+  // Node stands in for FFmpeg: it copies standard input to the file that replaced pipe:1.
+  const script =
+    "const c=[];process.stdin.on('data',d=>c.push(d)).on('end',()=>require('fs').writeFileSync(process.argv.at(-1),Buffer.concat(c)))";
+  const input = Buffer.alloc(4000, 3);
+  const output = await run(
+    process.execPath,
+    ['-e', script, '--', '-i', 'pipe:0', '-f', 'webm', 'pipe:1'],
+    undefined,
+    5000,
+    1 << 20,
+    undefined,
+    {
+      input,
+    },
+  );
+  assert.deepEqual(output, input);
 });

@@ -117,7 +117,7 @@ test('VP8 and VP9 chunks share only identical codec/source/quality/audio and pre
       encodes.map(v => v.encoder),
       ['libvpx-vp9', 'libvpx'],
     );
-    assert.deepEqual(encodes[0].maps, ['[v0]']);
+    assert.deepEqual(encodes[0].maps, ['[v0]', '0:2'], 'the picture process also copies the chosen sound out');
     assert.deepEqual(sounds[0], ['0:2']);
     assert.ok(policy.jobs.size <= 1);
     policy.settings.formats = ['vp8'];

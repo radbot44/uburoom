@@ -434,7 +434,8 @@ function noteResponse(state, asked) {
   state.requests = (state.requests || 0) + 1;
   state.slowest = Math.max(state.slowest || 0, waited);
 }
-// A chunk's sound, as its own short process. It starts AUDIO_LEAD early and ends 0.04 s
+// A chunk's sound read by its own short process: a process's first chunk, silence, or sound
+// the run's decoded copy could not supply. It starts AUDIO_LEAD early and ends 0.04 s
 // late, so consecutive chunks overlap and each decodes on its own; the player keeps only
 // the chunk's window. The first chunk has nothing before it, so silence takes the lead's place.
 // Matroska rounds audio packet times to the millisecond, so processes that seek separately
@@ -477,24 +478,175 @@ function audioCommand(url, spec, audioMap, start, duration, codec) {
     '-dn',
     '-map_metadata',
     '-1',
-    '-c:a',
-    'libopus',
-    '-b:a',
-    '128k',
-    '-ac',
-    '2',
-    '-ar',
-    '48000',
     '-af',
     filter,
+    ...OPUS,
+  ];
+}
+// Every chunk's sound is its own Opus stream: browsers start each WebM piece afresh.
+const OPUS = [
+  '-c:a',
+  'libopus',
+  '-b:a',
+  '128k',
+  '-ac',
+  '2',
+  '-ar',
+  '48000',
+  '-f',
+  'webm',
+  '-live',
+  '1',
+  '-cluster_time_limit',
+  '1000',
+  'pipe:1',
+];
+// A run decodes its sound once. Its process copies the chosen streams' packets out as they
+// are read, restored to the source's own times: an input seek takes away the seek point and
+// the file's start time, and -copyts on the decoder keeps them. Each decoder lays the sound
+// down from `from` on the same sample-exact timeline as audioCommand, as 48 kHz stereo floats.
+const PCM_RATE = 48000,
+  PCM_FRAME = 8;
+function soundCopyArgs(maps, offset, length) {
+  return [
+    ...maps.flatMap(map => ['-map', map]),
+    '-vn',
+    '-sn',
+    '-dn',
+    '-map_metadata',
+    '-1',
+    '-map_chapters',
+    '-1',
+    '-c:a',
+    'copy',
+    '-output_ts_offset',
+    String(offset),
+    ...(length ? ['-t', String(length)] : []),
+    // Matroska carries every codec a source can have (NUT refuses TrueHD and ALAC); short
+    // clusters hand the sound over as it is read.
     '-f',
-    'webm',
+    'matroska',
     '-live',
     '1',
     '-cluster_time_limit',
-    '1000',
+    '200',
     'pipe:1',
   ];
+}
+function soundDecodeCommand(stream, from, codec) {
+  return [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-nostdin',
+    '-copyts',
+    '-f',
+    'matroska',
+    '-i',
+    'pipe:0',
+    '-map',
+    `0:a:${stream}`,
+    '-vn',
+    '-af',
+    `${FIXED_FRAMES.includes(codec) ? SNAP + ',' : ''}atrim=start=${from},asetpts=PTS-STARTPTS`,
+    '-ac',
+    '2',
+    '-ar',
+    String(PCM_RATE),
+    '-f',
+    'f32le',
+    'pipe:1',
+  ];
+}
+// One chunk's Opus from decoded samples on standard input.
+function encodeCommand() {
+  return [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-nostdin',
+    '-f',
+    'f32le',
+    '-ar',
+    String(PCM_RATE),
+    '-ac',
+    '2',
+    '-i',
+    'pipe:0',
+    '-map_metadata',
+    '-1',
+    ...OPUS,
+  ];
+}
+// A run's decoded sound for one audio choice, from the lead of the chunk after its first.
+// Each chunk takes its window (the same one audioCommand cuts); samples before the earliest
+// chunk still to come are dropped. Once the process has ended, a chunk the samples do not
+// cover gets nothing, so it reads the source itself, except the source's last chunk, which
+// takes what there is.
+class SoundMemory {
+  constructor(from, last, limit = 64 * 1024 * 1024) {
+    this.from = from;
+    this.last = last;
+    this.limit = limit;
+    this.parts = [];
+    this.dropped = 0;
+    this.size = 0;
+    this.waiters = new Set();
+  }
+  at(k) {
+    return Math.round((k * CHUNK - AUDIO_LEAD - this.from) * PCM_RATE) * PCM_FRAME;
+  }
+  add(bytes) {
+    if (this.ended) return;
+    this.parts.push(bytes);
+    this.size += bytes.length;
+    // Nobody is taking it, so the run would only keep growing: chunks read the source instead.
+    if (this.size - this.dropped > this.limit) this.end(false);
+    else this.check();
+  }
+  end(complete) {
+    if (this.ended) return;
+    this.ended = true;
+    this.complete = complete;
+    this.check();
+    if (!complete) this.parts = [];
+  }
+  wait(k, duration) {
+    const start = this.at(k),
+      end = start + Math.round((duration + AUDIO_LEAD + 0.04) * PCM_RATE) * PCM_FRAME;
+    if (start < this.dropped || (this.ended && !this.complete)) return Promise.resolve(undefined);
+    return new Promise(resolve => {
+      this.waiters.add({ k, start, end, resolve });
+      this.check();
+    });
+  }
+  check() {
+    for (const waiter of this.waiters) {
+      const { k, start, end, resolve } = waiter;
+      if (this.size >= end) resolve(this.slice(start, end));
+      else if (this.ended)
+        resolve(this.complete && k === this.last && this.size > start ? this.slice(start, this.size) : undefined);
+      else continue;
+      this.waiters.delete(waiter);
+    }
+  }
+  slice(start, end) {
+    const out = Buffer.alloc(end - start);
+    let at = this.dropped;
+    for (const part of this.parts) {
+      const from = Math.max(start, at),
+        to = Math.min(end, at + part.length);
+      if (to > from) part.copy(out, from - start, from - at, to - at);
+      at += part.length;
+      if (at >= end) break;
+    }
+    return out;
+  }
+  // The run reached chunk k: what comes before its window, and before every waiting chunk's, goes.
+  advance(k) {
+    const keep = Math.min(this.at(k), ...[...this.waiters].map(waiter => waiter.start));
+    while (this.parts.length && this.dropped + this.parts[0].length <= keep) this.dropped += this.parts.shift().length;
+  }
 }
 
 const { SharedTask, runOperation } = require('./operation');
@@ -1191,7 +1343,8 @@ class AV1 {
   // closed for RUN_IDLE_MS stops, so a paused room keeps no slot or GPU memory.
   flow(run) {
     if (run.done) return;
-    const open = !run.memoryWait && run.next <= run.target;
+    // A chunk whose sound still waits for the process's own read keeps the source open.
+    const open = run.soundWaits > 0 || (!run.memoryWait && run.next <= run.target);
     if (open === run.gate.open) return;
     run.gate.set(open);
     if (open) {
@@ -1254,10 +1407,29 @@ class AV1 {
           const span = Math.min((run.end - start) * CHUNK, first.source.duration - start * CHUNK);
           const burned =
             outputs.length === 1 ? await this.burnInput(chosen, url, start * CHUNK, span, signal) : undefined;
+          // Sound is decoded once from the process's own read, from its second chunk on; its
+          // first chunk needs the lead before the process starts, so that one, and silence,
+          // still come from processes of their own.
+          const runIn = burned?.runIn || 0,
+            lastChunk = Math.ceil(first.source.duration / CHUNK) - 1,
+            choices =
+              Math.min(run.end - 1, lastChunk) > start
+                ? [...new Map(outputs.filter(o => o.spec.audio).map(o => [o.sound, o])).values()]
+                : [],
+            from = (start + 1) * CHUNK - AUDIO_LEAD,
+            memories = choices.map(() => new SoundMemory(from, lastChunk));
+          const sound = choices.length
+            ? {
+                maps: choices.map(o => o.sound),
+                offset: start * CHUNK - runIn + (Number(info.format?.start_time) || 0),
+                length: run.end <= lastChunk ? (run.end - start) * CHUNK + runIn + 1 : undefined,
+              }
+            : undefined;
+          let current;
           try {
-            const args = this.runCommand(url, outputs, lead, route, start, run, burned, chosen, encoder, codec);
+            const args = this.runCommand(url, outputs, lead, route, start, run, burned, chosen, encoder, codec, sound);
             run.spawned = true;
-            const current = (run.current = {
+            current = run.current = {
               start,
               outputs,
               url,
@@ -1270,7 +1442,8 @@ class AV1 {
               sounds: new Map(),
               // When each picture and sound arrived, so a slow chunk can say which was late.
               arrived: new Map(),
-            });
+              memory: new Map(choices.map((o, i) => [o.sound, memories[i]])),
+            };
             current.stalled = () => {
               clearTimeout(run.stallTimer);
               if (run.gate.open)
@@ -1299,11 +1472,24 @@ class AV1 {
               ended: () => !state?.upstreamFailed,
               memoryLimit: (burned?.bitmap ? 3 : 2 + 0.5 * (outputs.length - 1)) * 1024 * 1024 * 1024,
               failOn: route?.failOn,
+              sound: choices.length
+                ? {
+                    commands: choices.map((o, i) => soundDecodeCommand(i, from, o.audio.selected?.codec_name)),
+                    onData: (i, bytes) => memories[i].add(bytes),
+                    onEnd: (i, ok) => ok || memories[i].end(false),
+                  }
+                : undefined,
             });
+            for (const memory of memories) memory.end(true);
             return {};
           } finally {
+            for (const memory of memories) memory.end(false);
             clearTimeout(run.stallTimer);
             run.current = undefined;
+            // A chunk whose picture this process made keeps its sound, which may still be
+            // encoding or reading the source: the run settles only after it.
+            const unfinished = [...(current?.audio || [])].filter(([k]) => k < run.next);
+            await Promise.allSettled(unfinished.flatMap(([, byChoice]) => [...byChoice.values()]));
             await burned?.cleanup?.();
           }
         },
@@ -1316,7 +1502,7 @@ class AV1 {
       run.controller.signal.removeEventListener('abort', abort);
     }
   }
-  runCommand(url, outputs, lead, route, start, run, burn, chosen, encoder, codec) {
+  runCommand(url, outputs, lead, route, start, run, burn, chosen, encoder, codec, sound) {
     const count = outputs.length,
       runIn = burn?.runIn || 0,
       // Burned subtitles overlay in system memory; otherwise a route may keep its frames on the GPU.
@@ -1401,6 +1587,7 @@ class AV1 {
         '1',
         'segments:' + i,
       ]),
+      ...(sound ? soundCopyArgs(sound.maps, sound.offset, sound.length) : []),
     ];
   }
   // The run reaches chunk k: under contention it yields its slot here; otherwise it sets
@@ -1408,6 +1595,7 @@ class AV1 {
   begin(run, k) {
     const current = run.current;
     if (!current || k >= run.end) return;
+    for (const memory of current.memory.values()) memory.advance(k);
     // Waiting work is another conversion for a slot here, or anything waiting for a job of
     // the conversion limit shared with the media server.
     if (
@@ -1466,7 +1654,9 @@ class AV1 {
     for (const output of current.outputs)
       if (run.pending.get(k)?.has(output.group)) this.sound(run, current, output, k);
   }
-  // One sound process per chunk and audio choice, shared by members that chose the same.
+  // One sound encode per chunk and audio choice, shared by members that chose the same: from
+  // the run's decoded sound, or, for the process's first chunk, silence, or sound the
+  // process can no longer supply, its own short process reading the source.
   sound(run, current, output, k) {
     if (!current.audio.has(k)) current.audio.set(k, new Map());
     const byChoice = current.audio.get(k);
@@ -1475,21 +1665,24 @@ class AV1 {
         duration = Math.min(CHUNK, output.source.duration - start);
       // Its own source request, outside the run's gate, so a held run cannot starve it.
       const asked = Date.now();
-      const job = this.input(
-        () => this.runSource(run),
-        run.controller.signal,
-        (url, state) =>
-          this.run(
-            this.ffmpeg,
-            audioCommand(url, output.spec, output.audio.map, start, duration, output.audio.selected?.codec_name),
-            run.controller.signal,
-            30000,
-            4 * 1024 * 1024,
-          ).then(audio => {
-            if (k === current.start) current.firstSound = { seconds: (Date.now() - asked) / 1000, ...state };
-            return audio;
-          }),
-      );
+      const read = () =>
+        this.input(
+          () => this.runSource(run),
+          run.controller.signal,
+          (url, state) =>
+            this.run(
+              this.ffmpeg,
+              audioCommand(url, output.spec, output.audio.map, start, duration, output.audio.selected?.codec_name),
+              run.controller.signal,
+              30000,
+              4 * 1024 * 1024,
+            ).then(audio => {
+              if (k === current.start) current.firstSound = { seconds: (Date.now() - asked) / 1000, ...state };
+              return audio;
+            }),
+        );
+      const memory = k > current.start && current.memory.get(output.sound);
+      const job = memory ? this.decoded(run, memory, k, duration).then(audio => audio || read()) : read();
       job.catch(() => {});
       byChoice.set(output.sound, job);
     }
@@ -1510,6 +1703,23 @@ class AV1 {
         },
       )
       .catch(() => {});
+  }
+  // A chunk's Opus from the run's decoded sound, or undefined when the process ended before
+  // its window arrived. While it waits, the source stays open so the samples can come.
+  async decoded(run, memory, k, duration) {
+    run.soundWaits = (run.soundWaits || 0) + 1;
+    this.flow(run);
+    let samples;
+    try {
+      samples = await memory.wait(k, duration);
+    } finally {
+      run.soundWaits--;
+      this.flow(run);
+    }
+    if (!samples) return undefined;
+    return this.run(this.ffmpeg, encodeCommand(), run.controller.signal, 30000, 4 * 1024 * 1024, undefined, {
+      input: samples,
+    });
   }
   async deliver(run, current, output, n, video) {
     const k = current.start + n,
@@ -1589,7 +1799,7 @@ class AV1 {
               '-v',
               'error',
               '-show_entries',
-              'stream=index,codec_type,codec_name,width,height,pix_fmt,color_space,color_primaries,color_transfer,r_frame_rate,avg_frame_rate:stream_side_data=side_data_type,dv_profile,bl_signal_compatibility_id:format=bit_rate',
+              'stream=index,codec_type,codec_name,width,height,pix_fmt,color_space,color_primaries,color_transfer,r_frame_rate,avg_frame_rate:stream_side_data=side_data_type,dv_profile,bl_signal_compatibility_id:format=bit_rate,start_time',
               '-of',
               'json',
               url,
