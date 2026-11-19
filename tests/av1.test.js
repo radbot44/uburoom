@@ -479,6 +479,53 @@ test('AV1 isolates source audio and Plex scopes, maps the exact stream and refus
   }
 });
 
+test('sound for fixed-frame codecs is cut on one sample-exact timeline, so chunks join seamlessly', async () => {
+  // Matroska's millisecond packet times put separately seeking processes up to half a
+  // millisecond apart, which clicked at every join; snapping to the frame grid removes it.
+  const commands = [];
+  const manager = manage(
+    {},
+    fakeTools(
+      {
+        streams: [
+          { codec_type: 'video', width: 640, height: 360 },
+          { index: 1, codec_type: 'audio', codec_name: 'dts' },
+          { index: 2, codec_type: 'audio', codec_name: 'pcm_s24le' },
+        ],
+      },
+      { audio: args => commands.push(args) },
+    ),
+    fakeRuns(),
+  );
+  const lease = manager.acquire({ id: '1', duration: 60, start: 'http://fixture' }, '720p4'),
+    pcm = manager.acquire({ id: '1', duration: 60, start: 'http://fixture', audioIndex: 2 }, '720p4'),
+    signal = new AbortController().signal;
+  try {
+    await manager.chunk(lease, 0, signal);
+    await manager.chunk(lease, 1, signal);
+    await manager.chunk(pcm, 1, signal);
+    const filter = args => args[args.indexOf('-af') + 1];
+    const dts = commands.filter(args => args.includes('0:a:0'));
+    const second = dts.find(args => /atrim=start=5\.7935:/.test(filter(args)));
+    assert.ok(second, 'chunk 1 starts AUDIO_LEAD before 6 s, trimmed by sample position');
+    assert.ok(second.includes('-noaccurate_seek') && second.includes('-copyts'));
+    assert.match(filter(second), /^asetpts='\(round\(STARTPTS\*TB\*SR\/NB_SAMPLES\)\*NB_SAMPLES\+N\)\/SR\/TB'/);
+    assert.equal(Number(second[second.indexOf('-ss') + 1]), 5.7935 - 2, 'decoding starts before the chunk');
+    const first = dts.find(args => /first_pts=0/.test(filter(args)));
+    assert.match(
+      filter(first),
+      /aresample=async=1:first_pts=0,atrim=end=6\.04,.*adelay=9912S/,
+      'the first chunk pads to time zero',
+    );
+    const other = commands.find(args => args.includes('0:2'));
+    assert.ok(!other.includes('-copyts') && /^asetpts=PTS-STARTPTS/.test(filter(other)), 'PCM keeps the accurate seek');
+  } finally {
+    manager.release(lease);
+    manager.release(pcm);
+    await manager.close();
+  }
+});
+
 test('a slow chunk says whether its picture or its sound was late', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const warnings = [];

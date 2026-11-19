@@ -426,9 +426,6 @@ const delay = (ms, signal) =>
     );
   });
 
-// A chunk's sound, as its own short process. It starts AUDIO_LEAD early and ends 0.04 s
-// late, so consecutive chunks overlap and one continuous encoder cannot make them. The
-// first chunk has nothing before it, so silence takes the lead's place.
 const seconds = ms => (ms / 1000).toFixed(1) + 's';
 // Each provider response a bridged input waited for: how many, and the slowest.
 function noteResponse(state, asked) {
@@ -437,17 +434,42 @@ function noteResponse(state, asked) {
   state.requests = (state.requests || 0) + 1;
   state.slowest = Math.max(state.slowest || 0, waited);
 }
-function audioCommand(url, spec, audioMap, start, duration) {
+// A chunk's sound, as its own short process. It starts AUDIO_LEAD early and ends 0.04 s
+// late, so consecutive chunks overlap and each decodes on its own; the player keeps only
+// the chunk's window. The first chunk has nothing before it, so silence takes the lead's place.
+// Matroska rounds audio packet times to the millisecond, so processes that seek separately
+// disagree by up to half a millisecond about where a sample is, and chunks made by different
+// processes clicked where the player joined them. For codecs with fixed-size frames, each
+// process decodes from before its chunk, snaps its first frame to the frame grid, counts
+// samples from there and trims at those positions: every chunk then lands on one
+// sample-exact timeline, whichever process made it. Others keep FFmpeg's accurate seek.
+const FIXED_FRAMES = ['dts', 'ac3', 'eac3', 'aac', 'mp3', 'mp2'];
+const SNAP = "asetpts='(round(STARTPTS*TB*SR/NB_SAMPLES)*NB_SAMPLES+N)/SR/TB'";
+function audioCommand(url, spec, audioMap, start, duration, codec) {
+  const from = start - AUDIO_LEAD,
+    length = duration + AUDIO_LEAD + 0.04;
+  const exact = spec.audio && FIXED_FRAMES.includes(codec);
+  let input, filter;
+  if (!spec.audio) {
+    input = ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-t', String(length)];
+    filter = 'asetpts=PTS-STARTPTS';
+  } else if (!exact) {
+    input = ['-ss', String(Math.max(0, from)), '-i', url, '-t', String(length)];
+    filter = 'asetpts=PTS-STARTPTS' + (start ? '' : `,aresample=48000,adelay=${AUDIO_LEAD_SAMPLES}S:all=1`);
+  } else if (start) {
+    input = ['-ss', String(Math.max(0, from - 2)), '-noaccurate_seek', '-copyts', '-i', url];
+    filter = `${SNAP},atrim=start=${from}:end=${from + length},asetpts=PTS-STARTPTS`;
+  } else {
+    // The first chunk: silence from time zero to the source's first sound, then the lead.
+    input = ['-noaccurate_seek', '-copyts', '-i', url];
+    filter = `${SNAP},aresample=async=1:first_pts=0,atrim=end=${duration + 0.04},asetpts=PTS-STARTPTS,aresample=48000,adelay=${AUDIO_LEAD_SAMPLES}S:all=1`;
+  }
   return [
     '-hide_banner',
     '-loglevel',
     'error',
     '-nostdin',
-    ...(spec.audio
-      ? ['-ss', String(Math.max(0, start - AUDIO_LEAD)), '-i', url]
-      : ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo']),
-    '-t',
-    String(duration + AUDIO_LEAD + 0.04),
+    ...input,
     '-map',
     spec.audio ? audioMap(0) : '0:a:0',
     '-vn',
@@ -464,7 +486,7 @@ function audioCommand(url, spec, audioMap, start, duration) {
     '-ar',
     '48000',
     '-af',
-    'asetpts=PTS-STARTPTS' + (start ? '' : `,aresample=48000,adelay=${AUDIO_LEAD_SAMPLES}S:all=1`),
+    filter,
     '-f',
     'webm',
     '-live',
@@ -1448,7 +1470,7 @@ class AV1 {
         (url, state) =>
           this.run(
             this.ffmpeg,
-            audioCommand(url, output.spec, output.audio.map, start, duration),
+            audioCommand(url, output.spec, output.audio.map, start, duration, output.audio.selected?.codec_name),
             run.controller.signal,
             30000,
             4 * 1024 * 1024,
