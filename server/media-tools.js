@@ -29,6 +29,37 @@ function findOnPath(name, environment = process.env, platform = process.platform
   }
 }
 
+// Encoder initialization errors, the only failures that justify the software encoder.
+const ENCODER_FAILURE =
+  /(?:Error while opening encoder|Error initializing (?:output|an internal MFX)|No capable devices found|Cannot load (?:nvcuda|libcuda)|InitializeEncoder failed|unsupported device|MFX_ERR_UNSUPPORTED)/i;
+
+// Stop a media process whose memory passes its limit. A process that cannot be measured
+// while still running is stopped too; one that has just exited is left alone.
+function watchMemory(child, limit, memory, interval, finished, stop) {
+  let checking = false;
+  return setInterval(async () => {
+    if (checking || finished() || !child.pid) return;
+    checking = true;
+    try {
+      const rss = await memory(child.pid);
+      if (!finished() && rss > limit)
+        stop(Object.assign(new PlaybackError('WebM process exceeded the server memory limit.'), { exitFailure: true }));
+    } catch {
+      let alive = false;
+      try {
+        process.kill(child.pid, 0);
+        alive = true;
+      } catch (probeError) {
+        alive = probeError?.code === 'EPERM';
+      }
+      if (alive && !finished() && child.exitCode === null && child.signalCode === null)
+        stop(new PlaybackError('WebM process resource monitoring unavailable.'));
+    } finally {
+      checking = false;
+    }
+  }, interval);
+}
+
 async function run(
   binary,
   args,
@@ -69,7 +100,6 @@ async function run(
         failure,
         stderr = '',
         checking = false,
-        checkingMemory = false,
         drainTimer,
         complete = false,
         exited = false;
@@ -114,30 +144,14 @@ async function run(
             }
           }, 250)
         : undefined;
-      const memoryCheck = setInterval(async () => {
-        if (checkingMemory || settled || exited || failure || !child.pid) return;
-        checkingMemory = true;
-        try {
-          const rss = await memory(child.pid);
-          if (!settled && !exited && !failure && rss > memoryLimit)
-            stop(
-              Object.assign(new PlaybackError('WebM process exceeded the server memory limit.'), { exitFailure: true }),
-            );
-        } catch {
-          let alive = false;
-          try {
-            process.kill(child.pid, 0);
-            alive = true;
-          } catch (probeError) {
-            alive = probeError?.code === 'EPERM';
-          }
-          if (alive && !settled && !exited && !failure && child.exitCode === null && child.signalCode === null) {
-            stop(new PlaybackError('WebM process resource monitoring unavailable.'));
-          }
-        } finally {
-          checkingMemory = false;
-        }
-      }, memoryInterval);
+      const memoryCheck = watchMemory(
+        child,
+        memoryLimit,
+        memory,
+        memoryInterval,
+        () => settled || exited || !!failure,
+        stop,
+      );
       signal?.addEventListener('abort', cancel, { once: true });
       child.stdout.on('data', bytes => {
         size += bytes.length;
@@ -176,10 +190,7 @@ async function run(
       });
       child.on('close', code => {
         diagnostic?.(code, stderr);
-        const encoderFailure =
-          /(?:Error while opening encoder|Error initializing (?:output|an internal MFX)|No capable devices found|Cannot load (?:nvcuda|libcuda)|InitializeEncoder failed|unsupported device|MFX_ERR_UNSUPPORTED)/i.test(
-            stderr,
-          );
+        const encoderFailure = ENCODER_FAILURE.test(stderr);
         finish(
           failure ||
             (code === 0 || complete
@@ -213,6 +224,130 @@ async function run(
       );
       await fsp.rmdir(directory);
     }
+  }
+}
+
+// One long-running FFmpeg whose WebM outputs each go through the segment muxer. Arguments
+// name each output's files 'segments:N'. A segment is finished once the next one has
+// opened, or when the process ends cleanly and `ended()` confirms its input really ended.
+// Finished segments are handed to onSegment in order, one at a time, then deleted; only
+// they reach the disk, never a download of the source.
+async function segments(
+  binary,
+  args,
+  signal,
+  {
+    onSegment,
+    ended = () => true,
+    maxSegment = 64 * 1024 * 1024,
+    memoryLimit = 1024 * 1024 * 1024,
+    memory = processMemory,
+    memoryInterval = 1000,
+    poll = 100,
+  } = {},
+) {
+  if (signal?.aborted) throw signal.reason || new PlaybackError('WebM preparation cancelled.');
+  const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-run-'));
+  const outputs = [];
+  args = args.map(arg => {
+    const match = /^segments:(\d+)$/.exec(arg);
+    if (!match) return arg;
+    outputs.push(Number(match[1]));
+    return path.join(directory, `o${match[1]}-%d.webm`);
+  });
+  const next = new Map(outputs.map(output => [output, 0]));
+  const file = (output, n) => path.join(directory, `o${output}-${n}.webm`);
+  const exists = name =>
+    fsp.access(name).then(
+      () => true,
+      () => false,
+    );
+  let scanning = Promise.resolve();
+  const scan = final =>
+    (scanning = scanning.then(async () => {
+      for (const output of outputs) {
+        for (;;) {
+          const n = next.get(output);
+          if (!(await exists(file(output, n)))) break;
+          if (!final && !(await exists(file(output, n + 1)))) break;
+          const bytes = await fsp.readFile(file(output, n));
+          next.set(output, n + 1);
+          await fsp.unlink(file(output, n));
+          if (bytes.length > maxSegment) throw new PlaybackError('WebM output exceeded the supported limit.');
+          if (bytes.length < 100)
+            throw Object.assign(new PlaybackError('WebM output is empty or exceeded the supported limit.'), {
+              exitFailure: true,
+            });
+          await onSegment(output, n, bytes);
+        }
+      }
+    }));
+  try {
+    await new Promise((resolve, reject) => {
+      const child = spawn(binary, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+      let failure,
+        stderr = '',
+        exited = false,
+        settled = false;
+      const stop = error => {
+        failure ||= error;
+        child.kill('SIGKILL');
+      };
+      const cancel = () => stop(signal.reason || new PlaybackError('WebM preparation cancelled.'));
+      const finish = error => {
+        if (settled) return;
+        settled = true;
+        clearInterval(watcher);
+        clearInterval(memoryCheck);
+        signal?.removeEventListener('abort', cancel);
+        error ? reject(error) : resolve();
+      };
+      const watcher = setInterval(() => {
+        if (!failure) scan(false).catch(stop);
+      }, poll);
+      const memoryCheck = watchMemory(
+        child,
+        memoryLimit,
+        memory,
+        memoryInterval,
+        () => settled || exited || !!failure,
+        stop,
+      );
+      signal?.addEventListener('abort', cancel, { once: true });
+      // Drain, but never log stderr: FFmpeg may print its input URL.
+      child.stderr.on('data', bytes => {
+        stderr = (stderr + bytes.toString()).slice(-16000);
+      });
+      child.on('error', () =>
+        finish(new PlaybackError('WebM unavailable: configure an existing FFmpeg/FFprobe installation on the server.')),
+      );
+      child.on('exit', () => {
+        exited = true;
+        child.stderr.resume();
+      });
+      child.on('close', async code => {
+        clearInterval(watcher);
+        // Every segment before the last open one is complete, whatever the exit.
+        await scan(false).catch(error => (failure ||= error));
+        if (failure) return finish(failure);
+        if (code !== 0)
+          return finish(
+            Object.assign(
+              new PlaybackError(
+                'The configured video encoder/probe failed. Check the selected encoder and run the AV1 probe on the server.',
+              ),
+              { encoderFailure: ENCODER_FAILURE.test(stderr), exitFailure: true },
+            ),
+          );
+        // A clean exit whose input broke off is not the end of the source.
+        if (!ended())
+          return finish(Object.assign(new PlaybackError('The source stopped before its end.'), { exitFailure: true }));
+        await scan(true).then(() => finish(), finish);
+      });
+    });
+  } finally {
+    await scanning.catch(() => {});
+    await fsp.rm(directory, { recursive: true, force: true });
   }
 }
 
@@ -411,4 +546,4 @@ function cpuTonemap(hdrInfo) {
     : [];
 }
 
-module.exports = { findOnPath, run, stream, codecMatches, fileIndex, classifyHdr, cpuTonemap };
+module.exports = { findOnPath, run, segments, stream, codecMatches, fileIndex, classifyHdr, cpuTonemap };

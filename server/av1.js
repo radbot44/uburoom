@@ -12,7 +12,7 @@ const { pipeline } = require('node:stream/promises');
 const { QUALITIES, qualityDefinition, qualityId } = require('../shared/room-protocol.mjs');
 const Playback = require('../shared/playback-policy.mjs');
 const { PlaybackError } = require('./errors');
-const { run, stream, fileIndex, classifyHdr, cpuTonemap } = require('./media-tools');
+const { run, segments, stream, fileIndex, classifyHdr, cpuTonemap } = require('./media-tools');
 const CHUNK = Playback.BUFFER.chunkSeconds;
 // Audio starts this early so Opus has settled before the chunk's first sample, and the
 // player keeps only the chunk's own window. 312 samples of encoder delay plus ten
@@ -65,7 +65,20 @@ function encoderArgs(encoder = 'qsv', codec = 'av1', threads = 2, cores = os.ava
       throw new PlaybackError(
         'NVENC does not encode ' + codec.toUpperCase() + '. Enable CPU fallback or choose another backend.',
       );
-    return ['-c:v', 'av1_nvenc', '-preset', 'p4', '-pix_fmt', 'yuv420p', '-bf', '0', '-flags', '+global_header'];
+    return [
+      '-c:v',
+      'av1_nvenc',
+      '-preset',
+      'p4',
+      '-pix_fmt',
+      'yuv420p',
+      '-bf',
+      '0',
+      '-forced_idr',
+      '1',
+      '-flags',
+      '+global_header',
+    ];
   }
   if (codec === 'vp8')
     throw new PlaybackError('VP8 requires the software backend. Enable CPU fallback or select software.');
@@ -78,6 +91,9 @@ function encoderArgs(encoder = 'qsv', codec = 'av1', threads = 2, cores = os.ava
     'nv12',
     '-bf',
     '0',
+    // A forced keyframe must be a key frame, not an intra frame later chunks depend on.
+    '-forced_idr',
+    '1',
     '-flags',
     '+global_header',
   ];
@@ -189,9 +205,9 @@ function outputSpec(info, quality, maxQuality = QUALITIES[1]) {
 // HDR tonemaps through libplacebo with peak detection off, the closest GPU match
 // to the CPU picture. vpp_qsv tonemapping crushes shadows (its scaling matches libplacebo
 // within SSIM 0.99, measured on a UHD remux), and tonemap_opencl adapts per
-// process, so the first frame of every chunk flashes. Each chunk is a new process.
+// process, so the first frame after every restart flashes.
 // Sources without a listed surface format stay on the CPU path.
-// Burned subtitles need cues that began before the chunk. Bitmap tracks decode a
+// Burned subtitles need cues that began before the run. Bitmap tracks decode a
 // short run-in, so GPU routes stay real time; text cues only need reading.
 const BITMAP_RUN_IN = 8,
   TEXT_RUN_IN = 15;
@@ -312,16 +328,99 @@ function decodeRoutes(spec, encoder, hardwareDecode = true) {
   ];
 }
 
-// One process can make a chunk for every quality of a source: the picture is
+// One process can make chunks for every quality of a source: the picture is
 // decoded and tonemapped once, at the largest size, then split and scaled for each.
 // Decoding and tonemapping a 4K source is most of a chunk's cost; encoding is not.
 const BATCH_MAX = 6,
   BATCH_DEMAND_MS = 30000;
 
+// One process per source converts consecutive chunks for every quality sharing it, rather
+// than one process per chunk: starting FFmpeg, its GPU devices and the seek cost about as
+// much as converting a chunk. The process reads the source only while the chunk it is
+// converting is wanted (a viewer's look-ahead), and stops after RUN_IDLE_MS held.
+const AHEAD = Playback.BUFFER.ahead / CHUNK,
+  JOIN_URGENT = 2,
+  GATHER_MS = 250,
+  RUN_IDLE_MS = 10000,
+  RUN_STALL_MS = 30000,
+  TEXT_BURN_CHUNKS = 5;
+
+// Holds a run's source reads while nobody needs the chunk it would convert next.
+class Gate {
+  constructor() {
+    this.open = true;
+    this.waiters = [];
+  }
+  set(open) {
+    this.open = open || !!this.ended;
+    if (this.open) for (const resolve of this.waiters.splice(0)) resolve();
+  }
+  wait() {
+    return this.open ? undefined : new Promise(resolve => this.waiters.push(resolve));
+  }
+  end() {
+    this.ended = true;
+    this.set(true);
+  }
+}
+const delay = (ms, signal) =>
+  new Promise(resolve => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+
+// A chunk's sound, as its own short process. It starts AUDIO_LEAD early and ends 0.04 s
+// late, so consecutive chunks overlap and one continuous encoder cannot make them. The
+// first chunk has nothing before it, so silence takes the lead's place.
+function audioCommand(url, spec, audioMap, start, duration) {
+  return [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-nostdin',
+    ...(spec.audio
+      ? ['-ss', String(Math.max(0, start - AUDIO_LEAD)), '-i', url]
+      : ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo']),
+    '-t',
+    String(duration + AUDIO_LEAD + 0.04),
+    '-map',
+    spec.audio ? audioMap(0) : '0:a:0',
+    '-vn',
+    '-sn',
+    '-dn',
+    '-map_metadata',
+    '-1',
+    '-c:a',
+    'libopus',
+    '-b:a',
+    '128k',
+    '-ac',
+    '2',
+    '-ar',
+    '48000',
+    '-af',
+    'asetpts=PTS-STARTPTS' + (start ? '' : `,aresample=48000,adelay=${AUDIO_LEAD_SAMPLES}S:all=1`),
+    '-f',
+    'webm',
+    '-live',
+    '1',
+    '-cluster_time_limit',
+    '1000',
+    'pipe:1',
+  ];
+}
+
 const { SharedTask, runOperation } = require('./operation');
 
 class AV1 {
-  constructor(config = {}, execute = run, logger = silentLogger) {
+  constructor(config = {}, execute = run, logger = silentLogger, runSegments = segments) {
     this.ffmpeg = config.ffmpegPath;
     this.jobs = new Set();
     this.encoder = config.transcoding?.encoder || 'auto';
@@ -335,6 +434,12 @@ class AV1 {
     this.maxActive = Math.min(config.transcoding?.maxJobs || 2, Math.floor(this.maxBytes / this.jobBytes));
     this.run = (...args) => {
       const job = Promise.resolve().then(() => execute(...args));
+      this.jobs.add(job);
+      job.finally(() => this.jobs.delete(job)).catch(() => {});
+      return job;
+    };
+    this.segments = (...args) => {
+      const job = Promise.resolve().then(() => runSegments(...args));
       this.jobs.add(job);
       job.finally(() => this.jobs.delete(job)).catch(() => {});
       return job;
@@ -355,6 +460,8 @@ class AV1 {
     this.queue = [];
     this.active = 0;
     this.closed = false;
+    // Overridable for tests.
+    this.timing = { gather: GATHER_MS, idle: RUN_IDLE_MS, stall: RUN_STALL_MS };
   }
   async selectEncoder(codec = 'av1') {
     this.probePromises ||= new Map();
@@ -475,6 +582,7 @@ class AV1 {
     for (const controller of group.controllers) controller.abort();
     group.chunks.clear();
     group.bytes = 0;
+    if (group.run) this.checkRun(group.run);
   }
   bridge() {
     return runOperation(undefined, () => this.openBridge());
@@ -483,8 +591,9 @@ class AV1 {
     if (this.bridgePromise) return this.bridgePromise;
     this.bridgePromise = (async () => {
       const server = (this.server = http.createServer(async (req, res) => {
-        const entry = this.inputs.get(req.url);
-        if (!entry || entry.signal.aborted || !['GET', 'HEAD'].includes(req.method)) {
+        const entry = this.inputs.get(req.url),
+          source = typeof entry?.source === 'function' ? entry.source() : entry?.source;
+        if (!entry || !source || entry.signal.aborted || !['GET', 'HEAD'].includes(req.method)) {
           res.writeHead(403);
           return res.end();
         }
@@ -494,14 +603,14 @@ class AV1 {
         entry.signal.addEventListener('abort', cancel, { once: true });
         const timer = setTimeout(cancel, 30000);
         try {
-          const response = await entry.source.provider.request(entry.source.start, {
+          const response = await source.provider.request(source.start, {
             method: req.method,
             signal: abort.signal,
             streaming: true,
             headers: { Accept: '*/*', ...(req.headers.range ? { Range: req.headers.range } : {}) },
           });
           clearTimeout(timer);
-          if (entry.source.subtitleWindow && req.headers.range) {
+          if (source.subtitleWindow && req.headers.range) {
             const requested = /^bytes=(\d+)-/.exec(req.headers.range),
               received = /^bytes (\d+)-\d+\/\d+$/.exec(response.headers.get('content-range') || '');
             if (response.status !== 206 || !requested || !received || requested[1] !== received[1]) {
@@ -516,8 +625,24 @@ class AV1 {
             if (response.headers.has(key)) headers[key] = response.headers.get(key);
           res.writeHead(response.status, headers);
           if (req.method === 'HEAD') res.end();
-          else await pipeline(Readable.fromWeb(response.body), res);
+          else if (!entry.gate) await pipeline(Readable.fromWeb(response.body), res);
+          else {
+            // A held run stops here: FFmpeg's reads block and the whole process waits.
+            for await (const piece of Readable.fromWeb(response.body)) {
+              await entry.gate.wait();
+              if (abort.signal.aborted || res.destroyed) break;
+              if (!res.write(piece))
+                await new Promise(resolve => {
+                  res.once('drain', resolve);
+                  res.once('close', resolve);
+                });
+            }
+            res.end();
+          }
         } catch {
+          // FFmpeg closing a request is normal when it seeks; the source failing under an
+          // open request is not, and FFmpeg may take the cut-off for the end of the file.
+          if (!res.destroyed && !entry.signal.aborted) entry.state.upstreamFailed = true;
           res.destroy();
         } finally {
           clearTimeout(timer);
@@ -543,14 +668,15 @@ class AV1 {
     });
     return this.bridgePromise;
   }
-  async input(source, signal, action) {
+  async input(source, signal, action, gate) {
     const port = await this.bridge(),
-      key = '/' + randomBytes(24).toString('hex');
+      key = '/' + randomBytes(24).toString('hex'),
+      state = {};
     // A short-lived loopback capability is visible in the process arguments;
     // the provider's URL and credential are never passed to FFmpeg or FFprobe.
-    this.inputs.set(key, { source, signal });
+    this.inputs.set(key, { source, signal, gate, state });
     try {
-      return await action(`http://127.0.0.1:${port}${key}`);
+      return await action(`http://127.0.0.1:${port}${key}`, state);
     } finally {
       this.inputs.delete(key);
     }
@@ -669,44 +795,82 @@ class AV1 {
       group.chunks.delete(index);
       entry = undefined;
     }
-    if (!entry) entry = this.startChunk(group, source, index, { urgent, background });
+    if (!entry) entry = this.request(group, source, index, { urgent, background });
+    else if (this.liveRun(group)) this.want(this.liveRun(group), index, background);
     entry.at = Date.now();
     entry.users++;
     if (urgent) entry.priority.urgent = true;
     if (!background) entry.priority.background = false;
     try {
-      return await new Promise((resolve, reject) => {
+      const bytes = await new Promise((resolve, reject) => {
         const cancel = () => reject(new PlaybackError('WebM client disconnected.'));
         if (signal.aborted) return cancel();
         signal.addEventListener('abort', cancel, { once: true });
         entry.promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', cancel));
       });
+      entry.fetched = true;
+      return bytes;
     } finally {
       if (--entry.users === 0 && !entry.bytes) entry.controller.abort();
     }
   }
-  // A chunk for this group starts here. Sibling qualities of the same source that a
-  // synchronized room will ask for next join one process, which decodes the source once.
-  startChunk(group, source, index, { urgent, background }) {
+  alive(run) {
+    return !!run && !run.done && !run.controller.signal.aborted;
+  }
+  liveRun(group) {
+    return this.alive(group?.run) ? group.run : undefined;
+  }
+  // Reads for a run use a source a viewer still holds: the one that started it while its
+  // lease is held, otherwise a current lease's. Authorization stays with the leases.
+  runSource(run) {
+    const members = this.members(run);
+    for (const { group, source } of members)
+      if ([...group.leases].some(lease => lease.source === source)) return source;
+    for (const { group } of members) if (group.leases.size) return group.source;
+  }
+  // The members a run still converts for: groups that are current and still belong to it.
+  members(run) {
+    return run.members.filter(member => member.group.run === run && this.groups.get(member.group.key) === member.group);
+  }
+  // A chunk this group's run will reach soon waits for it, and so does a sibling run that
+  // has not started its process yet. Anything else starts a run at that chunk.
+  request(group, source, index, { urgent, background }) {
+    let run = this.liveRun(group);
+    if (
+      run &&
+      index >= run.next &&
+      index < run.end &&
+      index <= run.next + (urgent ? JOIN_URGENT : background ? Infinity : AHEAD)
+    ) {
+      this.want(run, index, background);
+      return this.runEntry(run, group, index);
+    }
+    if (!background && group.batchKey && !this.batchBroken.has(group.batchKey))
+      for (const other of this.groups.values()) {
+        run = this.liveRun(other);
+        if (
+          run &&
+          !run.spawned &&
+          !run.priority.background &&
+          other.batchKey === group.batchKey &&
+          run.members.length < BATCH_MAX &&
+          (!run.encoder || !group.encoder || run.encoder === group.encoder) &&
+          index >= run.start &&
+          index <= run.start + JOIN_URGENT
+        ) {
+          this.join(run, { group, source });
+          this.want(run, index, background);
+          return this.runEntry(run, group, index);
+        }
+      }
     const members = [{ group, source }, ...(background ? [] : this.siblings(group, index))];
-    // Members share one priority, so any viewer's urgent request raises the shared process.
-    const priority = { urgent, background };
-    const entries = members.map(member => this.newEntry(member.group, priority));
-    const work =
-      members.length === 1
-        ? [
-            runOperation(entries[0].controller.signal, () =>
-              this.slot(
-                entries[0].controller.signal,
-                () => this.soloJob(group, source, index, entries[0]),
-                group.key,
-                entries[0].priority,
-              ),
-            ),
-          ]
-        : this.batch(members, index, entries);
-    members.forEach((member, i) => this.track(member.group, index, entries[i], work[i]));
-    return entries[0];
+    return this.startRun(members, index, { urgent, background });
+  }
+  // Raise how far a run converts: a viewer's playhead request keeps the look-ahead ahead of
+  // it; a prefetch or speculative request needs only that chunk.
+  want(run, index, background) {
+    run.target = Math.max(run.target, background ? index : index + AHEAD);
+    this.flow(run);
   }
   newEntry(group, priority) {
     const controller = new AbortController();
@@ -715,236 +879,557 @@ class AV1 {
     // A seek can make an already queued prefetch imminent; joining raises it.
     return { users: 0, at: Date.now(), queued: Date.now(), controller, priority };
   }
-  // Other qualities of this source whose viewers are near this chunk and do not have it.
+  // A pending entry the run fills when it converts that chunk.
+  runEntry(run, group, index) {
+    const entry = this.newEntry(group, run.priority);
+    entry.run = run;
+    const work = new Promise((resolve, reject) => {
+      entry.resolve = resolve;
+      entry.reject = reject;
+    });
+    work.catch(() => {});
+    this.track(group, index, entry, work);
+    if (!run.pending.has(index)) run.pending.set(index, new Map());
+    run.pending.get(index).set(group, entry);
+    return entry;
+  }
+  // A group moves to a run with its pending chunks from there on. A run left with nobody stops.
+  join(run, member) {
+    const old = this.liveRun(member.group);
+    member.group.run = run;
+    if (!run.members.some(other => other.group === member.group)) run.members.push(member);
+    run.target = Math.max(run.target, (member.group.lastIndex ?? run.start) + AHEAD);
+    if (!old || old === run) return;
+    for (const [index, entries] of old.pending) {
+      const entry = entries.get(member.group);
+      if (!entry || index < run.start) continue;
+      entries.delete(member.group);
+      entry.run = run;
+      if (!run.pending.has(index)) run.pending.set(index, new Map());
+      run.pending.get(index).set(member.group, entry);
+    }
+    this.checkRun(old);
+  }
+  checkRun(run) {
+    if (this.alive(run) && !this.members(run).length)
+      run.controller.abort(new PlaybackError('WebM preparation cancelled.'));
+  }
+  // Other qualities of this source whose viewers are near this chunk.
   siblings(group, index) {
     if (!group.batchKey || this.batchBroken.has(group.batchKey)) return [];
     const now = performance.now(),
-      ahead = Playback.BUFFER.ahead / CHUNK,
       found = [];
     for (const other of this.groups.values()) {
       if (found.length >= BATCH_MAX - 1) break;
       if (other === group || other.batchKey !== group.batchKey || !other.leases.size) continue;
       if (other.encoder && group.encoder && other.encoder !== group.encoder) continue;
       if (now - (other.viewerDemandAt ?? -Infinity) > BATCH_DEMAND_MS) continue;
-      if (other.lastIndex === undefined || index < other.lastIndex - 1 || index > other.lastIndex + ahead) continue;
+      if (other.lastIndex === undefined || index < other.lastIndex - 1 || index > other.lastIndex + AHEAD) continue;
       if (index * CHUNK >= other.source.duration) continue;
-      const current = other.chunks.get(index);
-      if (current) {
-        if (!current.controller.signal.aborted || current.error) continue;
-        other.chunks.delete(index);
-      }
       found.push({ group: other, source: other.source });
     }
     return found;
   }
-  // One process for every member. It stops only when no member still wants its chunk;
-  // a failure makes each member try alone, with its own decode and encoder fallbacks.
-  batch(members, index, entries) {
-    const controller = new AbortController();
-    this.controllers.add(controller);
-    const stop = () => {
-      if (entries.every(entry => entry.controller.signal.aborted)) controller.abort();
+  // One process from this chunk on, for every member. A member whose old run was converting
+  // just before this chunk starts there, so its chunk in progress is not lost.
+  startRun(members, index, priority, { level, encoder } = {}) {
+    const first = members[0];
+    let start = index;
+    for (const { group } of members) {
+      const old = this.liveRun(group);
+      if (old && old.next <= index && old.next >= index - JOIN_URGENT) start = Math.min(start, old.next);
+    }
+    const count = Math.ceil(first.source.duration / CHUNK),
+      textBurn = first.source.burn && !bitmapSubtitle(first.source.burn);
+    const run = {
+      members: [],
+      start,
+      next: start,
+      // Text cues are read for a window, so a burned text run is bounded.
+      end: textBurn ? Math.min(count, start + TEXT_BURN_CHUNKS) : count,
+      target: priority.background ? index : index + AHEAD,
+      level: level ?? Math.max(0, ...members.map(({ group }) => group.decodeLevel || 0)),
+      encoder: encoder ?? first.group.encoder,
+      controller: new AbortController(),
+      gate: new Gate(),
+      priority: { ...priority },
+      pending: new Map(),
+      spawned: false,
+      done: false,
     };
-    for (const entry of entries) entry.controller.signal.addEventListener('abort', stop, { once: true });
-    const shared = runOperation(controller.signal, () =>
-      this.slot(
-        controller.signal,
-        () => this.batchJob(members, index, entries, controller),
-        members[0].group.key,
-        entries[0].priority,
-      ),
-    ).finally(() => {
-      this.controllers.delete(controller);
-      for (const entry of entries) entry.controller.signal.removeEventListener('abort', stop);
-    });
-    shared.catch(() => {});
-    return members.map(({ group, source }, i) => {
-      const entry = entries[i];
-      return shared.then(
-        results => results[i],
-        error => {
-          if (entry.controller.signal.aborted || this.closed) throw error;
-          if (error.exitFailure && !this.batchBroken.has(group.batchKey)) {
-            this.batchBroken.add(group.batchKey);
-            this.logger.warn('Conversion', 'Shared conversion failed for a source; converting each quality alone.');
-          }
-          if (entry.reservedBytes) {
-            this.pendingBytes -= entry.reservedBytes;
-            entry.reservedBytes = 0;
-          }
-          entry.shared = undefined;
-          return runOperation(entry.controller.signal, () =>
-            this.slot(
-              entry.controller.signal,
-              () => this.soloJob(group, source, index, entry),
-              group.key,
-              entry.priority,
-            ),
-          );
-        },
-      );
-    });
+    this.controllers.add(run.controller);
+    for (const member of members) this.join(run, member);
+    const entry = first.group.chunks.get(index) || this.runEntry(run, first.group, index);
+    run.promise = runOperation(run.controller.signal, () =>
+      this.slot(run.controller.signal, () => this.drive(run), first.group.key, run.priority),
+    )
+      .catch(error => (run.error = error))
+      .finally(() => this.settle(run));
+    return entry;
   }
-  async batchJob(members, index, entries, controller) {
-    const start = index * CHUNK,
-      count = members.length;
-    const sizes = members.map(({ group }) => this.chunkBytes(group)),
-      total = sizes.reduce((sum, bytes) => sum + bytes, 0);
-    this.pruneAll(total);
-    if (this.retainedBytes + this.pendingBytes + total > this.maxBytes)
-      throw new PlaybackError('Encoded video memory is busy; retry shortly.');
-    entries.forEach((entry, i) => {
-      this.pendingBytes += sizes[i];
-      entry.reservedBytes = sizes[i];
-    });
-    const first = members[0],
+  // Pending chunks of a run that ended: a member now in another run that will reach them
+  // moves there, anything else is cancelled so a later request starts it again.
+  settle(run) {
+    run.done = true;
+    clearTimeout(run.idleTimer);
+    clearTimeout(run.stallTimer);
+    clearInterval(run.memoryTimer);
+    run.gate.end();
+    this.controllers.delete(run.controller);
+    for (const [index, entries] of run.pending)
+      for (const [group, entry] of entries) {
+        const live = this.liveRun(group);
+        if (live && index >= live.next) {
+          entry.run = live;
+          if (!live.pending.has(index)) live.pending.set(index, new Map());
+          live.pending.get(index).set(group, entry);
+          continue;
+        }
+        // A real failure stays briefly as that chunk's error; cancellation leaves nothing.
+        if (!run.error || run.controller.signal.aborted) entry.controller.abort();
+        entry.reject(run.error || new PlaybackError('WebM preparation cancelled.'));
+      }
+    run.pending.clear();
+  }
+  // The run's slot: one process, replaced at the chunk where it failed by the next step
+  // down (GPU tonemapping, GPU decode, CPU, then the software encoder) until one works.
+  async drive(run) {
+    const signal = run.controller.signal,
+      first = run.members[0],
       codec = first.group.codec;
     await this.conversionPolicy?.video('uburoom', codec, first.source.provider);
-    const releaseConversion = await this.conversionPolicy?.wait({ signal: controller.signal, background: false });
-    for (const entry of entries) {
-      entry.began = Date.now();
-      entry.shared = count;
-    }
+    const releaseConversion = await this.conversionPolicy?.wait({ signal, background: run.priority.background });
     try {
-      const encoder = first.group.encoder || (await this.selectEncoder(codec));
-      const info = await this.sourceInfo(first.group, first.source, controller.signal);
-      for (const { group } of members) group.info ||= info;
-      return await this.input(first.source, controller.signal, async url => {
-        const outputs = members.map(({ group, source }) => {
-          const spec = outputSpec(info, group.quality, this.maxQuality);
-          const audio = this.audioChoice(source, info);
-          if (spec.audio && !audio.selected)
-            throw new PlaybackError('The selected audio track is not present in the source.');
-          return { group, spec, audio };
-        });
-        // Decode and tonemap at the largest size; smaller outputs scale from it.
-        const lead = outputs.reduce((best, output) =>
-          output.spec.width * output.spec.height > best.spec.width * best.spec.height ? output : best,
-        ).spec;
-        const duration = String(Math.min(CHUNK, first.source.duration - start));
-        const pipe = k => (k ? 'pipe:' + (k + 2) : 'pipe:1');
-        const command = route => {
-          const split = outputs.map((_, i) => `[s${i}]`).join('');
-          const scaled = outputs.map(({ spec }, i) =>
-            spec.width === lead.width && spec.height === lead.height
-              ? `[s${i}]null[v${i}]`
-              : `[s${i}]scale=${spec.width}:${spec.height},format=nv12[v${i}]`,
-          );
-          return [
-            '-hide_banner',
-            '-loglevel',
-            'error',
-            '-nostdin',
-            '-threads',
-            String(route ? 2 : this.cpuShare()),
-            ...(route?.input || []),
-            '-ss',
-            String(start),
-            '-i',
-            url,
-            ...(lead.audio
-              ? ['-ss', String(Math.max(0, start - AUDIO_LEAD)), '-i', url]
-              : ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo']),
-            '-filter_threads',
-            '4',
-            '-filter_complex',
-            `[0:v:0]${route?.filter || lead.filter}[base];[base]split=${count}${split};${scaled.join(';')}`,
-            ...outputs.flatMap(({ spec, audio }, i) => [
-              '-map',
-              `[v${i}]`,
-              '-t',
-              duration,
-              '-an',
-              '-sn',
-              '-dn',
-              '-map_metadata',
-              '-1',
-              '-map_chapters',
-              '-1',
-              ...encoderArgs(encoder, codec, Math.max(1, Math.floor(this.cpuShare() / count))),
-              ...rateArgs(encoder, codec, spec.bitrate),
-              ...(spec.frameRate ? ['-r', spec.frameRate, '-fps_mode', 'cfr'] : []),
-              '-g',
-              '180',
-              '-color_primaries',
-              'bt709',
-              '-color_trc',
-              'bt709',
-              '-colorspace',
-              'bt709',
-              '-f',
-              'webm',
-              '-live',
-              '1',
-              '-cluster_time_limit',
-              '1000',
-              pipe(2 * i),
-              '-t',
-              String(Number(duration) + AUDIO_LEAD + 0.04),
-              '-map',
-              spec.audio ? audio.map(1) : '1:a:0',
-              '-vn',
-              '-sn',
-              '-dn',
-              '-map_metadata',
-              '-1',
-              '-c:a',
-              'libopus',
-              '-b:a',
-              '128k',
-              '-ac',
-              '2',
-              '-ar',
-              '48000',
-              '-af',
-              'asetpts=PTS-STARTPTS' + (start ? '' : `,aresample=48000,adelay=${AUDIO_LEAD_SAMPLES}S:all=1`),
-              '-f',
-              'webm',
-              '-live',
-              '1',
-              '-cluster_time_limit',
-              '1000',
-              pipe(2 * i + 1),
-            ]),
-          ];
-        };
-        const routes = decodeRoutes(lead, encoder, this.hardwareDecode);
-        if (!routes.length) throw new PlaybackError('Dolby Vision Profile 5 requires Vulkan libplacebo tone-mapping.');
-        const known = Math.max(...members.map(({ group }) => group.decodeLevel || 0));
-        let level = Math.min(known, routes.length - 1),
-          bytes;
-        for (;;) {
-          try {
-            bytes = await this.run(
-              this.ffmpeg,
-              command(routes[level]),
-              controller.signal,
-              30000 + 5000 * (count - 1),
-              48 * 1024 * 1024 * count,
-              undefined,
-              { memoryLimit: (2 + 0.5 * (count - 1)) * 1024 * 1024 * 1024 },
-            );
-            break;
-          } catch (error) {
-            if (level === routes.length - 1 || !error.exitFailure || controller.signal.aborted) throw error;
-            level++;
-          }
+      run.encoder ||= await this.selectEncoder(codec);
+      const info = await this.sourceInfo(first.group, first.source, signal);
+      for (const { group } of run.members) group.info ||= info;
+      // Siblings asking for the same chunk a moment later join before the process starts.
+      if (!run.priority.background && this.gathering(run)) await delay(this.timing.gather, signal);
+      let restarts = 0;
+      while (run.next < run.end && !signal.aborted) {
+        const live = this.members(run);
+        if (!live.length) break;
+        const before = run.next;
+        const { error, stopped, routes, spec } = await this.attempt(run, live, info);
+        if (signal.aborted || this.closed) break;
+        if (stopped) {
+          if (stopped === 'yield') this.continueRun(run);
+          else if (run.memoryWait) run.error = new PlaybackError('Encoded video memory is busy; retry shortly.');
+          break;
         }
-        if (level > known)
-          this.logger.warn(
-            'Conversion',
-            `${routes[level] ? 'GPU tonemapping' : 'Hardware decode'} failed for a ${lead.sourceFormat} source; using a slower path for this stream.`,
-          );
-        for (const { group } of members) {
-          group.decodeLevel = Math.max(group.decodeLevel || 0, level);
-          group.encoder = encoder;
-          group.cpuFallback = encoder === 'software' && this.encoder !== 'software';
+        if (!error) {
+          // The source ended before these chunks: there is no picture for them.
+          this.failPending(run, run.next, new PlaybackError('The source has no video at this point.'));
+          break;
         }
-        return outputs.map((_, i) => ({ video: bytes[2 * i], audio: bytes[2 * i + 1] }));
-      });
+        // A failure after progress starts again where it stopped, a few times.
+        if (run.next > before && error.exitFailure && restarts++ < 3) continue;
+        if (!error.exitFailure) {
+          this.failChunk(run, error);
+          continue;
+        }
+        if (routes && run.level < routes - 1) {
+          run.level++;
+          continue;
+        }
+        if (live.length > 1) {
+          this.batchBroken.add(first.group.batchKey);
+          this.logger.warn('Conversion', 'Shared conversion failed for a source; converting each quality alone.');
+          this.continueRun(run, true);
+          break;
+        }
+        if (error.encoderFailure && run.encoder !== 'software' && this.cpuFallback) {
+          run.encoder = 'software';
+          run.software = true;
+          continue;
+        }
+        this.failChunk(
+          run,
+          spec?.doviP5 && !run.software ? new PlaybackError('Dolby Vision Profile 5 tone-mapping failed.') : error,
+        );
+      }
     } finally {
       releaseConversion?.();
     }
+  }
+  gathering(run) {
+    const key = run.members[0].group.batchKey,
+      now = performance.now();
+    if (!key || this.batchBroken.has(key)) return false;
+    return [...this.groups.values()].some(
+      group =>
+        group.batchKey === key &&
+        group.run !== run &&
+        now - (group.viewerDemandAt ?? -Infinity) <= BATCH_DEMAND_MS &&
+        group.leases.size,
+    );
+  }
+  // A chunk that failed even on the last step keeps its error briefly, as one chunk.
+  failChunk(run, error) {
+    const entries = run.pending.get(run.next);
+    run.pending.delete(run.next);
+    for (const entry of entries?.values() || []) entry.reject(error);
+    run.next++;
+    // Later chunks a viewer is waiting for start again in a new run.
+    this.continueRun(run);
+    run.controller.abort(new PlaybackError('WebM preparation cancelled.'));
+  }
+  failPending(run, from, error) {
+    for (const [index, entries] of run.pending) {
+      if (index < from) continue;
+      for (const entry of entries.values()) entry.reject(error);
+      run.pending.delete(index);
+    }
+  }
+  // Continue a run's waiting chunks in a new run: queued for a slot again, or, after a
+  // shared failure, one run per quality.
+  continueRun(run, split = false) {
+    const live = this.members(run);
+    const waiting = live.filter(({ group }) =>
+      [...run.pending].some(([index, entries]) => index >= run.next && (split || entries.get(group)?.users)),
+    );
+    if (!waiting.length) return;
+    const index = Math.min(
+      ...[...run.pending].filter(([index, entries]) => index >= run.next && entries.size).map(([index]) => index),
+    );
+    const priority = { urgent: run.priority.urgent, background: run.priority.background };
+    if (split)
+      for (const member of waiting) this.startRun([member], index, priority, { level: member.group.decodeLevel });
+    else this.startRun(waiting, index, priority, { level: run.level, encoder: run.encoder });
+  }
+  // Open the source while the chunk being converted is wanted and fits memory. A run held
+  // closed for RUN_IDLE_MS stops, so a paused room keeps no slot or GPU memory.
+  flow(run) {
+    if (run.done) return;
+    const open = !run.memoryWait && run.next <= run.target;
+    if (open === run.gate.open) return;
+    run.gate.set(open);
+    if (open) {
+      clearTimeout(run.idleTimer);
+      run.idleTimer = undefined;
+      const now = Date.now();
+      for (const entry of run.pending.get(run.next)?.values() || []) entry.began = now;
+      run.current?.stalled();
+    } else {
+      clearTimeout(run.stallTimer);
+      run.idleTimer ||= setTimeout(() => {
+        run.idleTimer = undefined;
+        run.current?.stop('idle');
+      }, this.timing.idle);
+    }
+  }
+  // One FFmpeg process from run.next: video for every member through the segment muxer,
+  // and sound as one short process per chunk for each distinct audio choice.
+  async attempt(run, live, info) {
+    const start = run.next,
+      controller = new AbortController(),
+      stop = reason => controller.abort(reason),
+      abort = () => stop(run.controller.signal.reason);
+    run.controller.signal.addEventListener('abort', abort, { once: true });
+    const first = live[0],
+      codec = first.group.codec,
+      encoder = run.encoder,
+      signal = controller.signal;
+    let routes, lead;
+    try {
+      return await this.input(
+        () => this.runSource(run),
+        signal,
+        async (url, state) => {
+          const outputs = live.map(({ group, source }) => {
+            const spec = outputSpec(info, group.quality, this.maxQuality);
+            const audio = this.audioChoice(source, info);
+            if (spec.audio && !audio.selected)
+              throw new PlaybackError('The selected audio track is not present in the source.');
+            return { group, source, spec, audio, sound: spec.audio ? audio.map(0) : 'silence' };
+          });
+          // Decode and tonemap at the largest size; smaller outputs scale from it.
+          lead = outputs.reduce((best, output) =>
+            output.spec.width * output.spec.height > best.spec.width * best.spec.height ? output : best,
+          ).spec;
+          const allRoutes = run.software
+            ? [lead.doviP5 ? cpuPlaceboRoute(lead) : undefined]
+            : decodeRoutes(lead, encoder, this.hardwareDecode);
+          if (!allRoutes.length)
+            throw new PlaybackError('Dolby Vision Profile 5 requires Vulkan libplacebo tone-mapping.');
+          routes = allRoutes.length;
+          const level = Math.min(run.level, routes - 1),
+            route = allRoutes[level];
+          const { chosen } = outputs[0].audio;
+          const burn = first.source.burn;
+          if (burn && !burn.external && burn.index !== undefined)
+            chosen.burn = { ...burn, index: fileIndex(first.source.tracks?.subtitles, burn, info.streams, 'subtitle') };
+          const span = Math.min((run.end - start) * CHUNK, first.source.duration - start * CHUNK);
+          const burned =
+            outputs.length === 1 ? await this.burnInput(chosen, url, start * CHUNK, span, signal) : undefined;
+          try {
+            const args = this.runCommand(url, outputs, lead, route, start, run, burned, chosen, encoder, codec);
+            run.spawned = true;
+            const current = (run.current = {
+              start,
+              outputs,
+              url,
+              stop,
+              delivered: new Map(),
+              audio: new Map(),
+              pictures: new Map(),
+              sounds: new Map(),
+            });
+            current.stalled = () => {
+              clearTimeout(run.stallTimer);
+              if (run.gate.open)
+                run.stallTimer = setTimeout(
+                  () => stop(new PlaybackError('WebM encoder timed out. Check the server GPU/FFmpeg support.')),
+                  this.timing.stall,
+                );
+            };
+            current.stalled();
+            current.success = () => {
+              if (outputs.some(({ group }) => level > (group.decodeLevel || 0)))
+                this.logger.warn(
+                  'Conversion',
+                  `${route ? 'GPU tonemapping' : 'Hardware decode'} failed for a ${lead.sourceFormat} source; using a slower path for this stream.`,
+                );
+              for (const { group } of outputs) {
+                group.decodeLevel = Math.max(group.decodeLevel || 0, level);
+                group.encoder = encoder;
+                group.cpuFallback = encoder === 'software' && this.encoder !== 'software';
+              }
+              current.success = undefined;
+            };
+            this.begin(run, start);
+            await this.segments(this.ffmpeg, args, signal, {
+              onSegment: (output, n, bytes) => this.deliver(run, current, output, n, bytes),
+              ended: () => !state?.upstreamFailed,
+              memoryLimit: (burned?.bitmap ? 3 : 2 + 0.5 * (outputs.length - 1)) * 1024 * 1024 * 1024,
+            });
+            return {};
+          } finally {
+            clearTimeout(run.stallTimer);
+            run.current = undefined;
+            await burned?.cleanup?.();
+          }
+        },
+        run.gate,
+      );
+    } catch (error) {
+      if (typeof signal.reason === 'string') return { stopped: signal.reason };
+      return { error, routes, spec: lead };
+    } finally {
+      run.controller.signal.removeEventListener('abort', abort);
+    }
+  }
+  runCommand(url, outputs, lead, route, start, run, burn, chosen, encoder, codec) {
+    const count = outputs.length,
+      runIn = burn?.runIn || 0,
+      filter = route?.filter || lead.filter;
+    let graph;
+    if (burn?.bitmap)
+      graph = [
+        '-filter_complex',
+        `[0:v:0]${filter.replace('setpts=PTS-STARTPTS,', '')}[picture];[0:${chosen.burn.index}]scale=${lead.width}:${lead.height}[subtitle];[picture][subtitle]overlay,format=nv12,trim=start=${runIn},setpts=PTS-STARTPTS[v0]`,
+      ];
+    else if (burn?.file)
+      graph = [
+        '-filter_complex',
+        `[0:v:0]${filter},setpts=PTS+${burn.offset}/TB,subtitles=filename='${filterPath(burn.file)}',setpts=PTS-STARTPTS,format=nv12[v0]`,
+      ];
+    else {
+      const split = outputs.map((_, i) => `[s${i}]`).join('');
+      const scaled = outputs.map(({ spec }, i) =>
+        spec.width === lead.width && spec.height === lead.height
+          ? `[s${i}]null[v${i}]`
+          : `[s${i}]scale=${spec.width}:${spec.height},format=nv12[v${i}]`,
+      );
+      graph = ['-filter_complex', `[0:v:0]${filter}[base];[base]split=${count}${split};${scaled.join(';')}`];
+    }
+    // A bounded run stops at its last chunk; otherwise the source's end does.
+    const bounded = run.end < Math.ceil(outputs[0].source.duration / CHUNK);
+    return [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-nostdin',
+      '-threads',
+      String(route ? 2 : this.cpuShare()),
+      ...(route?.input || []),
+      '-ss',
+      String(start * CHUNK - runIn),
+      '-i',
+      url,
+      '-filter_threads',
+      String(count > 1 ? 4 : 2),
+      ...graph,
+      ...outputs.flatMap(({ spec }, i) => [
+        '-map',
+        `[v${i}]`,
+        ...(bounded ? ['-t', String((run.end - start) * CHUNK)] : []),
+        '-an',
+        '-sn',
+        '-dn',
+        '-map_metadata',
+        '-1',
+        '-map_chapters',
+        '-1',
+        ...encoderArgs(encoder, codec, Math.max(1, Math.floor(this.cpuShare() / count))),
+        ...rateArgs(encoder, codec, spec.bitrate),
+        ...(spec.frameRate ? ['-r', spec.frameRate, '-fps_mode', 'cfr'] : []),
+        '-g',
+        '180',
+        // A keyframe opens every chunk, and the segment muxer cuts there.
+        '-force_key_frames',
+        `expr:gte(t,n_forced*${CHUNK})`,
+        '-color_primaries',
+        'bt709',
+        '-color_trc',
+        'bt709',
+        '-colorspace',
+        'bt709',
+        '-f',
+        'segment',
+        '-segment_time',
+        String(CHUNK),
+        '-segment_format',
+        'webm',
+        '-segment_format_options',
+        'cluster_time_limit=1000',
+        '-reset_timestamps',
+        '1',
+        'segments:' + i,
+      ]),
+    ];
+  }
+  // The run reaches chunk k: under contention it yields its slot here; otherwise it sets
+  // aside memory for every member's chunk, starts its sound and opens or holds the source.
+  begin(run, k) {
+    const current = run.current;
+    if (!current || k >= run.end) return;
+    // Waiting work is another conversion for a slot here, or anything waiting for a job of
+    // the conversion limit shared with the media server.
+    if (
+      k > current.start &&
+      (this.queue.some(waiter => !waiter.priority.background || run.priority.background) ||
+        this.conversionPolicy?.waiters?.length)
+    )
+      return current.stop('yield');
+    const now = Date.now(),
+      wanted = [];
+    for (const output of current.outputs) {
+      if (output.group.run !== run || this.groups.get(output.group.key) !== output.group) continue;
+      let entry = output.group.chunks.get(k);
+      if (entry?.bytes) continue;
+      if (entry && (entry.run !== run || entry.controller.signal.aborted)) {
+        if (!entry.controller.signal.aborted) continue;
+        output.group.chunks.delete(k);
+        entry = undefined;
+      }
+      entry ||= this.runEntry(run, output.group, k);
+      entry.began = now;
+      entry.shared = current.outputs.length > 1 ? current.outputs.length : undefined;
+      wanted.push({ output, entry });
+    }
+    const reserve = () => {
+      // A chunk carried over from a replaced process keeps its reservation.
+      const sizes = wanted.map(({ output, entry }) => (entry.reservedBytes ? 0 : this.chunkBytes(output.group))),
+        total = sizes.reduce((sum, bytes) => sum + bytes, 0);
+      this.pruneAll(total, undefined, true);
+      if (this.retainedBytes + this.pendingBytes + total > this.maxBytes) return false;
+      wanted.forEach(({ entry }, i) => {
+        if (!sizes[i]) return;
+        this.pendingBytes += sizes[i];
+        entry.reservedBytes = sizes[i];
+      });
+      return true;
+    };
+    clearInterval(run.memoryTimer);
+    run.memoryWait = !reserve();
+    // Memory frees as viewers read and old chunks are pruned; until then the source waits.
+    if (run.memoryWait)
+      run.memoryTimer = setInterval(() => {
+        if (run.done || !run.current || !reserve()) return;
+        clearInterval(run.memoryTimer);
+        run.memoryWait = false;
+        this.flow(run);
+      }, 250);
+    for (const { output } of wanted) this.sound(run, current, output, k);
+    this.flow(run);
+  }
+  // One sound process per chunk and audio choice, shared by members that chose the same.
+  sound(run, current, output, k) {
+    if (!current.audio.has(k)) current.audio.set(k, new Map());
+    const byChoice = current.audio.get(k);
+    if (!byChoice.has(output.sound)) {
+      const start = k * CHUNK,
+        duration = Math.min(CHUNK, output.source.duration - start);
+      // Its own source request, outside the run's gate, so a held run cannot starve it.
+      const job = this.input(
+        () => this.runSource(run),
+        run.controller.signal,
+        url =>
+          this.run(
+            this.ffmpeg,
+            audioCommand(url, output.spec, output.audio.map, start, duration),
+            run.controller.signal,
+            30000,
+            4 * 1024 * 1024,
+          ),
+      );
+      job.catch(() => {});
+      byChoice.set(output.sound, job);
+    }
+    byChoice
+      .get(output.sound)
+      .then(
+        audio => {
+          if (!run.pending.has(k)) return;
+          current.sounds.set(`${k}:${output.sound}`, audio);
+          this.complete(run, current, k, output);
+        },
+        error => {
+          const entry = run.pending.get(k)?.get(output.group);
+          if (!entry || run.controller.signal.aborted) return;
+          run.pending.get(k).delete(output.group);
+          entry.reject(error);
+        },
+      )
+      .catch(() => {});
+  }
+  async deliver(run, current, output, n, video) {
+    const k = current.start + n,
+      member = current.outputs[output];
+    current.success?.();
+    current.stalled();
+    // Only a chunk someone is waiting for is kept, so a long run holds no bytes of its own.
+    if (run.pending.get(k)?.has(member.group)) current.pictures.set(`${k}:${output}`, video);
+    this.complete(run, current, k, member);
+    const delivered = (current.delivered.get(k) || 0) + 1;
+    current.delivered.set(k, delivered);
+    if (delivered < current.outputs.length) return;
+    current.delivered.delete(k);
+    if (!run.pending.has(k)) this.forget(current, k);
+    run.next = Math.max(run.next, k + 1);
+    this.begin(run, k + 1);
+  }
+  // Picture and sound are kept by the process, not the request, so a request that replaced
+  // a cancelled one still gets both.
+  complete(run, current, k, output) {
+    const entry = run.pending.get(k)?.get(output.group),
+      video = current.pictures.get(`${k}:${current.outputs.indexOf(output)}`),
+      audio = current.sounds.get(`${k}:${output.sound}`);
+    if (!entry || !video || !audio) return;
+    run.pending.get(k).delete(output.group);
+    if (!run.pending.get(k).size) run.pending.delete(k);
+    // Every member that wants this chunk has it once none is pending, so the process forgets it.
+    if (!run.pending.has(k) && current.delivered.get(k) === undefined) this.forget(current, k);
+    entry.resolve({ video, audio });
+  }
+  forget(current, k) {
+    for (const key of [...current.pictures.keys(), ...current.sounds.keys()])
+      if (key.startsWith(k + ':')) {
+        current.pictures.delete(key);
+        current.sounds.delete(key);
+      }
+    current.audio.delete(k);
   }
   async sourceInfo(group, source, signal) {
     if (group.info) return group.info;
@@ -1038,188 +1523,6 @@ class AV1 {
     entry.promise.catch(() => {});
     group.chunks.set(index, entry);
   }
-  async soloJob(group, source, index, entry) {
-    const controller = entry.controller,
-      start = index * CHUNK;
-    const bytes = this.chunkBytes(group);
-    this.pruneAll(bytes);
-    if (this.retainedBytes + this.pendingBytes + bytes > this.maxBytes)
-      throw new PlaybackError('Encoded video memory is busy; retry shortly.');
-    this.pendingBytes += bytes;
-    entry.reservedBytes = bytes;
-    await this.conversionPolicy?.video('uburoom', group.codec, source.provider);
-    const releaseConversion = await this.conversionPolicy?.wait({
-      signal: controller.signal,
-      background: entry.priority.background,
-    });
-    entry.began = Date.now();
-    try {
-      const codec = group.codec;
-      const encoder = group.encoder || (await this.selectEncoder(codec));
-      const info = await this.sourceInfo(group, source, controller.signal);
-      return await this.input(source, controller.signal, async url => {
-        const spec = outputSpec(info, group.quality, this.maxQuality);
-        const { chosen, selected: selectedAudio, map: audioMap } = this.audioChoice(source, info);
-        if (source.burn && !source.burn.external && source.burn.index !== undefined)
-          chosen.burn = {
-            ...source.burn,
-            index: fileIndex(source.tracks?.subtitles, source.burn, info.streams, 'subtitle'),
-          };
-        if (spec.audio && !selectedAudio)
-          throw new PlaybackError('The selected audio track is not present in the source.');
-        const duration = String(Math.min(CHUNK, source.duration - start));
-        const burn = await this.burnInput(chosen, url, start, Number(duration), controller.signal);
-        const runIn = burn?.runIn || 0;
-        const video = route => {
-          const filter = route?.filter || spec.filter;
-          if (burn?.bitmap)
-            return [
-              '-filter_complex',
-              `[0:v:0]${filter.replace('setpts=PTS-STARTPTS,', '')}[picture];[0:${chosen.burn.index}]scale=${spec.width}:${spec.height}[subtitle];[picture][subtitle]overlay,format=nv12,trim=start=${runIn},setpts=PTS-STARTPTS[video]`,
-              '-map',
-              '[video]',
-              '-an',
-            ];
-          const text = burn?.file
-            ? `,setpts=PTS+${burn.offset}/TB,subtitles=filename='${filterPath(burn.file)}',setpts=PTS-STARTPTS,format=nv12`
-            : '';
-          return ['-map', '0:v:0', '-an', '-filter_threads', '2', '-vf', filter + text];
-        };
-        const silence = spec.audio ? [] : ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo'];
-        const audioInput = ['-ss', String(Math.max(0, start - AUDIO_LEAD)), '-i', url];
-        // The first chunk has nothing before it, so silence takes the lead's place.
-        const audio = input => [
-          '-t',
-          String(Number(duration) + AUDIO_LEAD + 0.04),
-          '-map',
-          spec.audio ? audioMap(input) : '1:a:0',
-          '-vn',
-          '-sn',
-          '-dn',
-          '-map_metadata',
-          '-1',
-          '-c:a',
-          'libopus',
-          '-b:a',
-          '128k',
-          '-ac',
-          '2',
-          '-ar',
-          '48000',
-          '-af',
-          'asetpts=PTS-STARTPTS' + (start ? '' : `,aresample=48000,adelay=${AUDIO_LEAD_SAMPLES}S:all=1`),
-          '-f',
-          'webm',
-          '-live',
-          '1',
-          '-cluster_time_limit',
-          '1000',
-        ];
-        const command = (selected, route) => [
-          '-hide_banner',
-          '-loglevel',
-          'error',
-          '-nostdin',
-          '-threads',
-          String(route ? 2 : this.cpuShare()),
-          ...(route?.input || []),
-          '-ss',
-          String(start - runIn),
-          '-i',
-          url,
-          ...(burn?.bitmap ? [] : spec.audio ? audioInput : silence),
-          '-t',
-          duration,
-          ...video(route),
-          '-sn',
-          '-dn',
-          '-map_metadata',
-          '-1',
-          '-map_chapters',
-          '-1',
-          ...encoderArgs(selected, codec, this.cpuShare()),
-          ...rateArgs(selected, codec, spec.bitrate),
-          ...(spec.frameRate ? ['-r', spec.frameRate, '-fps_mode', 'cfr'] : []),
-          '-g',
-          '180',
-          '-color_primaries',
-          'bt709',
-          '-color_trc',
-          'bt709',
-          '-colorspace',
-          'bt709',
-          '-f',
-          'webm',
-          '-live',
-          '1',
-          '-cluster_time_limit',
-          '1000',
-          'pipe:1',
-          ...(burn?.bitmap ? [] : [...audio(1), 'pipe:3']),
-        ];
-        // 4K jobs commit about 1 GiB on either path, GPU surfaces add to that, and the
-        // run-in for image subtitles adds about the same again.
-        const encode = async (selected, route) => {
-          const job = args =>
-            this.run(this.ffmpeg, args, controller.signal, 30000, 48 * 1024 * 1024, undefined, {
-              memoryLimit: (burn?.bitmap ? 3 : 2) * 1024 * 1024 * 1024,
-            });
-          if (!burn?.bitmap) return job(command(selected, route));
-          // Audio in the same process as an image overlay runs about ten times slower.
-          const [video, sound] = await Promise.all([
-            job(command(selected, route)),
-            job(['-hide_banner', '-loglevel', 'error', '-nostdin', ...audioInput, ...silence, ...audio(0), 'pipe:1']),
-          ]);
-          return { video, audio: sound };
-        };
-        const routes = decodeRoutes(spec, encoder, this.hardwareDecode);
-        if (!routes.length) throw new PlaybackError('Dolby Vision Profile 5 requires Vulkan libplacebo tone-mapping.');
-        try {
-          let level = Math.min(group.decodeLevel || 0, routes.length - 1),
-            bytes;
-          for (;;) {
-            try {
-              bytes = await encode(encoder, routes[level]);
-              break;
-            } catch (error) {
-              // Step down from GPU tonemapping, to GPU decode, to the CPU. Only a later
-              // success proves the step, so upstream failures change nothing for the group.
-              if (level === routes.length - 1) {
-                if (spec.doviP5 && error.exitFailure && !controller.signal.aborted)
-                  throw new PlaybackError('Dolby Vision Profile 5 tone-mapping failed.');
-                throw error;
-              }
-              if (!error.exitFailure || controller.signal.aborted) throw error;
-              level++;
-            }
-          }
-          if (level > (group.decodeLevel || 0)) {
-            group.decodeLevel = level;
-            this.logger.warn(
-              'Conversion',
-              `${routes[level] ? 'GPU tonemapping' : 'Hardware decode'} failed for a ${spec.sourceFormat} source; using a slower path for this stream.`,
-            );
-          }
-          group.encoder = encoder;
-          group.cpuFallback = encoder === 'software' && this.encoder !== 'software';
-          return bytes;
-        } catch (error) {
-          // Retry only an encoder process failure, under the same job lease.
-          // Cancellation, limits and upstream failures never trigger CPU work.
-          if (!error.encoderFailure || encoder === 'software' || !this.cpuFallback || controller.signal.aborted)
-            throw error;
-          const bytes = await encode('software', spec.doviP5 ? cpuPlaceboRoute(spec) : undefined);
-          group.encoder = 'software';
-          group.cpuFallback = true;
-          return bytes;
-        } finally {
-          await burn?.cleanup?.();
-        }
-      });
-    } finally {
-      releaseConversion?.();
-    }
-  }
   // A starting chunk's share of the CPU for CPU decoding and CPU encoders: the machine split
   // among the conversions running now, at least two threads. GPU routes keep two.
   cpuShare() {
@@ -1245,10 +1548,18 @@ class AV1 {
   get retainedBytes() {
     return [...this.groups.values()].reduce((sum, group) => sum + group.bytes, 0);
   }
-  pruneAll(reserve = 0, keep) {
+  // A run setting memory aside for look-ahead never evicts a chunk a viewer has yet to
+  // fetch ahead of its playhead; it waits instead.
+  pruneAll(reserve = 0, keep, lookAhead = false) {
     const candidates = [...this.groups.values()]
       .flatMap(group => [...group.chunks].map(([index, entry]) => ({ group, index, entry })))
-      .filter(({ entry }) => entry !== keep && !entry.users && (entry.bytes || entry.error))
+      .filter(
+        ({ group, index, entry }) =>
+          entry !== keep &&
+          !entry.users &&
+          (entry.bytes || entry.error) &&
+          !(lookAhead && entry.bytes && !entry.fetched && index >= (group.lastIndex ?? Infinity)),
+      )
       .sort(
         (a, b) =>
           Number(b.entry.priority?.background) - Number(a.entry.priority?.background) || a.entry.at - b.entry.at,

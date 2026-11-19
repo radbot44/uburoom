@@ -3,6 +3,7 @@ const test = require('node:test'),
   assert = require('node:assert/strict');
 const { normalizeConfig } = require('../server/config');
 const { AV1 } = require('../server/av1');
+const { fakeRuns, fakeTools } = require('./helpers/fake-ffmpeg');
 const { ConversionPolicy } = require('../server/transcoding-policy');
 const { Plex } = require('../server/plex');
 const Playback = require('../web/playback-policy');
@@ -62,27 +63,36 @@ test('encoder probes are isolated by codec and unsupported NVENC obeys CPU fallb
 
 test('VP8 and VP9 chunks share only identical codec/source/quality/audio and preserve global accounting', async () => {
   const encodes = [],
+    sounds = [],
     policy = new ConversionPolicy({ policy: 'override', uburoom: true, formats: ['vp8', 'vp9'], maxJobs: 1 });
-  const manager = new AV1({ ffmpegPath: 'fixture', transcoding: { encoder: 'software' } }, async (_file, args) => {
-    if (args.includes('-show_entries'))
-      return Buffer.from(
-        JSON.stringify({
-          streams: [
-            { index: 0, codec_type: 'video', width: 640, height: 360 },
-            { index: 2, codec_type: 'audio' },
-          ],
-        }),
-      );
-    if (!args.includes('-ss')) return Buffer.alloc(200);
-    assert.equal(policy.jobs.size, 1);
-    encodes.push({ encoder: args[args.indexOf('-c:v') + 1], maps: args.filter((_, i) => args[i - 1] === '-map') });
-    return { video: Buffer.alloc(200), audio: Buffer.alloc(100) };
+  const runs = fakeRuns({
+    duration: 120,
+    chunk: (args, n) => {
+      assert.equal(policy.jobs.size, 1);
+      if (!n)
+        encodes.push({ encoder: args[args.indexOf('-c:v') + 1], maps: args.filter((_, i) => args[i - 1] === '-map') });
+    },
   });
+  const manager = new AV1(
+    { ffmpegPath: 'fixture', transcoding: { encoder: 'software' } },
+    fakeTools(
+      {
+        streams: [
+          { index: 0, codec_type: 'video', width: 640, height: 360 },
+          { index: 2, codec_type: 'audio' },
+        ],
+      },
+      { audio: args => sounds.push(args.filter((_, i) => args[i - 1] === '-map')) },
+    ),
+    undefined,
+    runs.segments,
+  );
+  runs.manager = manager;
   manager.conversionPolicy = policy;
   manager.input = async (_source, _signal, action) => action('synthetic');
   const source = {
     id: '1',
-    duration: 12,
+    duration: 120,
     partId: 'part',
     sourceKey: 'source',
     shareKey: ['room', 'version'],
@@ -101,15 +111,17 @@ test('VP8 and VP9 chunks share only identical codec/source/quality/audio and pre
     );
     const signal = new AbortController().signal;
     assert.equal(await manager.chunk(a, 0, signal), await manager.chunk(b, 0, signal));
+    // One conversion job: the VP8 viewer gets it once the VP9 run yields at a chunk boundary.
     await manager.chunk(c, 0, signal);
     assert.deepEqual(
       encodes.map(v => v.encoder),
       ['libvpx-vp9', 'libvpx'],
     );
-    assert.deepEqual(encodes[0].maps, ['0:v:0', '1:2']);
-    assert.equal(policy.jobs.size, 0);
+    assert.deepEqual(encodes[0].maps, ['[v0]']);
+    assert.deepEqual(sounds[0], ['0:2']);
+    assert.ok(policy.jobs.size <= 1);
     policy.settings.formats = ['vp8'];
-    await assert.rejects(manager.chunk(a, 1, signal), /VP9.*not offered/);
+    await assert.rejects(manager.chunk(a, 15, signal), /VP9.*not offered/);
   } finally {
     for (const lease of [a, b, c]) manager.release(lease);
     await manager.close();
@@ -123,12 +135,9 @@ test('simultaneous VP8 and VP9 requests cannot bypass the shared conversion limi
     }),
     encodes = [];
   const policy = new ConversionPolicy({ policy: 'override', uburoom: true, formats: ['vp8', 'vp9'], maxJobs: 1 });
-  const manager = new AV1(
-    { ffmpegPath: 'fixture', transcoding: { encoder: 'software', maxJobs: 2 } },
-    async (_file, args) => {
-      if (args.includes('-show_entries'))
-        return Buffer.from(JSON.stringify({ streams: [{ index: 0, codec_type: 'video', width: 640, height: 360 }] }));
-      if (!args.includes('-ss')) return Buffer.alloc(200);
+  const runs = fakeRuns({
+    duration: 6,
+    chunk: async args => {
       encodes.push(args[args.indexOf('-c:v') + 1]);
       if (encodes.length === 1) {
         started();
@@ -137,8 +146,13 @@ test('simultaneous VP8 and VP9 requests cannot bypass the shared conversion limi
         });
       }
       assert.equal(policy.jobs.size, 1);
-      return { video: Buffer.alloc(200), audio: Buffer.alloc(100) };
     },
+  });
+  const manager = new AV1(
+    { ffmpegPath: 'fixture', transcoding: { encoder: 'software', maxJobs: 2 } },
+    fakeTools({ streams: [{ index: 0, codec_type: 'video', width: 640, height: 360 }] }),
+    undefined,
+    runs.segments,
   );
   manager.conversionPolicy = policy;
   manager.input = async (_source, _signal, action) => action('synthetic');
@@ -154,7 +168,7 @@ test('simultaneous VP8 and VP9 requests cannot bypass the shared conversion limi
     releaseFirst();
     await Promise.all([first, second]);
     assert.deepEqual(encodes, ['libvpx', 'libvpx-vp9']);
-    assert.equal(policy.jobs.size, 0);
+    while (policy.jobs.size) await new Promise(resolve => setTimeout(resolve, 5));
   } finally {
     releaseFirst?.();
     manager.release(a);

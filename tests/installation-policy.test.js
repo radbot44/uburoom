@@ -737,27 +737,35 @@ test('Plex requests opportunistic directStream when burn and fallback compatible
 
 test('explicit software AV1 uses/probes only software and identical viewers consume one conversion job', async () => {
   const { AV1 } = require('../server/av1');
-  let encodes = 0,
-    releaseEncode,
-    started;
+  const { fakeRuns, fakeTools } = require('./helpers/fake-ffmpeg');
+  let releaseEncode, started;
   const encoding = new Promise(resolve => {
       started = resolve;
     }),
     encoderArgs = [];
-  const manager = new AV1({ ffmpegPath: 'fixture', transcoding: { encoder: 'software' } }, async (_binary, args) => {
-    if (args.includes('-show_entries'))
-      return Buffer.from(JSON.stringify({ streams: [{ index: 0, codec_type: 'video', width: 640, height: 360 }] }));
-    encoderArgs.push(args);
-    if (args.includes('-ss')) {
-      encodes++;
+  const runs = fakeRuns({
+    chunk: (args, n) => {
+      if (n) return;
       started();
-      await new Promise(resolve => {
+      return new Promise(resolve => {
         releaseEncode = resolve;
       });
-      return { video: Buffer.alloc(200), audio: Buffer.alloc(50) };
-    }
-    return Buffer.alloc(200);
+    },
   });
+  const tools = fakeTools({ streams: [{ index: 0, codec_type: 'video', width: 640, height: 360 }] });
+  const manager = new AV1(
+    { ffmpegPath: 'fixture', transcoding: { encoder: 'software' } },
+    async (binary, args, signal) => {
+      if (!args.includes('-show_entries') && !args.includes('libopus')) encoderArgs.push(args);
+      return tools(binary, args, signal);
+    },
+    undefined,
+    async (...args) => {
+      encoderArgs.push(args[1]);
+      return runs.segments(...args);
+    },
+  );
+  runs.manager = manager;
   manager.conversionPolicy = new ConversionPolicy({
     policy: 'override',
     provider: true,
@@ -786,9 +794,10 @@ test('explicit software AV1 uses/probes only software and identical viewers cons
     await assert.rejects(manager.chunk(other, 0, new AbortController().signal), /conversion jobs/);
     releaseEncode();
     assert.equal(await first, await shared);
-    assert.equal(encodes, 1);
-    assert.equal(manager.conversionPolicy.jobs.size, 0);
+    assert.equal(runs.started.length, 1);
     assert.ok(encoderArgs.every(args => args.includes('libsvtav1') && !args.includes('av1_qsv')));
+    for (const lease of [a, b]) manager.release(lease);
+    while (manager.conversionPolicy.jobs.size) await new Promise(resolve => setTimeout(resolve, 5));
   } finally {
     releaseEncode?.();
     for (const lease of [a, b, other]) manager.release(lease);
