@@ -439,34 +439,110 @@ function noteResponse(state, asked) {
 // late, so consecutive chunks overlap and each decodes on its own; the player keeps only
 // the chunk's window. The first chunk has nothing before it, so silence takes the lead's place.
 // Matroska rounds audio packet times to the millisecond, so processes that seek separately
-// disagree by up to half a millisecond about where a sample is, and chunks made by different
-// processes clicked where the player joined them. For codecs with fixed-size frames, each
-// process decodes from before its chunk, snaps its first frame to the frame grid, counts
-// samples from there and trims at those positions: every chunk then lands on one
-// sample-exact timeline, whichever process made it. Others keep FFmpeg's accurate seek.
-const FIXED_FRAMES = ['dts', 'ac3', 'eac3', 'aac', 'mp3', 'mp2'];
-const SNAP = "asetpts='(round(STARTPTS*TB*SR/NB_SAMPLES)*NB_SAMPLES+N)/SR/TB'";
+// disagree by up to a millisecond about where a sample is, and chunks made by different
+// processes clicked where the player joined them. Most codecs' frames sit on a fixed grid from
+// the stream's first packet: each process snaps its first decoded frame onto that grid and
+// counts samples from there, so every chunk lands on one sample-exact timeline, whichever
+// process made it. Every frame is a whole number of grid steps, and half a step is wider than
+// the timestamp error. The decoder drops encoder delay from the first packet it decodes, after
+// a seek too, which shortens that frame, so its end is what is snapped. FLAC's and PCM's grid
+// is their packets' size, when the source's first packets are all of one size. TrueHD's
+// access units are under a millisecond long, but its sound starts at a major sync: the grid
+// is the major sync interval (Blu-ray discs: 128 units, after a shorter first one), counted in
+// units from the stream's first packet. FFmpeg's decoder makes one frame too many when it
+// opens: at the stream's start it delays the sound by a unit, and after a seek it comes from
+// the cluster's first packet, ahead of a gap to the first major sync. That frame is dropped,
+// and so is anything else before the first frame at the start or on the grid. Vorbis and Opus
+// keep their own timestamps.
+const FRAME_GRID = { aac: 1024, ac3: 1536, eac3: 256, mp3: 576, mp2: 1152, dts: '256*max(1,floor(SR/48000))' };
+function snap(stream) {
+  const syncs = stream?.major_sync_units,
+    grid = syncs
+      ? `${syncs * 40}*max(1,round(SR/44100))`
+      : stream?.even_packets
+        ? 'NB_SAMPLES'
+        : FRAME_GRID[stream?.codec_name];
+  if (!grid) return '';
+  // Without the stream's first packet time, the grid starts at zero.
+  const first = `(${Number(stream.first_pts) || 0})*SR`;
+  if (!syncs) {
+    const [end, back] = stream.even_packets ? ['', ''] : ['+NB_SAMPLES', '-NB_SAMPLES'],
+      at = `round((STARTPTS*TB*SR${end}-${first})/(${grid}))*(${grid})+${first}${back}`;
+    return `asetpts='round((if(eq(N,0),st(0,${at}),ld(0))+N)/SR/TB)',`;
+  }
+  // TrueHD: sound starts at the stream's start or at a major sync on the grid from the second.
+  const anchor = `(${stream.grid_from})*SR`,
+    at = time => `round((${time}-${anchor})/(${grid}))*(${grid})+${anchor}`,
+    near = (time, to) => `lt(abs(${time}-(${to})),0.0025*SR)`,
+    sound = time => `${near(time, first)}+${near(time, at(time))}`,
+    start = 'STARTPTS*TB*SR';
+  const select = `aselect='st(1,ld(1)+gt(n,0)*(${sound('t*SR')}))',`.replaceAll('SR', 'sample_rate');
+  return `${select}asetpts='round((if(eq(N,0),st(0,if(${near(start, first)},${first},${at(start)})),ld(0))+N)/SR/TB)',`;
+}
+// AC-3's decoder dithers with a generator seeded when it opens, so a process that seeks hears
+// other noise than one from the start; seeded from each frame, they decode alike.
+const decoderArgs = stream => (['ac3', 'eac3'].includes(stream?.codec_name) ? ['-cons_noisegen', '1'] : []);
+// From a probe's first packets: where each audio stream's grid starts (from zero when its sound
+// starts later than they reach), and the grids that depend on the source. TrueHD's needs a
+// constant major sync interval after the first, with one access unit per packet, FLAC's and
+// PCM's packets of one size; otherwise the stream is not snapped.
+function frameGrids(info) {
+  const packets = info.packets || [];
+  delete info.packets;
+  for (const stream of info.streams || []) {
+    if (stream.codec_type !== 'audio') continue;
+    const own = packets.filter(p => p.stream_index === stream.index && Number.isFinite(Number(p.pts_time))),
+      times = own.map(p => Number(p.pts_time)),
+      rate = Number(stream.sample_rate);
+    // Whether packets `from` to `to` are `step` samples apart, within the millisecond rounding.
+    const even = (from, to, step) => {
+      for (let i = from; i <= to; i++)
+        if (Math.abs(times[i] - times[from] - ((i - from) * step) / rate) > 0.0015) return false;
+      return true;
+    };
+    if (stream.codec_name === 'truehd' && rate) {
+      const unit = 40 * Math.max(1, Math.round(rate / 44100)),
+        syncs = own.flatMap((p, i) => (p.flags?.startsWith('K') ? [i] : [])),
+        steady = syncs.slice(2).map((at, i) => at - syncs[i + 1]);
+      if (steady.length >= 2 && steady.every(gap => gap === steady[0]) && even(syncs[0], syncs.at(-1), unit)) {
+        stream.first_pts = times[syncs[0]];
+        stream.grid_from = stream.first_pts + ((syncs[1] - syncs[0]) * unit) / rate;
+        stream.major_sync_units = steady[0];
+      }
+    } else if ((stream.codec_name === 'flac' || /^pcm_/.test(stream.codec_name)) && rate && own.length >= 5) {
+      const block = ((times.at(-1) - times[0]) / (times.length - 1)) * rate;
+      if (block >= rate / 200 && even(0, times.length - 1, block)) {
+        stream.first_pts = times[0];
+        stream.even_packets = true;
+      }
+    } else if (own.length && FRAME_GRID[stream.codec_name]) stream.first_pts = times[0];
+  }
+  return info;
+}
 // The sound at 48 kHz from sample `first` on: trimmed, or padded with silence where the source
 // has none yet. Unlike adelay it keeps the channel layout, which the stereo downmix needs.
 const PAD = first => `aresample=48000,aresample=async=1:first_pts=${first}`;
-function audioCommand(url, spec, audioMap, start, duration, codec) {
+// Each chunk decodes from 2 s before its lead (the first from the source's start), on the
+// source's own times, and is laid down exactly as the run's decoder lays down its sound.
+function audioCommand(url, spec, audioMap, start, duration, stream) {
   const from = start - AUDIO_LEAD,
     length = duration + AUDIO_LEAD + 0.04;
-  const exact = spec.audio && FIXED_FRAMES.includes(codec);
   let input, filter;
   if (!spec.audio) {
     input = ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-t', String(length)];
     filter = 'asetpts=PTS-STARTPTS';
-  } else if (!exact) {
-    input = ['-ss', String(Math.max(0, from)), '-i', url, '-t', String(length)];
-    filter = 'asetpts=PTS-STARTPTS' + (start ? '' : `,${PAD(-AUDIO_LEAD_SAMPLES)}`);
-  } else if (start) {
-    input = ['-ss', String(Math.max(0, from - 2)), '-noaccurate_seek', '-copyts', '-i', url];
-    filter = `${SNAP},atrim=start=${from}:end=${from + length},asetpts=PTS-STARTPTS`;
   } else {
-    // The first chunk: silence for the lead and up to the source's first sound.
-    input = ['-noaccurate_seek', '-copyts', '-i', url];
-    filter = `${SNAP},${PAD(-AUDIO_LEAD_SAMPLES)},atrim=end_sample=${Math.round(length * PCM_RATE)},asetpts=PTS-STARTPTS`;
+    input = [
+      ...(start ? ['-ss', String(Math.max(0, from - 2))] : []),
+      '-noaccurate_seek',
+      '-copyts',
+      ...decoderArgs(stream),
+      '-i',
+      url,
+    ];
+    filter =
+      `${snap(stream)}${PAD(Math.round(from * PCM_RATE))},` +
+      `atrim=end_sample=${Math.round(length * PCM_RATE)},asetpts=PTS-STARTPTS`;
   }
   return [
     '-hide_banner',
@@ -536,22 +612,23 @@ function soundCopyArgs(maps, offset, length) {
     'pipe:1',
   ];
 }
-function soundDecodeCommand(stream, from, codec) {
+function soundDecodeCommand(index, from, stream) {
   return [
     '-hide_banner',
     '-loglevel',
     'error',
     '-nostdin',
     '-copyts',
+    ...decoderArgs(stream),
     '-f',
     'matroska',
     '-i',
     'pipe:0',
     '-map',
-    `0:a:${stream}`,
+    `0:a:${index}`,
     '-vn',
     '-af',
-    `${FIXED_FRAMES.includes(codec) ? SNAP + ',' : ''}${PAD(Math.round(from * PCM_RATE))},asetpts=PTS-STARTPTS`,
+    `${snap(stream)}${PAD(Math.round(from * PCM_RATE))},asetpts=PTS-STARTPTS`,
     '-ac',
     '2',
     '-ar',
@@ -1539,7 +1616,7 @@ class AV1 {
               sound: choices.length
                 ? {
                     commands: choices.map((o, i) =>
-                      soundDecodeCommand(i, start * CHUNK - AUDIO_LEAD, o.audio.selected?.codec_name),
+                      soundDecodeCommand(i, start * CHUNK - AUDIO_LEAD, o.audio.selected),
                     ),
                     onCopy: copied,
                     onData: (i, bytes) => memories[i].add(bytes),
@@ -1739,7 +1816,7 @@ class AV1 {
           (url, state) =>
             this.run(
               this.ffmpeg,
-              audioCommand(url, output.spec, output.audio.map, start, duration, output.audio.selected?.codec_name),
+              audioCommand(url, output.spec, output.audio.map, start, duration, output.audio.selected),
               run.controller.signal,
               30000,
               4 * 1024 * 1024,
@@ -1876,7 +1953,10 @@ class AV1 {
               '-v',
               'error',
               '-show_entries',
-              'stream=index,codec_type,codec_name,width,height,pix_fmt,color_space,color_primaries,color_transfer,r_frame_rate,avg_frame_rate:stream_side_data=side_data_type,dv_profile,bl_signal_compatibility_id:format=bit_rate,start_time',
+              'stream=index,codec_type,codec_name,sample_rate,width,height,pix_fmt,color_space,color_primaries,color_transfer,r_frame_rate,avg_frame_rate:stream_side_data=side_data_type,dv_profile,bl_signal_compatibility_id:format=bit_rate,start_time:packet=stream_index,pts_time,flags',
+              // Half a second of packets, which the stream analysis has mostly read already.
+              '-read_intervals',
+              '%+0.5',
               '-of',
               'json',
               url,
@@ -1884,7 +1964,7 @@ class AV1 {
             signal,
           );
           group.probed = { seconds: (Date.now() - asked) / 1000, ...state };
-          return JSON.parse(raw.toString());
+          return frameGrids(JSON.parse(raw.toString()));
         }),
       );
       group.infoTask = task;
@@ -2040,6 +2120,10 @@ module.exports = {
   AV1,
   CHUNK,
   AUDIO_LEAD,
+  audioCommand,
+  soundDecodeCommand,
+  soundCopyArgs,
+  frameGrids,
   MIME,
   AUDIO_MIME,
   copyStarts,

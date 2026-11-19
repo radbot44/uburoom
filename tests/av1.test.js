@@ -1,7 +1,16 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { AV1, outputSpec, decodeRoute, decodeRoutes, cpuPlaceboRoute, encoderArgs } = require('../server/av1');
+const {
+  AV1,
+  outputSpec,
+  decodeRoute,
+  decodeRoutes,
+  cpuPlaceboRoute,
+  encoderArgs,
+  frameGrids,
+  soundDecodeCommand,
+} = require('../server/av1');
 const { PlaybackError } = require('../server/errors');
 const { fakeRuns, fakeTools } = require('./helpers/fake-ffmpeg');
 const { classifyHdr, run, segments } = require('../server/media-tools');
@@ -482,8 +491,8 @@ test('AV1 isolates source audio and Plex scopes, maps the exact stream and refus
 });
 
 test('sound for fixed-frame codecs is cut on one sample-exact timeline, so chunks join seamlessly', async () => {
-  // Matroska's millisecond packet times put separately seeking processes up to half a
-  // millisecond apart, which clicked at every join; snapping to the frame grid removes it.
+  // Matroska's millisecond packet times put separately seeking processes up to a millisecond
+  // apart, which clicked at every join; snapping to the stream's own frame grid removes it.
   const commands = [];
   const manager = manage(
     {},
@@ -491,8 +500,13 @@ test('sound for fixed-frame codecs is cut on one sample-exact timeline, so chunk
       {
         streams: [
           { codec_type: 'video', width: 640, height: 360 },
-          { index: 1, codec_type: 'audio', codec_name: 'dts' },
-          { index: 2, codec_type: 'audio', codec_name: 'pcm_s24le' },
+          { index: 1, codec_type: 'audio', codec_name: 'dts', sample_rate: '48000' },
+          { index: 2, codec_type: 'audio', codec_name: 'pcm_s24le', sample_rate: '48000' },
+        ],
+        // DTS from 46 ms; the PCM packets are of no one size, so it keeps its own times.
+        packets: [
+          { stream_index: 1, pts_time: '0.046000' },
+          ...Array.from({ length: 30 }, (_, i) => ({ stream_index: 2, pts_time: String(i * 0.005 + (i % 3) * 0.002) })),
         ],
       },
       { audio: args => commands.push(args) },
@@ -510,24 +524,75 @@ test('sound for fixed-frame codecs is cut on one sample-exact timeline, so chunk
     await manager.chunk(lease, 0, signal);
     const filter = args => args[args.indexOf('-af') + 1];
     const dts = commands.filter(args => args.includes('0:a:0'));
-    const second = dts.find(args => /atrim=start=5\.7935:/.test(filter(args)));
-    assert.ok(second, 'chunk 1 starts AUDIO_LEAD before 6 s, trimmed by sample position');
+    const second = dts.find(args => /first_pts=278088,/.test(filter(args)));
+    assert.ok(second, 'chunk 1 starts AUDIO_LEAD before 6 s, at its 48 kHz sample');
     assert.ok(second.includes('-noaccurate_seek') && second.includes('-copyts'));
-    assert.match(filter(second), /^asetpts='\(round\(STARTPTS\*TB\*SR\/NB_SAMPLES\)\*NB_SAMPLES\+N\)\/SR\/TB'/);
+    // The first frame's end, on a 256-sample grid from the stream's first packet.
+    assert.match(
+      filter(second),
+      /^asetpts='round\(\(if\(eq\(N,0\),st\(0,round\(\(STARTPTS\*TB\*SR\+NB_SAMPLES-\(0\.046\)\*SR\)\/\(256\*/,
+    );
+    assert.match(filter(second), /,atrim=end_sample=299832,asetpts=PTS-STARTPTS$/);
     assert.equal(Number(second[second.indexOf('-ss') + 1]), 5.7935 - 2, 'decoding starts before the chunk');
     const first = dts.find(args => /first_pts=-9912/.test(filter(args)));
+    assert.ok(!first.includes('-ss'));
     assert.match(
       filter(first),
       /aresample=48000,aresample=async=1:first_pts=-9912,atrim=end_sample=299832,/,
       'the first chunk pads its lead and up to the first sound, keeping the channel layout',
     );
     const other = commands.find(args => args.includes('0:2'));
-    assert.ok(!other.includes('-copyts') && /^asetpts=PTS-STARTPTS/.test(filter(other)), 'PCM keeps the accurate seek');
+    assert.ok(other.includes('-copyts'), 'PCM is cut on the same source times');
+    assert.match(filter(other), /^aresample=48000,aresample=async=1:first_pts=278088,/, 'but is not snapped');
   } finally {
     manager.release(lease);
     manager.release(pcm);
     await manager.close();
   }
+});
+
+test("each audio stream's frame grid starts at its first packet, and source-dependent grids are checked", () => {
+  // TrueHD access units are 1/1200 s; Blu-ray discs put a major sync every 128 after the first.
+  const syncs = [0, 79, 207, 335, 463],
+    truehd = Array.from({ length: 500 }, (_, i) => ({
+      stream_index: 1,
+      pts_time: (Math.round((0.5 + i / 1200) * 1000) / 1000).toFixed(3),
+      flags: syncs.includes(i) ? 'K_' : '__',
+    }));
+  const blocks = (index, step, jitter = () => 0) =>
+    Array.from({ length: 40 }, (_, i) => ({ stream_index: index, pts_time: String(i * step + jitter(i)) }));
+  const info = frameGrids({
+    streams: [
+      { index: 0, codec_type: 'video' },
+      { index: 1, codec_type: 'audio', codec_name: 'truehd', sample_rate: '48000' },
+      { index: 2, codec_type: 'audio', codec_name: 'flac', sample_rate: '48000' },
+      { index: 3, codec_type: 'audio', codec_name: 'pcm_s16le', sample_rate: '48000' },
+      { index: 4, codec_type: 'audio', codec_name: 'ac3', sample_rate: '48000' },
+      { index: 5, codec_type: 'audio', codec_name: 'truehd', sample_rate: '48000' },
+    ],
+    packets: [
+      ...truehd,
+      ...blocks(2, 4096 / 48000),
+      ...blocks(3, 0.01, i => (i % 2 ? 0.003 : 0)),
+      { stream_index: 4, pts_time: '0.037000' },
+      // Major syncs at uneven intervals.
+      ...truehd.map((p, i) => ({ ...p, stream_index: 5, flags: [0, 79, 207, 300, 463].includes(i) ? 'K_' : '__' })),
+    ],
+  });
+  const [, hd, flac, pcm, ac3, uneven] = info.streams;
+  assert.equal(info.packets, undefined);
+  // The grid counts the first interval's 79 units from the start, not the second sync's rounded time.
+  assert.deepEqual([hd.first_pts, hd.grid_from, hd.major_sync_units], [0.5, 0.5 + (79 * 40) / 48000, 128]);
+  const filter = soundDecodeCommand(0, 0, hd)[soundDecodeCommand(0, 0, hd).indexOf('-af') + 1];
+  assert.match(filter, /^aselect='st\(1,ld\(1\)\+gt\(n,0\)\*/, "the decoder's extra first frame is dropped");
+  assert.match(filter, /,0\.0025\*SR\),\(0\.5\)\*SR,round\(\(STARTPTS\*TB\*SR-\(0\.565833+\d*\)\*SR\)\/\(5120\*/);
+  assert.deepEqual([flac.first_pts, flac.even_packets], [0, true]);
+  assert.match(soundDecodeCommand(0, 0, flac).join(' '), /\/\(NB_SAMPLES\)\)\*\(NB_SAMPLES\)\+\(0\)\*SR\),/);
+  assert.equal(pcm.even_packets, undefined, 'packets of no one size are not snapped');
+  assert.deepEqual([ac3.first_pts, ac3.even_packets], [0.037, undefined]);
+  assert.deepEqual([uneven.first_pts, uneven.major_sync_units], [undefined, undefined]);
+  const command = soundDecodeCommand(0, 5.7935, ac3);
+  assert.ok(command.indexOf('-cons_noisegen') < command.indexOf('-i'), "AC-3's dither does not depend on the seek");
 });
 
 test('a run decodes its sound once from its own read, and later chunks encode from it', async () => {
@@ -560,7 +625,7 @@ test('a run decodes its sound once from its own read, and later chunks encode fr
     assert.equal(copy[copy.indexOf('-output_ts_offset') + 1], '0.042', 'the copy keeps the source times');
     const [decode] = runs.decoders[0];
     assert.ok(decode.includes('-copyts') && decode.includes('pipe:0'));
-    assert.match(decode[decode.indexOf('-af') + 1], /^asetpts='\(round.*,aresample=async=1:first_pts=-9912,/);
+    assert.match(decode[decode.indexOf('-af') + 1], /^asetpts='round\(\(if.*,aresample=async=1:first_pts=-9912,/);
     const decoded = encodes.filter(({ args }) => args.includes('pipe:0')),
       read = encodes.filter(({ args }) => !args.includes('pipe:0'));
     assert.equal(read.length, 0, 'no chunk reads the source for its sound');
@@ -573,7 +638,7 @@ test('a run decodes its sound once from its own read, and later chunks encode fr
     const fallback = encodes.slice(3).filter(({ args }) => !args.includes('pipe:0'));
     assert.ok(fallback.length && fallback.every(({ args }) => !args.includes('pipe:0')));
     assert.ok(
-      fallback.some(({ args }) => /atrim=start=17\.7935:/.test(args[args.indexOf('-af') + 1])),
+      fallback.some(({ args }) => /first_pts=854088,/.test(args[args.indexOf('-af') + 1])),
       'sound the process never supplied reads the source',
     );
   } finally {
@@ -1392,7 +1457,7 @@ test("a run's first chunk takes decoded sound only when the copy began early eno
       await manager.chunk(lease, 5, new AbortController().signal);
       const read = encodes.filter(args => !args.includes('pipe:0'));
       assert.equal(read.length, reads, `copy from ${copyLead} s before the seek`);
-      if (reads) assert.match(read[0][read[0].indexOf('-af') + 1], /atrim=start=29\.7935:/);
+      if (reads) assert.match(read[0][read[0].indexOf('-af') + 1], /first_pts=1430088,/);
     } finally {
       manager.release(lease);
       await manager.close();

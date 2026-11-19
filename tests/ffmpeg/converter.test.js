@@ -120,21 +120,13 @@ test('converted chunks come from one read of the source and join on one sound ti
     assert.ok(Math.abs(level / tones[1].level - 1) < 0.01, 'the first chunk is as loud as the rest');
 
   // A seek: a new process from chunk 2, which still has sound to settle on before it.
-  await t.test(
-    "a seek's sound lands where the same chunk from the start does",
-    {
-      todo:
-        'SNAP takes the first frame as the grid from time zero; after encoder delay is dropped ' +
-        "the first frame is short, so a run from the start sits on another grid than a seek's",
-    },
-    async () => {
-      const seeked = await convert(2, 2);
-      for (const [i, chunk] of seeked.entries()) {
-        const before = fromStart[i + 2].samples;
-        let most = 0;
-        for (let j = 0; j < before.length; j++) most = Math.max(most, Math.abs(before[j] - chunk.samples[j]));
-        assert.ok(most < 1e-4, `chunk ${chunk.k} after a seek matches the same chunk from the start (${most})`);
-      }
-    },
-  );
+  await t.test("a seek's sound lands where the same chunk from the start does", async () => {
+    const seeked = await convert(2, 2);
+    for (const [i, chunk] of seeked.entries()) {
+      const before = fromStart[i + 2].samples;
+      let most = 0;
+      for (let j = 0; j < before.length; j++) most = Math.max(most, Math.abs(before[j] - chunk.samples[j]));
+      assert.ok(most < 1e-4, `chunk ${chunk.k} after a seek matches the same chunk from the start (${most})`);
+    }
+  });
 });
