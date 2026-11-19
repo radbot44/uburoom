@@ -865,3 +865,70 @@ test('run returns every WebM output of one process in pipe order', async () => {
   const pair = await run(process.execPath, ['-e', script, 'webm', 'pipe:1', 'pipe:3'], undefined);
   assert.deepEqual([pair.video.length, pair.audio.length], [100, 101]);
 });
+
+test('six shared qualities with real chunk sizes fit memory and keep their outputs for viewers', async () => {
+  const MB = 1024 * 1024,
+    sizes = { 20000: 11 * MB, 12000: 7 * MB, 8000: 4.5 * MB, 4000: 2.3 * MB, 2000: 1.3 * MB };
+  const shared = [],
+    solo = [];
+  const manager = new AV1({ ffmpegPath: 'fixture' }, async (_binary, args) => {
+    if (args.includes('-show_entries'))
+      return Buffer.from(
+        JSON.stringify({
+          streams: [
+            { index: 0, codec_type: 'video', width: 3840, height: 2160 },
+            { index: 1, codec_type: 'audio' },
+          ],
+          format: { bit_rate: '8000000' },
+        }),
+      );
+    if (args.some(arg => String(arg).startsWith('testsrc2'))) return Buffer.alloc(200);
+    const rates = args.filter((_, i) => args[i - 1] === '-b:v').map(rate => sizes[parseInt(rate)] || 4.5 * MB);
+    (args.includes('-filter_complex') ? shared : solo).push(args);
+    const outputs = rates.flatMap(bytes => [Buffer.alloc(bytes), Buffer.alloc(100 * 1024)]);
+    return outputs.length > 2 ? outputs : { video: outputs[0], audio: outputs[1] };
+  });
+  // An 8 Mbps source: converted Original is its own sixth output, not the 20 Mbps one.
+  const source = { id: '1', partId: '5', principal: 'p', duration: 600, start: 'x', sourceBitrate: 8000 };
+  const leases = ['direct', '1080p20', '1080p12', '1080p8', '720p4', '720p2'].map(q => manager.acquire(source, q));
+  const signal = new AbortController().signal;
+  try {
+    assert.equal(new Set(leases.map(lease => lease.group)).size, 6);
+    for (const lease of leases) await manager.chunk(lease, 0, signal);
+    const before = solo.length;
+    // The first quality to ask makes chunks 1 and 2 for everyone before the others ask.
+    await manager.chunk(leases[0], 1, signal);
+    await manager.chunk(leases[0], 2, signal);
+    assert.equal(shared.length, 2, 'six qualities fit one shared process per chunk');
+    assert.equal(shared[0][shared[0].indexOf('-filter_complex') + 1].match(/split=(\d)/)[1], '6');
+    for (const lease of leases.slice(1)) {
+      await manager.chunk(lease, 1, signal);
+      await manager.chunk(lease, 2, signal);
+    }
+    assert.equal(solo.length, before, 'the other qualities read both chunks from cache');
+    assert.equal(manager.pendingBytes, 0);
+  } finally {
+    for (const lease of leases) manager.release(lease);
+    await manager.close();
+  }
+});
+
+test('converted Original shares the top quality output only when the source reaches its bitrate', () => {
+  const manager = new AV1({ ffmpegPath: 'fixture' });
+  const source = { id: '1', partId: '5', principal: 'p', duration: 60, start: 'x' };
+  try {
+    const remux = { ...source, sourceBitrate: 68000 },
+      top = manager.acquire(remux, '1080p20'),
+      original = manager.acquire(remux, 'direct');
+    assert.equal(original.group, top.group, 'a 68 Mbps source converts Original to exactly 1080p20');
+    const light = { ...source, id: '2', sourceBitrate: 8000 },
+      lightTop = manager.acquire(light, '1080p20'),
+      lightOriginal = manager.acquire(light, 'direct');
+    assert.notEqual(lightOriginal.group, lightTop.group, 'an 8 Mbps Original keeps its own lower bitrate');
+    const unknown = manager.acquire({ ...source, id: '3' }, 'direct');
+    assert.equal(unknown.group.quality, 'direct');
+    for (const lease of [top, original, lightTop, lightOriginal, unknown]) manager.release(lease);
+  } finally {
+    manager.close();
+  }
+});

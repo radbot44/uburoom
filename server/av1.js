@@ -396,7 +396,7 @@ class AV1 {
           source.partId,
           source.audioIndex,
           source.audioOrdinal,
-          qualityId(quality),
+          this.outputQuality(source, quality),
           codec,
           source.burn?.id,
         ]),
@@ -753,9 +753,9 @@ class AV1 {
             this.batchBroken.add(group.batchKey);
             this.logger.warn('Conversion', 'Shared conversion failed for a source; converting each quality alone.');
           }
-          if (entry.reserved) {
-            this.pendingBytes -= this.jobBytes;
-            entry.reserved = false;
+          if (entry.reservedBytes) {
+            this.pendingBytes -= entry.reservedBytes;
+            entry.reservedBytes = 0;
           }
           entry.shared = undefined;
           return runOperation(entry.controller.signal, () =>
@@ -773,13 +773,15 @@ class AV1 {
   async batchJob(members, index, entries, controller) {
     const start = index * CHUNK,
       count = members.length;
-    this.pruneAll(this.jobBytes * count);
-    if (this.retainedBytes + this.pendingBytes + this.jobBytes * count > this.maxBytes)
+    const sizes = members.map(({ group }) => this.chunkBytes(group)),
+      total = sizes.reduce((sum, bytes) => sum + bytes, 0);
+    this.pruneAll(total);
+    if (this.retainedBytes + this.pendingBytes + total > this.maxBytes)
       throw new PlaybackError('Encoded video memory is busy; retry shortly.');
-    for (const entry of entries) {
-      this.pendingBytes += this.jobBytes;
-      entry.reserved = true;
-    }
+    entries.forEach((entry, i) => {
+      this.pendingBytes += sizes[i];
+      entry.reservedBytes = sizes[i];
+    });
     const first = members[0],
       codec = first.group.codec;
     await this.conversionPolicy?.video('uburoom', codec, first.source.provider);
@@ -979,9 +981,9 @@ class AV1 {
       .then(bytes => {
         if (controller.signal.aborted || group.chunks.get(index) !== entry)
           throw new PlaybackError('WebM preparation cancelled.');
-        if (entry.reserved) {
-          this.pendingBytes -= this.jobBytes;
-          entry.reserved = false;
+        if (entry.reservedBytes) {
+          this.pendingBytes -= entry.reservedBytes;
+          entry.reservedBytes = 0;
         }
         entry.bytes = bytes;
         entry.size = bytes.video.length + bytes.audio.length;
@@ -1010,9 +1012,9 @@ class AV1 {
         throw entry.error || error;
       })
       .finally(() => {
-        if (entry.reserved) {
-          this.pendingBytes -= this.jobBytes;
-          entry.reserved = false;
+        if (entry.reservedBytes) {
+          this.pendingBytes -= entry.reservedBytes;
+          entry.reservedBytes = 0;
         }
         group.controllers.delete(controller);
         this.controllers.delete(controller);
@@ -1024,11 +1026,12 @@ class AV1 {
   async soloJob(group, source, index, entry) {
     const controller = entry.controller,
       start = index * CHUNK;
-    this.pruneAll(this.jobBytes);
-    if (this.retainedBytes + this.pendingBytes + this.jobBytes > this.maxBytes)
+    const bytes = this.chunkBytes(group);
+    this.pruneAll(bytes);
+    if (this.retainedBytes + this.pendingBytes + bytes > this.maxBytes)
       throw new PlaybackError('Encoded video memory is busy; retry shortly.');
-    this.pendingBytes += this.jobBytes;
-    entry.reserved = true;
+    this.pendingBytes += bytes;
+    entry.reservedBytes = bytes;
     await this.conversionPolicy?.video('uburoom', group.codec, source.provider);
     const releaseConversion = await this.conversionPolicy?.wait({
       signal: controller.signal,
@@ -1201,6 +1204,23 @@ class AV1 {
     } finally {
       releaseConversion?.();
     }
+  }
+  // Converted Original takes the highest configured quality's size limit, and the source's
+  // bitrate up to that quality's. From a source at least that bitrate it is exactly that
+  // quality, so both share one output.
+  outputQuality(source, quality) {
+    const id = qualityId(quality),
+      top = this.maxQuality;
+    return id === 'direct' && top?.bitrate && source.sourceBitrate >= top.bitrate ? top.id : id;
+  }
+  // Memory set aside for one chunk before it is encoded. With -maxrate at the bitrate and a
+  // buffer of twice that, a chunk holds at most its length plus two seconds of bitrate; a
+  // quarter more covers the container and sound. A flat 48 MB worst case per quality let a
+  // shared chunk of five qualities fill the whole cache.
+  chunkBytes(group) {
+    const kbps = (group.quality === 'direct' ? this.maxQuality : qualityDefinition(group.quality))?.bitrate;
+    if (!kbps) return this.jobBytes;
+    return Math.min(this.jobBytes, Math.ceil(((kbps + 128) * 1000 * (CHUNK + 2) * 1.25) / 8));
   }
   get retainedBytes() {
     return [...this.groups.values()].reduce((sum, group) => sum + group.bytes, 0);
