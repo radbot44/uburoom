@@ -319,3 +319,19 @@ for (const wallStep of [30000, -10000]) {
     assert.equal(history[0].watchedSeconds, 3);
   });
 }
+
+test('a paused player reports every few seconds from the timer, and at once on events', async () => {
+  const f = client();
+  f.ctx.video.paused = true;
+  for (let second = 0; second < 7; second++) {
+    await f.ctx.reportObservation(false, true);
+    f.tick();
+  }
+  assert.equal(f.sent.length, 3, 'seconds 0, 3 and 6 keep the server record open (it closes after 5 s)');
+  assert.ok(f.sent.every(data => data.state === 'paused'));
+  await f.ctx.reportObservation();
+  assert.equal(f.sent.length, 4, 'an event report is never held back');
+  f.ctx.video.paused = false;
+  await f.ctx.reportObservation(false, true);
+  assert.equal(f.sent.length, 5, 'a playing player reports every second');
+});

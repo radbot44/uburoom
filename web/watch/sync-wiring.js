@@ -59,7 +59,13 @@ export function mount(host, deps) {
   function expected() {
     return deps.time.target(store.room.state);
   }
-  async function reportObservation(immediateStall = false) {
+  // A paused player reports less often from the periodic timer: often enough that the server keeps its
+  // playback record (it closes after 5 s without a report), not once a second for a picture that is still.
+  const PAUSED_REPORT_MS = 3000;
+  let lastReportAt = -Infinity;
+  async function reportObservation(immediateStall = false, periodic = false) {
+    if (periodic && deps.video.paused && !deps.video.seeking && deps.time.mono() - lastReportAt < PAUSED_REPORT_MS)
+      return;
     // While a new stream is held back for a seamless swap, the player still shows the stream the server
     // has already replaced, so the server would reject every report about it.
     if (
@@ -119,6 +125,7 @@ export function mount(host, deps) {
       ...(playerState === 'buffering' ? { stalled: !store.stream.probing } : {}),
     };
     store.player.observationPending++;
+    lastReportAt = sampleAt;
     try {
       const result = await deps.roomLink.observe(id, data);
       if (result.credit && result.credit.reason !== 'credited')
@@ -153,7 +160,7 @@ export function mount(host, deps) {
       );
     });
   deps.every(1000, () => {
-    void reportObservation();
+    void reportObservation(false, true);
     if (store.room.state?.readiness) void reportReadiness();
   });
 

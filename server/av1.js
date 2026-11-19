@@ -22,11 +22,26 @@ const AUDIO_LEAD_SAMPLES = 9912,
 const MIME = 'video/webm; codecs="av01.0.12M.08"',
   AUDIO_MIME = 'audio/webm; codecs="opus"';
 
-function encoderArgs(encoder = 'qsv', codec = 'av1') {
+// CPU encoders get this job's share of the machine: VP9/VP8 as threads, SVT-AV1 as its
+// parallelism level (1-6), which it otherwise sets near the whole machine in every process.
+function encoderArgs(encoder = 'qsv', codec = 'av1', threads = 2, cores = os.availableParallelism()) {
   if (!Playback.localFormat(codec)) throw new PlaybackError('Unknown local output codec.');
   if (encoder === 'software') {
-    if (codec === 'av1')
-      return ['-c:v', 'libsvtav1', '-preset', '10', '-pix_fmt', 'yuv420p', '-flags', '+global_header'];
+    if (codec === 'av1') {
+      const level = Math.min(6, Math.max(1, Math.ceil((6 * threads) / Math.max(threads, cores))));
+      return [
+        '-c:v',
+        'libsvtav1',
+        '-preset',
+        '10',
+        '-svtav1-params',
+        'lp=' + level,
+        '-pix_fmt',
+        'yuv420p',
+        '-flags',
+        '+global_header',
+      ];
+    }
     return [
       '-c:v',
       codec === 'vp9' ? 'libvpx-vp9' : 'libvpx',
@@ -35,7 +50,7 @@ function encoderArgs(encoder = 'qsv', codec = 'av1') {
       '-cpu-used',
       codec === 'vp9' ? '6' : '8',
       '-threads',
-      '2',
+      String(threads),
       '-lag-in-frames',
       '0',
       '-auto-alt-ref',
@@ -821,7 +836,7 @@ class AV1 {
             'error',
             '-nostdin',
             '-threads',
-            '2',
+            String(route ? 2 : this.cpuShare()),
             ...(route?.input || []),
             '-ss',
             String(start),
@@ -846,7 +861,7 @@ class AV1 {
               '-1',
               '-map_chapters',
               '-1',
-              ...encoderArgs(encoder, codec),
+              ...encoderArgs(encoder, codec, Math.max(1, Math.floor(this.cpuShare() / count))),
               ...rateArgs(encoder, codec, spec.bitrate),
               ...(spec.frameRate ? ['-r', spec.frameRate, '-fps_mode', 'cfr'] : []),
               '-g',
@@ -1106,7 +1121,7 @@ class AV1 {
           'error',
           '-nostdin',
           '-threads',
-          '2',
+          String(route ? 2 : this.cpuShare()),
           ...(route?.input || []),
           '-ss',
           String(start - runIn),
@@ -1122,7 +1137,7 @@ class AV1 {
           '-1',
           '-map_chapters',
           '-1',
-          ...encoderArgs(selected, codec),
+          ...encoderArgs(selected, codec, this.cpuShare()),
           ...rateArgs(selected, codec, spec.bitrate),
           ...(spec.frameRate ? ['-r', spec.frameRate, '-fps_mode', 'cfr'] : []),
           '-g',
@@ -1204,6 +1219,11 @@ class AV1 {
     } finally {
       releaseConversion?.();
     }
+  }
+  // A starting chunk's share of the CPU for CPU decoding and CPU encoders: the machine split
+  // among the conversions running now, at least two threads. GPU routes keep two.
+  cpuShare() {
+    return Math.max(2, Math.floor(os.availableParallelism() / Math.max(1, this.active)));
   }
   // Converted Original takes the highest configured quality's size limit, and the source's
   // bitrate up to that quality's. From a source at least that bitrate it is exactly that

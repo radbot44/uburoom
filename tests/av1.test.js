@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { AV1, outputSpec, decodeRoute, cpuPlaceboRoute } = require('../server/av1');
+const { AV1, outputSpec, decodeRoute, cpuPlaceboRoute, encoderArgs } = require('../server/av1');
 const { PlaybackError } = require('../server/errors');
 const { classifyHdr, run } = require('../server/media-tools');
 const { Plex } = require('../server/plex');
@@ -930,5 +930,39 @@ test('converted Original shares the top quality output only when the source reac
     for (const lease of [top, original, lightTop, lightOriginal, unknown]) manager.release(lease);
   } finally {
     manager.close();
+  }
+});
+
+test('CPU conversion splits the machine among running jobs instead of fixed threads', async () => {
+  const cores = require('node:os').availableParallelism();
+  assert.deepEqual(
+    encoderArgs('software', 'av1', 2, 12).slice(4, 6),
+    ['-svtav1-params', 'lp=1'],
+    'a fifth of twelve threads is the lowest SVT-AV1 level',
+  );
+  assert.deepEqual(encoderArgs('software', 'av1', 12, 12).slice(4, 6), ['-svtav1-params', 'lp=6']);
+  const vp9 = encoderArgs('software', 'vp9', 4, 12);
+  assert.equal(vp9[vp9.indexOf('-threads') + 1], '4');
+  assert.ok(!encoderArgs('qsv', 'av1', 8).includes('-threads'), 'hardware encoders are unchanged');
+
+  const commands = [];
+  const manager = new AV1(
+    { ffmpegPath: 'fixture', transcoding: { encoder: 'software', hardwareDecode: false } },
+    async (_binary, args) => {
+      if (args.includes('-show_entries'))
+        return Buffer.from(JSON.stringify({ streams: [{ codec_type: 'video', width: 1920, height: 1080 }] }));
+      if (args.includes('-ss')) commands.push(args);
+      return args.includes('pipe:3') ? { video: Buffer.alloc(200), audio: Buffer.alloc(50) } : Buffer.alloc(200);
+    },
+  );
+  const lease = manager.acquire({ id: '1', duration: 60, start: 'x' }, '720p4');
+  try {
+    await manager.chunk(lease, 0, new AbortController().signal);
+    const args = commands[0];
+    assert.equal(args[args.indexOf('-threads') + 1], String(Math.max(2, cores)), 'a lone CPU decode uses every core');
+    assert.equal(args[args.indexOf('-svtav1-params') + 1], 'lp=6', 'a lone CPU encode uses the top level');
+  } finally {
+    manager.release(lease);
+    await manager.close();
   }
 });
