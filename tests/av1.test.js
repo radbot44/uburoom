@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { AV1, outputSpec, decodeRoute, cpuPlaceboRoute, encoderArgs } = require('../server/av1');
+const { AV1, outputSpec, decodeRoute, decodeRoutes, cpuPlaceboRoute, encoderArgs } = require('../server/av1');
 const { PlaybackError } = require('../server/errors');
 const { fakeRuns, fakeTools } = require('./helpers/fake-ffmpeg');
 const { classifyHdr, run, segments } = require('../server/media-tools');
@@ -157,6 +157,63 @@ test('hardware decode falls back to the CPU for the stream only when the CPU pro
     assert.deepEqual([gpu, cpu], [2, 1], 'the working process carries on');
     await manager.chunk(lease, 15, signal);
     assert.deepEqual([gpu, cpu], [2, 2], 'a later process skips the failed routes');
+  } finally {
+    manager.release(lease);
+    await manager.close();
+  }
+});
+
+test('NVENC decodes HDR on Vulkan first and steps down to CUDA when Vulkan fails', async () => {
+  const hdr = {
+    codec_type: 'video',
+    codec_name: 'hevc',
+    width: 3840,
+    height: 2160,
+    pix_fmt: 'yuv420p10le',
+    color_transfer: 'smpte2084',
+    r_frame_rate: '24000/1001',
+  };
+  const spec = outputSpec({ streams: [hdr] }, '1080p8');
+  const [vulkan, cuda, cudaOnly, cpu, extra] = decodeRoutes(spec, 'nvenc', true, 'win32');
+  assert.match(vulkan.filter, /^setpts=PTS-STARTPTS,libplacebo=w=1920:h=1080:.*,hwupload=derive_device=cuda$/);
+  assert.match(vulkan.burnFilter, /libplacebo=.*,hwdownload,format=nv12$/, 'burned subtitles overlay on the CPU');
+  assert.equal(vulkan.scale(1280, 720), 'scale_cuda=1280:720');
+  assert.ok(vulkan.input.includes('vulkan=v@cu'), 'Vulkan decodes on the encoding GPU');
+  assert.match(cuda.filter, /scale_cuda=1920:1080:format=p010le,hwdownload/);
+  assert.ok(cudaOnly && cpu === undefined && extra === undefined);
+  for (const other of [
+    decodeRoutes({ ...spec, sourceCodec: 'vp9' }, 'nvenc', true, 'win32'),
+    decodeRoutes(spec, 'qsv', true, 'win32'),
+    decodeRoutes(outputSpec({ streams: [{ ...hdr, pix_fmt: 'yuv420p', color_transfer: 'bt709' }] }, '1080p8'), 'nvenc'),
+  ])
+    assert.ok(!other.some(route => route?.input.includes('vulkan=v@cu')));
+
+  const routes = [],
+    warnings = [];
+  const runs = fakeRuns({
+    chunk: (args, n) => {
+      if (n) return;
+      routes.push(args[args.indexOf('-hwaccel') + 1]);
+      if (args.includes('vulkan=v@cu')) {
+        // NVENC takes the CUDA frames as they are: no conversion back to system memory.
+        assert.ok(!args.includes('-pix_fmt'));
+        throw Object.assign(new PlaybackError('vulkan crashed'), { exitFailure: true });
+      }
+      assert.equal(args[args.indexOf('-pix_fmt') + 1], 'yuv420p');
+    },
+  });
+  const manager = manage(
+    { transcoding: { encoder: 'nvenc', cpuFallback: false } },
+    fakeTools({ streams: [hdr, { codec_type: 'audio' }] }),
+    runs,
+    { warn: (_, message) => warnings.push(message) },
+  );
+  const lease = manager.acquire({ id: '1', duration: 60, start: 'http://fixture' }, '1080p8');
+  try {
+    await manager.chunk(lease, 0, new AbortController().signal);
+    assert.deepEqual(routes, ['vulkan', 'cuda']);
+    assert.equal(lease.group.decodeLevel, 1);
+    assert.match(warnings[0], /^Vulkan decode failed/);
   } finally {
     manager.release(lease);
     await manager.close();
@@ -1074,4 +1131,23 @@ test('segments hands over each finished segment in order and only a real end fin
     seen.map(([, n]) => n),
     [0, 0],
   );
+});
+
+test('segments stops a process whose route quietly lost its hardware decoder', async () => {
+  // FFmpeg replaces a Vulkan decoder that fails setup with the CPU and carries on, slowly.
+  const started = Date.now();
+  await assert.rejects(
+    segments(
+      process.execPath,
+      [
+        '-e',
+        "console.error('Failed setup for format vulkan: hwaccel initialisation returned error.');setInterval(()=>{},1000)",
+        'segments:0',
+      ],
+      undefined,
+      { onSegment() {}, failOn: /Failed setup for format vulkan/, poll: 10 },
+    ),
+    error => error.exitFailure === true,
+  );
+  assert.ok(Date.now() - started < 5000);
 });

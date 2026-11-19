@@ -194,6 +194,7 @@ function outputSpec(info, quality, maxQuality = QUALITIES[1]) {
     frameRate,
     tonemap,
     sourceFormat: video.pix_fmt,
+    sourceCodec: video.codec_name,
     filter: filters.join(','),
     audio: info.streams.some(s => s.codec_type === 'audio'),
   };
@@ -227,6 +228,47 @@ function cpuPlaceboRoute(spec, platform = process.platform) {
     ].join(','),
   };
 }
+// NVENC can keep HDR on the GPU through libplacebo only if Vulkan decodes: FFmpeg can't
+// map CUDA frames into Vulkan, or copy them there. The tonemapped picture is copied to
+// CUDA, smaller qualities scale there, and NVENC takes the frames as they are. Measured
+// on an RTX 4090, 60 s of a 4K HDR10 remux with five qualities: about 6x real time through
+// CUDA and system memory, 10x this way, same picture. Downloading the tonemapped picture
+// instead saves nothing with five qualities: CPU scaling and five uploads cost as much.
+// Burned subtitles overlay in system memory, so those runs download (`burnFilter`).
+// If Vulkan setup fails, FFmpeg silently decodes on the CPU instead, so `failOn` stops the
+// run and it steps down to the CUDA route.
+const VULKAN_DECODE = ['hevc', 'h264', 'av1'];
+function vulkanRoute(spec, encoder, platform = process.platform) {
+  if (encoder !== 'nvenc' || !spec.hdr || spec.doviP5 || platform === 'darwin') return;
+  if (!VULKAN_DECODE.includes(spec.sourceCodec) || !SURFACES[spec.sourceFormat]) return;
+  const placebo = [
+    'setpts=PTS-STARTPTS',
+    `libplacebo=w=${spec.width}:h=${spec.height}:format=nv12:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:peak_detect=0:apply_dolbyvision=1`,
+  ];
+  return {
+    label: 'Vulkan decode',
+    filter: [...placebo, 'hwupload=derive_device=cuda'].join(','),
+    burnFilter: [...placebo, 'hwdownload', 'format=nv12'].join(','),
+    scale: (width, height) => `scale_cuda=${width}:${height}`,
+    gpuFrames: true,
+    input: [
+      '-init_hw_device',
+      'cuda=cu',
+      // Derived from CUDA, so Vulkan decodes on the GPU that encodes.
+      '-init_hw_device',
+      'vulkan=v@cu',
+      '-hwaccel',
+      'vulkan',
+      '-hwaccel_device',
+      'v',
+      '-hwaccel_output_format',
+      'vulkan',
+      '-filter_hw_device',
+      'v',
+    ],
+    failOn: /Failed setup for format vulkan/,
+  };
+}
 function decodeRoute(spec, encoder, platform = process.platform, gpuTonemap = true) {
   const surface = SURFACES[spec.sourceFormat];
   if (!surface) return;
@@ -235,6 +277,7 @@ function decodeRoute(spec, encoder, platform = process.platform, gpuTonemap = tr
     vpp = `vpp_qsv=w=${spec.width}:h=${spec.height}:format=${surface}`;
   const placebo = spec.hdr && gpuTonemap && platform !== 'darwin';
   const route = (input, gpu, downloaded = true) => ({
+    label: placebo ? 'GPU tonemapping' : 'Hardware decode',
     input: placebo
       ? [
           '-init_hw_device',
@@ -314,15 +357,22 @@ function decodeRoute(spec, encoder, platform = process.platform, gpuTonemap = tr
   );
 }
 
-// The decode routes a chunk tries in order: GPU tonemapping, GPU decode, then the
-// CPU. A failed route steps down; only a later success proves the step.
-function decodeRoutes(spec, encoder, hardwareDecode = true) {
+// The decode routes a chunk tries in order: Vulkan decode (NVENC HDR only), GPU
+// tonemapping, GPU decode, then the CPU. A failed route steps down; only a later
+// success proves the step.
+function decodeRoutes(spec, encoder, hardwareDecode = true, platform = process.platform) {
   const unique = (route, i, all) => route && all.findIndex(other => other?.filter === route.filter) === i;
   if (spec.doviP5)
-    return [...(hardwareDecode ? [decodeRoute(spec, encoder)] : []), cpuPlaceboRoute(spec)].filter(unique);
+    return [...(hardwareDecode ? [decodeRoute(spec, encoder, platform)] : []), cpuPlaceboRoute(spec, platform)].filter(
+      unique,
+    );
   return [
     ...(hardwareDecode
-      ? [decodeRoute(spec, encoder), decodeRoute(spec, encoder, undefined, false)].filter(unique)
+      ? [
+          vulkanRoute(spec, encoder, platform),
+          decodeRoute(spec, encoder, platform),
+          decodeRoute(spec, encoder, platform, false),
+        ].filter(unique)
       : []),
     undefined,
   ];
@@ -1194,7 +1244,7 @@ class AV1 {
               if (outputs.some(({ group }) => level > (group.decodeLevel || 0)))
                 this.logger.warn(
                   'Conversion',
-                  `${route ? 'GPU tonemapping' : 'Hardware decode'} failed for a ${lead.sourceFormat} source; using a slower path for this stream.`,
+                  `${allRoutes[level - 1]?.label || 'Hardware decode'} failed for a ${lead.sourceFormat} source; using a slower path for this stream.`,
                 );
               for (const { group } of outputs) {
                 group.decodeLevel = Math.max(group.decodeLevel || 0, level);
@@ -1208,6 +1258,7 @@ class AV1 {
               onSegment: (output, n, bytes) => this.deliver(run, current, output, n, bytes),
               ended: () => !state?.upstreamFailed,
               memoryLimit: (burned?.bitmap ? 3 : 2 + 0.5 * (outputs.length - 1)) * 1024 * 1024 * 1024,
+              failOn: route?.failOn,
             });
             return {};
           } finally {
@@ -1228,7 +1279,9 @@ class AV1 {
   runCommand(url, outputs, lead, route, start, run, burn, chosen, encoder, codec) {
     const count = outputs.length,
       runIn = burn?.runIn || 0,
-      filter = route?.filter || lead.filter;
+      // Burned subtitles overlay in system memory; otherwise a route may keep its frames on the GPU.
+      gpu = !burn && route?.gpuFrames,
+      filter = (burn && route?.burnFilter) || route?.filter || lead.filter;
     let graph;
     if (burn?.bitmap)
       graph = [
@@ -1245,7 +1298,9 @@ class AV1 {
       const scaled = outputs.map(({ spec }, i) =>
         spec.width === lead.width && spec.height === lead.height
           ? `[s${i}]null[v${i}]`
-          : `[s${i}]scale=${spec.width}:${spec.height},format=nv12[v${i}]`,
+          : gpu
+            ? `[s${i}]${route.scale(spec.width, spec.height)}[v${i}]`
+            : `[s${i}]scale=${spec.width}:${spec.height},format=nv12[v${i}]`,
       );
       graph = ['-filter_complex', `[0:v:0]${filter}[base];[base]split=${count}${split};${scaled.join(';')}`];
     }
@@ -1277,7 +1332,10 @@ class AV1 {
         '-1',
         '-map_chapters',
         '-1',
-        ...encoderArgs(encoder, codec, Math.max(1, Math.floor(this.cpuShare() / count))),
+        // GPU frames carry their own format; -pix_fmt would ask FFmpeg to convert them.
+        ...encoderArgs(encoder, codec, Math.max(1, Math.floor(this.cpuShare() / count))).filter(
+          (arg, j, all) => !gpu || (arg !== '-pix_fmt' && all[j - 1] !== '-pix_fmt'),
+        ),
         ...rateArgs(encoder, codec, spec.bitrate),
         ...(spec.frameRate ? ['-r', spec.frameRate, '-fps_mode', 'cfr'] : []),
         '-g',
@@ -1608,6 +1666,7 @@ module.exports = {
   probeEncoder,
   outputSpec,
   decodeRoute,
+  decodeRoutes,
   cpuPlaceboRoute,
   rateArgs,
 };

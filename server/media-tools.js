@@ -244,6 +244,7 @@ async function segments(
     memory = processMemory,
     memoryInterval = 1000,
     poll = 100,
+    failOn,
   } = {},
 ) {
   if (signal?.aborted) throw signal.reason || new PlaybackError('WebM preparation cancelled.');
@@ -317,6 +318,10 @@ async function segments(
       // Drain, but never log stderr: FFmpeg may print its input URL.
       child.stderr.on('data', bytes => {
         stderr = (stderr + bytes.toString()).slice(-16000);
+        // A route can name output that means it quietly lost its point, such as a
+        // hardware decoder FFmpeg replaced with the CPU; stopping lets the caller step down.
+        if (failOn && !failure && failOn.test(stderr))
+          stop(Object.assign(new PlaybackError('A hardware decode route is unavailable.'), { exitFailure: true }));
       });
       child.on('error', () =>
         finish(new PlaybackError('WebM unavailable: configure an existing FFmpeg/FFprobe installation on the server.')),
