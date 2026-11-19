@@ -429,6 +429,14 @@ const delay = (ms, signal) =>
 // A chunk's sound, as its own short process. It starts AUDIO_LEAD early and ends 0.04 s
 // late, so consecutive chunks overlap and one continuous encoder cannot make them. The
 // first chunk has nothing before it, so silence takes the lead's place.
+const seconds = ms => (ms / 1000).toFixed(1) + 's';
+// Each provider response a bridged input waited for: how many, and the slowest.
+function noteResponse(state, asked) {
+  if (!state) return;
+  const waited = (Date.now() - asked) / 1000;
+  state.requests = (state.requests || 0) + 1;
+  state.slowest = Math.max(state.slowest || 0, waited);
+}
 function audioCommand(url, spec, audioMap, start, duration) {
   return [
     '-hide_banner',
@@ -651,7 +659,8 @@ class AV1 {
           cancel = () => abort.abort();
         res.on('close', cancel);
         entry.signal.addEventListener('abort', cancel, { once: true });
-        const timer = setTimeout(cancel, 30000);
+        const timer = setTimeout(cancel, 30000),
+          asked = Date.now();
         try {
           const response = await source.provider.request(source.start, {
             method: req.method,
@@ -660,6 +669,7 @@ class AV1 {
             headers: { Accept: '*/*', ...(req.headers.range ? { Range: req.headers.range } : {}) },
           });
           clearTimeout(timer);
+          noteResponse(entry.state, asked);
           if (source.subtitleWindow && req.headers.range) {
             const requested = /^bytes=(\d+)-/.exec(req.headers.range),
               received = /^bytes (\d+)-\d+\/\d+$/.exec(response.headers.get('content-range') || '');
@@ -1192,6 +1202,7 @@ class AV1 {
         () => this.runSource(run),
         signal,
         async (url, state) => {
+          const spawned = Date.now();
           const outputs = live.map(({ group, source }) => {
             const spec = outputSpec(info, group.quality, this.maxQuality);
             const audio = this.audioChoice(source, info);
@@ -1226,6 +1237,8 @@ class AV1 {
               outputs,
               url,
               stop,
+              spawned,
+              state,
               delivered: new Map(),
               audio: new Map(),
               pictures: new Map(),
@@ -1426,17 +1439,21 @@ class AV1 {
       const start = k * CHUNK,
         duration = Math.min(CHUNK, output.source.duration - start);
       // Its own source request, outside the run's gate, so a held run cannot starve it.
+      const asked = Date.now();
       const job = this.input(
         () => this.runSource(run),
         run.controller.signal,
-        url =>
+        (url, state) =>
           this.run(
             this.ffmpeg,
             audioCommand(url, output.spec, output.audio.map, start, duration),
             run.controller.signal,
             30000,
             4 * 1024 * 1024,
-          ),
+          ).then(audio => {
+            if (k === current.start) current.firstSound = { seconds: (Date.now() - asked) / 1000, ...state };
+            return audio;
+          }),
       );
       job.catch(() => {});
       byChoice.set(output.sound, job);
@@ -1486,6 +1503,29 @@ class AV1 {
     // Every member that wants this chunk has it once none is pending, so the process forgets it.
     if (!run.pending.has(k) && current.delivered.get(k) === undefined) this.forget(current, k);
     entry.resolve({ video, audio });
+    if (k === current.start && !current.reported) {
+      current.reported = true;
+      this.logStart(current, k, entry);
+    }
+  }
+  // How long a process took to its first chunk, and where: seeks, joins and resumes all
+  // pay it, and the provider's responses, the probe and the sound show which part was slow.
+  logStart(current, k, entry) {
+    const now = Date.now(),
+      group = current.outputs[0].group,
+      probed = group.probed,
+      sound = current.firstSound;
+    group.probed = undefined;
+    const requests = state =>
+      `${state.requests || 0} source request${state.requests === 1 ? '' : 's'}, slowest ${(state.slowest || 0).toFixed(2)}s`;
+    this.logger.info(
+      'Conversion',
+      `Chunk ${k} of ${current.outputs.map(output => output.group.quality).join(', ')} ready ${seconds(now - entry.queued)} after it was asked for: ` +
+        `process ${seconds(now - current.spawned)} (${requests(current.state)})` +
+        (sound ? `, sound ${sound.seconds.toFixed(1)}s (${requests(sound)})` : '') +
+        (probed ? `, probe ${probed.seconds.toFixed(1)}s (${requests(probed)})` : '') +
+        '.',
+    );
   }
   forget(current, k) {
     for (const key of [...current.pictures.keys(), ...current.sounds.keys()])
@@ -1499,7 +1539,8 @@ class AV1 {
     if (group.info) return group.info;
     if (!group.infoTask || group.infoTask.signal.aborted) {
       const task = new SharedTask(signal =>
-        this.input(source, signal, async url => {
+        this.input(source, signal, async (url, state) => {
+          const asked = Date.now();
           const raw = await this.run(
             this.ffprobe,
             [
@@ -1513,6 +1554,7 @@ class AV1 {
             ],
             signal,
           );
+          group.probed = { seconds: (Date.now() - asked) / 1000, ...state };
           return JSON.parse(raw.toString());
         }),
       );

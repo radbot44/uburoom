@@ -479,6 +479,30 @@ test('AV1 isolates source audio and Plex scopes, maps the exact stream and refus
   }
 });
 
+test('a process logs where the time to its first chunk went, once', async () => {
+  const lines = [];
+  const runs = fakeRuns({ read: true });
+  const manager = manage({}, fakeTools(VIDEO), runs, { info: (_, message) => lines.push(message), warn() {} });
+  const lease = manager.acquire(
+    { id: '1', duration: 60, start: 'part', provider: { request: async () => new Response(Buffer.alloc(16)) } },
+    '720p4',
+  );
+  const signal = new AbortController().signal;
+  try {
+    await manager.chunk(lease, 0, signal);
+    await manager.chunk(lease, 1, signal);
+    const timing = lines.filter(line => line.startsWith('Chunk '));
+    assert.equal(timing.length, 1, 'only the first chunk of a process is reported');
+    assert.match(
+      timing[0],
+      /^Chunk 0 of 720p4 ready \d+\.\ds after it was asked for: process \d+\.\ds \(1 source request, slowest \d\.\d\ds\), sound \d+\.\ds \(0 source requests, slowest 0\.00s\), probe \d+\.\ds/,
+    );
+  } finally {
+    manager.release(lease);
+    await manager.close();
+  }
+});
+
 test('AV1 room outputs share across principals and a run reads with a lease still held', async () => {
   const reads = [];
   const runs = fakeRuns({ duration: 120, read: true });
