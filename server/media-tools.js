@@ -39,21 +39,24 @@ async function run(
   { memoryLimit = 1024 * 1024 * 1024, memory = processMemory, memoryInterval = 1000, outputComplete } = {},
 ) {
   if (signal?.aborted) throw new PlaybackError('WebM preparation cancelled.');
-  const split = args.includes('pipe:3');
   const webm = args.includes('webm') && args.includes('pipe:1');
+  // WebM outputs named pipe:1, pipe:3, pipe:4 ..., returned in that order.
+  const pipes = webm ? [...new Set(args.filter(arg => /^pipe:\d+$/.test(arg) && arg !== 'pipe:2'))] : [];
+  pipes.sort((a, b) => Number(a.slice(5)) - Number(b.slice(5)));
+  const split = pipes.length === 2;
   let directory,
     files = [];
   try {
     if (webm) {
       // QSV (and libaom) may supply AV1 codec extradata only with the first
       // packet. WebM must seek back to finalize CodecPrivate; live stdout fails.
-      // Only one bounded chunk is written, never a temporary episode download.
+      // Only bounded chunks are written, never a temporary episode download.
       directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-av1-'));
-      files = ['video.webm', ...(split ? ['audio.webm'] : [])].map(name => path.join(directory, name));
+      files = pipes.map((_, i) => path.join(directory, `output-${i}.webm`));
       args = [...args];
       for (let i = 0; i < args.length; i++) {
-        if (args[i] === 'pipe:1') args[i] = files[0];
-        else if (args[i] === 'pipe:3') args[i] = files[1];
+        const at = pipes.indexOf(args[i]);
+        if (at >= 0) args[i] = files[at];
         else if (args[i] === '-live') args[i + 1] = '0';
       }
     }
@@ -198,7 +201,7 @@ async function run(
         exitFailure: true,
       });
     const bytes = await Promise.all(files.map(file => fsp.readFile(file)));
-    return split ? { video: bytes[0], audio: bytes[1] } : bytes[0];
+    return pipes.length === 1 ? bytes[0] : split ? { video: bytes[0], audio: bytes[1] } : bytes;
   } finally {
     if (directory) {
       await Promise.all(

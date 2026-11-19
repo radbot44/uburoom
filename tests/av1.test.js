@@ -237,6 +237,22 @@ test('quality tiers respect source bitrate/resolution; AV1 clamps Original to th
   );
   const qsvPlacebo = decodeRoute(doviP5, 'qsv', 'win32', true);
   assert.ok(!qsvPlacebo.input.includes('qsv=q@d') && !qsvPlacebo.filter.includes('vpp_qsv'));
+  // HDR10 on QSV shrinks on the GPU, still in HDR, so only the output size is copied to libplacebo.
+  const hdr10 = outputSpec(
+    {
+      streams: [
+        { codec_type: 'video', width: 3840, height: 2160, pix_fmt: 'yuv420p10le', color_transfer: 'smpte2084' },
+      ],
+    },
+    '1080p8',
+  );
+  const qsvScaled = decodeRoute(hdr10, 'qsv', 'win32', true);
+  assert.match(
+    qsvScaled.filter,
+    /^setpts=PTS-STARTPTS,hwmap=derive_device=qsv,format=qsv,vpp_qsv=w=1920:h=1080:format=p010le,hwdownload,format=p010le,libplacebo=w=1920:h=1080:/,
+  );
+  assert.ok(qsvScaled.input.includes('qsv=q@d') && qsvScaled.input.at(-1) === 'v', 'libplacebo filters on Vulkan');
+  assert.doesNotMatch(qsvScaled.filter, /tonemap=1/, 'the GPU only scales; libplacebo tonemaps');
   assert.match(cpuPlaceboRoute(doviP5, 'win32').filter, /format=p010le,libplacebo=.*apply_dolbyvision=1/);
 
   const doviP7 = outputSpec(
@@ -712,4 +728,140 @@ test('recent AV1 fallback demand survives wall steps and yields capacity only af
     for (const lease of [fallback, ...viewers, urgent]) manager.release(lease);
     await manager.close();
   }
+});
+
+// A fake FFmpeg for shared chunks: one buffer per WebM output, in pipe order.
+function sharedFixture(onEncode) {
+  return async (_binary, args, signal) => {
+    if (args.includes('-show_entries'))
+      return Buffer.from(
+        JSON.stringify({
+          streams: [
+            { index: 0, codec_type: 'video', width: 1920, height: 1080 },
+            { index: 1, codec_type: 'audio' },
+            { index: 2, codec_type: 'audio' },
+          ],
+        }),
+      );
+    if (args.some(arg => String(arg).startsWith('testsrc2'))) return Buffer.alloc(200);
+    await onEncode?.(args, signal);
+    const pipes = args.filter(arg => /^pipe:\d+$/.test(arg));
+    if (pipes.length > 2) return pipes.map((_, i) => Buffer.alloc(i % 2 ? 50 : 200 + i));
+    return pipes.length === 2 ? { video: Buffer.alloc(200), audio: Buffer.alloc(50) } : Buffer.alloc(200);
+  };
+}
+
+test('qualities of one source near the same chunk share one process that decodes once', async () => {
+  const encodes = [];
+  const manager = new AV1(
+    { ffmpegPath: 'fixture' },
+    sharedFixture(args => encodes.push(args)),
+  );
+  const source = { id: '1', partId: '5', principal: 'alice', duration: 60, start: 'http://fixture' };
+  const a = manager.acquire(source, '1080p8'),
+    b = manager.acquire(source, '720p4'),
+    c = manager.acquire({ ...source, audioIndex: 2, audioOrdinal: 1 }, '720p2'),
+    burned = manager.acquire({ ...source, burn: { id: 's', index: 3, codec: 'ass' } }, '720p4'),
+    signal = new AbortController().signal;
+  try {
+    assert.equal(burned.group.batchKey, undefined, 'burned subtitles belong to one selection');
+    for (const lease of [a, b, c]) await manager.chunk(lease, 0, signal);
+    assert.equal(encodes.length, 3, 'qualities with no recent position start alone');
+
+    const first = await manager.chunk(a, 1, signal);
+    assert.equal(encodes.length, 4);
+    const shared = encodes.at(-1);
+    const graph = shared[shared.indexOf('-filter_complex') + 1];
+    assert.equal(graph.match(/split=(\d)/)?.[1], '3', 'one decode feeds all three qualities');
+    assert.equal((graph.match(/scale=1280:720/g) || []).length, 2, 'smaller qualities scale from the largest');
+    assert.equal(shared.filter(arg => arg === '-i').length, 2, 'the source is opened once for picture, once for sound');
+    const maps = shared.filter((_, i) => shared[i - 1] === '-map');
+    assert.deepEqual(maps, ['[v0]', '1:a:0', '[v1]', '1:a:0', '[v2]', '1:2'], 'each quality keeps its own audio');
+
+    const [second, third] = await Promise.all([manager.chunk(b, 1, signal), manager.chunk(c, 1, signal)]);
+    assert.equal(encodes.length, 4, 'siblings read the shared chunk from cache');
+    assert.deepEqual(
+      [first, second, third].map(bytes => bytes.video.length),
+      [200, 202, 204],
+      'each quality receives its own output',
+    );
+    assert.ok(second.audio.length && third.audio.length);
+  } finally {
+    for (const lease of [a, b, c, burned]) manager.release(lease);
+    await manager.close();
+  }
+});
+
+test('a shared chunk outlives a leaving viewer and a failed one converts each quality alone', async () => {
+  let release,
+    failShared = false;
+  const encodes = [],
+    warnings = [];
+  const manager = new AV1(
+    { ffmpegPath: 'fixture' },
+    sharedFixture(async (args, signal) => {
+      encodes.push(args);
+      if (!args.includes('-filter_complex')) return;
+      if (failShared) throw Object.assign(new PlaybackError('split unsupported'), { exitFailure: true });
+      await new Promise((resolve, reject) => {
+        release = resolve;
+        signal.addEventListener('abort', () => reject(new PlaybackError('WebM preparation cancelled.')), {
+          once: true,
+        });
+      });
+    }),
+    { warn: (_, message) => warnings.push(message), info() {} },
+  );
+  const source = { id: '1', partId: '5', principal: 'alice', duration: 60, start: 'http://fixture' };
+  const a = manager.acquire(source, '1080p8'),
+    b = manager.acquire(source, '720p4'),
+    signal = new AbortController().signal;
+  try {
+    await manager.chunk(a, 0, signal);
+    await manager.chunk(b, 0, signal);
+
+    const leaving = new AbortController();
+    const gone = manager.chunk(a, 1, leaving.signal);
+    await new Promise(resolve => setImmediate(resolve));
+    while (!release) await new Promise(resolve => setTimeout(resolve, 5));
+    leaving.abort();
+    await assert.rejects(gone, /disconnected/);
+    const staying = manager.chunk(b, 1, signal);
+    release();
+    assert.equal((await staying).video.length, 202, 'the remaining quality keeps the shared work');
+    assert.equal(encodes.filter(args => args.includes('-filter_complex')).length, 1);
+
+    failShared = true;
+    const before = encodes.length;
+    const [x, y] = await Promise.all([manager.chunk(a, 2, signal), manager.chunk(b, 2, signal)]);
+    assert.ok(x.video.length && y.video.length, 'both qualities still play');
+    assert.equal(encodes.length - before, 3, 'one failed shared attempt, then one process per quality');
+    assert.equal(warnings.filter(message => /Shared conversion failed/.test(message)).length, 1);
+    await manager.chunk(a, 3, signal);
+    assert.equal(
+      encodes.slice(before + 3).some(args => args.includes('-filter_complex')),
+      false,
+      'a source whose shared conversion failed is not retried shared',
+    );
+  } finally {
+    for (const lease of [a, b]) manager.release(lease);
+    await manager.close();
+  }
+});
+
+test('run returns every WebM output of one process in pipe order', async () => {
+  // Node stands in for FFmpeg: it writes each output file it is given, sized by position.
+  const script =
+    "const fs=require('fs');process.argv.slice(1).filter(a=>a.endsWith('.webm')).forEach((f,i)=>fs.writeFileSync(f,Buffer.alloc(100+i)))";
+  const outputs = await run(
+    process.execPath,
+    ['-e', script, 'webm', 'pipe:1', 'pipe:3', 'pipe:4', 'pipe:5'],
+    undefined,
+  );
+  assert.deepEqual(
+    outputs.map(bytes => bytes.length),
+    [100, 101, 102, 103],
+  );
+  const pair = await run(process.execPath, ['-e', script, 'webm', 'pipe:1', 'pipe:3'], undefined);
+  assert.deepEqual([pair.video.length, pair.audio.length], [100, 101]);
 });

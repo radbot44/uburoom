@@ -253,7 +253,7 @@ transcoding:
   hardware_decode: true
 
   # AV1, VP9 and VP8 are the codecs that work in Discord with HW acceleration off.
-  max_jobs: 5 # Total jobs; viewers at same quality share a job
+  max_jobs: 5 # Total jobs; viewers at same quality share a job, qualities of one source share a chunk's job
 
   # Optional room fallback, encoded by uburoom within the same job/memory limits.
   # Kept 30 seconds ahead; idle while paused or empty. Viewers fetch it only

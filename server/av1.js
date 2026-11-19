@@ -172,7 +172,8 @@ function outputSpec(info, quality, maxQuality = QUALITIES[1]) {
 // own decoder with -hwaccel. Never use wrapper decoders such as hevc_qsv: after a
 // seek it mislabels frames, so chunks start up to three frames early.
 // HDR tonemaps through libplacebo with peak detection off, the closest GPU match
-// to the CPU picture. vpp_qsv crushes shadows, and tonemap_opencl adapts per
+// to the CPU picture. vpp_qsv tonemapping crushes shadows (its scaling matches libplacebo
+// within SSIM 0.99, measured on a UHD remux), and tonemap_opencl adapts per
 // process, so the first frame of every chunk flashes. Each chunk is a new process.
 // Sources without a listed surface format stay on the CPU path.
 // Burned subtitles need cues that began before the chunk. Bitmap tracks decode a
@@ -238,11 +239,15 @@ function decodeRoute(spec, encoder, platform = process.platform, gpuTonemap = tr
       platform === 'win32'
         ? ['d3d11va=d,vendor_id=0x8086', 'd3d11va', 'd3d11']
         : [`vaapi=d:${VAAPI_DEVICE}`, 'vaapi', 'vaapi'];
+    // Scale on the GPU while the picture is still HDR, so only the output size crosses to
+    // libplacebo, as with CUDA and VAAPI. Copying whole 4K frames cost a third of each chunk.
+    // Dolby Vision Profile 5 needs its original frame for libplacebo to reshape.
     if (placebo)
       return route(
         [
           '-init_hw_device',
           device[0],
+          ...(spec.doviP5 ? [] : ['-init_hw_device', 'qsv=q@d']),
           '-hwaccel',
           device[1],
           '-hwaccel_device',
@@ -250,7 +255,7 @@ function decodeRoute(spec, encoder, platform = process.platform, gpuTonemap = tr
           '-hwaccel_output_format',
           device[2],
         ],
-        [],
+        spec.doviP5 ? [] : ['hwmap=derive_device=qsv', 'format=qsv', vpp],
       );
     return route(
       [
@@ -277,6 +282,26 @@ function decodeRoute(spec, encoder, platform = process.platform, gpuTonemap = tr
     spec.doviP5 ? [] : [`scale_vaapi=w=${spec.width}:h=${spec.height}:format=${surface}`],
   );
 }
+
+// The decode routes a chunk tries in order: GPU tonemapping, GPU decode, then the
+// CPU. A failed route steps down; only a later success proves the step.
+function decodeRoutes(spec, encoder, hardwareDecode = true) {
+  const unique = (route, i, all) => route && all.findIndex(other => other?.filter === route.filter) === i;
+  if (spec.doviP5)
+    return [...(hardwareDecode ? [decodeRoute(spec, encoder)] : []), cpuPlaceboRoute(spec)].filter(unique);
+  return [
+    ...(hardwareDecode
+      ? [decodeRoute(spec, encoder), decodeRoute(spec, encoder, undefined, false)].filter(unique)
+      : []),
+    undefined,
+  ];
+}
+
+// One process can make a chunk for every quality of a source: the picture is
+// decoded and tonemapped once, at the largest size, then split and scaled for each.
+// Decoding and tonemapping a 4K source is most of a chunk's cost; encoding is not.
+const BATCH_MAX = 6,
+  BATCH_DEMAND_MS = 30000;
 
 const { SharedTask, runOperation } = require('./operation');
 
@@ -309,6 +334,7 @@ class AV1 {
       config.ffprobePath ||
       (this.ffmpeg && path.join(path.dirname(this.ffmpeg), process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe'));
     this.groups = new Map();
+    this.batchBroken = new Set();
     this.inputs = new Map();
     this.controllers = new Set();
     this.queue = [];
@@ -406,6 +432,12 @@ class AV1 {
         controllers: new Set(),
         leases: new Set(),
         bytes: 0,
+        // Qualities of one source that can share a decode. Burned subtitles are per selection.
+        batchKey: source.burn
+          ? undefined
+          : createHash('sha256')
+              .update(JSON.stringify([scope, source.id, source.partId, codec]))
+              .digest('hex'),
       };
       this.groups.set(key, group);
     }
@@ -604,9 +636,12 @@ class AV1 {
     const group = lease.group,
       source = lease.source || group.source,
       start = index * CHUNK;
-    if (!background) group.viewerDemandAt = performance.now();
     if (!Number.isSafeInteger(index) || index < 0 || start >= source.duration)
       throw new PlaybackError('Invalid WebM chunk.');
+    if (!background) {
+      group.viewerDemandAt = performance.now();
+      group.lastIndex = index;
+    }
     let entry = group.chunks.get(index);
     if (entry?.controller.signal.aborted && !entry.error) {
       group.chunks.delete(index);
@@ -619,301 +654,7 @@ class AV1 {
       group.chunks.delete(index);
       entry = undefined;
     }
-    if (!entry) {
-      const controller = new AbortController();
-      group.controllers.add(controller);
-      this.controllers.add(controller);
-      // A seek can make an already queued prefetch imminent; joining raises it.
-      entry = { users: 0, at: Date.now(), queued: Date.now(), controller, priority: { urgent, background } };
-      entry.promise = runOperation(controller.signal, () =>
-        this.slot(
-          controller.signal,
-          async () => {
-            this.pruneAll(this.jobBytes);
-            if (this.retainedBytes + this.pendingBytes + this.jobBytes > this.maxBytes)
-              throw new PlaybackError('Encoded video memory is busy; retry shortly.');
-            this.pendingBytes += this.jobBytes;
-            entry.reserved = true;
-            await this.conversionPolicy?.video('uburoom', group.codec, source.provider);
-            const releaseConversion = await this.conversionPolicy?.wait({
-              signal: controller.signal,
-              background: entry.priority.background,
-            });
-            entry.began = Date.now();
-            try {
-              const codec = group.codec;
-              const encoder = group.encoder || (await this.selectEncoder(codec));
-              if (!group.info) {
-                if (!group.infoTask || group.infoTask.signal.aborted) {
-                  const task = new SharedTask(signal =>
-                    this.input(source, signal, async url => {
-                      const raw = await this.run(
-                        this.ffprobe,
-                        [
-                          '-v',
-                          'error',
-                          '-show_entries',
-                          'stream=index,codec_type,codec_name,width,height,pix_fmt,color_space,color_primaries,color_transfer,r_frame_rate,avg_frame_rate:stream_side_data=side_data_type,dv_profile,bl_signal_compatibility_id:format=bit_rate',
-                          '-of',
-                          'json',
-                          url,
-                        ],
-                        signal,
-                      );
-                      return JSON.parse(raw.toString());
-                    }),
-                  );
-                  group.infoTask = task;
-                  task.promise.catch(() => {
-                    if (group.infoTask === task) group.infoTask = undefined;
-                  });
-                }
-                group.info = await group.infoTask.join(controller.signal);
-              }
-              return await this.input(source, controller.signal, async url => {
-                const spec = outputSpec(group.info, group.quality, this.maxQuality);
-                const audioStreams = group.info.streams.filter(s => s.codec_type === 'audio');
-                const chosen = { ...source };
-                if (source.audioTrack && source.audioIndex !== undefined)
-                  chosen.audioIndex = fileIndex(source.tracks?.audio, source.audioTrack, group.info.streams, 'audio');
-                if (source.burn && !source.burn.external && source.burn.index !== undefined)
-                  chosen.burn = {
-                    ...source.burn,
-                    index: fileIndex(source.tracks?.subtitles, source.burn, group.info.streams, 'subtitle'),
-                  };
-                const selectedAudio =
-                  chosen.audioIndex !== undefined
-                    ? audioStreams.find(s => s.index === chosen.audioIndex)
-                    : audioStreams[chosen.audioOrdinal ?? 0];
-                if (spec.audio && !selectedAudio)
-                  throw new PlaybackError('The selected audio track is not present in the source.');
-                const audioMap = input =>
-                  chosen.audioIndex !== undefined
-                    ? input + ':' + chosen.audioIndex
-                    : input + ':a:' + (chosen.audioOrdinal ?? 0);
-                const duration = String(Math.min(CHUNK, source.duration - start));
-                const burn = await this.burnInput(chosen, url, start, Number(duration), controller.signal);
-                const runIn = burn?.runIn || 0;
-                const video = route => {
-                  const filter = route?.filter || spec.filter;
-                  if (burn?.bitmap)
-                    return [
-                      '-filter_complex',
-                      `[0:v:0]${filter.replace('setpts=PTS-STARTPTS,', '')}[picture];[0:${chosen.burn.index}]scale=${spec.width}:${spec.height}[subtitle];[picture][subtitle]overlay,format=nv12,trim=start=${runIn},setpts=PTS-STARTPTS[video]`,
-                      '-map',
-                      '[video]',
-                      '-an',
-                    ];
-                  const text = burn?.file
-                    ? `,setpts=PTS+${burn.offset}/TB,subtitles=filename='${filterPath(burn.file)}',setpts=PTS-STARTPTS,format=nv12`
-                    : '';
-                  return ['-map', '0:v:0', '-an', '-filter_threads', '2', '-vf', filter + text];
-                };
-                const silence = spec.audio ? [] : ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo'];
-                const audioInput = ['-ss', String(Math.max(0, start - AUDIO_LEAD)), '-i', url];
-                // The first chunk has nothing before it, so silence takes the lead's place.
-                const audio = input => [
-                  '-t',
-                  String(Number(duration) + AUDIO_LEAD + 0.04),
-                  '-map',
-                  spec.audio ? audioMap(input) : '1:a:0',
-                  '-vn',
-                  '-sn',
-                  '-dn',
-                  '-map_metadata',
-                  '-1',
-                  '-c:a',
-                  'libopus',
-                  '-b:a',
-                  '128k',
-                  '-ac',
-                  '2',
-                  '-ar',
-                  '48000',
-                  '-af',
-                  'asetpts=PTS-STARTPTS' + (start ? '' : `,aresample=48000,adelay=${AUDIO_LEAD_SAMPLES}S:all=1`),
-                  '-f',
-                  'webm',
-                  '-live',
-                  '1',
-                  '-cluster_time_limit',
-                  '1000',
-                ];
-                const command = (selected, route) => [
-                  '-hide_banner',
-                  '-loglevel',
-                  'error',
-                  '-nostdin',
-                  '-threads',
-                  '2',
-                  ...(route?.input || []),
-                  '-ss',
-                  String(start - runIn),
-                  '-i',
-                  url,
-                  ...(burn?.bitmap ? [] : spec.audio ? audioInput : silence),
-                  '-t',
-                  duration,
-                  ...video(route),
-                  '-sn',
-                  '-dn',
-                  '-map_metadata',
-                  '-1',
-                  '-map_chapters',
-                  '-1',
-                  ...encoderArgs(selected, codec),
-                  ...rateArgs(selected, codec, spec.bitrate),
-                  ...(spec.frameRate ? ['-r', spec.frameRate, '-fps_mode', 'cfr'] : []),
-                  '-g',
-                  '180',
-                  '-color_primaries',
-                  'bt709',
-                  '-color_trc',
-                  'bt709',
-                  '-colorspace',
-                  'bt709',
-                  '-f',
-                  'webm',
-                  '-live',
-                  '1',
-                  '-cluster_time_limit',
-                  '1000',
-                  'pipe:1',
-                  ...(burn?.bitmap ? [] : [...audio(1), 'pipe:3']),
-                ];
-                // 4K jobs commit about 1 GiB on either path, GPU surfaces add to that, and the
-                // run-in for image subtitles adds about the same again.
-                const encode = async (selected, route) => {
-                  const job = args =>
-                    this.run(this.ffmpeg, args, controller.signal, 30000, 48 * 1024 * 1024, undefined, {
-                      memoryLimit: (burn?.bitmap ? 3 : 2) * 1024 * 1024 * 1024,
-                    });
-                  if (!burn?.bitmap) return job(command(selected, route));
-                  // Audio in the same process as an image overlay runs about ten times slower.
-                  const [video, sound] = await Promise.all([
-                    job(command(selected, route)),
-                    job([
-                      '-hide_banner',
-                      '-loglevel',
-                      'error',
-                      '-nostdin',
-                      ...audioInput,
-                      ...silence,
-                      ...audio(0),
-                      'pipe:1',
-                    ]),
-                  ]);
-                  return { video, audio: sound };
-                };
-                const routes = spec.doviP5
-                  ? [...(this.hardwareDecode ? [decodeRoute(spec, encoder)] : []), cpuPlaceboRoute(spec)].filter(
-                      (route, i, all) => route && all.findIndex(other => other?.filter === route.filter) === i,
-                    )
-                  : [
-                      ...(this.hardwareDecode
-                        ? [decodeRoute(spec, encoder), decodeRoute(spec, encoder, undefined, false)].filter(
-                            (route, i, all) => route && all.findIndex(other => other?.filter === route.filter) === i,
-                          )
-                        : []),
-                      undefined,
-                    ];
-                if (!routes.length)
-                  throw new PlaybackError('Dolby Vision Profile 5 requires Vulkan libplacebo tone-mapping.');
-                try {
-                  let level = Math.min(group.decodeLevel || 0, routes.length - 1),
-                    bytes;
-                  for (;;) {
-                    try {
-                      bytes = await encode(encoder, routes[level]);
-                      break;
-                    } catch (error) {
-                      // Step down from GPU tonemapping, to GPU decode, to the CPU. Only a later
-                      // success proves the step, so upstream failures change nothing for the group.
-                      if (level === routes.length - 1) {
-                        if (spec.doviP5 && error.exitFailure && !controller.signal.aborted)
-                          throw new PlaybackError('Dolby Vision Profile 5 tone-mapping failed.');
-                        throw error;
-                      }
-                      if (!error.exitFailure || controller.signal.aborted) throw error;
-                      level++;
-                    }
-                  }
-                  if (level > (group.decodeLevel || 0)) {
-                    group.decodeLevel = level;
-                    this.logger.warn(
-                      'Conversion',
-                      `${routes[level] ? 'GPU tonemapping' : 'Hardware decode'} failed for a ${spec.sourceFormat} source; using a slower path for this stream.`,
-                    );
-                  }
-                  group.encoder = encoder;
-                  group.cpuFallback = encoder === 'software' && this.encoder !== 'software';
-                  return bytes;
-                } catch (error) {
-                  // Retry only an encoder process failure, under the same job lease.
-                  // Cancellation, limits and upstream failures never trigger CPU work.
-                  if (!error.encoderFailure || encoder === 'software' || !this.cpuFallback || controller.signal.aborted)
-                    throw error;
-                  const bytes = await encode('software', spec.doviP5 ? cpuPlaceboRoute(spec) : undefined);
-                  group.encoder = 'software';
-                  group.cpuFallback = true;
-                  return bytes;
-                } finally {
-                  await burn?.cleanup?.();
-                }
-              });
-            } finally {
-              releaseConversion?.();
-            }
-          },
-          group.key,
-          entry.priority,
-        ),
-      )
-        .then(bytes => {
-          if (controller.signal.aborted || group.chunks.get(index) !== entry)
-            throw new PlaybackError('WebM preparation cancelled.');
-          if (entry.reserved) {
-            this.pendingBytes -= this.jobBytes;
-            entry.reserved = false;
-          }
-          entry.bytes = bytes;
-          entry.size = bytes.video.length + bytes.audio.length;
-          group.bytes += entry.size;
-          this.prune(group, entry);
-          // A chunk slower than real time means viewers will catch up and wait.
-          const took = (Date.now() - entry.began) / 1000,
-            waited = (entry.began - entry.queued) / 1000;
-          if (took > CHUNK * 0.8 || waited > CHUNK)
-            this.logger.warn(
-              'Conversion',
-              `Chunk ${index} of ${group.quality} took ${took.toFixed(1)}s to encode and waited ${waited.toFixed(1)}s for a slot (${group.encoder || 'auto'}${group.cpuFallback ? ', software fallback' : ''}); viewers may wait.`,
-            );
-          return bytes;
-        })
-        .catch(error => {
-          if (controller.signal.aborted) {
-            if (group.chunks.get(index) === entry) group.chunks.delete(index);
-          } else {
-            // Keep failure local to this chunk and cool down before re-encoding.
-            entry.error = error instanceof PlaybackError ? error : new PlaybackError('WebM chunk preparation failed.');
-            this.logger.warn('Conversion', `Chunk ${index} failed: ${entry.error.message}`);
-            entry.failedAt = performance.now();
-            this.prune(group, entry);
-          }
-          throw entry.error || error;
-        })
-        .finally(() => {
-          if (entry.reserved) {
-            this.pendingBytes -= this.jobBytes;
-            entry.reserved = false;
-          }
-          group.controllers.delete(controller);
-          this.controllers.delete(controller);
-        });
-      // Caller disconnects can stop waiting without leaving an unhandled rejection.
-      entry.promise.catch(() => {});
-      group.chunks.set(index, entry);
-    }
+    if (!entry) entry = this.startChunk(group, source, index, { urgent, background });
     entry.at = Date.now();
     entry.users++;
     if (urgent) entry.priority.urgent = true;
@@ -927,6 +668,538 @@ class AV1 {
       });
     } finally {
       if (--entry.users === 0 && !entry.bytes) entry.controller.abort();
+    }
+  }
+  // A chunk for this group starts here. Sibling qualities of the same source that a
+  // synchronized room will ask for next join one process, which decodes the source once.
+  startChunk(group, source, index, { urgent, background }) {
+    const members = [{ group, source }, ...(background ? [] : this.siblings(group, index))];
+    // Members share one priority, so any viewer's urgent request raises the shared process.
+    const priority = { urgent, background };
+    const entries = members.map(member => this.newEntry(member.group, priority));
+    const work =
+      members.length === 1
+        ? [
+            runOperation(entries[0].controller.signal, () =>
+              this.slot(
+                entries[0].controller.signal,
+                () => this.soloJob(group, source, index, entries[0]),
+                group.key,
+                entries[0].priority,
+              ),
+            ),
+          ]
+        : this.batch(members, index, entries);
+    members.forEach((member, i) => this.track(member.group, index, entries[i], work[i]));
+    return entries[0];
+  }
+  newEntry(group, priority) {
+    const controller = new AbortController();
+    group.controllers.add(controller);
+    this.controllers.add(controller);
+    // A seek can make an already queued prefetch imminent; joining raises it.
+    return { users: 0, at: Date.now(), queued: Date.now(), controller, priority };
+  }
+  // Other qualities of this source whose viewers are near this chunk and do not have it.
+  siblings(group, index) {
+    if (!group.batchKey || this.batchBroken.has(group.batchKey)) return [];
+    const now = performance.now(),
+      ahead = Playback.BUFFER.ahead / CHUNK,
+      found = [];
+    for (const other of this.groups.values()) {
+      if (found.length >= BATCH_MAX - 1) break;
+      if (other === group || other.batchKey !== group.batchKey || !other.leases.size) continue;
+      if (other.encoder && group.encoder && other.encoder !== group.encoder) continue;
+      if (now - (other.viewerDemandAt ?? -Infinity) > BATCH_DEMAND_MS) continue;
+      if (other.lastIndex === undefined || index < other.lastIndex - 1 || index > other.lastIndex + ahead) continue;
+      if (index * CHUNK >= other.source.duration) continue;
+      const current = other.chunks.get(index);
+      if (current) {
+        if (!current.controller.signal.aborted || current.error) continue;
+        other.chunks.delete(index);
+      }
+      found.push({ group: other, source: other.source });
+    }
+    return found;
+  }
+  // One process for every member. It stops only when no member still wants its chunk;
+  // a failure makes each member try alone, with its own decode and encoder fallbacks.
+  batch(members, index, entries) {
+    const controller = new AbortController();
+    this.controllers.add(controller);
+    const stop = () => {
+      if (entries.every(entry => entry.controller.signal.aborted)) controller.abort();
+    };
+    for (const entry of entries) entry.controller.signal.addEventListener('abort', stop, { once: true });
+    const shared = runOperation(controller.signal, () =>
+      this.slot(
+        controller.signal,
+        () => this.batchJob(members, index, entries, controller),
+        members[0].group.key,
+        entries[0].priority,
+      ),
+    ).finally(() => {
+      this.controllers.delete(controller);
+      for (const entry of entries) entry.controller.signal.removeEventListener('abort', stop);
+    });
+    shared.catch(() => {});
+    return members.map(({ group, source }, i) => {
+      const entry = entries[i];
+      return shared.then(
+        results => results[i],
+        error => {
+          if (entry.controller.signal.aborted || this.closed) throw error;
+          if (error.exitFailure && !this.batchBroken.has(group.batchKey)) {
+            this.batchBroken.add(group.batchKey);
+            this.logger.warn('Conversion', 'Shared conversion failed for a source; converting each quality alone.');
+          }
+          if (entry.reserved) {
+            this.pendingBytes -= this.jobBytes;
+            entry.reserved = false;
+          }
+          entry.shared = undefined;
+          return runOperation(entry.controller.signal, () =>
+            this.slot(
+              entry.controller.signal,
+              () => this.soloJob(group, source, index, entry),
+              group.key,
+              entry.priority,
+            ),
+          );
+        },
+      );
+    });
+  }
+  async batchJob(members, index, entries, controller) {
+    const start = index * CHUNK,
+      count = members.length;
+    this.pruneAll(this.jobBytes * count);
+    if (this.retainedBytes + this.pendingBytes + this.jobBytes * count > this.maxBytes)
+      throw new PlaybackError('Encoded video memory is busy; retry shortly.');
+    for (const entry of entries) {
+      this.pendingBytes += this.jobBytes;
+      entry.reserved = true;
+    }
+    const first = members[0],
+      codec = first.group.codec;
+    await this.conversionPolicy?.video('uburoom', codec, first.source.provider);
+    const releaseConversion = await this.conversionPolicy?.wait({ signal: controller.signal, background: false });
+    for (const entry of entries) {
+      entry.began = Date.now();
+      entry.shared = count;
+    }
+    try {
+      const encoder = first.group.encoder || (await this.selectEncoder(codec));
+      const info = await this.sourceInfo(first.group, first.source, controller.signal);
+      for (const { group } of members) group.info ||= info;
+      return await this.input(first.source, controller.signal, async url => {
+        const outputs = members.map(({ group, source }) => {
+          const spec = outputSpec(info, group.quality, this.maxQuality);
+          const audio = this.audioChoice(source, info);
+          if (spec.audio && !audio.selected)
+            throw new PlaybackError('The selected audio track is not present in the source.');
+          return { group, spec, audio };
+        });
+        // Decode and tonemap at the largest size; smaller outputs scale from it.
+        const lead = outputs.reduce((best, output) =>
+          output.spec.width * output.spec.height > best.spec.width * best.spec.height ? output : best,
+        ).spec;
+        const duration = String(Math.min(CHUNK, first.source.duration - start));
+        const pipe = k => (k ? 'pipe:' + (k + 2) : 'pipe:1');
+        const command = route => {
+          const split = outputs.map((_, i) => `[s${i}]`).join('');
+          const scaled = outputs.map(({ spec }, i) =>
+            spec.width === lead.width && spec.height === lead.height
+              ? `[s${i}]null[v${i}]`
+              : `[s${i}]scale=${spec.width}:${spec.height},format=nv12[v${i}]`,
+          );
+          return [
+            '-hide_banner',
+            '-loglevel',
+            'error',
+            '-nostdin',
+            '-threads',
+            '2',
+            ...(route?.input || []),
+            '-ss',
+            String(start),
+            '-i',
+            url,
+            ...(lead.audio
+              ? ['-ss', String(Math.max(0, start - AUDIO_LEAD)), '-i', url]
+              : ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo']),
+            '-filter_threads',
+            '4',
+            '-filter_complex',
+            `[0:v:0]${route?.filter || lead.filter}[base];[base]split=${count}${split};${scaled.join(';')}`,
+            ...outputs.flatMap(({ spec, audio }, i) => [
+              '-map',
+              `[v${i}]`,
+              '-t',
+              duration,
+              '-an',
+              '-sn',
+              '-dn',
+              '-map_metadata',
+              '-1',
+              '-map_chapters',
+              '-1',
+              ...encoderArgs(encoder, codec),
+              ...rateArgs(encoder, codec, spec.bitrate),
+              ...(spec.frameRate ? ['-r', spec.frameRate, '-fps_mode', 'cfr'] : []),
+              '-g',
+              '180',
+              '-color_primaries',
+              'bt709',
+              '-color_trc',
+              'bt709',
+              '-colorspace',
+              'bt709',
+              '-f',
+              'webm',
+              '-live',
+              '1',
+              '-cluster_time_limit',
+              '1000',
+              pipe(2 * i),
+              '-t',
+              String(Number(duration) + AUDIO_LEAD + 0.04),
+              '-map',
+              spec.audio ? audio.map(1) : '1:a:0',
+              '-vn',
+              '-sn',
+              '-dn',
+              '-map_metadata',
+              '-1',
+              '-c:a',
+              'libopus',
+              '-b:a',
+              '128k',
+              '-ac',
+              '2',
+              '-ar',
+              '48000',
+              '-af',
+              'asetpts=PTS-STARTPTS' + (start ? '' : `,aresample=48000,adelay=${AUDIO_LEAD_SAMPLES}S:all=1`),
+              '-f',
+              'webm',
+              '-live',
+              '1',
+              '-cluster_time_limit',
+              '1000',
+              pipe(2 * i + 1),
+            ]),
+          ];
+        };
+        const routes = decodeRoutes(lead, encoder, this.hardwareDecode);
+        if (!routes.length) throw new PlaybackError('Dolby Vision Profile 5 requires Vulkan libplacebo tone-mapping.');
+        const known = Math.max(...members.map(({ group }) => group.decodeLevel || 0));
+        let level = Math.min(known, routes.length - 1),
+          bytes;
+        for (;;) {
+          try {
+            bytes = await this.run(
+              this.ffmpeg,
+              command(routes[level]),
+              controller.signal,
+              30000 + 5000 * (count - 1),
+              48 * 1024 * 1024 * count,
+              undefined,
+              { memoryLimit: (2 + 0.5 * (count - 1)) * 1024 * 1024 * 1024 },
+            );
+            break;
+          } catch (error) {
+            if (level === routes.length - 1 || !error.exitFailure || controller.signal.aborted) throw error;
+            level++;
+          }
+        }
+        if (level > known)
+          this.logger.warn(
+            'Conversion',
+            `${routes[level] ? 'GPU tonemapping' : 'Hardware decode'} failed for a ${lead.sourceFormat} source; using a slower path for this stream.`,
+          );
+        for (const { group } of members) {
+          group.decodeLevel = Math.max(group.decodeLevel || 0, level);
+          group.encoder = encoder;
+          group.cpuFallback = encoder === 'software' && this.encoder !== 'software';
+        }
+        return outputs.map((_, i) => ({ video: bytes[2 * i], audio: bytes[2 * i + 1] }));
+      });
+    } finally {
+      releaseConversion?.();
+    }
+  }
+  async sourceInfo(group, source, signal) {
+    if (group.info) return group.info;
+    if (!group.infoTask || group.infoTask.signal.aborted) {
+      const task = new SharedTask(signal =>
+        this.input(source, signal, async url => {
+          const raw = await this.run(
+            this.ffprobe,
+            [
+              '-v',
+              'error',
+              '-show_entries',
+              'stream=index,codec_type,codec_name,width,height,pix_fmt,color_space,color_primaries,color_transfer,r_frame_rate,avg_frame_rate:stream_side_data=side_data_type,dv_profile,bl_signal_compatibility_id:format=bit_rate',
+              '-of',
+              'json',
+              url,
+            ],
+            signal,
+          );
+          return JSON.parse(raw.toString());
+        }),
+      );
+      group.infoTask = task;
+      task.promise.catch(() => {
+        if (group.infoTask === task) group.infoTask = undefined;
+      });
+    }
+    group.info = await group.infoTask.join(signal);
+    return group.info;
+  }
+  // The audio track a source selects, by its index in this file.
+  audioChoice(source, info) {
+    const audioStreams = info.streams.filter(s => s.codec_type === 'audio');
+    const chosen = { ...source };
+    if (source.audioTrack && source.audioIndex !== undefined)
+      chosen.audioIndex = fileIndex(source.tracks?.audio, source.audioTrack, info.streams, 'audio');
+    const selected =
+      chosen.audioIndex !== undefined
+        ? audioStreams.find(s => s.index === chosen.audioIndex)
+        : audioStreams[chosen.audioOrdinal ?? 0];
+    const map = input =>
+      chosen.audioIndex !== undefined ? input + ':' + chosen.audioIndex : input + ':a:' + (chosen.audioOrdinal ?? 0);
+    return { chosen, selected, map };
+  }
+  // A chunk settles once: cached on success, briefly remembered on failure.
+  track(group, index, entry, work) {
+    const controller = entry.controller;
+    entry.promise = work
+      .then(bytes => {
+        if (controller.signal.aborted || group.chunks.get(index) !== entry)
+          throw new PlaybackError('WebM preparation cancelled.');
+        if (entry.reserved) {
+          this.pendingBytes -= this.jobBytes;
+          entry.reserved = false;
+        }
+        entry.bytes = bytes;
+        entry.size = bytes.video.length + bytes.audio.length;
+        group.bytes += entry.size;
+        this.prune(group, entry);
+        // A chunk slower than real time means viewers will catch up and wait.
+        const took = (Date.now() - entry.began) / 1000,
+          waited = (entry.began - entry.queued) / 1000;
+        if (took > CHUNK * 0.8 || waited > CHUNK)
+          this.logger.warn(
+            'Conversion',
+            `Chunk ${index} of ${group.quality} took ${took.toFixed(1)}s to encode and waited ${waited.toFixed(1)}s for a slot (${group.encoder || 'auto'}${group.cpuFallback ? ', software fallback' : ''}${entry.shared ? `, shared by ${entry.shared} qualities` : ''}); viewers may wait.`,
+          );
+        return bytes;
+      })
+      .catch(error => {
+        if (controller.signal.aborted) {
+          if (group.chunks.get(index) === entry) group.chunks.delete(index);
+        } else {
+          // Keep failure local to this chunk and cool down before re-encoding.
+          entry.error = error instanceof PlaybackError ? error : new PlaybackError('WebM chunk preparation failed.');
+          this.logger.warn('Conversion', `Chunk ${index} failed: ${entry.error.message}`);
+          entry.failedAt = performance.now();
+          this.prune(group, entry);
+        }
+        throw entry.error || error;
+      })
+      .finally(() => {
+        if (entry.reserved) {
+          this.pendingBytes -= this.jobBytes;
+          entry.reserved = false;
+        }
+        group.controllers.delete(controller);
+        this.controllers.delete(controller);
+      });
+    // Caller disconnects can stop waiting without leaving an unhandled rejection.
+    entry.promise.catch(() => {});
+    group.chunks.set(index, entry);
+  }
+  async soloJob(group, source, index, entry) {
+    const controller = entry.controller,
+      start = index * CHUNK;
+    this.pruneAll(this.jobBytes);
+    if (this.retainedBytes + this.pendingBytes + this.jobBytes > this.maxBytes)
+      throw new PlaybackError('Encoded video memory is busy; retry shortly.');
+    this.pendingBytes += this.jobBytes;
+    entry.reserved = true;
+    await this.conversionPolicy?.video('uburoom', group.codec, source.provider);
+    const releaseConversion = await this.conversionPolicy?.wait({
+      signal: controller.signal,
+      background: entry.priority.background,
+    });
+    entry.began = Date.now();
+    try {
+      const codec = group.codec;
+      const encoder = group.encoder || (await this.selectEncoder(codec));
+      const info = await this.sourceInfo(group, source, controller.signal);
+      return await this.input(source, controller.signal, async url => {
+        const spec = outputSpec(info, group.quality, this.maxQuality);
+        const { chosen, selected: selectedAudio, map: audioMap } = this.audioChoice(source, info);
+        if (source.burn && !source.burn.external && source.burn.index !== undefined)
+          chosen.burn = {
+            ...source.burn,
+            index: fileIndex(source.tracks?.subtitles, source.burn, info.streams, 'subtitle'),
+          };
+        if (spec.audio && !selectedAudio)
+          throw new PlaybackError('The selected audio track is not present in the source.');
+        const duration = String(Math.min(CHUNK, source.duration - start));
+        const burn = await this.burnInput(chosen, url, start, Number(duration), controller.signal);
+        const runIn = burn?.runIn || 0;
+        const video = route => {
+          const filter = route?.filter || spec.filter;
+          if (burn?.bitmap)
+            return [
+              '-filter_complex',
+              `[0:v:0]${filter.replace('setpts=PTS-STARTPTS,', '')}[picture];[0:${chosen.burn.index}]scale=${spec.width}:${spec.height}[subtitle];[picture][subtitle]overlay,format=nv12,trim=start=${runIn},setpts=PTS-STARTPTS[video]`,
+              '-map',
+              '[video]',
+              '-an',
+            ];
+          const text = burn?.file
+            ? `,setpts=PTS+${burn.offset}/TB,subtitles=filename='${filterPath(burn.file)}',setpts=PTS-STARTPTS,format=nv12`
+            : '';
+          return ['-map', '0:v:0', '-an', '-filter_threads', '2', '-vf', filter + text];
+        };
+        const silence = spec.audio ? [] : ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo'];
+        const audioInput = ['-ss', String(Math.max(0, start - AUDIO_LEAD)), '-i', url];
+        // The first chunk has nothing before it, so silence takes the lead's place.
+        const audio = input => [
+          '-t',
+          String(Number(duration) + AUDIO_LEAD + 0.04),
+          '-map',
+          spec.audio ? audioMap(input) : '1:a:0',
+          '-vn',
+          '-sn',
+          '-dn',
+          '-map_metadata',
+          '-1',
+          '-c:a',
+          'libopus',
+          '-b:a',
+          '128k',
+          '-ac',
+          '2',
+          '-ar',
+          '48000',
+          '-af',
+          'asetpts=PTS-STARTPTS' + (start ? '' : `,aresample=48000,adelay=${AUDIO_LEAD_SAMPLES}S:all=1`),
+          '-f',
+          'webm',
+          '-live',
+          '1',
+          '-cluster_time_limit',
+          '1000',
+        ];
+        const command = (selected, route) => [
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-nostdin',
+          '-threads',
+          '2',
+          ...(route?.input || []),
+          '-ss',
+          String(start - runIn),
+          '-i',
+          url,
+          ...(burn?.bitmap ? [] : spec.audio ? audioInput : silence),
+          '-t',
+          duration,
+          ...video(route),
+          '-sn',
+          '-dn',
+          '-map_metadata',
+          '-1',
+          '-map_chapters',
+          '-1',
+          ...encoderArgs(selected, codec),
+          ...rateArgs(selected, codec, spec.bitrate),
+          ...(spec.frameRate ? ['-r', spec.frameRate, '-fps_mode', 'cfr'] : []),
+          '-g',
+          '180',
+          '-color_primaries',
+          'bt709',
+          '-color_trc',
+          'bt709',
+          '-colorspace',
+          'bt709',
+          '-f',
+          'webm',
+          '-live',
+          '1',
+          '-cluster_time_limit',
+          '1000',
+          'pipe:1',
+          ...(burn?.bitmap ? [] : [...audio(1), 'pipe:3']),
+        ];
+        // 4K jobs commit about 1 GiB on either path, GPU surfaces add to that, and the
+        // run-in for image subtitles adds about the same again.
+        const encode = async (selected, route) => {
+          const job = args =>
+            this.run(this.ffmpeg, args, controller.signal, 30000, 48 * 1024 * 1024, undefined, {
+              memoryLimit: (burn?.bitmap ? 3 : 2) * 1024 * 1024 * 1024,
+            });
+          if (!burn?.bitmap) return job(command(selected, route));
+          // Audio in the same process as an image overlay runs about ten times slower.
+          const [video, sound] = await Promise.all([
+            job(command(selected, route)),
+            job(['-hide_banner', '-loglevel', 'error', '-nostdin', ...audioInput, ...silence, ...audio(0), 'pipe:1']),
+          ]);
+          return { video, audio: sound };
+        };
+        const routes = decodeRoutes(spec, encoder, this.hardwareDecode);
+        if (!routes.length) throw new PlaybackError('Dolby Vision Profile 5 requires Vulkan libplacebo tone-mapping.');
+        try {
+          let level = Math.min(group.decodeLevel || 0, routes.length - 1),
+            bytes;
+          for (;;) {
+            try {
+              bytes = await encode(encoder, routes[level]);
+              break;
+            } catch (error) {
+              // Step down from GPU tonemapping, to GPU decode, to the CPU. Only a later
+              // success proves the step, so upstream failures change nothing for the group.
+              if (level === routes.length - 1) {
+                if (spec.doviP5 && error.exitFailure && !controller.signal.aborted)
+                  throw new PlaybackError('Dolby Vision Profile 5 tone-mapping failed.');
+                throw error;
+              }
+              if (!error.exitFailure || controller.signal.aborted) throw error;
+              level++;
+            }
+          }
+          if (level > (group.decodeLevel || 0)) {
+            group.decodeLevel = level;
+            this.logger.warn(
+              'Conversion',
+              `${routes[level] ? 'GPU tonemapping' : 'Hardware decode'} failed for a ${spec.sourceFormat} source; using a slower path for this stream.`,
+            );
+          }
+          group.encoder = encoder;
+          group.cpuFallback = encoder === 'software' && this.encoder !== 'software';
+          return bytes;
+        } catch (error) {
+          // Retry only an encoder process failure, under the same job lease.
+          // Cancellation, limits and upstream failures never trigger CPU work.
+          if (!error.encoderFailure || encoder === 'software' || !this.cpuFallback || controller.signal.aborted)
+            throw error;
+          const bytes = await encode('software', spec.doviP5 ? cpuPlaceboRoute(spec) : undefined);
+          group.encoder = 'software';
+          group.cpuFallback = true;
+          return bytes;
+        } finally {
+          await burn?.cleanup?.();
+        }
+      });
+    } finally {
+      releaseConversion?.();
     }
   }
   get retainedBytes() {
