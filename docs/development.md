@@ -78,6 +78,7 @@ Use `scripts/playback-recovery.js`, `scripts/sync-baseline.js`, `scripts/sync-st
 **Running FFmpeg by hand.** To test or time a conversion outside the server, start from the arguments `server/av1.js` builds (capture them from `AV1` with a stub executor) rather than retyping them:
 
 - Put `-t` after `-i`, on every output. Before `-i`, with D3D11VA decode, libplacebo and `av1_qsv`, FFmpeg can stall indefinitely with no error. After `-i`, a single `-t` limits only the first output; with several outputs the rest run to the end of the source.
+- An output `-to` does not bound reading for a sparse subtitle stream: FFmpeg demuxes every stream until that stream's next packet after the end. An input `-to` with `-copyts` did not stop reading at all. Bound subtitle reads by an all-stream ffprobe `-read_intervals` inspection, as `server/subtitle-resources.js` does.
 - Keep `-pix_fmt nv12 -flags +global_header` for `av1_qsv` into WebM, as `encoderArgs` does.
 - Conversion is one process per source. Video goes through the segment muxer (`-f segment -segment_time 6 -reset_timestamps 1`) with `-force_key_frames expr:gte(t,n_forced*6)` and, for `av1_qsv` and `av1_nvenc`, `-forced_idr 1`, so every 6-second segment starts with a key frame and carries its own codec header. A segment is complete once the next one opens. Sound stays one short process per chunk, because consecutive audio chunks overlap. To time a run by hand, add `-t` after each video output's `-map`.
 - Cap each test process with a timeout, so a stalled run cannot hold the GPU for the runs after it.

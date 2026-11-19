@@ -8,6 +8,7 @@ const fs = require('node:fs/promises'),
   path = require('node:path');
 const { PlaybackError } = require('./errors');
 const { fileIndex } = require('./media-tools');
+const { StringDecoder } = require('node:string_decoder');
 const LIMIT = 64 * 1024 * 1024,
   FONTS = 16 * 1024 * 1024,
   TOTAL = 96 * 1024 * 1024;
@@ -516,8 +517,79 @@ async function load(av1, media, signal) {
   return awaitJob(job.promise, signal);
 }
 // Inspect all packet timestamps first: filtering ffprobe to a sparse subtitle
-// stream makes even its interval reader wait for the next selected packet.
-// Then stop FFmpeg at the known packet count, preserving original source PTS.
+// stream makes even its interval reader wait for the next selected packet, and
+// FFmpeg's output -to likewise demuxes every stream until the subtitle stream's
+// next packet after the window, which on a high-bitrate source is hundreds of MB.
+// Reading every stream, the interval ends at the window end. Callers then stop
+// FFmpeg once the known packets arrive, preserving original source PTS.
+async function inspectWindow(av1, media, url, index, codec, startSeconds, endSeconds, signal) {
+  const probe = av1.ffprobe;
+  if (!probe) throw new PlaybackError('Subtitle window extraction needs configured FFprobe. Try burn-in.');
+  const verify = info => {
+    if (!info.streams?.some(stream => stream.index === index && (!codec || stream.codec_name === codec)))
+      throw new PlaybackError('The selected subtitle stream could not be verified. Try burn-in.');
+  };
+  const inspect = async (interval, timeout, limit, entries) =>
+    JSON.parse(
+      (
+        await av1.run(
+          probe,
+          [
+            '-v',
+            'error',
+            '-analyzeduration',
+            '1000000',
+            '-probesize',
+            '1048576',
+            '-read_intervals',
+            interval,
+            '-show_packets',
+            '-show_entries',
+            entries,
+            '-of',
+            'json',
+            url,
+          ],
+          signal,
+          timeout,
+          limit,
+        )
+      ).toString(),
+    );
+  let origin = media.subtitleOrigin;
+  if (!Number.isFinite(origin)) {
+    const info = await inspect(
+      '%+0.1',
+      10000,
+      1024 * 1024,
+      'format=start_time:stream=index,codec_name:packet=pts_time',
+    );
+    verify(info);
+    origin = Number(info.format?.start_time ?? info.packets?.[0]?.pts_time);
+    if (!Number.isFinite(origin)) throw new PlaybackError('The source timeline could not be determined. Try burn-in.');
+    signal.throwIfAborted();
+    media.subtitleOrigin = origin;
+  }
+  const metadata = await inspect(
+    String(origin + startSeconds) + '%' + String(origin + endSeconds),
+    25000,
+    16 * 1024 * 1024,
+    'packet=stream_index,pts_time,size:stream=index,codec_name',
+  );
+  verify(metadata);
+  if (!Array.isArray(metadata.packets) || !metadata.packets.length)
+    throw new PlaybackError('No media packets could be verified for the subtitle window. Try burn-in.');
+  return { origin, packets: metadata.packets.filter(packet => packet.stream_index === index) };
+}
+// Text cue start times FFmpeg has written so far, in milliseconds of source time.
+function cueStarts(text) {
+  const starts = [];
+  for (const match of text.matchAll(/^(\S+)\s+-->\s/gm)) {
+    const m = /^(?:(\d{1,6}):)?(\d{2}):(\d{2})\.(\d{3})$/.exec(match[1]);
+    if (m) starts.push(((Number(m[1] || 0) * 60 + Number(m[2])) * 60 + Number(m[3])) * 1000 + Number(m[4]));
+  }
+  return starts;
+}
 function alignPgs(data, origin, endSeconds) {
   const output = [];
   let cues = 0;
@@ -622,77 +694,16 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
           async url => {
             const { index } = await fileTrack(av1, job.media, track, url, abort);
             if (track.delivery === 'pgs') {
-              const probe = av1.ffprobe;
-              if (!probe) throw new PlaybackError('PGS window extraction needs configured FFprobe. Try burn-in.');
-              let origin = media.subtitleOrigin;
-              if (!Number.isFinite(origin)) {
-                const info = JSON.parse(
-                  (
-                    await av1.run(
-                      probe,
-                      [
-                        '-v',
-                        'error',
-                        '-analyzeduration',
-                        '1000000',
-                        '-probesize',
-                        '1048576',
-                        '-read_intervals',
-                        '%+0.1',
-                        '-show_packets',
-                        '-show_entries',
-                        'format=start_time:stream=index,codec_name:packet=pts_time',
-                        '-of',
-                        'json',
-                        url,
-                      ],
-                      abort,
-                      10000,
-                      1024 * 1024,
-                    )
-                  ).toString(),
-                );
-                if (!info.streams?.some(stream => stream.index === index && stream.codec_name === 'hdmv_pgs_subtitle'))
-                  throw new PlaybackError('The selected PGS stream could not be verified. Try burn-in.');
-                origin = Number(info.format?.start_time ?? info.packets?.[0]?.pts_time);
-                if (!Number.isFinite(origin))
-                  throw new PlaybackError('The source timeline could not be determined. Try burn-in.');
-                abort.throwIfAborted();
-                job.media.subtitleOrigin = origin;
-              }
-              const metadata = JSON.parse(
-                (
-                  await av1.run(
-                    probe,
-                    [
-                      '-v',
-                      'error',
-                      '-analyzeduration',
-                      '1000000',
-                      '-probesize',
-                      '1048576',
-                      '-read_intervals',
-                      String(origin + startSeconds) + '%' + String(origin + endSeconds),
-                      '-show_packets',
-                      '-show_entries',
-                      'packet=stream_index,pts_time,size:stream=index,codec_name',
-                      '-of',
-                      'json',
-                      url,
-                    ],
-                    abort,
-                    25000,
-                    16 * 1024 * 1024,
-                  )
-                ).toString(),
+              const { origin, packets } = await inspectWindow(
+                av1,
+                job.media,
+                url,
+                index,
+                'hdmv_pgs_subtitle',
+                startSeconds,
+                endSeconds,
+                abort,
               );
-              if (
-                !metadata.streams?.some(stream => stream.index === index && stream.codec_name === 'hdmv_pgs_subtitle')
-              )
-                throw new PlaybackError('The selected PGS stream could not be verified. Try burn-in.');
-              if (!Array.isArray(metadata.packets) || !metadata.packets.length)
-                throw new PlaybackError('No media packets could be verified for the subtitle window. Try burn-in.');
-              const packets = metadata.packets.filter(packet => packet.stream_index === index);
               const count = packets.length;
               const expected = packets.reduce((sum, packet) => sum + Number(packet.size), 0);
               if (!Number.isSafeInteger(expected) || expected < 0 || expected > 16 * 1024 * 1024)
@@ -777,8 +788,43 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
             }
             // Without -copyts cue times are relative to the keyframe the seek landed on, so they
             // shift between windows. With it, only an output -to ends the window at the right place.
-            if (track.delivery === 'cues')
-              return av1.run(
+            if (track.delivery === 'cues') {
+              const { packets } = await inspectWindow(
+                av1,
+                job.media,
+                url,
+                index,
+                undefined,
+                startSeconds,
+                endSeconds,
+                abort,
+              );
+              const first = Math.round((job.media.subtitleOrigin + startSeconds) * 1000),
+                last = Math.round((job.media.subtitleOrigin + endSeconds) * 1000),
+                wanted = [];
+              for (const packet of packets) {
+                const at = Math.round(Number(packet.pts_time) * 1000);
+                if (!Number.isSafeInteger(at))
+                  throw new PlaybackError('Subtitle source timestamps are unavailable. Try burn-in.');
+                if (at >= first && at < last) wanted.push(at);
+              }
+              // Inspected media with no caption packets is verified quiet coverage.
+              if (!wanted.length) return Buffer.alloc(0);
+              wanted.sort((a, b) => a - b);
+              const decoder = new StringDecoder('utf8');
+              let text = '';
+              // Every inspected packet needs its own cue; allow 1ms of timebase rounding.
+              const missing = () => {
+                const seen = cueStarts(text).sort((a, b) => a - b);
+                let i = 0;
+                for (const at of wanted) {
+                  while (i < seen.length && seen[i] < at - 1) i++;
+                  if (i >= seen.length || seen[i] > at + 1) return true;
+                  i++;
+                }
+                return false;
+              };
+              const data = await av1.run(
                 av1.ffmpeg,
                 [
                   '-hide_banner',
@@ -797,6 +843,8 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
                   '0:' + index,
                   '-c:s',
                   'webvtt',
+                  '-flush_packets',
+                  '1',
                   '-map_metadata',
                   '-1',
                   '-map_chapters',
@@ -808,7 +856,19 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
                 abort,
                 25000,
                 4 * 1024 * 1024,
+                undefined,
+                {
+                  outputComplete: chunk => {
+                    text += decoder.write(chunk);
+                    return !missing();
+                  },
+                },
               );
+              text = data.toString('utf8');
+              if (missing())
+                throw new PlaybackError('Subtitle extraction did not match the inspected cues. Try burn-in.');
+              return data;
+            }
             const args = [
               '-hide_banner',
               '-loglevel',
