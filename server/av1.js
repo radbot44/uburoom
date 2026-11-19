@@ -446,6 +446,9 @@ function noteResponse(state, asked) {
 // sample-exact timeline, whichever process made it. Others keep FFmpeg's accurate seek.
 const FIXED_FRAMES = ['dts', 'ac3', 'eac3', 'aac', 'mp3', 'mp2'];
 const SNAP = "asetpts='(round(STARTPTS*TB*SR/NB_SAMPLES)*NB_SAMPLES+N)/SR/TB'";
+// The sound at 48 kHz from sample `first` on: trimmed, or padded with silence where the source
+// has none yet. Unlike adelay it keeps the channel layout, which the stereo downmix needs.
+const PAD = first => `aresample=48000,aresample=async=1:first_pts=${first}`;
 function audioCommand(url, spec, audioMap, start, duration, codec) {
   const from = start - AUDIO_LEAD,
     length = duration + AUDIO_LEAD + 0.04;
@@ -456,14 +459,14 @@ function audioCommand(url, spec, audioMap, start, duration, codec) {
     filter = 'asetpts=PTS-STARTPTS';
   } else if (!exact) {
     input = ['-ss', String(Math.max(0, from)), '-i', url, '-t', String(length)];
-    filter = 'asetpts=PTS-STARTPTS' + (start ? '' : `,aresample=48000,adelay=${AUDIO_LEAD_SAMPLES}S:all=1`);
+    filter = 'asetpts=PTS-STARTPTS' + (start ? '' : `,${PAD(-AUDIO_LEAD_SAMPLES)}`);
   } else if (start) {
     input = ['-ss', String(Math.max(0, from - 2)), '-noaccurate_seek', '-copyts', '-i', url];
     filter = `${SNAP},atrim=start=${from}:end=${from + length},asetpts=PTS-STARTPTS`;
   } else {
-    // The first chunk: silence from time zero to the source's first sound, then the lead.
+    // The first chunk: silence for the lead and up to the source's first sound.
     input = ['-noaccurate_seek', '-copyts', '-i', url];
-    filter = `${SNAP},aresample=async=1:first_pts=0,atrim=end=${duration + 0.04},asetpts=PTS-STARTPTS,aresample=48000,adelay=${AUDIO_LEAD_SAMPLES}S:all=1`;
+    filter = `${SNAP},${PAD(-AUDIO_LEAD_SAMPLES)},atrim=end_sample=${Math.round(length * PCM_RATE)},asetpts=PTS-STARTPTS`;
   }
   return [
     '-hide_banner',
@@ -548,7 +551,7 @@ function soundDecodeCommand(stream, from, codec) {
     `0:a:${stream}`,
     '-vn',
     '-af',
-    `${FIXED_FRAMES.includes(codec) ? SNAP + ',' : ''}atrim=start=${from},asetpts=PTS-STARTPTS`,
+    `${FIXED_FRAMES.includes(codec) ? SNAP + ',' : ''}${PAD(Math.round(from * PCM_RATE))},asetpts=PTS-STARTPTS`,
     '-ac',
     '2',
     '-ar',
@@ -578,20 +581,76 @@ function encodeCommand() {
     ...OPUS,
   ];
 }
-// A run's decoded sound for one audio choice, from the lead of the chunk after its first.
-// Each chunk takes its window (the same one audioCommand cuts); samples before the earliest
-// chunk still to come are dropped. Once the process has ended, a chunk the samples do not
-// cover gets nothing, so it reads the source itself, except the source's last chunk, which
-// takes what there is.
+// When each track of the copy starts: the time in seconds of its first block, by track
+// number, from the start of a Matroska stream. Undefined until every one of `tracks` has a
+// block, or if the stream is not one this can read.
+const EBML_MASTER = new Set([0x18538067, 0x1549a966, 0x1f43b675, 0xa0]);
+function copyStarts(bytes, tracks) {
+  const vint = (at, id) => {
+    const first = bytes[at];
+    if (first === undefined || !first) return undefined;
+    const length = Math.clz32(first) - 23;
+    if (at + length > bytes.length) return undefined;
+    let value = id ? first : first & (0xff >> length),
+      unknown = value === 0xff >> length;
+    for (let i = 1; i < length; i++) {
+      value = value * 256 + bytes[at + i];
+      unknown &&= bytes[at + i] === 0xff;
+    }
+    return { value: unknown && !id ? Infinity : value, length };
+  };
+  const starts = new Map();
+  let scale = 1e6,
+    cluster = 0;
+  for (let at = 0; at < bytes.length && starts.size < tracks;) {
+    const id = vint(at, true),
+      size = id && vint(at + id.length, false);
+    if (!size) return undefined;
+    const body = at + id.length + size.length;
+    if (EBML_MASTER.has(id.value)) {
+      at = body;
+      continue;
+    }
+    if (size.value === Infinity) return undefined;
+    if (body + size.value > bytes.length) return undefined;
+    const uint = () => bytes.subarray(body, body + size.value).reduce((v, b) => v * 256 + b, 0);
+    if (id.value === 0x2ad7b1) scale = uint();
+    else if (id.value === 0xe7) cluster = uint();
+    else if (id.value === 0xa3 || id.value === 0xa1) {
+      const track = vint(body, false);
+      if (!track) return undefined;
+      const relative = bytes.readInt16BE(body + track.length);
+      if (!starts.has(track.value)) starts.set(track.value, ((cluster + relative) * scale) / 1e9);
+    }
+    at = body + size.value;
+  }
+  return starts.size < tracks ? undefined : starts;
+}
+// A run's decoded sound for one audio choice, from the lead of the process's first chunk,
+// padded with silence where the copy has no sound yet. Each chunk takes its window (the same
+// one audioCommand cuts); samples before the earliest chunk still to come are dropped. The
+// first chunk needs real sound before its window, so it is taken only when the copy began
+// early enough (or at the file's start). Once the process has ended, a chunk the samples do
+// not cover gets nothing, so it reads the source itself, except the source's last chunk,
+// which takes what there is.
+const SOUND_PREROLL = 0.5;
 class SoundMemory {
-  constructor(from, last, limit = 64 * 1024 * 1024) {
-    this.from = from;
+  constructor(start, last, limit = 64 * 1024 * 1024) {
+    this.start = start;
+    this.from = start * CHUNK - AUDIO_LEAD;
     this.last = last;
     this.limit = limit;
     this.parts = [];
     this.dropped = 0;
     this.size = 0;
     this.waiters = new Set();
+    this.began = new Promise(resolve => (this.begin = resolve));
+  }
+  // Whether chunk k's window has real sound before it, once the copy's start is known.
+  async covers(k) {
+    if (k > this.start || !this.start) return true;
+    const began = await this.began;
+    return began !== undefined && began <= this.from - SOUND_PREROLL;
   }
   at(k) {
     return Math.round((k * CHUNK - AUDIO_LEAD - this.from) * PCM_RATE) * PCM_FRAME;
@@ -608,6 +667,7 @@ class SoundMemory {
     if (this.ended) return;
     this.ended = true;
     this.complete = complete;
+    this.begin(undefined);
     this.check();
     if (!complete) this.parts = [];
   }
@@ -1407,17 +1467,21 @@ class AV1 {
           const span = Math.min((run.end - start) * CHUNK, first.source.duration - start * CHUNK);
           const burned =
             outputs.length === 1 ? await this.burnInput(chosen, url, start * CHUNK, span, signal) : undefined;
-          // Sound is decoded once from the process's own read, from its second chunk on; its
-          // first chunk needs the lead before the process starts, so that one, and silence,
-          // still come from processes of their own.
+          // Sound is decoded once from the process's own read. Silence, and a first chunk the
+          // copy began too late for, still come from processes of their own.
           const runIn = burned?.runIn || 0,
             lastChunk = Math.ceil(first.source.duration / CHUNK) - 1,
-            choices =
-              Math.min(run.end - 1, lastChunk) > start
-                ? [...new Map(outputs.filter(o => o.spec.audio).map(o => [o.sound, o])).values()]
-                : [],
-            from = (start + 1) * CHUNK - AUDIO_LEAD,
-            memories = choices.map(() => new SoundMemory(from, lastChunk));
+            choices = [...new Map(outputs.filter(o => o.spec.audio).map(o => [o.sound, o])).values()],
+            memories = choices.map(() => new SoundMemory(start, lastChunk));
+          let head = Buffer.alloc(0);
+          const copied = bytes => {
+            if (!head) return;
+            head = Buffer.concat([head, bytes]);
+            const starts = copyStarts(head, choices.length);
+            if (!starts && head.length < 4 * 1024 * 1024) return;
+            memories.forEach((memory, i) => memory.begin(starts?.get(i + 1)));
+            head = undefined;
+          };
           const sound = choices.length
             ? {
                 maps: choices.map(o => o.sound),
@@ -1474,7 +1538,10 @@ class AV1 {
               failOn: route?.failOn,
               sound: choices.length
                 ? {
-                    commands: choices.map((o, i) => soundDecodeCommand(i, from, o.audio.selected?.codec_name)),
+                    commands: choices.map((o, i) =>
+                      soundDecodeCommand(i, start * CHUNK - AUDIO_LEAD, o.audio.selected?.codec_name),
+                    ),
+                    onCopy: copied,
                     onData: (i, bytes) => memories[i].add(bytes),
                     onEnd: (i, ok) => ok || memories[i].end(false),
                   }
@@ -1681,8 +1748,14 @@ class AV1 {
               return audio;
             }),
         );
-      const memory = k > current.start && current.memory.get(output.sound);
-      const job = memory ? this.decoded(run, memory, k, duration).then(audio => audio || read()) : read();
+      const memory = current.memory.get(output.sound);
+      const job = memory
+        ? this.decoded(run, memory, k, duration).then(audio => {
+            if (!audio) return read();
+            if (k === current.start) current.firstSound = { seconds: (Date.now() - asked) / 1000 };
+            return audio;
+          })
+        : read();
       job.catch(() => {});
       byChoice.set(output.sound, job);
     }
@@ -1704,14 +1777,15 @@ class AV1 {
       )
       .catch(() => {});
   }
-  // A chunk's Opus from the run's decoded sound, or undefined when the process ended before
-  // its window arrived. While it waits, the source stays open so the samples can come.
+  // A chunk's Opus from the run's decoded sound, or undefined when the copy began too late
+  // for it or the process ended before its window arrived. While it waits, the source stays
+  // open so the samples can come.
   async decoded(run, memory, k, duration) {
     run.soundWaits = (run.soundWaits || 0) + 1;
     this.flow(run);
     let samples;
     try {
-      samples = await memory.wait(k, duration);
+      if (await memory.covers(k)) samples = await memory.wait(k, duration);
     } finally {
       run.soundWaits--;
       this.flow(run);
@@ -1965,6 +2039,7 @@ module.exports = {
   AUDIO_LEAD,
   MIME,
   AUDIO_MIME,
+  copyStarts,
   encoderArgs,
   probeEncoder,
   outputSpec,

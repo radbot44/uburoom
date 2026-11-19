@@ -471,7 +471,8 @@ test('AV1 isolates source audio and Plex scopes, maps the exact stream and refus
       ['[v0]', '0:4'],
       'the process copies only the chosen sound out',
     );
-    assert.deepEqual(sounds[0], ['0:4'], 'the sound process maps the chosen stream');
+    assert.equal(runs.decoders[0].length, 1, 'one decoder, for the one stream copied');
+    assert.deepEqual(sounds[0], [], 'the sound is encoded from the decode, reading nothing itself');
     await assert.rejects(manager.chunk(missing, 0, signal), /selected audio track/);
     assert.equal(runs.started.length, 1, 'a missing choice starts no process');
   } finally {
@@ -496,7 +497,8 @@ test('sound for fixed-frame codecs is cut on one sample-exact timeline, so chunk
       },
       { audio: args => commands.push(args) },
     ),
-    fakeRuns(),
+    // No decoded sound reaches memory, so every chunk's sound reads the source itself.
+    fakeRuns({ copyLead: 0, decoded: () => false }),
   );
   const lease = manager.acquire({ id: '1', duration: 60, start: 'http://fixture' }, '720p4'),
     pcm = manager.acquire({ id: '1', duration: 60, start: 'http://fixture', audioIndex: 2 }, '720p4'),
@@ -513,11 +515,11 @@ test('sound for fixed-frame codecs is cut on one sample-exact timeline, so chunk
     assert.ok(second.includes('-noaccurate_seek') && second.includes('-copyts'));
     assert.match(filter(second), /^asetpts='\(round\(STARTPTS\*TB\*SR\/NB_SAMPLES\)\*NB_SAMPLES\+N\)\/SR\/TB'/);
     assert.equal(Number(second[second.indexOf('-ss') + 1]), 5.7935 - 2, 'decoding starts before the chunk');
-    const first = dts.find(args => /first_pts=0/.test(filter(args)));
+    const first = dts.find(args => /first_pts=-9912/.test(filter(args)));
     assert.match(
       filter(first),
-      /aresample=async=1:first_pts=0,atrim=end=6\.04,.*adelay=9912S/,
-      'the first chunk pads to time zero',
+      /aresample=48000,aresample=async=1:first_pts=-9912,atrim=end_sample=299832,/,
+      'the first chunk pads its lead and up to the first sound, keeping the channel layout',
     );
     const other = commands.find(args => args.includes('0:2'));
     assert.ok(!other.includes('-copyts') && /^asetpts=PTS-STARTPTS/.test(filter(other)), 'PCM keeps the accurate seek');
@@ -558,17 +560,17 @@ test('a run decodes its sound once from its own read, and later chunks encode fr
     assert.equal(copy[copy.indexOf('-output_ts_offset') + 1], '0.042', 'the copy keeps the source times');
     const [decode] = runs.decoders[0];
     assert.ok(decode.includes('-copyts') && decode.includes('pipe:0'));
-    assert.match(decode[decode.indexOf('-af') + 1], /^asetpts='\(round.*,atrim=start=5\.7935,/);
+    assert.match(decode[decode.indexOf('-af') + 1], /^asetpts='\(round.*,aresample=async=1:first_pts=-9912,/);
     const decoded = encodes.filter(({ args }) => args.includes('pipe:0')),
       read = encodes.filter(({ args }) => !args.includes('pipe:0'));
-    assert.equal(read.length, 1, "only the process's first chunk reads the source for its sound");
-    assert.equal(decoded.length, 2);
+    assert.equal(read.length, 0, 'no chunk reads the source for its sound');
+    assert.equal(decoded.length, 3);
     assert.ok(
       decoded.every(({ input }) => input.length === 299832 * 8),
       'each chunk encodes its window: the lead, six seconds and 40 ms',
     );
     await manager.chunk(lease, 3, signal);
-    const fallback = encodes.slice(3);
+    const fallback = encodes.slice(3).filter(({ args }) => !args.includes('pipe:0'));
     assert.ok(fallback.length && fallback.every(({ args }) => !args.includes('pipe:0')));
     assert.ok(
       fallback.some(({ args }) => /atrim=start=17\.7935:/.test(args[args.indexOf('-af') + 1])),
@@ -903,15 +905,16 @@ const SHARED = {
 
 test('qualities of one source asking together share one process that decodes once, and one sound per choice', async () => {
   const sounds = [];
-  const runs = fakeRuns();
+  // Twelve seconds: chunk 1 is the run's only chunk.
+  const runs = fakeRuns({ duration: 12 });
   const manager = manage(
     {},
     fakeTools(SHARED, {
-      audio: args => sounds.push([args[args.indexOf('-ss') + 1], args[args.indexOf('-map') + 1]]),
+      audio: args => sounds.push(args),
     }),
     runs,
   );
-  const source = { id: '1', partId: '5', principal: 'alice', duration: 60, start: 'http://fixture' };
+  const source = { id: '1', partId: '5', principal: 'alice', duration: 12, start: 'http://fixture' };
   const a = manager.acquire(source, '1080p8'),
     b = manager.acquire(source, '720p4'),
     c = manager.acquire({ ...source, audioIndex: 2, audioOrdinal: 1 }, '720p2'),
@@ -937,11 +940,10 @@ test('qualities of one source asking together share one process that decodes onc
       [200, 201, 202],
       'each quality receives its own output',
     );
-    const first = sounds.filter(([start]) => Number(start) < 6 && Number(start) > 5);
-    assert.deepEqual(
-      first.map(([, map]) => map).sort(),
-      ['0:2', '0:a:0'],
-      'two qualities with the same audio share one sound process',
+    assert.equal(sounds.length, 2, 'two qualities with the same audio share one sound encode');
+    assert.ok(
+      sounds.every(args => args.includes('pipe:0')),
+      "each comes from its choice's decode, not the source",
     );
     assert.ok(chunks.every(bytes => bytes.audio.length));
   } finally {
@@ -1351,4 +1353,60 @@ test('run feeds its input to a WebM encode on stdin and returns only the WebM ou
     },
   );
   assert.deepEqual(output, input);
+});
+
+test("a run's first chunk takes decoded sound only when the copy began early enough before it", async () => {
+  // A seek copies sound from the keyframe before the seek point: usually seconds before, but
+  // a keyframe right at it leaves the first chunk no sound to settle Opus on.
+  for (const [copyLead, reads] of [
+    [2, 0],
+    [0, 1],
+  ]) {
+    const encodes = [];
+    const manager = manage(
+      {},
+      fakeTools(
+        {
+          streams: [
+            { codec_type: 'video', width: 640, height: 360 },
+            { index: 1, codec_type: 'audio', codec_name: 'dts' },
+          ],
+        },
+        { audio: args => encodes.push(args) },
+      ),
+      fakeRuns({ copyLead }),
+    );
+    const lease = manager.acquire({ id: '1', duration: 60, start: 'http://fixture' }, '720p4');
+    try {
+      await manager.chunk(lease, 5, new AbortController().signal);
+      const read = encodes.filter(args => !args.includes('pipe:0'));
+      assert.equal(read.length, reads, `copy from ${copyLead} s before the seek`);
+      if (reads) assert.match(read[0][read[0].indexOf('-af') + 1], /atrim=start=29\.7935:/);
+    } finally {
+      manager.release(lease);
+      await manager.close();
+    }
+  }
+});
+
+test('the copy start is read from the first block of each track, once the head has arrived', () => {
+  const { copyStarts } = require('../server/av1');
+  // Segment and Cluster of unknown size, a cluster time of 29.5 s, one block per track.
+  const unknown = [0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+  const head = Buffer.from([
+    ...[0x18, 0x53, 0x80, 0x67, ...unknown],
+    ...[0x15, 0x49, 0xa9, 0x66, 0x87, 0x2a, 0xd7, 0xb1, 0x83, 0x0f, 0x42, 0x40],
+    ...[0x1f, 0x43, 0xb6, 0x75, ...unknown],
+    ...[0xe7, 0x82, 0x73, 0x3c],
+    ...[0xa3, 0x84, 0x81, 0x00, 0x00, 0x80],
+    ...[0xa3, 0x84, 0x82, 0x00, 0x0b, 0x80],
+  ]);
+  assert.deepEqual(
+    copyStarts(head, 2),
+    new Map([
+      [1, 29.5],
+      [2, 29.511],
+    ]),
+  );
+  assert.equal(copyStarts(head.subarray(0, head.length - 3), 2), undefined, 'a block still arriving');
 });

@@ -241,7 +241,8 @@ async function run(
 // they reach the disk, never a download of the source.
 // With `sound`, the process also writes a copy of its source's sound to stdout, and one
 // FFmpeg per `sound.commands` entry decodes it from stdin: its output goes to
-// sound.onData(i, bytes), and sound.onEnd(i, ok) reports how it exited. A decoder that
+// sound.onData(i, bytes), and sound.onEnd(i, ok) reports how it exited. sound.onCopy, if
+// given, sees the copy itself. A decoder that
 // fails never stops the process, and the call returns only once every decoder has exited.
 async function segments(
   binary,
@@ -300,7 +301,7 @@ async function segments(
     await new Promise((resolve, reject) => {
       const child = spawn(binary, args, { windowsHide: true, stdio: ['ignore', sound ? 'pipe' : 'ignore', 'pipe'] });
       decoders = (sound?.commands || []).map((command, i) => decoder(binary, command, i, sound));
-      if (sound) tee(child.stdout, decoders);
+      if (sound) tee(child.stdout, decoders, sound.onCopy);
       let failure,
         stderr = '',
         exited = false,
@@ -395,8 +396,9 @@ function decoder(binary, args, i, sound) {
 }
 // The process's stdout to every decoder still running, at the pace of the slowest, so the
 // copy never piles up in memory; with none left, the process's output is still drained.
-function tee(output, decoders) {
+function tee(output, decoders, onCopy) {
   output.on('data', bytes => {
+    onCopy?.(bytes);
     const full = decoders.filter(({ child }) => child.stdin.writable && !child.stdin.write(bytes));
     if (!full.length) return;
     output.pause();
