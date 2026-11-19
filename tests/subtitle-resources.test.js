@@ -1209,3 +1209,83 @@ test('browser aggregate budget charges retained input, parser data and replay tr
     global.fetch = previous;
   }
 });
+
+test('text windows stop at the inspected cues instead of demuxing to the next caption after the window', async () => {
+  const media = { ...windowMedia(), captionVersion: 'text-a' };
+  media.selection = { subtitle: { id: '23', index: 1, delivery: 'cues', available: true } };
+  const clock = seconds =>
+    `00:${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}.000`;
+  const vtt = seconds => `${clock(seconds)} --> ${clock(seconds + 1)}
+line ${seconds}
+
+`;
+  let captions = [3, 8, 20],
+    emitted = [8, 20];
+  const probes = [],
+    ffmpegRuns = [];
+  const plex = {
+    av1: {
+      ffmpeg: 'ffmpeg',
+      ffprobe: 'ffprobe',
+      input: async (source, signal, action) => action('http://fixture.invalid/cap'),
+      run: async (binary, args, signal, timeout, limit, diagnostic, options) => {
+        if (binary === 'ffprobe') {
+          probes.push(args[args.indexOf('-read_intervals') + 1]);
+          return Buffer.from(
+            JSON.stringify({
+              streams: [
+                { index: 0, codec_name: 'hevc' },
+                { index: 1, codec_name: 'subrip' },
+              ],
+              packets: [
+                { stream_index: 0, pts_time: '2', size: '900000' },
+                ...captions.map(at => ({ stream_index: 1, pts_time: String(at), size: '20' })),
+                { stream_index: 0, pts_time: '29.9', size: '900000' },
+              ],
+            }),
+          );
+        }
+        ffmpegRuns.push(args);
+        // Like FFmpeg with an output -to on a sparse stream: after the window's last cue
+        // it keeps reading until the next caption, here past the tool budget.
+        const chunks = [];
+        for (const at of emitted) {
+          chunks.push(Buffer.from(vtt(at)));
+          if (options?.outputComplete?.(chunks.at(-1))) return Buffer.concat(chunks);
+        }
+        if (options?.natural) return Buffer.concat(chunks);
+        throw new PlaybackError('FFmpeg timed out.');
+      },
+    },
+  };
+  try {
+    const result = await SubtitleResources.window(plex.av1, media, { atMs: 10000, beforeMs: 5000, afterMs: 20000 });
+    assert.equal(probes.at(-1), '5%30', 'inspection reads every stream for exactly the window');
+    assert.equal(result.cues, 2);
+    assert.deepEqual(
+      JSON.parse(result.data.toString()).map(cue => cue.start),
+      [8, 20],
+    );
+    assert.ok(ffmpegRuns[0].includes('-flush_packets'), 'cues reach the stop check as FFmpeg writes them');
+
+    captions = [];
+    const quiet = await SubtitleResources.window(plex.av1, media, { atMs: 40000, beforeMs: 5000, afterMs: 20000 });
+    assert.equal(quiet.cues, 0);
+    assert.equal(ffmpegRuns.length, 1, 'an inspected window without captions is quiet coverage without FFmpeg');
+
+    captions = [68, 72];
+    emitted = [68];
+    plex.av1.run = (
+      run => (binary, args, signal, timeout, limit, diagnostic, options) =>
+        run(binary, args, signal, timeout, limit, diagnostic, { ...options, natural: true })
+    )(plex.av1.run);
+    const cached = media.windowCache.size;
+    await assert.rejects(
+      SubtitleResources.window(plex.av1, media, { atMs: 70000, beforeMs: 5000, afterMs: 20000 }),
+      /did not match the inspected cues/,
+    );
+    assert.equal(media.windowCache.size, cached, 'a window missing an inspected cue is not cached as coverage');
+  } finally {
+    SubtitleResources.clear(media);
+  }
+});

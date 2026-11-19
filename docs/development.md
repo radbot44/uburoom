@@ -78,6 +78,7 @@ Use `scripts/playback-recovery.js`, `scripts/sync-baseline.js`, `scripts/sync-st
 **Running FFmpeg by hand.** To test or time a conversion outside the server, start from the arguments `server/av1.js` builds (capture them from `AV1` with a stub executor) rather than retyping them:
 
 - Put `-t` after `-i`, on every output. Before `-i`, with D3D11VA decode, libplacebo and `av1_qsv`, FFmpeg can stall indefinitely with no error. After `-i`, a single `-t` limits only the first output; with several outputs the rest run to the end of the source.
+- An output `-to` does not bound reading for a sparse subtitle stream: FFmpeg demuxes every stream until that stream's next packet after the end. An input `-to` with `-copyts` did not stop reading at all. Bound subtitle reads by an all-stream ffprobe `-read_intervals` inspection, as `server/subtitle-resources.js` does.
 - Keep `-pix_fmt nv12 -flags +global_header` for `av1_qsv` into WebM, as `encoderArgs` does.
 - Cap each test process with a timeout, so a stalled run cannot hold the GPU for the runs after it.
 - Expected noise, not failures: ffprobe prints `Error parsing Opus packet header` for every converted chunk's audio, and Intel's runtime prints `TEELIB … SendIOCTL` lines when QSV sessions start together.
