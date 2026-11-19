@@ -479,6 +479,32 @@ test('AV1 isolates source audio and Plex scopes, maps the exact stream and refus
   }
 });
 
+test('a slow chunk says whether its picture or its sound was late', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const warnings = [];
+  // Chunk 1's picture arrives five seconds after its sound.
+  const runs = fakeRuns({
+    chunk: async (_args, n) => {
+      if (n !== 1) return;
+      for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+      t.mock.timers.tick(5000);
+    },
+  });
+  const manager = manage({}, fakeTools(VIDEO), runs, { warn: (_, message) => warnings.push(message), info() {} });
+  const lease = manager.acquire({ id: '1', duration: 60, start: 'x' }, '720p4');
+  try {
+    const signal = new AbortController().signal;
+    await manager.chunk(lease, 0, signal);
+    await manager.chunk(lease, 1, signal);
+    const slow = warnings.filter(line => line.startsWith('Chunk 1 '));
+    assert.equal(slow.length, 1);
+    assert.match(slow[0], /took 5\.\ds to encode \(video 5\.\ds, sound 0\.\ds\)/);
+  } finally {
+    manager.release(lease);
+    await manager.close();
+  }
+});
+
 test('a process logs where the time to its first chunk went, once', async () => {
   const lines = [];
   const runs = fakeRuns({ read: true });

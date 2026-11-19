@@ -1243,6 +1243,8 @@ class AV1 {
               audio: new Map(),
               pictures: new Map(),
               sounds: new Map(),
+              // When each picture and sound arrived, so a slow chunk can say which was late.
+              arrived: new Map(),
             });
             current.stalled = () => {
               clearTimeout(run.stallTimer);
@@ -1464,6 +1466,7 @@ class AV1 {
         audio => {
           if (!run.pending.has(k)) return;
           current.sounds.set(`${k}:${output.sound}`, audio);
+          current.arrived.set(`${k}:sound:${output.sound}`, Date.now());
           this.complete(run, current, k, output);
         },
         error => {
@@ -1481,7 +1484,10 @@ class AV1 {
     current.success?.();
     current.stalled();
     // Only a chunk someone is waiting for is kept, so a long run holds no bytes of its own.
-    if (run.pending.get(k)?.has(member.group)) current.pictures.set(`${k}:${output}`, video);
+    if (run.pending.get(k)?.has(member.group)) {
+      current.pictures.set(`${k}:${output}`, video);
+      current.arrived.set(`${k}:video:${output}`, Date.now());
+    }
     this.complete(run, current, k, member);
     const delivered = (current.delivered.get(k) || 0) + 1;
     current.delivered.set(k, delivered);
@@ -1498,6 +1504,8 @@ class AV1 {
       video = current.pictures.get(`${k}:${current.outputs.indexOf(output)}`),
       audio = current.sounds.get(`${k}:${output.sound}`);
     if (!entry || !video || !audio) return;
+    entry.videoAt = current.arrived.get(`${k}:video:${current.outputs.indexOf(output)}`);
+    entry.soundAt = current.arrived.get(`${k}:sound:${output.sound}`);
     run.pending.get(k).delete(output.group);
     if (!run.pending.get(k).size) run.pending.delete(k);
     // Every member that wants this chunk has it once none is pending, so the process forgets it.
@@ -1528,10 +1536,11 @@ class AV1 {
     );
   }
   forget(current, k) {
-    for (const key of [...current.pictures.keys(), ...current.sounds.keys()])
+    for (const key of [...current.pictures.keys(), ...current.sounds.keys(), ...current.arrived.keys()])
       if (key.startsWith(k + ':')) {
         current.pictures.delete(key);
         current.sounds.delete(key);
+        current.arrived.delete(key);
       }
     current.audio.delete(k);
   }
@@ -1598,10 +1607,17 @@ class AV1 {
         // A chunk slower than real time means viewers will catch up and wait.
         const took = (Date.now() - entry.began) / 1000,
           waited = (entry.began - entry.queued) / 1000;
+        // Picture and sound come from different processes; say which one was late.
+        const parts = [
+          ['video', entry.videoAt],
+          ['sound', entry.soundAt],
+        ]
+          .filter(([, at]) => at)
+          .map(([name, at]) => `${name} ${Math.max(0, (at - entry.began) / 1000).toFixed(1)}s`);
         if (took > CHUNK * 0.8 || waited > CHUNK)
           this.logger.warn(
             'Conversion',
-            `Chunk ${index} of ${group.quality} took ${took.toFixed(1)}s to encode and waited ${waited.toFixed(1)}s for a slot (${group.encoder || 'auto'}${group.cpuFallback ? ', software fallback' : ''}${entry.shared ? `, shared by ${entry.shared} qualities` : ''}); viewers may wait.`,
+            `Chunk ${index} of ${group.quality} took ${took.toFixed(1)}s to encode${parts.length ? ` (${parts.join(', ')})` : ''} and waited ${waited.toFixed(1)}s for a slot (${group.encoder || 'auto'}${group.cpuFallback ? ', software fallback' : ''}${entry.shared ? `, shared by ${entry.shared} qualities` : ''}); viewers may wait.`,
           );
         return bytes;
       })
