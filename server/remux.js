@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
-const { Readable } = require('node:stream');
+const { fileStream } = require('./file-stream');
 const { PlaybackError } = require('./errors');
 const { run } = require('./media-tools');
 
@@ -647,7 +647,7 @@ class Remux {
     const segment = await session.segment(Number(match[3]), signal, lease);
     let body = null;
     if (method === 'HEAD') await segment.handle.close();
-    else body = /** @type {any} */ (Readable.toWeb(segment.handle.createReadStream({ signal })));
+    else body = fileStream(segment.handle, { signal });
     return new Response(body, {
       headers: { 'Content-Type': 'video/iso.segment', 'Content-Length': String(segment.size) },
     });

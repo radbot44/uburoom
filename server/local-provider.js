@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const fsp = fs.promises;
 const path = require('node:path');
-const { Readable } = require('node:stream');
+const { fileStream } = require('./file-stream');
 const { createHash, randomUUID } = require('node:crypto');
 const { PlaybackError } = require('./errors');
 const { classifyHdr } = require('./media-tools');
@@ -581,8 +581,10 @@ class LocalMedia {
     const headers = { 'Content-Type': type, 'Content-Length': String(end - start + 1), 'Accept-Ranges': 'bytes' };
     if (range) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
     if (options.method === 'HEAD' || !size) return new Response(null, { status: range ? 206 : 200, headers });
-    const stream = fs.createReadStream(file, { start, end, signal: options.signal });
-    return new Response(/** @type {any} */ (Readable.toWeb(stream)), { status: range ? 206 : 200, headers });
+    return new Response(fileStream(file, { start, end, signal: options.signal }), {
+      status: range ? 206 : 200,
+      headers,
+    });
   }
   prepare(id, quality, compatible = false, source, fallback, choices = {}) {
     return prepareStream(this, id, quality, compatible, source, fallback, choices);
