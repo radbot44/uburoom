@@ -98,6 +98,21 @@ test('observations keep monotonic duration through client wall steps and queue i
   assert.equal(rows[0].creditReason, 'clock-unavailable');
 });
 
+test('a held stream swap sends no reports about the stream the server already replaced', async () => {
+  const f = client();
+  f.ctx.heldStream = { next: { streamVersion: 'next-stream' } };
+  for (let i = 0; i < 3; i++) {
+    f.tick();
+    await f.ctx.reportObservation();
+  }
+  assert.equal(f.sent.length, 0, 'every report during the hold would be a stream-changed rejection');
+  assert.equal(f.ctx.observationQueued, false);
+  f.ctx.heldStream = undefined;
+  f.tick();
+  await f.ctx.reportObservation();
+  assert.equal(f.sent.length, 1, 'reports resume once the swap settles');
+});
+
 test('a waiting event in a shared-buffering room sends while a playing observation awaits acknowledgement', async () => {
   const f = client();
   f.ctx.state.pauseOnBuffering = true;

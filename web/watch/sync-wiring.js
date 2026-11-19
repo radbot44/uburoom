@@ -60,12 +60,15 @@ export function mount(host, deps) {
     return deps.time.target(store.room.state);
   }
   async function reportObservation(immediateStall = false) {
+    // While a new stream is held back for a seamless swap, the player still shows the stream the server
+    // has already replaced, so the server would reject every report about it.
     if (
       !store.player.observing ||
       !store.room.selected ||
       !store.room.state?.mediaUrl ||
       !store.room.state.streamVersion ||
-      store.stream.mediaSource !== store.room.state.mediaUrl
+      store.stream.mediaSource !== store.room.state.mediaUrl ||
+      store.stream.heldStream
     ) {
       store.player.observationQueued = false;
       return;
