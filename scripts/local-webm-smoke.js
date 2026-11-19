@@ -8,6 +8,8 @@ const { createApp } = require('../server/app');
 const { fixturePlex } = require('./playback-baseline');
 const { playbackBrowser, pause } = require('./lib/playback-browser');
 const { findOnPath } = require('../server/media-tools');
+const { accountFixture } = require('./account-fixture');
+const { openPage, navigatePage } = require('./lib/ui-fixture');
 async function main() {
   const option = (key, fallback) =>
     process.argv.find(s => s.startsWith('--' + key + '='))?.slice(key.length + 3) || fallback;
@@ -22,16 +24,19 @@ async function main() {
   fs.mkdirSync(output, { recursive: false });
   const directory = path.resolve(option('media', path.join(EVIDENCE, 'playback-media-initial'))),
     manifest = JSON.parse(fs.readFileSync(path.join(directory, 'manifest.json'), 'utf8'));
+  const fixture = accountFixture();
   const config = {
     cert: fs.readFileSync('certs/server-cert.pem'),
     key: fs.readFileSync('certs/server-key.pem'),
     publicUrl: 'https://localhost',
-    ownerId: 'demo-host',
+    ownerId: fixture.subjects.host,
     guildId: 'fixture',
     channels: ['fixture'],
     demo: true,
-    plexUrl: 'http://playback-fixture.invalid:32400',
-    plexToken: 'synthetic-playback-only',
+    unifiedAccounts: true,
+    demoSubjects: fixture.subjects,
+    plexUrl: 'http://plex-fixture.invalid:32400',
+    plexToken: 'fixture-owner',
     ffmpegPath: findOnPath('ffmpeg'),
     ffprobePath: findOnPath('ffprobe'),
     transcoding: {
@@ -44,7 +49,22 @@ async function main() {
       maxJobs: 5,
     },
   };
-  const app = createApp(config, { plexFetch: fixturePlex(directory, manifest, { requests: [] }) }),
+  // Accounts and the media server's identity come from the account fixture; the synthetic
+  // playback media (its metadata, file and streams) from the playback fixture.
+  const mediaServer = fixturePlex(directory, manifest, { requests: [] });
+  const plexFetch = (input, options = {}) => {
+    const url = new URL(input);
+    if (
+      url.origin !== 'http://plex-fixture.invalid:32400' ||
+      !/^\/(library\/(metadata|parts|streams)|video)\//.test(url.pathname)
+    )
+      return fixture.fetch(input, options);
+    return mediaServer('http://playback-fixture.invalid:32400' + url.pathname + url.search, {
+      ...options,
+      headers: { ...options.headers, 'X-Plex-Token': 'synthetic-playback-only' },
+    });
+  };
+  const app = createApp(config, { plexFetch, oauthFetch: fixture.discordFetch, plexDemo: fixture }),
     browsers = [],
     pages = [];
   let room;
@@ -77,26 +97,46 @@ async function main() {
     for (const persona of ['host', 'guest']) {
       const browser = await playbackBrowser(name);
       browsers.push(browser);
-      const page = await browser.page(config.publicUrl + '/watch?demo=' + persona);
+      // The synthetic file offers only Original, above the default 720p4 preference, so each
+      // viewer has saved Original as theirs, as a returning viewer would.
+      const url = config.publicUrl + '/?demo=' + persona;
+      const page = await openPage(browser, url);
+      await browser.evaluate(page, 'localStorage.setItem("uburoom.player",JSON.stringify({quality:"direct"}));true');
+      await navigatePage(browser, page, url);
       pages.push(page);
       await browser.until(page, 'typeof transport!=="undefined"&&transport?.ready', 'Login');
       await browser.viewport(page, 1200, 850);
     }
-    await browsers[0].evaluate(pages[0], 'createRoom().then(()=>true)');
-    await browsers[0].until(pages[0], '!!state', 'Room');
-    room = await browsers[0].evaluate(pages[0], 'selected');
-    await browsers[1].evaluate(pages[1], 'selectRoom(' + JSON.stringify(room) + ').then(()=>true)');
+    // Create the room through the lobby, then the guest joins it there.
+    await browsers[0].evaluate(pages[0], 'document.getElementById("create").click();true');
+    await browsers[0].until(pages[0], 'document.getElementById("room-dialog").open', 'Create chooser');
+    await browsers[0].evaluate(
+      pages[0],
+      'document.getElementById("room-name").value="Local WebM";document.getElementById("room-create").click();true',
+    );
+    await browsers[0].until(pages[0], 'state?.durable && !document.getElementById("room-dialog").open', 'Room');
+    room = [...app.watch.rooms.keys()][0];
+    await browsers[1].until(pages[1], '!!document.querySelector("#lobby-rooms .room-actions :is(a,button)")', 'Lobby');
+    await browsers[1].evaluate(
+      pages[1],
+      'document.querySelector("#lobby-rooms .room-actions :is(a,button)").click();true',
+    );
+    await browsers[1].until(pages[1], '!!state', 'Guest joins');
     await browsers[0].evaluate(
       pages[0],
       'execute({action:"media.load",args:{mediaId:"101",quality:"direct"}}).then(()=>true)',
     );
-    for (const index of [0, 1]) {
+    // The guest converts first, so the shared output is produced under the guest's lease.
+    for (const index of [1, 0]) {
       await browsers[index].until(pages[index], 'state?.mediaId==="101"', 'Shared source');
-      viewers[index] = await browsers[index].evaluate(pages[index], 'viewerId');
-      // Exercise configured automatic selection rather than exposing a codec menu.
+      viewers[index] = [...app.watch.rooms.get(room).viewers].find(
+        ([, viewer]) => viewer.name === (index ? 'Demo guest' : 'Demo host'),
+      )?.[0];
+      // Exercise configured automatic selection rather than exposing a codec menu: the player's
+      // compatibility fallback tries the configured local formats this browser decodes, in order.
       await browsers[index].evaluate(
         pages[index],
-        'compatibleFallback("Synthetic compatibility check").then(()=>true)',
+        '(async()=>{for(const codec of uburoomPlayback.fallbackCodecs(config.localFormats||["av1"],new Set(),m=>MediaSource.isTypeSupported(m))){try{await execute({action:"media.quality.set",args:{quality:"direct",compatible:true,fallback:codec,reason:"Synthetic compatibility check"}});return codec}catch{}}return null})()',
       );
       await browsers[index].until(
         pages[index],
@@ -135,14 +175,17 @@ async function main() {
     await browsers[0].screenshot(pages[0], path.join(output, 'player.png'));
     await browsers[0].evaluate(
       pages[0],
-      'renderMediaInformation(state);document.getElementById("tracks-dialog").showModal();document.querySelector("[data-player-section=media]").click();true',
+      'document.getElementById("tracks-open").click();document.getElementById("settings-more").click();true',
     );
+    await browsers[0].until(pages[0], '!!document.getElementById("tracks-dialog").open', 'Player settings');
+    await browsers[0].evaluate(pages[0], 'document.querySelector("[data-player-section=media]")?.click();true');
     await browsers[0].screenshot(pages[0], path.join(output, 'settings.png'));
-    await browsers[0].close();
-    await browsers[1].until(pages[1], 'state?.isHost', 'Remaining viewer');
-    await browsers[1].evaluate(pages[1], 'execute({action:"media.play"}).then(()=>true)');
-    await browsers[1].until(
-      pages[1],
+    // The guest, whose lease produced the shared output, leaves; the host plays on from it.
+    await browsers[0].evaluate(pages[0], 'document.getElementById("tracks-dialog").close();true');
+    await browsers[1].close();
+    await browsers[0].evaluate(pages[0], 'execute({action:"media.play"}).then(()=>true)');
+    await browsers[0].until(
+      pages[0],
       '!video.paused&&video.currentTime>2&&state.format===' + JSON.stringify(codec),
       'Playback survives producer departure',
     );
