@@ -75,6 +75,14 @@ Use `scripts/playback-recovery.js`, `scripts/sync-baseline.js`, `scripts/sync-st
 
 **Kept diagnostics.** With `diagnostics.enabled` (on by default), the server writes one JSON Lines file per local day to `diagnostics/` in the data folder. Each line is a server log line at info or above (`source: "server"`) or a viewer's player row (`source: "viewer"`, with room, viewer name and title). Players upload every 30 seconds and on page close through `POST /api/watch/diagnostics`, outside the room command path. `shared/playback-diagnostics.mjs` holds the one field allowlist that the browser and server both apply, so player rows never carry links, sign-in details or error text. `diagnostics.keep_days` and `diagnostics.max_mb` bound the folder; the oldest days go first, and today's file stops growing at the limit. Player settings → Technical details → Copy diagnostic report gives the same rows for one viewer when a server is not keeping them. A host's report also has `sync-spread` rows (the room's viewer spread, at most one a minute), and the server logs a `Sync` line with the spread every 10 minutes of samples and when the video changes.
 
+**Running FFmpeg by hand.** To test or time a conversion outside the server, start from the arguments `server/av1.js` builds (capture them from `AV1` with a stub executor) rather than retyping them:
+
+- Put `-t` after `-i`, on every output. Before `-i`, with D3D11VA decode, libplacebo and `av1_qsv`, FFmpeg can stall indefinitely with no error. After `-i`, a single `-t` limits only the first output; with several outputs the rest run to the end of the source.
+- Keep `-pix_fmt nv12 -flags +global_header` for `av1_qsv` into WebM, as `encoderArgs` does.
+- Cap each test process with a timeout, so a stalled run cannot hold the GPU for the runs after it.
+- Expected noise, not failures: ffprobe prints `Error parsing Opus packet header` for every converted chunk's audio, and Intel's runtime prints `TEELIB … SendIOCTL` lines when QSV sessions start together.
+- Found on Windows with an Intel Arc A380 (driver 32.0.101.6647, FFmpeg build of July 2025): D3D11-to-Vulkan and Vulkan-to-QSV frame mapping are not implemented, and Vulkan decode fails to start for 10-bit HEVC, so HDR frames cross to libplacebo through system memory. `av1_qsv` rejects QVBR; `-b:v` equal to `-maxrate` selects CBR, and a lower `-b:v` selects VBR. `vpp_qsv` tonemapping crushes shadows, while its scaling matches libplacebo (SSIM 0.99). Recheck these after a driver or FFmpeg update.
+
 For UI work, consult the relevant [design guide](design-guide.md) sections and [approved screen behavior](ui-behavior.md) before changing an established interaction. Record results and limitations in [testing](testing.md); historical scripts/counts are not current instructions. Real-provider tests and production changes require separate authorization.
 
 ## P1/P2/P13 live two-viewer continuity check
