@@ -633,8 +633,13 @@ class AV1 {
               if (abort.signal.aborted || res.destroyed) break;
               if (!res.write(piece))
                 await new Promise(resolve => {
-                  res.once('drain', resolve);
-                  res.once('close', resolve);
+                  const done = () => {
+                    res.off('drain', done);
+                    res.off('close', done);
+                    resolve();
+                  };
+                  res.on('drain', done);
+                  res.on('close', done);
                 });
             }
             res.end();
@@ -796,7 +801,7 @@ class AV1 {
       entry = undefined;
     }
     if (!entry) entry = this.request(group, source, index, { urgent, background });
-    else if (this.liveRun(group)) this.want(this.liveRun(group), index, background);
+    else if (this.liveRun(group)) this.want(this.liveRun(group), index, urgent);
     entry.at = Date.now();
     entry.users++;
     if (urgent) entry.priority.urgent = true;
@@ -842,7 +847,7 @@ class AV1 {
       index < run.end &&
       index <= run.next + (urgent ? JOIN_URGENT : background ? Infinity : AHEAD)
     ) {
-      this.want(run, index, background);
+      this.want(run, index, urgent);
       return this.runEntry(run, group, index);
     }
     if (!background && group.batchKey && !this.batchBroken.has(group.batchKey))
@@ -859,17 +864,18 @@ class AV1 {
           index <= run.start + JOIN_URGENT
         ) {
           this.join(run, { group, source });
-          this.want(run, index, background);
+          this.want(run, index, urgent);
           return this.runEntry(run, group, index);
         }
       }
     const members = [{ group, source }, ...(background ? [] : this.siblings(group, index))];
     return this.startRun(members, index, { urgent, background });
   }
-  // Raise how far a run converts: a viewer's playhead request keeps the look-ahead ahead of
-  // it; a prefetch or speculative request needs only that chunk.
-  want(run, index, background) {
-    run.target = Math.max(run.target, background ? index : index + AHEAD);
+  // Raise how far a run converts. A request at a viewer's playhead keeps the look-ahead
+  // ahead of it; any other request (the player's own look-ahead, a prefetch, speculative
+  // work) needs only that chunk, or the target would run away from the playhead.
+  want(run, index, urgent) {
+    run.target = Math.max(run.target, urgent ? index + AHEAD : index);
     this.flow(run);
   }
   newEntry(group, priority) {
@@ -898,7 +904,7 @@ class AV1 {
     const old = this.liveRun(member.group);
     member.group.run = run;
     if (!run.members.some(other => other.group === member.group)) run.members.push(member);
-    run.target = Math.max(run.target, (member.group.lastIndex ?? run.start) + AHEAD);
+    run.target = Math.max(run.target, member.group.lastIndex ?? run.start);
     if (!old || old === run) return;
     for (const [index, entries] of old.pending) {
       const entry = entries.get(member.group);
@@ -947,7 +953,7 @@ class AV1 {
       next: start,
       // Text cues are read for a window, so a burned text run is bounded.
       end: textBurn ? Math.min(count, start + TEXT_BURN_CHUNKS) : count,
-      target: priority.background ? index : index + AHEAD,
+      target: priority.urgent ? index + AHEAD : index,
       level: level ?? Math.max(0, ...members.map(({ group }) => group.decodeLevel || 0)),
       encoder: encoder ?? first.group.encoder,
       controller: new AbortController(),

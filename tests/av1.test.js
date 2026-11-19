@@ -842,6 +842,25 @@ test('a run holds its source past the look-ahead, stops when held, and resumes a
   }
 });
 
+test('look-ahead requests extend a run only to the chunk asked for, so it stays near the playhead', async () => {
+  const runs = fakeRuns({ duration: 600 });
+  const manager = manage({}, fakeTools(VIDEO), runs);
+  const lease = manager.acquire({ id: '1', duration: 600, start: 'http://fixture' }, '720p4'),
+    signal = new AbortController().signal;
+  try {
+    await manager.chunk(lease, 0, signal);
+    // The player fetches its next minute, chunk by chunk, none of them at the playhead.
+    for (let index = 1; index <= 12; index++) await manager.chunk(lease, index, signal, { urgent: false });
+    await tick();
+    assert.equal(runs.started.length, 1);
+    assert.equal(lease.group.run.target, 12, 'the target is the furthest chunk asked for');
+    assert.equal(runs.produced[0], 13, 'nothing beyond it is converted');
+  } finally {
+    manager.release(lease);
+    await manager.close();
+  }
+});
+
 test('a process failing mid-run keeps its chunks and starts again where it stopped, on the same path', async () => {
   let failed = false;
   const runs = fakeRuns({

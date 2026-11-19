@@ -56,13 +56,18 @@ async function main() {
     options: () => ({ available: true }),
   });
   const manager = app.watch.pipeline.av1,
-    run = manager.run;
-  let chunks = 0;
-  manager.run = (binary, args, ...rest) => {
-    if (failFirst && args.includes('libvpx-vp9'))
-      return Promise.reject(new (require('../server/errors').PlaybackError)('Injected unavailable VP9 encoder'));
-    if (args.includes('-ss')) chunks++;
-    return run(binary, args, ...rest);
+    run = manager.run,
+    segments = manager.segments;
+  // Video is one long-running process per source; sound is one short process per chunk.
+  let runs = 0;
+  const injected = args =>
+    failFirst && args.includes('libvpx-vp9')
+      ? Promise.reject(new (require('../server/errors').PlaybackError)('Injected unavailable VP9 encoder'))
+      : undefined;
+  manager.run = (binary, args, ...rest) => injected(args) || run(binary, args, ...rest);
+  manager.segments = (binary, args, ...rest) => {
+    runs++;
+    return injected(args) || segments(binary, args, ...rest);
   };
   const media = index => app.watch.rooms.get(room)?.viewers.get(viewers[index])?.media,
     viewers = [];
@@ -104,7 +109,7 @@ async function main() {
     assert.equal(media(0).audioCodec, 'opus');
     const group = media(0).av1Lease.group;
     assert.equal(group.refs, 2);
-    assert.ok(chunks <= 3, 'matching viewers reuse the three source chunks');
+    assert.equal(runs, 1, 'matching viewers share one conversion process');
     const returned = JSON.parse(
       await browsers[0].evaluate(pages[0], 'fetch(state.mediaUrl).then(r=>r.json()).then(JSON.stringify)'),
     );
@@ -124,9 +129,9 @@ async function main() {
     await browsers[0].evaluate(pages[0], 'execute({action:"media.seek.absolute",args:{seconds:1}}).then(()=>true)');
     for (const index of [0, 1])
       await browsers[index].until(pages[index], '!video.seeking&&Math.abs(video.currentTime-1)<.7', 'Cached rewind');
-    const before = chunks;
+    const before = runs;
     await pause(300);
-    assert.equal(chunks, before, 'cached rewind does not start new work');
+    assert.equal(runs, before, 'cached rewind does not start new work');
     await browsers[0].screenshot(pages[0], path.join(output, 'player.png'));
     await browsers[0].evaluate(
       pages[0],
@@ -143,18 +148,19 @@ async function main() {
     );
     app.watch.remove(room);
     assert.equal(manager.groups.size, 0);
-    assert.equal(app.watch.pipeline.conversionPolicy.jobs.size, 0);
+    for (let i = 0; i < 50 && app.watch.pipeline.conversionPolicy.jobs.size; i++) await pause(100);
+    assert.equal(app.watch.pipeline.conversionPolicy.jobs.size, 0, 'the conversion job ends with its viewers');
     const report = {
       passed: true,
       browser: name,
       version: browsers[1].version,
       codec,
       failFirst,
-      chunks,
+      runs,
       checks: [
         'configured automatic codec selection',
         'authorized codec-specific manifest',
-        'shared chunk output',
+        'shared chunk output from one long-running process',
         'exact Opus delivery',
         'paused seek',
         'cached rewind',
