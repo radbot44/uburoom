@@ -209,12 +209,13 @@ class uburoomAV1 {
       // refill, MSE would then remove dependent frames from that good chunk, so
       // bound the chunk. In order, the window would instead drop that last frame.
       this.buffer.appendWindowEnd = this.appended.has(index + 1) ? end : end + 0.1;
-      // Keep only this chunk's packets of the audio that started early. The margins
-      // cover WebM's millisecond timestamps around packet edges on the boundaries.
+      // Keep only this chunk's sound of the audio that started early. Browsers trim audio
+      // to the window start sample-exactly, so the chunk begins on the boundary: starting
+      // 2 ms early overlapped the previous chunk and clicked at every join (Chrome, Firefox).
       this.audio.timestampOffset = start - this.audioLead;
       this.audio.appendWindowStart = 0;
       this.audio.appendWindowEnd = end + 0.002;
-      this.audio.appendWindowStart = start - 0.002;
+      this.audio.appendWindowStart = start;
       const results = await Promise.allSettled([
         this.operation(this.buffer, () => this.buffer.appendBuffer(videoBytes)),
         this.operation(this.audio, () => this.audio.appendBuffer(audioBytes)),
