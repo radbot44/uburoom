@@ -35,7 +35,7 @@ Set these values in your private `config.yaml`:
 | `server.tls_cert` / `server.tls_key` | Certificate and key paths for uburoom's HTTPS listener. |
 | `access.discord` | Set `false` for a Plex-only installation; otherwise configure Discord below. |
 
-**Before turning on [shared Plex fallback](#shared-plex-fallback), check its access implications: it is off by default and, when enabled, may give viewers media access through the configured Plex account.**
+**Everyone uburoom admits can watch every library of every media source through that source's own account.** Choose who gets in with the [sign-in and access](#sign-in-and-access) settings, and give `plex.token` (or the Jellyfin user) only the libraries people may watch here.
 
 Open `https://your-origin/watch`. The health endpoint is `/health`. For a config file outside the checkout, run `node server/index.js --config /path/to/config.yaml`.
 
@@ -57,17 +57,15 @@ Do not start a second instance using your live credentials or database. Check si
 
 ## Sign-in and access
 
-Sign-in, permission to enter uburoom, Plex media access, and server administration are separate checks.
+Sign-in, permission to enter uburoom and server administration are separate checks. Being admitted is the only media gate: admitted people, guests included, browse and play every Plex, Jellyfin and local library with the source's own credential. A viewer's own Plex permissions play no part.
 
 | Setting | Behavior |
 | --- | --- |
 | `access.plex` / `access.discord` | Enable Plex and/or Discord login; both default to `true`. Discord login checks membership in the configured guild; standalone Plex login checks access to the pinned Plex server. Outside visitors without either membership need a `/join/<code>` room invite with `guests.enabled: true`. |
-| `access.require_plex: true` | Require each viewer's own access to the pinned Plex server and a library. Neither a password nor shared fallback satisfies this. |
-| `access.require_plex_in_activity: false` | Exempt **verified Discord Activities** from the personal-Plex entry requirement, not web visits or browser handoff. |
 | `secrets.entry_password` | Optional extra entry password alongside provider rules. Access lasts 12 hours and resets on restart; it does not grant admin access. |
 | `server.max_connections: 256` | Open room connections (one per browser tab or app window) accepted at once; 1–4096. Further connections are refused until one closes. |
 | `server.public_web_app: false` | Restrict playback to verified Discord Activity. Browser handoff remains available for account linking/management. |
-| `operator.discord_id` / `operator.plex_id` | Exact quoted provider account IDs authorized to open **Server settings** in the browser (the 19-key allowlist across Rooms, Directory and Transcoding). Saved edits write to `config.yaml` and require a manual restart to take effect. |
+| `operator.discord_id` / `operator.plex_id` | Exact quoted provider account IDs authorized to open **Server settings** in the browser (the 18-key allowlist across Rooms, Directory and Transcoding). Saved edits write to `config.yaml` and require a manual restart to take effect. |
 
 With both sign-in methods off, uburoom allows separate 24-hour anonymous browser logins without owner/admin rights; these are guest accounts with a random, changeable name, separate from room invites. Admission changes invalidate existing browser logins. `/auth/owner` supports the configured Discord owner's OAuth recovery, subject to the remaining admission rules.
 
@@ -82,27 +80,15 @@ Guests let a room's invite admit people who couldn't otherwise get in. Turn the 
 | `guests.default_allow` | `true` (default) turns on Allow guests in newly created rooms when guests are enabled. |
 | `guests.issuers` | Lowest server tier that may turn on guests in a room they host: `operator`, `admins`, `trusted` or `members` (default `admins`). Admin mode always counts. |
 | `rooms.trusted_discord_ids` / `trusted_plex_ids` / `trusted_discord_role_ids` | The trusted tier, between admins and everyone else. Exact quoted IDs, matched only against verified sign-ins. Trusted grants nothing else today. |
-| `guests.require_sign_in` | `true` makes every guest sign in with Discord or Plex. Required when `access.require_plex` is `true`, since being a guest never replaces personal Plex access. |
+| `guests.require_sign_in` | `true` makes every guest sign in with Discord or Plex. |
 | `guests.max_per_room` | Most guests in one room at once (1–50, default 10). |
 | `guests.session_hours` | How long a guest stays signed in before re-entering the code (1–720, default 24). |
 
-Guests are always participants: never hosts (All hosts mode skips them), never Admin mode, and they only see their room. Guests who don't sign in pick a name (prefilled with a random ubunym). It isn't verified, so the roster shows it in italics, and a guest can't take the name of someone signed in who is in the room. They watch Plex media through [shared fallback](#shared-plex-fallback) and are never reported to Plex.
+Guests are always participants: never hosts (All hosts mode skips them), never Admin mode, and they only see their room. Guests who don't sign in pick a name (prefilled with a random ubunym). It isn't verified, so the roster shows it in italics, and a guest can't take the name of someone signed in who is in the room. Like anyone admitted, they watch every library, and they are never reported to Plex.
 
 Turning Allow guests off keeps current guests. **Remove all guests** removes them all at once and makes a new code. Kicking a guest, or someone who joined a private room by invite, removes them and keeps them out until the code changes.
 
 See [accounts and access](accounts-and-access.md) for the authorization model.
-
-## Shared Plex fallback
-
-`plex.fallback_enabled` is **false by default**. When it is true and `access.require_plex: false`, admitted Discord members and room guests without a linked Plex account, or with confirmed lack of server membership, can use a fallback account's media access. Fallback does not grant standalone Plex admission. **That may expose libraries or items beyond the viewer's personal Plex permissions.**
-
-- Leave `plex.fallback_enabled: false` to require personal media entitlement.
-- Enable it only if you intend to share the fallback account's scope.
-- Set `plex.fallback_token` to a dedicated, restricted Plex account token to limit that scope. If blank, uburoom uses `plex.token`. To get that account's token, sign in at app.plex.tv as it in a private window and run `localStorage.myPlexAccessToken` in the browser console (F12). The token works only while that browser sign-in exists; signing out or removing the device from the account stops sharing. The startup log warns when sharing would use the owner's token.
-
-Fallback does not bypass `access.require_plex: true`. Revoked/expired credentials, Plex errors or outages, and item-level restrictions fail closed. Viewers already in a room keep their place during an outage, and the next answer from Plex applies any real denial; nobody new is admitted meanwhile. Personal entitlement takes priority. Shared access does not link the fallback identity to the viewer or write their personal Plex history.
-
-**Direct fallback** is a separate opt-in with stricter requirements; see [direct Plex delivery](#direct-plex-delivery).
 
 ## Plex delivery, reporting and transcoding
 
@@ -112,13 +98,13 @@ Fallback does not bypass `access.require_plex: true`. Revoked/expired credential
 
 For `auto`, configure `plex.client_url` as a trusted, viewer-reachable HTTPS origin belonging to your selected Plex server (no path/query). LAN clients use authenticated origin discovery or `plex.lan_client_url`. Browser reachability, CORS, range handling and decoding support still apply. Discord Activity, native-HLS-only clients, captions and local conversions retain their respective proxy/conversion paths; there is no direct-only mode.
 
-**Direct fallback** needs all three: `plex.fallback_enabled: true`, `plex.direct_fallback_enabled: true` and a dedicated `plex.fallback_token` verified as a **non-owner** Plex account. Blank, owner, ambiguous or unverifiable fallback credentials are rejected for direct delegation. Temporary Plex tokens are not restricted to the current movie or room; they can remain valid for up to 48 hours or until PMS restart, and revoking uburoom access may not revoke them immediately. Keep all tokens out of logs and persistent client storage.
+`auto` also needs `plex.direct_token`: a dedicated Plex account with access to your libraries that does **not** own the server. Browsers receive temporary tokens derived from it, never from `plex.token`, so with `auto` everyone watches through that account and sees what it can see. Startup rejects `auto` without it, a `direct_token` equal to `plex.token`, or one set with `proxy`; plex.tv must also confirm the account is not the owner before any token is issued, otherwise playback stays on the proxy. To get its token, sign in at app.plex.tv as that account in a private window and run `localStorage.myPlexAccessToken` in the browser console (F12). It works only while that browser sign-in exists; once it stops working, Plex media is unavailable until you replace it or switch back to `proxy`. Temporary Plex tokens are not restricted to the current movie or room; they can remain valid for up to 48 hours or until PMS restart, and revoking uburoom access may not revoke them immediately. Keep all tokens out of logs and persistent client storage.
 
 Technical details, failure budgets and provider boundaries: [Plex delivery](playback-reliability.md#direct-plex-delivery-hls-and-direct-file) and [Plex developer reference](https://developer.plex.tv/pms/).
 
 ### Reporting
 
-`plex.reporting_enabled: true` (default) reports active playback sessions to Plex for viewers with verified personal Plex credentials using a decoupled viewer session ID so individual viewer departures never stop shared HLS transcodes. Connected Plex accounts default to activity-only reporting (omitting timeline duration so playback appears in Now Playing without mutating personal resume offsets or watch history). `plex.reporting_watch_state: true` (default) allows viewers with connected Plex accounts to explicitly opt in to personal watch-state synchronization in player settings. Sponsored and guest viewers without personal Plex credentials remain local-only and never report to Plex.
+`plex.reporting_enabled: true` (default) reports active playback sessions to Plex for viewers with verified personal Plex credentials using a decoupled viewer session ID so individual viewer departures never stop shared HLS transcodes. Connected Plex accounts default to activity-only reporting (omitting timeline duration so playback appears in Now Playing without mutating personal resume offsets or watch history). `plex.reporting_watch_state: true` (default) allows viewers with connected Plex accounts to explicitly opt in to personal watch-state synchronization in player settings. Viewers without their own Plex sign-in, guests included, remain local-only and never report to Plex.
 
 ### Transcoding
 
@@ -148,7 +134,7 @@ At capacity, a conversion may wait briefly or reuse an existing compatible outpu
 | `api_key` | A key from the Jellyfin dashboard (API Keys). It is sent only as a request header to that server. |
 | `user` | A Jellyfin username. Libraries and parental limits follow this user, so give it only what people may watch here. |
 
-Jellyfin accounts are not linked to uburoom accounts: everyone uburoom admits, including guests in their room, watches through the configured user, and Jellyfin never becomes another way in. `access.require_plex` keeps its meaning as an entry rule. The server is remembered by its own id the first time it answers; a different server at the same address is refused.
+Jellyfin accounts are not linked to uburoom accounts: everyone uburoom admits, including guests in their room, watches through the configured user, and Jellyfin never becomes another way in. The server is remembered by its own id the first time it answers; a different server at the same address is refused.
 
 Original files play as they are, and files a browser cannot play need FFmpeg and a local output in `transcoding.outputs`: uburoom converts them itself and Jellyfin's transcoder is not used. When only the sound is the problem, or a viewer picks another audio track, the picture is copied untouched (HDR included) and only the chosen track is converted. Embedded subtitles are read from the file; external text subtitles (SRT, WebVTT, ASS) are offered as tracks and other external formats are left out. Nothing is reported back to Jellyfin: no play state, progress or watched marks. Collections, multiple versions of one item, intro and credit markers and personal Jellyfin sign-in are not supported. `npm run doctor` checks the address, key and user.
 
@@ -164,7 +150,7 @@ Original files play as they are, and files a browser cannot play need FFmpeg and
 | `parse_names` | `true` (default) reads each name as a film's title, year and edition, the way Plex reads file names: everything after the year (resolution, source, codec, release group) is dropped, so `65.2023.2160p.UHD.BluRay.x265-GROUP.mkv` is *65* (2023) and `Blade Runner 2049 (2017).mkv` is *Blade Runner 2049* (2017). Plex's `{edition-…}` marker sets the edition. A file without a year that is the only video in its folder takes the folder's name, as in `Heat (1995)/movie.mkv`. Nothing is looked up online. `false` shows each file name as it is. |
 | `type` | `movies` (default) or `shows`. A shows library groups episodes into shows and seasons the way Plex does: the show is the first folder inside the library (`Show (2005)/…`, its year taken from the name) or else the name before the episode number; `S01E02`, `s1e2`, `S01E02E03` or `1x02` give season and episode, and in a `Season 2` folder a name starting with a number (`03 - Title.mkv`) is that episode; `Specials` is season 0, and a file with no number is a special. The text after the number, up to the first release tag, is the episode's title. Pictures in a show's own folder (`poster.jpg`, `fanart.jpg`, `logo.png`) are the show's; otherwise its first episode's frame is used. Episodes step to their neighbours, whole shows and seasons queue in order (Specials only when asked), and a new episode shows in Recently added as its show. |
 
-Local media has no accounts of its own: everyone uburoom admits, including guests in their room, may browse and watch it, and it never becomes another way in. `access.require_plex` keeps its meaning as an entry rule. Viewers name a file only by an opaque token, never a path.
+Local media has no accounts of its own: everyone uburoom admits, including guests in their room, may browse and watch it, and it never becomes another way in. Viewers name a file only by an opaque token, never a path.
 
 FFprobe is required to read a file's duration and tracks. Files a browser cannot play as they are need FFmpeg and a local output in `transcoding.outputs`; there is no Plex transcode for local files. When only the sound is the problem, or a viewer picks another audio track, the picture is copied untouched (HDR included) and only the chosen track is converted, which costs little; Dolby Vision Profile 5 and video the browser cannot decode are still converted. Subtitle files beside a video that share its name (`Film.srt`, `Film.en.srt`, `Film.en.forced.ass`, `.vtt`, `.sup`, `.sub` with `.idx`) are offered as tracks. Folders are re-read at most once a minute. Pictures need FFmpeg. A picture file beside a video is used first: `Film-poster.jpg` (or `Film.jpg`), `Film-fanart.jpg`, `Film-landscape.jpg` and `Film-logo.png` beside `Film.mkv`, and in a film's own folder also `poster`, `folder`, `cover`, `fanart`, `backdrop`, `logo` and similar (`.jpg`, `.png` or `.webp`). Otherwise uburoom looks at 5%, 10%, 15% and 20% of the running time (never later, so nothing is spoiled) and uses the best-lit, most detailed of those frames, tone-mapping HDR (Dolby Vision Profile 5 gets none). Pictures are made ahead of time in the background, newest files first and one at a time, pausing while uburoom converts video for playback (and on demand, two at a time, for anything not yet made), and kept in `local-art` in the data folder (up to 256 MB, least recently shown removed first); nothing is ever written beside the media. Local libraries sort by title, release year, date added (the file's creation time), runtime and at random, filter by release year when `parse_names` is on, and their newest files join Media Home's Recently added. There are no collections and no genres; a shows library filters by its shows' years. `npm run doctor` checks each folder and the tools.
 
@@ -177,7 +163,7 @@ Create an application in the [Discord Developer Portal](https://discord.com/deve
 - For Activity, enable Activities, map the root to the uburoom HTTPS origin and verify it in a real Discord client.
 - Bot commands are no longer supported; rooms are controlled in the browser or Activity.
 
-Optional host-directory discovery can use Discord Server Members/Presence intents. `directory.expose_discord_members` defaults to `true`, and `directory.expose_plex_members` defaults to `false`. Directory results are not invitations or access grants. See [member directory](accounts-and-access.md#provider-directory-and-member-search).
+Optional host-directory discovery can use Discord Server Members/Presence intents. `directory.expose_discord_members` defaults to `true`. Directory results are not invitations or access grants. See [member directory](accounts-and-access.md#provider-directory-and-member-search).
 
 ### Publish rooms to Discord
 
@@ -241,7 +227,7 @@ Restrict access to `config.yaml`, tokens, databases, TLS keys and credential key
 
 - **Startup/config errors:** Check the YAML key names, duplicates, paths and startup output. Configuration is validated before opening state or contacting providers.
 - **HTTPS/WebSocket failures:** Check `server.public_url`, certificates, bind address and proxy forwarding of `/watch-socket`.
-- **Login works, playback fails:** Separate admission, Plex media entitlement, delivery reachability and browser codec support when diagnosing.
+- **Login works, playback fails:** Separate admission, delivery reachability and browser codec support when diagnosing.
 - **Transcoding/subtitles unavailable:** Check the selected FFmpeg/FFprobe binaries, encoders and actual decode behavior.
 
 See [development](development.md) for isolated checks and [testing](testing.md) for verified configurations and open release gates.

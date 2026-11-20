@@ -1,9 +1,12 @@
 'use strict';
 const net = require('node:net');
 const { isLocalAddress, normalizeAddress } = require('../client-address');
+const { DIRECT_CLIENT } = require('../plex-auth');
 
-// Direct credentials belong to one viewer, including consumers of shared HLS.
-// Credentials never enter shared room state, shared producers or persistent state.
+// Browsers get delegated tokens only from the dedicated non-owner account
+// (`plex.direct_token`), never from the owner's plex.token. Issued tokens belong to one
+// viewer, including consumers of shared HLS, and never enter shared room state, shared
+// producers or persistent state.
 class PlexDelivery {
   constructor(config, plex, plexAuth, resolve) {
     this.config = config;
@@ -17,15 +20,18 @@ class PlexDelivery {
     this.publicAddresses = new Set();
     this.rememberConfiguredPublicOrigin();
     this.discoveryJob = undefined;
-    if (this.config.plexDelivery?.mode === 'auto' && !this.discoveredLanOrigin && this.plexAuth) {
+    if (this.enabled && !this.discoveredLanOrigin && this.plexAuth) {
       queueMicrotask(() => {
         void this.discoverLanOrigin();
       });
     }
   }
-  /** Whether the owner turned direct delivery on; off, nothing here is asked. */
+  /** Whether the owner turned direct delivery on with a dedicated account; off, nothing here is asked. */
   get enabled() {
-    return this.config.plexDelivery?.mode === 'auto' && !!this.config.plexDelivery.clientUrl;
+    const delivery = this.config.plexDelivery;
+    return (
+      delivery?.mode === 'auto' && !!delivery.clientUrl && !!delivery.token && delivery.token !== this.config.plexToken
+    );
   }
   rememberPublicAddress(raw) {
     const ip = normalizeAddress(raw);
@@ -86,7 +92,7 @@ class PlexDelivery {
     }
     if (Date.now() < (this.lanCheckedUntil || 0)) return;
     if (this.discoveryJob) return this.discoveryJob;
-    const token = this.config.plexFallback?.token || this.config.plexToken;
+    const token = this.config.plexDelivery?.token;
     if (!token || !this.plexAuth) return;
     this.discoveryJob = (async () => {
       try {
@@ -166,14 +172,14 @@ class PlexDelivery {
     this.resources.set(scope, { job, until: Date.now() + 30000 });
     return job;
   }
-  async fallbackAllowed(scope) {
-    const { plexFallback: sharing, plexDelivery: delivery } = this.config;
+  /** Whether this scope is the dedicated account and plex.tv confirms it does not own the server. */
+  async dedicatedAllowed(scope) {
+    const token = this.config.plexDelivery?.token;
     if (
-      !delivery?.fallback ||
-      !sharing?.enabled ||
-      !sharing.token ||
-      sharing.token === this.config.plexToken ||
-      (scope.discoveryToken || scope.token) !== sharing.token
+      !this.enabled ||
+      scope?.clientId !== DIRECT_CLIENT ||
+      (scope.discoveryToken || scope.token) !== token ||
+      scope.token === this.config.plexToken
     )
       return false;
     // A different string alone does not prove a non-owner account.
@@ -203,8 +209,7 @@ class PlexDelivery {
   }
   async file(media, auth, valid, remoteAddress) {
     if (
-      this.config.plexDelivery?.mode !== 'auto' ||
-      !this.config.plexDelivery.clientUrl ||
+      !this.enabled ||
       auth.identity.activity ||
       media?.kind !== 'plex' ||
       media.format !== 'file' ||
@@ -241,8 +246,7 @@ class PlexDelivery {
   }
   async hlsPlan(scope, viewer, room, valid) {
     if (
-      this.config.plexDelivery?.mode !== 'auto' ||
-      !this.config.plexDelivery.clientUrl ||
+      !this.enabled ||
       viewer.activity !== false ||
       viewer.directProxyVersion === room.mediaVersion ||
       !scope ||
@@ -278,7 +282,7 @@ class PlexDelivery {
         return await Promise.race([
           timeout,
           (async () => {
-            if (scope.clientId === 'configured-fallback' && !(await this.fallbackAllowed(scope))) return;
+            if (!(await this.dedicatedAllowed(scope))) return;
             if (!(await current())) return;
             const plan = await this.credentials(scope, current, controller.signal, viewer.remoteAddress);
             return (await current()) ? plan : undefined;
@@ -301,9 +305,9 @@ class PlexDelivery {
   async candidate(media, auth, valid, signal, remoteAddress) {
     try {
       const scope = await this.resolve(auth.actor);
-      // The unscoped configured token is never a direct-play credential.
+      // The owner's configured token is never a direct-play credential; only the dedicated account is.
       if (!scope || scope === this.plex || scope !== media.provider) return;
-      if (scope.clientId === 'configured-fallback' && !(await this.fallbackAllowed(scope))) return;
+      if (!(await this.dedicatedAllowed(scope))) return;
       if (!(await valid())) return;
       const origin = await this.originFor(scope, remoteAddress);
       if (signal?.aborted || !(await valid())) return;
@@ -364,7 +368,7 @@ class PlexDelivery {
         typeof delegated.token !== 'string' ||
         !delegated.token.startsWith('transient-') ||
         delegated.token.length > 1024 ||
-        [scope.token, scope.discoveryToken, this.config.plexToken, this.config.plexFallback?.token].includes(
+        [scope.token, scope.discoveryToken, this.config.plexToken, this.config.plexDelivery?.token].includes(
           delegated.token,
         )
       )

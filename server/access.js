@@ -2,7 +2,8 @@
 
 /**
  * The admission gate every part of the server asks: Discord membership when Discord is
- * connected (`connect`), the account's Plex entitlement, and the entry policy.
+ * connected (`connect`), Plex server membership, and the entry policy. Admitted means
+ * every library of every media source.
  * Until Discord connects, the Discord side reports no members.
  * @param {{registry: any, config: any, plexAuth: any, entryPolicy: any}} services
  */

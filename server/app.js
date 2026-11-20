@@ -119,7 +119,7 @@ function createApp(config, options = {}) {
     const sessions = createSessions({ config, logger, registry, accounts, access, oauthFetch });
     const providers = new MediaProviders(
       [
-        plexProvider({ plex, config, registry, plexAuth, entryPolicy }),
+        plexProvider({ plex, config, registry, plexAuth }),
         jellyfinProvider({ config, pipeline, registry, logger, fetcher: jellyfinFetch }),
         localProvider({ config, pipeline, logger }),
       ].filter(Boolean),

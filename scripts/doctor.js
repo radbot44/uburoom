@@ -876,15 +876,6 @@ function checkGuestPasses(config) {
         'guests.issuers is trusted but no trusted members are listed, so only admins and the operator can turn on guests.',
       remediation: 'Add rooms.trusted_discord_ids, rooms.trusted_plex_ids or rooms.trusted_discord_role_ids.',
     });
-  if (!guests.requireSignIn && config.plexFallback?.enabled === false)
-    checks.push({
-      category: 'Access',
-      name: 'Guest playback',
-      status: 'warn',
-      message:
-        'Guests who do not sign in have no Plex access and plex.fallback_enabled is false, so they can join but not watch Plex media.',
-      remediation: 'Enable plex.fallback_enabled or set guests.require_sign_in: true.',
-    });
   return checks;
 }
 

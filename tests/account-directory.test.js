@@ -5,7 +5,6 @@ const { Accounts, credentialVault } = require('../server/accounts');
 const { RoomStore } = require('../server/room-store');
 const Policy = require('../server/room-policy');
 const { UserDirectory } = require('../server/user-directory');
-const { parseRoster } = require('../server/plex-directory');
 const { Hub } = require('../server/core');
 function fixture(t) {
   const registry = new Accounts(undefined, credentialVault());
@@ -216,18 +215,18 @@ test('live guests are discoverable without publishing unproven account reservati
   assert.equal((await directory.search('Guest')).results[0].userId, guest);
   assert.equal(registry.canonical(reserved.id).signedInAt, null);
 });
-test('Plex directory uses server-scoped accepted shares and real Plex subjects, excludes managed users, pending invites and secrets', () => {
-  const user = (id, extra, server) =>
-    `<User id="${id}" username="name${id}" title="A &amp; B" ${extra}>${server}</User>`;
-  const share = '<Server machineIdentifier="selected" pending="0" numLibraries="1" accessToken="private-token"/>';
-  const xml =
-    '<MediaContainer>' +
-    user('1', 'email="private"', share) +
-    user('2', 'restricted="1"', share) +
-    user('3', '', share.replace('pending="0"', 'pending="1"')) +
-    user('4', '', share.replace('selected', 'other')) +
-    '</MediaContainer>';
-  assert.deepEqual(parseRoster(xml, 'selected'), [{ subject: '1', name: 'A & B', alias: 'name1' }]);
-  assert.throws(() => parseRoster('<!DOCTYPE x>' + xml, 'selected'), /Unsupported/);
-  assert.throws(() => parseRoster('unexpected', 'selected'), /Unsupported/);
+test('the host directory never searches Plex members, even when an old setting names them', async t => {
+  const { registry } = fixture(t);
+  let asked = false;
+  const directory = new UserDirectory({
+    registry,
+    config: { directory: { discord: false, plex: true } },
+    plex: async () => {
+      asked = true;
+      return [{ subject: '555', name: 'Plex share' }];
+    },
+  });
+  assert.equal((await directory.search('Plex share')).results.length, 0);
+  assert.equal(asked, false);
+  await assert.rejects(directory.candidate('plex', '555'), { status: 403 });
 });

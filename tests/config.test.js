@@ -22,7 +22,7 @@ test('example YAML is usable, private inputs are absent and defaults preserve ex
   assert.deepEqual(config.trustedProxies, []);
   assert.equal(config.trustedProxyHeader, 'x-forwarded-for');
   assert.equal(config.plexToken, '');
-  assert.deepEqual(config.plexDelivery, { mode: 'proxy', clientUrl: '', lanClientUrl: '', fallback: false });
+  assert.deepEqual(config.plexDelivery, { mode: 'proxy', clientUrl: '', lanClientUrl: '', token: '' });
   assert.equal(config.botToken, '');
   assert.deepEqual(config.channels, []);
   assert.deepEqual(config.roomPermissions, Policy.policy());
@@ -89,14 +89,16 @@ rooms:
   assert.throws(() => configPath(['--config=a', '--config=b']), /once/);
 });
 
-test('direct Plex delivery requires an explicit secure origin and cannot inherit owner fallback credentials', () => {
+test('direct Plex delivery requires an explicit secure origin and a dedicated non-owner token', () => {
+  const direct = { url: 'http://plex.example', token: 'owner', direct_token: 'dedicated' };
   assert.deepEqual(
-    normalizeConfig({ plex: { delivery: 'auto', client_url: 'https://plex.example:32400/' } }).plexDelivery,
-    { mode: 'auto', clientUrl: 'https://plex.example:32400', lanClientUrl: '', fallback: false },
+    normalizeConfig({ plex: { ...direct, delivery: 'auto', client_url: 'https://plex.example:32400/' } }).plexDelivery,
+    { mode: 'auto', clientUrl: 'https://plex.example:32400', lanClientUrl: '', token: 'dedicated' },
   );
   assert.deepEqual(
     normalizeConfig({
       plex: {
+        ...direct,
         delivery: 'auto',
         client_url: 'https://plex.example:32400',
         lan_client_url: 'https://plex-lan.example:32400/',
@@ -106,33 +108,56 @@ test('direct Plex delivery requires an explicit secure origin and cannot inherit
       mode: 'auto',
       clientUrl: 'https://plex.example:32400',
       lanClientUrl: 'https://plex-lan.example:32400',
-      fallback: false,
+      token: 'dedicated',
     },
   );
-  for (const plex of [
-    { delivery: 'direct' },
-    { delivery: 'auto' },
-    { client_url: 'http://plex.example' },
-    { client_url: 'https://user:secret@plex.example' },
-    { client_url: 'https://plex.example/path' },
-    { delivery: 'auto', client_url: 'https://plex.example:32400', lan_client_url: 'http://plex-lan.example' },
-    { delivery: 'auto', client_url: 'https://plex.example:32400', lan_client_url: 'https://plex-lan.example/path' },
-    { direct_fallback_enabled: true },
-    { token: 'owner', fallback_token: 'owner', direct_fallback_enabled: true },
-    { fallback_token: 'dedicated', fallback_enabled: false, direct_fallback_enabled: true },
-  ])
-    assert.throws(() => normalizeConfig({ plex }));
-  assert.equal(
-    normalizeConfig({
-      plex: {
-        url: 'http://plex.example',
-        fallback_enabled: true,
-        fallback_token: 'dedicated',
-        direct_fallback_enabled: true,
+  for (const [plex, message] of [
+    [{ delivery: 'direct' }],
+    [{ ...direct, delivery: 'auto' }, /client_url/],
+    [{ client_url: 'http://plex.example' }],
+    [{ client_url: 'https://user:secret@plex.example' }],
+    [{ client_url: 'https://plex.example/path' }],
+    [
+      {
+        ...direct,
+        delivery: 'auto',
+        client_url: 'https://plex.example:32400',
+        lan_client_url: 'http://plex-lan.example',
       },
-    }).plexDelivery.fallback,
-    true,
-  );
+    ],
+    [
+      {
+        ...direct,
+        delivery: 'auto',
+        client_url: 'https://plex.example:32400',
+        lan_client_url: 'https://plex-lan.example/path',
+      },
+    ],
+    // auto needs the dedicated account, never the owner's token, and the token means nothing without auto.
+    [
+      { url: 'http://plex.example', token: 'owner', delivery: 'auto', client_url: 'https://plex.example' },
+      /direct_token is required/,
+    ],
+    [
+      {
+        url: 'http://plex.example',
+        token: 'owner',
+        direct_token: 'owner',
+        delivery: 'auto',
+        client_url: 'https://plex.example',
+      },
+      /non-owner/,
+    ],
+    [{ ...direct }, /only with plex.delivery: 'auto'/],
+    [{ direct_token: 'dedicated', delivery: 'auto', client_url: 'https://plex.example' }, /plex.url/],
+  ])
+    assert.throws(() => normalizeConfig({ plex }), message);
+  // The old shared fallback settings are gone.
+  for (const plex of [{ fallback_enabled: true }, { fallback_token: 'x' }, { direct_fallback_enabled: true }])
+    assert.throws(() => normalizeConfig({ plex }), /Unknown|unknown/);
+  for (const access of [{ require_plex: true }, { require_plex_in_activity: false }])
+    assert.throws(() => normalizeConfig({ access }), /Unknown|unknown/);
+  assert.throws(() => normalizeConfig({ directory: { expose_plex_members: true } }), /Unknown|unknown/);
 });
 
 test('malformed YAML and unsupported structures never echo secret source text', () => {
@@ -183,18 +208,12 @@ test('malformed YAML and unsupported structures never echo secret source text', 
     { server: { public_url: 'https://example.com/path' } },
     { plex: { url: 'file:///secret' } },
     { storage: { credential_key_file: path.join(ROOT, 'key') } },
-    { access: { require_plex_in_activity: 'false' } },
     { guests: { default_allow: 'false' } },
     { access: { discord: false }, rooms: { single_room: true } },
     { rooms: { single_room_leader_plex_id: 'alice' } },
   ]) {
     assert.throws(() => normalizeConfig(value));
   }
-  assert.equal(normalizeConfig({}).accessPolicy.requirePlexInActivity, true);
-  assert.equal(
-    normalizeConfig({ access: { require_plex_in_activity: false } }).accessPolicy.requirePlexInActivity,
-    false,
-  );
   assert.equal(normalizeConfig({}).guests.defaultAllow, true);
   assert.equal(normalizeConfig({ guests: { default_allow: false } }).guests.defaultAllow, false);
   assert.equal(

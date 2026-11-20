@@ -533,9 +533,7 @@ function watchHttp({
           auth.pending || config.accessPolicy?.publicWeb === false || data.account,
         );
         handoff.get(issued.id).connectPlex = Boolean(
-          ((auth.pending && config.accessPolicy?.requirePlex) || data.connectPlex) &&
-          watch.providers.configured &&
-          config.accessPolicy?.plex !== false,
+          data.connectPlex && watch.providers.configured && config.accessPolicy?.plex !== false,
         );
         json(res, 200, {
           id: issued.id,

@@ -84,7 +84,7 @@ test('YAML editor preserves comments/private settings, protects backup/replaceme
     changes: {
       'rooms.max_members': 12,
       'rooms.viewer_permissions': ['playPause', 'seek'],
-      'directory.expose_plex_members': true,
+      'directory.expose_discord_members': false,
       'transcoding.encoder': 'software',
       'transcoding.qualities': [[480, 1]],
       'transcoding.allow_original': false,
@@ -116,7 +116,7 @@ test('YAML editor preserves comments/private settings, protects backup/replaceme
   assert.equal(after.roomLimits.maxMembers, 12);
   assert.equal(running.roomLimits.maxMembers, 20);
   assert.equal(after.roomPermissions.viewer.seek, true);
-  assert.equal(after.directory.plex, true);
+  assert.equal(after.directory.discord, false);
   assert.equal(after.transcoding.encoder, 'software');
   assert.equal(await fs.promises.readFile(result.backupPath, 'utf8'), source);
   if (process.platform === 'win32') {
@@ -164,7 +164,7 @@ test('YAML editor rejects forbidden/invalid edits and validates the entire file 
     { 'transcoding.max_jobs': 0 },
     { 'transcoding.encoder': 'private-invalid-value' },
     { 'rooms.viewer_permissions': ['manageHosts'] },
-    { 'directory.expose_plex_members': null },
+    { 'directory.expose_discord_members': null },
     { 'transcoding.allow_original': false, 'transcoding.qualities': [] },
   ]) {
     await assert.rejects(
@@ -172,6 +172,9 @@ test('YAML editor rejects forbidden/invalid edits and validates the entire file 
       error => error.code === 'CONFIG_INVALID' && !error.message.includes('private-invalid-value'),
     );
   }
+  await assert.rejects(editor.save({ revision, changes: { 'directory.expose_plex_members': true } }), {
+    code: 'CONFIG_FORBIDDEN',
+  });
   await assert.rejects(editor.save(null), { code: 'CONFIG_INVALID' });
   assert.equal(await fs.promises.readFile(file, 'utf8'), source);
   // Even untouched invalid settings must prevent persistence, with parser and

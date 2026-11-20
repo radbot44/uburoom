@@ -12,7 +12,6 @@ const KEYS = [
   'operator.discord_id',
   'operator.plex_id',
   'directory.expose_discord_members',
-  'directory.expose_plex_members',
   ...Object.keys(require('./room-limits').SETTINGS).map(key => 'rooms.' + key),
   'jellyfin.url',
   'jellyfin.api_key',
@@ -20,12 +19,10 @@ const KEYS = [
   'plex.url',
   'plex.token',
   'plex.machine_identifier',
-  'plex.fallback_enabled',
-  'plex.fallback_token',
   'plex.delivery',
   'plex.client_url',
   'plex.lan_client_url',
-  'plex.direct_fallback_enabled',
+  'plex.direct_token',
   'plex.reporting_enabled',
   'plex.reporting_watch_state',
   'discord.bot_token',
@@ -71,8 +68,6 @@ const KEYS = [
   'secrets.entry_password',
   'access.discord',
   'access.plex',
-  'access.require_plex',
-  'access.require_plex_in_activity',
   'transcoding.policy',
   'transcoding.encoder',
   'transcoding.outputs',
@@ -254,8 +249,6 @@ function normalizeConfig(
   config.accessPolicy = {
     discord: boolean('access.discord', true),
     plex: boolean('access.plex', true),
-    requirePlex: boolean('access.require_plex', false),
-    requirePlexInActivity: boolean('access.require_plex_in_activity', true),
     password: get('secrets.entry_password'),
     publicWeb: boolean('server.public_web_app', true),
   };
@@ -264,7 +257,6 @@ function normalizeConfig(
     throw new Error('operator.discord_id must be a quoted Discord account ID');
   if (config.serverOperator.plexId && !/^\d{1,20}$/.test(config.serverOperator.plexId))
     throw new Error('operator.plex_id must be a quoted Plex account ID');
-  config.plexFallback = { enabled: boolean('plex.fallback_enabled', false), token: get('plex.fallback_token') };
   // Folders of videos on this machine. Each library keeps its id for as long as its
   // queue entries and resume positions should survive, wherever its folder moves.
   const libraries = value.local_media?.libraries ?? [];
@@ -342,7 +334,9 @@ function normalizeConfig(
     mode: choice('plex.delivery', 'proxy', ['proxy', 'auto']),
     clientUrl: get('plex.client_url'),
     lanClientUrl: get('plex.lan_client_url'),
-    fallback: boolean('plex.direct_fallback_enabled', false),
+    // The dedicated non-owner Plex account everyone watches through when delivery is direct,
+    // because browsers receive tokens derived from it. Never the owner's plex.token.
+    token: get('plex.direct_token'),
   };
   if (config.plexDelivery.clientUrl) {
     let client;
@@ -382,16 +376,16 @@ function normalizeConfig(
   }
   if (config.plexDelivery.mode === 'auto' && !config.plexDelivery.clientUrl)
     throw new Error('plex.client_url is required for automatic direct delivery');
-  if (
-    config.plexDelivery.fallback &&
-    (!config.plexFallback.enabled || !config.plexFallback.token || config.plexFallback.token === config.plexToken)
-  )
-    throw new Error('Direct fallback requires enabled sharing and a dedicated non-owner plex.fallback_token');
+  if (config.plexDelivery.mode === 'auto' && !config.plexDelivery.token)
+    throw new Error('plex.direct_token is required for automatic direct delivery');
+  if (config.plexDelivery.token && config.plexDelivery.mode !== 'auto')
+    throw new Error("plex.direct_token is used only with plex.delivery: 'auto'");
+  if (config.plexDelivery.token && config.plexDelivery.token === config.plexToken)
+    throw new Error('plex.direct_token must belong to a dedicated non-owner Plex account, not plex.token');
   config.singleRoom = boolean('rooms.single_room', false);
   config.pauseOnBuffering = boolean('rooms.pause_on_buffering', false);
   config.directory = {
     discord: boolean('directory.expose_discord_members', true),
-    plex: boolean('directory.expose_plex_members', false),
   };
   config.roomLimits = require('./room-limits').configuration(value.rooms);
   config.singleRoomLeaderPlexId = get('rooms.single_room_leader_plex_id');
@@ -487,14 +481,9 @@ function normalizeConfig(
     (a, b) => (b.height || Infinity) - (a.height || Infinity) || (b.bitrate || Infinity) - (a.bitrate || Infinity),
   );
   if (!config.transcoding.qualities.length) throw new Error('Offer Original or at least one transcoding quality');
-  if (config.accessPolicy.requirePlex && !config.accessPolicy.plex)
-    throw new Error('access.require_plex requires access.plex');
-  if (config.accessPolicy.requirePlex && !config.plexToken)
-    throw new Error('access.require_plex requires configured Plex credentials');
   if (config.accessPolicy.password.length > 1024)
     throw new Error('secrets.entry_password must contain at most 1024 characters');
-  if ((config.accessPolicy.requirePlex || config.plexFallback.token) && !config.plexUrl)
-    throw new Error('Plex access policy requires plex.url');
+  if (config.plexDelivery.token && !config.plexUrl) throw new Error('plex.direct_token requires plex.url');
   if (
     !config.accessPolicy.publicWeb &&
     (!config.accessPolicy.discord || !config.clientId || !config.clientSecret || !config.ownerId)
@@ -556,10 +545,6 @@ function normalizeConfig(
     sessionHours: whole('session_hours', 24, 1, 720),
   };
   config.events = { schedulers: choice('events.schedulers', 'trusted', Policy.TIERS) };
-  // Unverified guests cannot hold personal Plex access, so a server that
-  // requires it can only admit guests who sign in.
-  if (config.guests.enabled && config.accessPolicy.requirePlex && !config.guests.requireSignIn)
-    throw new Error('guests.require_sign_in must be true when access.require_plex is true');
   if (config.guests.enabled && !config.accessPolicy.publicWeb)
     throw new Error('Guests need the public web app (server.public_web_app: true)');
   return config;

@@ -8,18 +8,18 @@ Uburoom's account, administration, and access architecture enforces layered auth
 | --- | --- |
 | Identity | Canonical UUID plus verified provider subjects; names grant nothing |
 | Sign-in | Configured Plex/Discord methods; both off allows anonymous guest visitors |
-| Room invite | One code per room; reaches private rooms and admits guests where the room allows them; never a role, Admin mode or personal Plex access |
+| Room invite | One code per room; reaches private rooms and admits guests where the room allows them; never a role or Admin mode |
 | Admission | Current provider/Plex/password rules and verified Activity context |
-| Media | Current personal Plex entitlement or explicitly configured sponsorship |
-| Room roles | Viewer, host, creator and explicit Admin override; none grants Plex entitlement |
-| Server operator | Verified Discord or Plex subject explicitly selected in YAML; independent of room roles and media entitlement |
-| Reporting | Actual verified Plex subject, independently of the source/encoder credential |
+| Media | Admitted: every library of every source, through the source's own credential |
+| Room roles | Viewer, host, creator and explicit Admin override; none changes media access |
+| Server operator | Verified Discord or Plex subject explicitly selected in YAML; independent of room roles and admission |
+| Reporting | Actual verified Plex subject with server access, independently of the source/encoder credential |
 
-**Approved sharing policy:** Discord sign-in requires membership in the configured guild; standalone Plex sign-in requires access to the pinned Plex server. Outside visitors without either membership enter through `/join/<code>` room invites when `guests.enabled: true`. With `access.require_plex: false` and `plex.fallback_enabled: true` (off by default), fallback applies to admitted Discord members and room guests without an attached Plex account or with confirmed server nonmembership. Removing a Plex link can therefore permit configured sponsorship. This is an explicit operator choice, not personal entitlement. Revoked/expired credentials, provider errors and item denials fail closed. Dedicated non-owner direct delegation is a separate opt-in; see [operator settings](self-hosting.md#shared-plex-fallback).
+**Approved sharing policy ([media sources](media-sources.md)):** Discord sign-in requires membership in the configured guild; standalone Plex sign-in requires access to the pinned Plex server. Outside visitors without either membership enter through `/join/<code>` room invites when `guests.enabled: true`. Everyone admitted, guests included, browses and plays every Plex, Jellyfin and local library through the source's own credential; a viewer's own Plex permissions, links and denials play no part. With `plex.delivery: 'auto'`, that credential is the dedicated non-owner `plex.direct_token` account, because browsers receive tokens derived from it; see [delivery](self-hosting.md#delivery).
 
-Provider-confirmed admission lasts five minutes between checks, so a removed viewer can stay up to that long. After that only the provider's own denial removes an admitted viewer; one that gives no answer is asked again every 30 seconds, for up to 12 hours since the last confirmation. Nobody new is admitted without an answer, and a linked-provider or Plex-requirement change starts over.
+Provider-confirmed admission lasts five minutes between checks, so a removed viewer can stay up to that long. After that only the provider's own denial removes an admitted viewer; one that gives no answer is asked again every 30 seconds, for up to 12 hours since the last confirmation. Nobody new is admitted without an answer, and a linked-provider change starts over.
 
-Recheck authority around awaited work across sockets, catalogs, artwork, captions, queues and media. Planned canonical deny/revocation rules must take precedence over alternate providers and passes. Finer-grained source/library/item/audience grants remain future work; do not describe them as implemented.
+Recheck authority around awaited work across sockets, catalogs, artwork, captions, queues and media. Planned canonical deny/revocation rules must take precedence over alternate providers and passes. There are no per-viewer source, library or item grants.
 
 ## Accounts, names and identity
 
@@ -30,12 +30,11 @@ Recheck authority around awaited work across sockets, catalogs, artwork, caption
 
 ## Provider directory and member search
 
-`directory.expose_discord_members: true` and `directory.expose_plex_members: false` are the defaults. Previously authenticated users remain searchable locally even when external provider discovery is disabled. Discovery never grants sign-in, room entry, or media access.
+`directory.expose_discord_members: true` is the default; Discord is the only external member source (the Plex member directory was removed). Previously authenticated users remain searchable locally even when Discord discovery is disabled. Discovery never grants sign-in, room entry, or media access.
 
 | Provider | Boundary |
 | --- | --- |
 | Discord | Configured guild only; exclude bots and bound pagination. Request optional member/presence intents only when application flags permit; missing capabilities warn without disabling ordinary operations. Read presence only from a ready shard. |
-| Plex | Configured owner token and pinned server's accepted library shares only. Exclude managed profiles, pending invitations, other servers, emails and shared-user tokens. Bound responses to 4 MiB; reject external XML entities. Unsupported privilege or payload shape reports unavailable. |
 
 Search debounce is 250 ms in the client; shared provider success cache is 60 seconds and failure backoff is 15 seconds. Provider failure leaves local account search available with an informative notice.
 
@@ -47,7 +46,7 @@ Results are deduplicated by canonical UUID and ranked across four priority group
 3. Previously signed-in accounts.
 4. External provider members who have never signed in.
 
-Within groups 3 and 4, positively observed Discord presence ranks first, followed by alphabetical name order. Unknown presence is not treated as offline; Plex presence is not queried. Authenticated sockets are deduplicated by canonical UUID, separately from reconnect reservations.
+Within groups 3 and 4, positively observed Discord presence ranks first, followed by alphabetical name order. Unknown presence is not treated as offline. Authenticated sockets are deduplicated by canonical UUID, separately from reconnect reservations.
 
 ### Pending host assignments
 
@@ -55,11 +54,11 @@ Known accounts receive immediate UUID assignments in `watch_room_hosts`. Other t
 
 ## Configuration and administration
 
-Set `operator.discord_id` and/or `operator.plex_id` to exact quoted provider account IDs in private YAML, then restart. Either matching **verified** identity on the authenticated account grants server-operator authority; blank or omitted settings grant none. Names, manual pending assignments, `discord.owner_id`, room administrators/owners and the owner of `plex.token` grant no implicit operator authority. Operator status does not grant room permissions, admission or Plex media entitlement.
+Set `operator.discord_id` and/or `operator.plex_id` to exact quoted provider account IDs in private YAML, then restart. Either matching **verified** identity on the authenticated account grants server-operator authority; blank or omitted settings grant none. Names, manual pending assignments, `discord.owner_id`, room administrators/owners and the owner of `plex.token` grant no implicit operator authority. Operator status does not grant room permissions or admission.
 
 The reusable server check is `isServerOperator(registry, config, userId)` in `server/operator-policy.js`. Call it with the canonical UUID from a current authenticated server session and recheck after awaited work before an administration mutation. It reads current verified registry identities, so unlinking the configured identity removes that authority unless the other configured identity still matches. Existing owner Admin account matching retains its current authorization. The browser Account dialog uses the server-derived `serverOperator` capability to show **Server settings**, independently of Admin mode; Activity does not expose this entry.
 
-`GET /api/operator/settings` uses the authenticated browser session and returns `401` without a valid session or `403` for a nonoperator. Its noncacheable response has `source: 'running'` and an allowlisted `settings` object covering access policy, room limits/default permissions, directory visibility and transcoding policy/quality choices. It reads the running configuration, not pending YAML edits. Credentials, passwords, provider/account IDs, endpoints and paths are excluded. Session validity and operator authority are rechecked after persistence waits. Playback admission/media entitlement remain independent; no restart/recovery controls are implemented.
+`GET /api/operator/settings` uses the authenticated browser session and returns `401` without a valid session or `403` for a nonoperator. Its noncacheable response has `source: 'running'` and an allowlisted `settings` object covering access policy, room limits/default permissions, directory visibility and transcoding policy/quality choices. It reads the running configuration, not pending YAML edits. Credentials, passwords, provider/account IDs, endpoints and paths are excluded. Session validity and operator authority are rechecked after persistence waits. Playback admission remains independent; no restart/recovery controls are implemented.
 
 Internal YAML persistence uses `createConfigEditor(selectedPath)` in `server/config-editor.js`; omitted paths use the existing `--config` selection. `read()` returns a file revision and nonsecret settings (`source: 'file'`); `readEditable()` limits this to editable dotted YAML keys. `save({revision, changes})` accepts only the existing allowlist for room capacity/default permissions, directory visibility and transcoding. Access policy, single-room mode, retention/history deletion, identities, credentials, connections and paths are excluded. The complete file is validated relative to its directory; YAML comments and unrelated values are retained, though formatting and replaced-list comment placement can change. Saving leaves running settings unchanged and requires a later explicit restart.
 
@@ -71,10 +70,10 @@ Saves are serialized within the process, retain a verified backup in a protected
 
 ### Administration boundaries and configuration safety
 
-- Private `config.yaml` remains the sole configuration authority. The 19-key allowlist in `server/config-editor.js` (Rooms, Directory and Transcoding) is the complete browser-editable scope; access policy, single-room mode, retention/history deletion, operator IDs, credentials, connections and paths remain YAML-only.
+- Private `config.yaml` remains the sole configuration authority. The 18-key allowlist in `server/config-editor.js` (Rooms, Directory and Transcoding) is the complete browser-editable scope; access policy, single-room mode, retention/history deletion, operator IDs, credentials, connections and paths remain YAML-only.
 - Saving never exposes secret-bearing YAML content, creates competing stores, implicitly restarts services or alters provider registration.
 - Operators can edit the supported settings with complete-file validation and revision conflict rejection. Room Admin mode is not global configuration authority.
-- Ordinary viewers cannot administer the server; creators, explicit hosts, All hosts and room Admin mode grant no Plex entitlement. Detected provider/item denial rejects existing media/caption grants, including subtitle windows, without owner-token fallback. Provider checks cache for up to 30 seconds and item checks for 3 seconds; active proxy streams recheck every 2 seconds (subtitle resources every 1 second). Already-issued direct Plex URLs remain subject to PMS enforcement.
+- Ordinary viewers cannot administer the server; creators, explicit hosts, All hosts and room Admin mode change no media access. Losing admission rejects existing media/caption grants, including subtitle windows. Provider checks cache for up to 30 seconds and item checks for 3 seconds; active proxy streams recheck every 2 seconds (subtitle resources every 1 second). Already-issued direct Plex URLs remain subject to PMS enforcement.
 
 ## Account linking and unlinking safety
 
@@ -93,7 +92,7 @@ Operational backup and restoration procedures are defined in [retaining state](u
 
 ## Discord Activity and browser handoff
 
-Preserve one-use expiring handoff authorization, source-grant/browser binding and confirmation for an existing browser-account mismatch. Carry the same account and current policy into the browser. The Activity exception to required Plex access never exempts browser entry; Activity-only installations permit browser account management, not browser playback.
+Preserve one-use expiring handoff authorization, source-grant/browser binding and confirmation for an existing browser-account mismatch. Carry the same account and current policy into the browser. Activity admission never exempts browser entry; Activity-only installations permit browser account management, not browser playback.
 
 Further Plex-only/Activity association work must bind fresh Plex proof to the exact pending attempt and distinguish temporary context from permanent linking. Discord context alone cannot silently enroll a login, enable a disabled provider or grant media access.
 
@@ -106,7 +105,7 @@ Product reporting architecture in `server/plex-reporting.js` decouples local vie
 | Identifier | Purpose |
 | --- | --- |
 | Verified Plex token/subject | Personal reporting authority |
-| Source/producer credential | Entitlement for upstream bytes; may differ from consumer |
+| Source/producer credential | Reads upstream bytes for every admitted viewer; never a personal identity |
 | `X-Plex-Client-Identifier` | Actual viewer client |
 | `X-Plex-Session-Identifier` | Playback occurrence, consistent across decision/start/timeline |
 | Transcode session parameter | Encoder job; distinct from client and occurrence |
@@ -121,7 +120,7 @@ Product reporting architecture in `server/plex-reporting.js` decouples local vie
 - Check current login authority independently of a control socket's liveness, plus room/media eligibility and personal Plex credentials. A closed socket alone does not revoke bounded reporting continuity. Queued reports carry their attachment generation; stale authorization results cannot end a newer attachment. Terminal dispatch settles before a replacement occurrence starts. Authorization loss never falls back to source/owner credentials.
 - **Activity-only reporting and duration omission:** Users with connected Plex accounts default to activity-only reporting (`duration` is omitted from `/:/timeline` queries), keeping playback visible in Now Playing without mutating personal view offsets or play history. Personal watch-state synchronization requires explicit opt-in.
 - **Address forwarding risk and deferred status:** Address forwarding (`X-Forwarded-For`) remains deferred. If PMS uses a forwarded viewer address as its remote address, uburoom viewers can be reclassified by PMS as remote streams, subjecting them to remote bandwidth budgets, per-user stream limits, and transcoding ceilings. Because shared playback relies on coordinated delivery, forwarding viewer IPs carries operational risk of PMS throttling or stream denial.
-- Track sponsored viewers locally. Their source credential creates no personal Plex identity; never report or write owner history for guests without personal Plex accounts.
+- Track viewers without their own Plex sign-in locally. The source credential creates no personal Plex identity; never report or write owner history for them.
 
 ## Room invites and guests
 
@@ -129,7 +128,7 @@ Configuration options for invites and guests are in [self-hosting](self-hosting.
 
 ### Server tiers and trusted members
 
-Server-wide standing is organized into four tiers: operator > admins > trusted > members (`RoomPolicy.serverTier`). The trusted tier sits between admins and members, configured via `rooms.trusted_discord_ids`, `rooms.trusted_plex_ids`, and `rooms.trusted_discord_role_ids`. It matches only verified provider identities and grants no Admin mode, room rights, server admission, or Plex media entitlement; its designated function is qualifying users to allow guests under `guests.issuers`.
+Server-wide standing is organized into four tiers: operator > admins > trusted > members (`RoomPolicy.serverTier`). The trusted tier sits between admins and members, configured via `rooms.trusted_discord_ids`, `rooms.trusted_plex_ids`, and `rooms.trusted_discord_role_ids`. It matches only verified provider identities and grants no Admin mode, room rights or server admission; its designated function is qualifying users to allow guests under `guests.issuers`.
 
 ### Room invite architecture
 
@@ -144,6 +143,6 @@ Every room has exactly one active invite code: two six-letter ubumfa words separ
   - Remove all guests terminates every guest session in the room and rerolls the invite code.
   - Blocks in `watch_room_invite_blocks` expire when the room invite code is rerolled. All removals emit the kick notice, terminate the session, and close the socket.
 - **Guest session boundaries:** Guest sessions see only their assigned room, cannot create rooms or enter Admin mode, cannot modify the invite, and are treated as viewers for every capability. Room records list current guests in `guests`, which the shared role check treats as viewers even under All hosts; host assignment rejects them. Private rooms admit leaders, hosts, invited members, and current guests (`RoomPolicy.admitted`). Reopening a closed room remains restricted to leaders, assigned hosts, and administrators; a guest whose room is closed is notified that it is unavailable.
-- Guests replace guild membership, Plex server membership, and the entry password, but never required personal Plex access; configuration validation requires `guests.require_sign_in` when `access.require_plex` is enabled.
-- Guest names are unverified, adhere to ordinary display name rules (1–80 characters, NFC), and cannot collide with the name of a signed-in person present in the room. Guest accounts (`users.guest = 1`) are excluded from host directory search, cannot link a provider (signing in starts a separate account and replaces the guest session), are never reported to Plex, and watch only through configured sponsorship. Anonymous visitors (when both sign-in methods are off) are also guest accounts. Unused guest accounts and their local history are deleted after one minute of disuse.
+- Guests replace guild membership, Plex server membership, and the entry password for their room.
+- Guest names are unverified, adhere to ordinary display name rules (1–80 characters, NFC), and cannot collide with the name of a signed-in person present in the room. Guest accounts (`users.guest = 1`) are excluded from host directory search, cannot link a provider (signing in starts a separate account and replaces the guest session), are never reported to Plex, and like anyone admitted watch every library. Anonymous visitors (when both sign-in methods are off) are also guest accounts. Unused guest accounts and their local history are deleted after one minute of disuse.
 - Invite attempts are rate-limited per IP address. Codes are low-secrecy join codes, comparable to a party game's room code, and may appear in request logs. Registered-account conversion (retaining guest history after signing in) is not implemented.

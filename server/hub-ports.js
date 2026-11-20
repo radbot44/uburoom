@@ -1,7 +1,6 @@
 'use strict';
 const RoomPolicy = require('./room-policy');
 const { UserDirectory } = require('./user-directory');
-const { plexDirectory } = require('./plex-directory');
 
 /**
  * What the hub calls out to, built from the services it needs. `hub` and `rooms` are read
@@ -38,7 +37,6 @@ function createHubPorts({
     config,
     discord: () => access.directory(),
     discordOnline: subject => access.discordOnline(subject),
-    plex: () => plexDirectory(plexAuth),
   });
   const ports = {
     logger,

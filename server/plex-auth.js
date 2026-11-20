@@ -12,6 +12,8 @@ class PlexAccessError extends Error {
 // every device) or that uburoom no longer holds. Only signing in to Plex again fixes it.
 const RECONNECT_PLEX =
   'Your Plex sign-in has expired or was revoked, for example by a Plex password change. Reconnect Plex to continue.';
+/** The client id the dedicated direct-delivery account's scope is opened with. */
+const DIRECT_CLIENT = 'configured-direct';
 function plexReconnectError(message = RECONNECT_PLEX) {
   return Object.assign(new PlexAccessError(message, true), { status: 403, reconnect: 'plex' });
 }
@@ -95,13 +97,8 @@ class PlexAuth {
     try {
       await this.validate(credential);
     } catch (error) {
-      if (!(
-        this.config.accessPolicy &&
-        !this.config.accessPolicy.requirePlex &&
-        (this.config.plexFallback?.enabled || this.config.guests?.enabled) &&
-        error.noServerAccess
-      ))
-        throw error;
+      // Someone outside the server may still sign in to use a room invite as a guest.
+      if (!(this.config.accessPolicy && this.config.guests?.enabled && error.noServerAccess)) throw error;
     }
     return { subject: String(profile.id), name, credential };
   }
@@ -183,34 +180,39 @@ class PlexAuth {
     scoped.invalidateAccess?.();
     return scoped;
   }
-  async fallback() {
-    const token = this.config.plexFallback?.token;
-    if (!token) return this.plex;
-    if (this.fallbackCache?.token === token && this.fallbackCache.until > Date.now()) return this.fallbackCache.plex;
-    if (this.fallbackInflight?.token === token) return this.fallbackInflight.job;
+  /**
+   * The server as the dedicated direct-delivery account (`plex.direct_token`) sees it.
+   * Everyone admitted watches through it when delivery is direct; it is never the owner token.
+   */
+  async dedicated() {
+    const token = this.config.plexDelivery?.token;
+    if (!token || token === this.config.plexToken)
+      throw new PlexAccessError('Direct delivery has no dedicated account');
+    if (this.dedicatedCache?.token === token && this.dedicatedCache.until > Date.now()) return this.dedicatedCache.plex;
+    if (this.dedicatedInflight?.token === token) return this.dedicatedInflight.job;
     const generation = this.generation;
     const job = runOperation(undefined, async () => {
-      let scoped = this.plex.scope(token, 'configured-fallback'),
+      let scoped = this.plex.scope(token, DIRECT_CLIENT),
         sections;
       try {
         sections = await scoped.json('/library/sections');
       } catch (error) {
         if (error.status !== 401) throw error;
-        // Configured fallback may be an account token rather than a PMS
-        // token. Resolve access for that same account; never change identity.
-        scoped = await this.validate({ token, clientId: 'configured-fallback' });
+        // The dedicated token may be an account token rather than a PMS token.
+        // Resolve access for that same account; never change identity.
+        scoped = await this.validate({ token, clientId: DIRECT_CLIENT });
       }
       if (sections && (!Array.isArray(sections.Directory) || !sections.Directory.length))
-        throw new PlexAccessError('The configured fallback account has no accessible libraries');
+        throw new PlexAccessError('The direct delivery account has no accessible libraries');
       if (generation !== this.generation) throw new PlexAccessError('Plex scope changed during validation');
-      this.fallbackCache = { token, plex: scoped, until: Date.now() + 30000 };
+      this.dedicatedCache = { token, plex: scoped, until: Date.now() + 30000 };
       return scoped;
     });
-    this.fallbackInflight = { token, job };
+    this.dedicatedInflight = { token, job };
     try {
       return await job;
     } finally {
-      if (this.fallbackInflight?.job === job) this.fallbackInflight = undefined;
+      if (this.dedicatedInflight?.job === job) this.dedicatedInflight = undefined;
     }
   }
   async forUser(userId) {
@@ -256,8 +258,8 @@ class PlexAuth {
     this.generation++;
     this.cache.clear();
     this.inflight.clear();
-    this.fallbackCache = undefined;
-    this.fallbackInflight = undefined;
+    this.dedicatedCache = undefined;
+    this.dedicatedInflight = undefined;
   }
 }
-module.exports = { PlexAuth, PlexAccessError, plexReconnectError, RECONNECT_PLEX };
+module.exports = { PlexAuth, PlexAccessError, plexReconnectError, RECONNECT_PLEX, DIRECT_CLIENT };

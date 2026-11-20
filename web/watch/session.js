@@ -257,19 +257,15 @@ export function mount(host, deps) {
           ? 'Discord Activity only'
           : admission.passwordNeeded
             ? 'Enter uburoom'
-            : admission.plexRequired
-              ? 'Connect Plex to join'
-              : 'Sign in to join';
+            : 'Sign in to join';
         $('entry-form').hidden = !admission.passwordNeeded || admission.activityOnly;
         $('entry-status').textContent = admission.activityOnly
           ? 'Open uburoom through Discord Activity. Browser playback is disabled.'
           : admission.passwordNeeded
             ? 'Enter this server’s password to continue.'
-            : admission.plexRequired
-              ? 'This server requires confirmed Plex access. Connect a Plex account with access to the configured server to continue.'
-              : admission.identity
-                ? 'Your account does not meet this server’s entry requirements. Check your Discord membership or Plex server access.'
-                : 'Sign in to join this server.';
+            : admission.identity
+              ? 'Your account does not meet this server’s entry requirements. Check your Discord membership or Plex server access.'
+              : 'Sign in to join this server.';
         discordButton.hidden =
           store.identity.config.access.discord === false || admission.passwordNeeded || admission.activityOnly;
         $('plex-login').hidden =

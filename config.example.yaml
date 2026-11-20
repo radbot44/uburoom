@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2v
+# Config schema v2w
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -18,30 +18,26 @@ plex:
   url: 'http://127.0.0.1:32400'
   token: ''
   machine_identifier: '' # Leave blank to detect and remember your Plex server.
-  # Original files and Plex HLS in supported browsers; Activity remains proxied.
-  delivery: 'proxy' # proxy | auto (prefer direct, recover through the proxy)
+  # Everyone admitted watches every library through this server's account.
+  # proxy: media goes through uburoom. auto: supported browsers fetch original
+  # files and Plex HLS straight from Plex (Activity stays proxied), with the
+  # proxy as recovery. Browsers then get tokens derived from direct_token, so
+  # auto needs a dedicated account and everyone watches what it can see.
+  delivery: 'proxy' # proxy | auto
   client_url: '' # Required for auto: viewer-reachable HTTPS Plex origin, no path.
   lan_client_url: '' # Optional LAN HTTPS Plex origin override; blank auto-detects from Plex.
-
-  # SHARING: off by default. When true, viewers without a Plex account or
-  # confirmed server membership can access the fallback account's libraries
-  # and media. This can grant more media access than their personal account has.
-  # Expired/revoked credentials, outages and item denials NEVER use fallback.
-  fallback_enabled: false
-  # Blank uses token above. Prefer a dedicated account that has access to your
-  # libraries but does not own the server. To get its token: open a private
-  # browser window, sign in at https://app.plex.tv as that account, press F12,
-  # and type localStorage.myPlexAccessToken in the console.
-  # Cautions: the token is a password, so paste it only here. It belongs to that
-  # browser sign-in: signing that browser out, or removing its device from the
-  # account's Plex devices, stops the token working and sharing quietly fails.
-  fallback_token: ''
-  # Direct sharing NEVER uses token above. Requires a dedicated Plex account
-  # with library access but no server ownership, verified against plex.tv.
-  direct_fallback_enabled: false
+  # Required for auto, unused otherwise. A dedicated Plex account with access to
+  # your libraries that does not own the server (checked against plex.tv); NEVER
+  # token above. To get its token: open a private browser window, sign in at
+  # https://app.plex.tv as that account, press F12, and type
+  # localStorage.myPlexAccessToken in the console. The token is a password, so
+  # paste it only here. Signing that browser out, or removing its device from the
+  # account's Plex devices, stops it working, and Plex media is unavailable until
+  # you replace it or switch back to proxy.
+  direct_token: ''
 
   # REPORTING: report active playback and watch progress for verified Plex accounts.
-  # Viewers without personal Plex access (sponsored/guests) are never reported.
+  # Viewers without their own Plex sign-in (guests included) are never reported.
   reporting_enabled: true # Enable timeline activity reporting to Plex.
   reporting_watch_state: true # Allow personal watch-state (resume/scrobble) synchronization.
 
@@ -88,13 +84,9 @@ access:
   # Choose sign-in methods. Both false allows anonymous guests (not guest passes).
   # Discord sign-in requires guild membership; standalone Plex sign-in requires
   # access to the pinned Plex server. Outside visitors need a room guest invite.
+  # Everyone admitted can watch every library of every media source.
   discord: true
   plex: true
-  # Require confirmed personal access to THIS Plex server, before any entry.
-  # Fallback and the entry password do not count as Plex authorization.
-  require_plex: false
-  # Set false to let Discord Activities skip the Plex requirement above.
-  require_plex_in_activity: true
 
 # Application settings
 server:
@@ -203,8 +195,7 @@ rooms:
 # share. People who can already get in use it to reach the room, including private
 # rooms. Hosts can also turn on "Allow guests" so the invite lets in people who
 # can't otherwise get in. Guests are always plain participants, never hosts, and
-# only see that room. Without their own Plex access they watch through
-# plex.fallback_enabled sharing.
+# only see that room. Like anyone admitted, they can watch every library.
 guests:
   enabled: false # Allow rooms to turn on guests at all.
   default_allow: true # Newly created rooms allow guests by default when guests are enabled.
@@ -212,7 +203,6 @@ guests:
   # operator | admins | trusted | members. Higher tiers are included.
   issuers: 'admins'
   # true: every guest must sign in with Discord or Plex (their name is verified).
-  # Required when access.require_plex is true.
   require_sign_in: false
   max_per_room: 10 # Most guests in one room at once (1-50).
   session_hours: 24 # How long a guest stays signed in before re-entering the code (1-720).
@@ -225,11 +215,10 @@ events:
   # hosting that room.
   schedulers: 'trusted'
 
-# Show never-signed-in provider members in authorized room host search.
+# Show never-signed-in Discord members in authorized room host search.
 # Discord discovery/presence also need the matching privileged bot intents enabled.
 directory:
   expose_discord_members: true
-  expose_plex_members: false # Requires the configured Plex server owner's token.
 
 # Transcoding behavior
 transcoding:

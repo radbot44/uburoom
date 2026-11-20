@@ -1,9 +1,11 @@
 'use strict';
 
 // Search returns public presentation fields only, never Accounts.summary/credentials.
+// Discord is the only external member source; everyone else is a known local account.
+const SOURCES = ['discord'];
 class UserDirectory {
-  constructor({ registry, config, discord, discordOnline, plex, now = Date.now }) {
-    Object.assign(this, { registry, config, discord, discordOnline, plex, now });
+  constructor({ registry, config, discord, discordOnline, now = Date.now }) {
+    Object.assign(this, { registry, config, discord, discordOnline, now });
     this.cache = new Map();
     this.connections = new Map();
   }
@@ -25,7 +27,7 @@ class UserDirectory {
     return ids;
   }
   enabled(provider) {
-    return this.config.directory?.[provider] ?? provider === 'discord';
+    return SOURCES.includes(provider) && (this.config.directory?.[provider] ?? true);
   }
   async source(provider) {
     if (!this.enabled(provider)) return [];
@@ -41,11 +43,7 @@ class UserDirectory {
         const rows = await this[provider]();
         if (!Array.isArray(rows) || rows.length > 100000) throw new Error('Directory too large');
         entry.rows = rows
-          .filter(
-            row =>
-              typeof row.subject === 'string' &&
-              (provider === 'discord' ? /^\d{17,20}$/ : /^\d{1,20}$/).test(row.subject),
-          )
+          .filter(row => typeof row.subject === 'string' && /^\d{17,20}$/.test(row.subject))
           .map(row => {
             const name = String(row.name || row.subject).slice(0, 100),
               alias = String(row.alias || '').slice(0, 100);
@@ -60,10 +58,7 @@ class UserDirectory {
         entry.until = this.now() + 60000;
         return entry.rows;
       } catch {
-        entry.error =
-          provider === 'discord'
-            ? 'Discord directory unavailable; check the bot and Server Members Intent.'
-            : 'Plex directory unavailable; check the configured server owner token.';
+        entry.error = 'Discord directory unavailable; check the bot and Server Members Intent.';
         entry.until = this.now() + 15000;
         throw new Error(entry.error);
       } finally {
@@ -74,8 +69,7 @@ class UserDirectory {
     return entry.promise;
   }
   async candidate(provider, subject) {
-    if (!['discord', 'plex'].includes(provider) || !this.enabled(provider))
-      throw Object.assign(new Error('Directory source is disabled'), { status: 403 });
+    if (!this.enabled(provider)) throw Object.assign(new Error('Directory source is disabled'), { status: 403 });
     const target = (await this.source(provider)).find(row => row.subject === subject);
     if (!target) throw Object.assign(new Error('Directory member unavailable; search again'), { status: 409 });
     return target;
@@ -88,7 +82,7 @@ class UserDirectory {
       external = [];
     if (!q) return { results: [], notices };
     await Promise.all(
-      ['discord', 'plex'].map(async provider => {
+      SOURCES.map(async provider => {
         if (!this.enabled(provider)) return;
         try {
           external.push(...(await this.source(provider)));
