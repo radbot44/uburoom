@@ -2,7 +2,7 @@
 
 **Status: design approved by the owner on 2026-11-20 (D1–D8 as recommended). Implemented so far: the fallback default (D5) and the Docker config folder (part of D4). Setup mode itself is not implemented.**
 
-**Being revised:** the [media sources and admission](media-sources.md) proposal replaces the Plex-only parts of this design. When it's approved, the Sharing step (and D5's setup question) goes away, Connect Plex and Choose your server become one connector in a "Media sources" step that can add any number of Plex, Jellyfin and folder sources, D7 (Plex account must own the server) is reconsidered, a "Who can get in" step picks the entry rules (Discord server, members of a chosen source, server password, uburoom accounts, room invites), and the owner signs in with Plex or creates a uburoom account. The setup code, transport, config location and hand-off decisions stay as they are. The wizard's screen layout and wording still need UI approval before the build.
+**Revised 2026-11-20** for [media sources and admission](media-sources.md): the Plex-only steps and the Sharing step were replaced by Your account, Media sources and Who can get in, and the owner arrives already signed in. D5's setup question and D7 (Plex account must own the server) no longer apply. The setup code, transport, config location and hand-off decisions are unchanged.
 
 ## Goal
 
@@ -61,41 +61,52 @@ The pages follow the [design guide](design-guide.md). Screen layout and wording 
 
 Filled in automatically from the URL fragment, otherwise typed. One line explains where to find it (console window, `docker logs uburoom`).
 
-### 2. Connect Plex
+### 2. Your account
 
-- "Sign in with Plex" uses the existing PIN flow in `server/plex-auth.js`. `start()` already works without a configured server. `finish()` currently calls `validate()`, which needs a configured Plex server, so the plex.tv account step (PIN → token → `/user`) gets split out into its own function, and both normal sign-in and setup use it.
-- The server keeps the token in setup memory only, never in the browser.
+"Sign in with Plex" (the plex.tv PIN flow, with the account step split out of `server/plex-auth.js` so it needs no configured server) or "Create a uburoom account" (username and a password of at least 10 characters). The result becomes the server operator. Tokens and passwords stay on the server.
 
-### 3. Choose your server
+### 3. Media sources
 
-- Fetch `/resources?includeHttps=1` from plex.tv with that token and list entries that provide `server` and are **owned** by the account (D7).
-- For the chosen server, test its connections **from the uburoom machine**: local addresses first, then remote, never relay. Ask each for `/identity`, and pick the first that answers with the expected `machineIdentifier`. If none answers, say so plainly ("uburoom can't reach this server from this computer") and offer a manual URL field.
-- Result: `plex.url`, `plex.token` and `plex.machine_identifier`.
+A list of added sources, each with a remove button, and three add buttons: **Add Plex**, **Add Jellyfin**, **Add a folder**. Next is enabled once at least one source is added. Each add flow is the source module's `connect` ([media sources](media-sources.md)):
 
-### 4. Sharing
+- **Plex:** uses the Plex sign-in from step 2, or asks for one. Lists the account's servers; tests each server's connections from the uburoom machine (local first, never relay) against its `/identity`; unreachable servers are shown disabled with the reason. A manual address field is the fallback. The account does not have to own the server.
+- **Jellyfin:** lists servers found on the network, with a manual address field. Then a Jellyfin administrator signs in once, with username and password or the Quick Connect code shown; uburoom creates its own API key and keeps no password. Last, pick the Jellyfin user whose libraries are offered.
+- **Folders:** a folder browser listing directories on the uburoom machine (setup-session only; in Docker, the container's mounted paths). Then a name and Movies or Shows.
 
-One plain-language question, defaulting to **No** (D5):
+### 4. Who can get in
 
-> **Let friends watch even if they don't have access to your Plex server?** If yes, uburoom plays media for them using your Plex account, so they can see anything your account can. You can change this later.
+One checkbox per entry rule, with a one-line hint each:
 
-"Yes" sets `plex.fallback_enabled: true` with the owner's token, and the existing startup warning stays. Using a dedicated fallback account (a second PIN sign-in) is a follow-up, not v1.
+| Rule | Default |
+| --- | --- |
+| People with access to each Plex source / an account on each Jellyfin source (one row per source) | On |
+| Anyone who knows the server password (shows a password field when ticked) | Off |
+| uburoom accounts you create | On |
+| Guests with a room invite | On |
+| Members of your Discord server | Shown disabled: "Set up Discord in Server settings after setup" |
 
-### 5. Who will connect
+### 5. Where will people watch?
 
 | Choice | Writes | Certificate |
 | --- | --- | --- |
-| Just this computer | `server.host: '127.0.0.1'`, `public_url: https://localhost:5756` | Self-signed for `localhost` |
-| People on my home network | `server.host: '0.0.0.0'`, `public_url` set to the detected LAN address | Self-signed covering `localhost` and that address; the page says viewers will see a one-time warning |
-| People over the internet | Not offered in v1; links to the remote-access guide | Depends on the TLS decision |
+| This computer | `server.host: '127.0.0.1'`, `public_url: https://localhost:5756` | Self-signed for `localhost` |
+| My home network | `server.host: '0.0.0.0'`, `public_url` set to the detected LAN address | Self-signed covering `localhost` and that address; the page says viewers will see a one-time warning |
 
-Certificates go in the data folder, and their paths are written to `server.tls_cert` and `server.tls_key`.
+Internet access isn't a choice here; a line links to the remote access guide. Certificates go in the data folder, and their paths are written to `server.tls_cert` and `server.tls_key`.
 
 ### 6. Check and finish
 
-- Run the existing doctor checks in-process, against the proposed config: port, storage and key location, TLS files, Plex connectivity. `scripts/doctor.js` already has `runDoctor(options)`, and the checks get a function form that takes a config object instead of reading a file.
-- Show the results as pass or fix. "Finish" is enabled only when all of them pass.
-- Write the config from `config.example.yaml` as the template, using the `yaml` library's document API so comments stay. Validate it with `normalizeConfig` before writing. The signed-in Plex account's ID goes into `operator.plex_id`.
-- Hand off to the normal app and redirect to `/watch`. The owner signs in with Plex through the normal flow, which creates their account; they're recognized as operator through `operator.plex_id`. No setup-only account path.
+- Run the doctor checks in-process against the proposed config: port, every media source's `check`, certificate, settings and data folder, encryption key (with a back-up reminder). `scripts/doctor.js` already has `runDoctor(options)`; the checks get a function form that takes a config object.
+- Show pass or fix for each. Finish is enabled only when all pass.
+- Write the config from `config.example.yaml` as the template, using the `yaml` library's document API so comments stay, and validate it with `normalizeConfig` before writing.
+
+### 7. Ready, already signed in
+
+"uburoom is ready. You're signed in." On Finish, setup creates a single-use ticket (about a minute) bound to the setup session. **Open uburoom** submits it by form POST to the new app, which hands the already-verified identity to the same sign-in completion code a normal sign-in uses, sets the normal session and opens the lobby. No second sign-in, and no setup-only account path.
+
+### Mockup
+
+`personal/mockups/first-run-setup.html` (served by `personal/mockups/serve.js`; v1 kept as `first-run-setup-v1.html`). Screen and wording choices for steps 2–7 were made by the coordinator under the owner's delegated discretion on 2026-11-20 and are open to owner changes.
 
 ## The fallback default (separate small change)
 
