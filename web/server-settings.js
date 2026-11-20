@@ -254,11 +254,10 @@ function mount({ request, trigger }) {
     }
   }
   checkbox(panels.directory, 'directory.expose_discord_members', 'Show Discord members in host search');
-  checkbox(panels.directory, 'directory.expose_plex_members', 'Show Plex members in host search');
   node(
     'p',
     panels.directory,
-    'Controls which provider members appear when searching for hosts. It does not grant access or permissions.',
+    'Controls whether Discord members appear when searching for hosts. It does not grant access or permissions.',
     'hint',
   );
   const transcoding = node('div', panels.transcoding, null, 'server-settings-grid');

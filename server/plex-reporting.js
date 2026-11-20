@@ -3,6 +3,7 @@
 const { runOperation } = require('./operation');
 const { randomUUID } = require('node:crypto');
 const { plexIdentity } = require('./plex/identity');
+const { DIRECT_CLIENT } = require('./plex-auth');
 const { RECONNECT_GRACE_MS } = require('../shared/sync');
 const RECOVERABLE = new Set(['stream-changed', 'delivery-changed', 'observation-timeout']);
 
@@ -33,7 +34,7 @@ class PlexReporting {
 
   /**
    * Determine whether a viewer is eligible for personal Plex reporting.
-   * Sponsored and guest viewers without stored personal credentials must fail closed.
+   * Viewers without their own stored Plex sign-in, guests included, must fail closed.
    * @param {string} userId
    * @returns {boolean}
    */
@@ -66,7 +67,7 @@ class PlexReporting {
   }
 
   personal(scoped) {
-    return scoped && scoped.principal !== 'discord-shared' && scoped.clientId !== 'configured-fallback';
+    return scoped && scoped.principal !== 'discord-shared' && scoped.clientId !== DIRECT_CLIENT;
   }
 
   current(context) {

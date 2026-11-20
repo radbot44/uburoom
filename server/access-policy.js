@@ -64,11 +64,6 @@ class AccessPolicy {
     this.sweep();
     return token;
   }
-  requiresPlex(context) {
-    return (
-      !!this.settings?.requirePlex && !(context?.activity === true && this.settings.requirePlexInActivity === false)
-    );
-  }
   admissionKey(id, context) {
     const room = this.guestRoom(context);
     return room ? 'guest:' + room + ':' + id : context?.activity === true ? 'activity:' + id : id;
@@ -83,20 +78,17 @@ class AccessPolicy {
         this.allowed.delete(key);
         return false;
       }
-      // Being a guest never stands in for required personal Plex access.
-      if (!this.requiresPlex(context)) {
-        this.allowed.set(key, Date.now() + 1000);
-        return true;
-      }
+      this.allowed.set(key, Date.now() + 1000);
+      return true;
     } else if (this.passwordRequired && (this.entryUsers.get(account.id) || 0) <= Date.now()) return false;
     const identities = this.registry.identities(account.id).filter(identity => identity.verified);
     const key = this.admissionKey(account.id, context),
       now = Date.now();
-    // Linking a provider or changing the rule changes who has to vouch for this account.
-    const proof = [
-      this.requiresPlex(context),
-      ...identities.map(identity => identity.provider + ':' + identity.subject).sort(),
-    ].join();
+    // Linking a provider changes who has to vouch for this account.
+    const proof = identities
+      .map(identity => identity.provider + ':' + identity.subject)
+      .sort()
+      .join();
     let held = this.confirmed.get(key);
     if (held?.proof !== proof || held.expires <= now) held = undefined;
     let allowed = held?.recheck > now;
@@ -118,7 +110,6 @@ class AccessPolicy {
   async answer(account, identities, context) {
     const discord = identities.find(identity => identity.provider === 'discord');
     const plex = identities.find(identity => identity.provider === 'plex');
-    if (this.requiresPlex(context)) return plex ? this.plexAnswer(account.id, false) : false;
     if (this.anonymous || discord?.subject === this.config.ownerId) return true;
     let answer = false;
     if ((this.settings.discord || context?.activity === true) && discord) {
@@ -158,8 +149,6 @@ class AccessPolicy {
       ? {
           discord: this.settings.discord,
           plex: this.settings.plex,
-          requirePlex: this.settings.requirePlex,
-          requirePlexInActivity: this.settings.requirePlexInActivity !== false,
           passwordRequired: this.passwordRequired,
           anonymous: this.anonymous,
           publicWeb: this.settings.publicWeb,

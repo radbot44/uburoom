@@ -11,7 +11,7 @@ Importing `shared/sync/` has **zero side effects**: it opens no sockets, starts 
 | Layer | Location | Responsibilities |
 | --- | --- | --- |
 | **A. Shared Synchronization Core** | `shared/sync/*.mjs`, `shared/sync/index.js` | Four-timestamp clock filter, server-authoritative timeline math, scheduled `startAt`/`pauseAt` lead coordination, initial/seek readiness gates and straggler bypass, client `PlayerAdapter` and Hybrid EMA drift/jump controllers, generic room roles/capabilities, command `epoch`/`expiresAt` envelope fencing, sync-quality scoring/aggregation, and room/tenant-scoped subscription coalescing. |
-| **B. Self-Hosted Uburoom Integration** | `server/*`, `web/*`, `shared/engine.mjs`, `shared/room-protocol.mjs` | Plex library browsing, personal Plex entitlement checks, sponsored playback isolation, HLS/direct delivery and FFmpeg AV1 conversion, subtitle extraction/streaming, Discord OAuth/Activity/guild admission, encrypted SQLite account & durable queue storage, `config.yaml` validation, HTTPS/WSS hosting, and DOM player UI. |
+| **B. Self-Hosted Uburoom Integration** | `server/*`, `web/*`, `shared/engine.mjs`, `shared/room-protocol.mjs` | Plex library browsing, admission checks, HLS/direct delivery and FFmpeg AV1 conversion, subtitle extraction/streaming, Discord OAuth/Activity/guild admission, encrypted SQLite account & durable queue storage, `config.yaml` validation, HTTPS/WSS hosting, and DOM player UI. |
 
 ### Component ownership boundary
 

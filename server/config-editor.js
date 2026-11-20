@@ -14,7 +14,6 @@ const execute = promisify(execFile);
 // retention/history deletion, single-room, identity, connection or path settings.
 const EDITABLE = new Set([
   'directory.expose_discord_members',
-  'directory.expose_plex_members',
   'rooms.max_saved',
   'rooms.max_open',
   'rooms.max_members',
@@ -66,7 +65,6 @@ const metadata = stat =>
 function editableSettings(config) {
   const values = {
     'directory.expose_discord_members': config.directory.discord,
-    'directory.expose_plex_members': config.directory.plex,
     'rooms.host_permissions': Object.keys(config.roomPermissions.host).filter(key => config.roomPermissions.host[key]),
     'rooms.viewer_permissions': Object.keys(config.roomPermissions.viewer).filter(
       key => config.roomPermissions.viewer[key],

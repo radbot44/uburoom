@@ -8,8 +8,6 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
     accessPolicy: {
       discord: true,
       plex: false,
-      requirePlex: true,
-      requirePlexInActivity: true,
       publicWeb: false,
       extraSecret: 'hidden',
     },
@@ -87,8 +85,6 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
   assert.deepEqual(result.settings.access, {
     discord: true,
     plex: false,
-    requirePlex: true,
-    requirePlexInActivity: true,
     publicWeb: false,
   });
   assert.equal(result.settings.rooms.singleRoom, true);
@@ -131,10 +127,7 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
     addHosts: false,
     kickParticipants: false,
   });
-  assert.deepEqual(result.settings.directory, {
-    discord: true,
-    plex: true,
-  });
+  assert.deepEqual(result.settings.directory, { discord: true }, 'there is no Plex member directory');
   assert.equal(result.settings.transcoding.policy, 'auto');
   assert.equal(result.settings.transcoding.provider, true);
   assert.equal(result.settings.transcoding.uburoom, true);

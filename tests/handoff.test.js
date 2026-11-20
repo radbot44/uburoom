@@ -346,7 +346,7 @@ test(
 
 test('native client handoff bearer token succeeds when a server entry password is configured', tlsOptions, async t => {
   const f = await fixture(t, {
-    accessPolicy: { discord: true, plex: false, requirePlex: false, password: 'entry-secret', publicWeb: true },
+    accessPolicy: { discord: true, plex: false, password: 'entry-secret', publicWeb: true },
   });
   const host = await f.source('host');
   // Before passing the entry password, bearer auth fails against authenticated endpoints.

@@ -1,5 +1,4 @@
 'use strict';
-const { plexReconnectError } = require('./plex-auth');
 const { PlexDelivery } = require('./plex/delivery');
 const { PlexReporting } = require('./plex-reporting');
 const { serverName } = require('./media-providers');
@@ -7,20 +6,20 @@ const { serverName } = require('./media-providers');
 const failure = (message, status = 409) => Object.assign(new Error(message), { status });
 
 /**
- * Plex as a media provider: which server it is, which Plex scope a person watches
+ * Plex as a media provider: which server it is, the one scope everyone admitted watches
  * through, and the two things only Plex offers: playback reports to a viewer's own Plex
  * account and direct delivery from the Plex server. Catalog, sessions and transcodes
  * stay in server/plex.js.
- * @param {{plex: any, config?: any, registry?: any, plexAuth?: any, entryPolicy?: any}} services
+ * @param {{plex: any, config?: any, registry?: any, plexAuth?: any}} services
  * @returns {import('./media-providers').MediaProvider}
  */
-function plexProvider({ plex, config = {}, registry, plexAuth, entryPolicy }) {
+function plexProvider({ plex, config = {}, registry, plexAuth }) {
   let identifying;
   const provider = {
     kind: 'plex',
     root: plex,
     reporting: services => new PlexReporting({ config, plexAuth, registry, ...services }),
-    // Direct credentials are personal, so there is no direct path without the services that know people.
+    // Direct delivery checks its dedicated account with plex.tv, so it needs the Plex sign-in services.
     direct: plexAuth ? new PlexDelivery(config, plex, plexAuth, actor => provider.scopeFor(actor)) : undefined,
     /** The server's own name (Plex's friendlyName), known once `identity()` has answered. */
     serverName: '',
@@ -49,34 +48,27 @@ function plexProvider({ plex, config = {}, registry, plexAuth, entryPolicy }) {
     },
     /**
      * Continue watching is each viewer's own: their Plex On Deck through their own verified Plex sign-in.
-     * A viewer without one gets none, since the shared account's progress is not theirs.
+     * A viewer without one, or whose account cannot reach this server, gets none: the shared
+     * account's progress is not theirs. This is personal data, never a way to media.
      */
     async continueWatching(actor) {
       if (!plexAuth || !registry.identities(actor.userId).some(i => i.provider === 'plex' && i.verified)) return [];
-      return (await provider.scopeFor(actor)).continueWatching();
-    },
-    // Without the services that know people, everyone watches through the configured token.
-    async scopeFor(actor) {
-      if (!plexAuth) return plex;
-      const identity = registry.identities(actor.userId).find(i => i.provider === 'plex' && i.verified);
-      const fallback = () => {
-        if (config.plexFallback?.enabled === false)
-          throw new Error('Connect a Plex account with access to this server; shared fallback is disabled');
-        return plexAuth.fallback();
-      };
-      if (!identity) return fallback();
-      if (!registry.hasCredential(identity.subject))
-        throw plexReconnectError('Your Plex sign-in is missing. Reconnect Plex to continue.');
+      let own;
       try {
-        const scoped = await plexAuth.forUser(actor.userId);
-        if (!scoped) throw plexReconnectError('Your Plex sign-in is missing. Reconnect Plex to continue.');
-        return scoped;
+        own = await plexAuth.forUser(actor.userId);
       } catch (error) {
-        // Only a confirmed lack of server membership may use explicit open-entry
-        // sponsorship. Expiry, network errors and item restrictions never do.
-        if (config.accessPolicy && !entryPolicy.requiresPlex(actor) && error.noServerAccess) return fallback();
+        if (error.noServerAccess) return [];
         throw error;
       }
+      return own ? own.continueWatching() : [];
+    },
+    /**
+     * Everyone admitted watches every library through the source's own credential: the
+     * configured token, or with direct delivery the dedicated account browsers get tokens from.
+     * Admission is checked by the caller; a viewer's own Plex permissions play no part.
+     */
+    async scopeFor() {
+      return provider.direct?.enabled ? plexAuth.dedicated() : plex;
     },
   };
   return provider;

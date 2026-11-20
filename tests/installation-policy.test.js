@@ -26,8 +26,7 @@ async function fixture(t, changes = {}) {
     demoSubjects: provider.subjects,
     plexUrl: 'http://plex-fixture.invalid:32400',
     plexToken: 'fixture-owner',
-    accessPolicy: { discord: true, plex: true, requirePlex: false, password: '', publicWeb: true },
-    plexFallback: { enabled: true, token: '' },
+    accessPolicy: { discord: true, plex: true, password: '', publicWeb: true },
     ...changes,
   };
   const app = createApp(config, { plexFetch: provider.fetch, oauthFetch: provider.discordFetch, plexDemo: provider });
@@ -126,7 +125,7 @@ test('codec samples require active admin mode with browser or Activity authoriza
 
 test('shared password is additional to provider sign-in and applies to HTTP and sockets', async t => {
   const f = await fixture(t, {
-      accessPolicy: { discord: true, plex: true, requirePlex: false, password: 'fixture-password', publicWeb: true },
+      accessPolicy: { discord: true, plex: true, password: 'fixture-password', publicWeb: true },
     }),
     browser = f.browser();
   await browser.discord();
@@ -157,7 +156,7 @@ test('shared password is additional to provider sign-in and applies to HTTP and 
 
 test('anonymous entry gets a distinct account, shared media scope and no owner/admin rights', async t => {
   const f = await fixture(t, {
-    accessPolicy: { discord: false, plex: false, requirePlex: false, password: '', publicWeb: true },
+    accessPolicy: { discord: false, plex: false, password: '', publicWeb: true },
     channels: [],
   });
   const a = f.browser(),
@@ -173,71 +172,54 @@ test('anonymous entry gets a distinct account, shared media scope and no owner/a
   assert.equal((await a.post('/api/watch/rooms', {})).status, 201, 'no Discord channels needed for browser rooms');
 });
 
-test('Plex-required admission supports pending Discord identity and linking, and never accepts nonmember Plex', async t => {
-  const f = await fixture(t, {
-      accessPolicy: { discord: true, plex: true, requirePlex: true, password: '', publicWeb: true },
-    }),
-    browser = f.browser();
-  await browser.discord();
-  assert.equal((await browser.request('/api/watch/me')).status, 401);
-  const pending = (await browser.request('/api/watch/admission')).body;
-  assert.equal(pending.identity, true);
-  assert.equal(pending.plexRequired, true);
-  assert.equal((await browser.plex('alice')).status, 302);
-  const me = (await browser.request('/api/watch/me')).body;
-  assert.deepEqual(me.account.identities.map(identity => identity.provider).sort(), ['discord', 'plex']);
-  assert.notEqual((await f.app.hub.mediaFor({ userId: me.account.id })).principal, 'discord-shared');
-  const denied = f.browser();
-  assert.equal((await denied.plex('denied')).status, 302);
-  assert.equal((await denied.request('/api/watch/me')).status, 401);
+test('every admitted person watches every library through the source credential; refused people get nothing', async t => {
+  const f = await fixture(t);
+  const source = principal => assert.equal(principal, 'discord-shared', 'the source credential, not a personal one');
+  // A Discord member with no Plex link.
+  const member = f.browser();
+  await member.discord('guest');
+  const memberId = (await member.request('/api/watch/me')).body.account.id;
+  // A Plex member whose own account is denied item 999.
+  const limited = f.browser();
+  await limited.plex('bob');
+  const limitedId = (await limited.request('/api/watch/me')).body.account.id;
+  for (const userId of [memberId, limitedId]) {
+    const scope = await f.app.hub.mediaFor({ userId });
+    source(scope.principal);
+    assert.ok(await scope.allows('999'), "a viewer's own Plex restrictions play no part");
+  }
+  // Someone the server refuses gets no library from any source.
+  const refused = f.browser();
+  assert.equal((await refused.plex('denied')).status, 302);
+  assert.equal((await refused.request('/api/watch/me')).status, 401);
+  assert.equal((await refused.request('/api/watch/library')).status, 401);
+  assert.equal((await refused.request('/api/watch/rooms')).status, 401);
 });
 
-test('standalone Plex requires PMS membership while Discord members retain configured fallback', async t => {
+test('standalone Plex requires PMS membership; a Plex denial takes no media from someone Discord admits', async t => {
   const f = await fixture(t),
     standalone = await fixture(t),
     browser = standalone.browser();
-  await browser.plex('denied');
+  assert.equal((await browser.plex('denied')).headers.location, '/auth/error', 'a nonmember Plex sign-in is refused');
   assert.equal((await browser.request('/api/watch/me')).status, 401);
   const admission = (await browser.request('/api/watch/admission')).body;
-  assert.equal(admission.identity, true);
   assert.equal(admission.admitted, false);
+  assert.equal(admission.plexRequired, undefined, 'there is no Plex requirement any more');
   const member = f.browser();
   await member.discord('guest');
-  await member.plex('denied');
+  await member.plex('alice', true);
   const me = (await member.request('/api/watch/me')).body;
-  assert.ok(me.account);
+  assert.deepEqual(me.account.identities.map(identity => identity.provider).sort(), ['discord', 'plex']);
   assert.equal((await f.app.hub.mediaFor({ userId: me.account.id })).principal, 'discord-shared');
-  f.provider.revoked.add('103');
+  f.provider.revoked.add('101');
   f.app.plexAuth.clear();
-  await assert.rejects(f.app.hub.mediaFor({ userId: me.account.id }), /expired|revoked/);
-  const limited = f.browser();
-  await limited.plex('bob');
-  const user = (await limited.request('/api/watch/me')).body.account;
-  const scoped = await f.app.hub.mediaFor({ userId: user.id });
-  assert.notEqual(scoped.principal, 'discord-shared');
-  await assert.rejects(scoped.allows('999'), /HTTP 404/);
-
-  // Fallback can be disabled or use a separate configured token without becoming personal identity
-  f.provider.revoked.delete('103');
-  f.app.plexAuth.clear();
-  f.config.plexFallback = { enabled: false, token: '' };
-  assert.equal((await member.request('/api/watch/me')).status, 200, 'guild admission is independent of sponsorship');
-  await assert.rejects(f.app.hub.mediaFor({ userId: me.account.id }), /fallback is disabled/);
-  const discordUser = f.browser();
-  await discordUser.discord();
-  const dMe = (await discordUser.request('/api/watch/me')).body;
-  f.config.plexFallback = { enabled: false, token: '' };
-  f.app.plexAuth.clear();
-  await assert.rejects(f.app.hub.mediaFor({ userId: dMe.account.id }), /fallback is disabled/);
-  f.config.plexFallback = { enabled: true, token: 'fixture-server-102' };
-  const separate = await f.app.hub.mediaFor({ userId: dMe.account.id });
-  assert.equal(separate.token, 'fixture-server-102');
-  assert.ok(!dMe.account.identities.some(identity => identity.provider === 'plex'));
+  assert.equal((await member.request('/api/watch/me')).status, 200, 'guild admission is independent of Plex');
+  assert.equal((await f.app.hub.mediaFor({ userId: me.account.id })).principal, 'discord-shared');
 });
 
 test('owner-only recovery works with ordinary Discord disabled and rejects another verified Discord user', async t => {
   const f = await fixture(t, {
-      accessPolicy: { discord: false, plex: false, requirePlex: false, password: '', publicWeb: true },
+      accessPolicy: { discord: false, plex: false, password: '', publicWeb: true },
     }),
     browser = f.browser();
   assert.notEqual((await browser.request('/auth/discord')).status, 302);
@@ -266,7 +248,7 @@ test('owner-only recovery works with ordinary Discord disabled and rejects anoth
 
 test('Activity-only rejects browser sessions and spoofed frame query while accepting verified Activity OAuth', async t => {
   const f = await fixture(t, {
-      accessPolicy: { discord: true, plex: true, requirePlex: false, password: '', publicWeb: false },
+      accessPolicy: { discord: true, plex: true, password: '', publicWeb: false },
     }),
     browser = f.browser();
   await browser.discord();
@@ -282,17 +264,17 @@ test('Activity-only rejects browser sessions and spoofed frame query while accep
   assert.equal(handoff.status, 200, 'account linking remains possible without public playback');
 });
 
-test('Plex-required Activity can approve browser linking without enabling browser playback', async t => {
+test('Activity can approve browser Plex linking without enabling browser playback', async t => {
   const f = await fixture(t, {
-      accessPolicy: { discord: true, plex: true, requirePlex: true, password: '', publicWeb: false },
+      accessPolicy: { discord: true, plex: true, password: '', publicWeb: false },
     }),
     activity = f.browser(),
     browser = f.browser();
   const headers = { Origin: 'https://' + f.config.clientId + '.discordsays.com' };
   const issued = await activity.request('/api/watch/activity-login', { code: 'guest' }, headers);
   headers.Authorization = 'Bearer ' + issued.body.token;
-  assert.equal((await activity.request('/api/watch/me', undefined, headers)).status, 401);
-  const issue = (await activity.request('/api/watch/handoff', {}, headers)).body;
+  assert.equal((await activity.request('/api/watch/me', undefined, headers)).status, 200);
+  const issue = (await activity.request('/api/watch/handoff', { connectPlex: true }, headers)).body;
   await browser.request('/auth/handoff');
   const proof = randomBytes(32).toString('hex');
   const claim = await browser.request('/api/watch/handoff/claim', { code: new URL(issue.url).hash.slice(1), proof });
@@ -332,7 +314,7 @@ test('Plex-required Activity can approve browser linking without enabling browse
 
 test('Activity password is additional to OAuth and survives verified renewal for the same identity', async t => {
   const f = await fixture(t, {
-      accessPolicy: { discord: true, plex: true, requirePlex: false, password: 'fixture-entry', publicWeb: false },
+      accessPolicy: { discord: true, plex: true, password: 'fixture-entry', publicWeb: false },
     }),
     browser = f.browser();
   const headers = { Origin: 'https://' + f.config.clientId + '.discordsays.com' };
@@ -805,90 +787,35 @@ test('explicit software AV1 uses/probes only software and identical viewers cons
   }
 });
 
-test('Plex exemption belongs only to verified Activity requests and survives browser cache checks', async t => {
-  const f = await fixture(t, {
-    accessPolicy: {
-      discord: true,
-      plex: true,
-      requirePlex: true,
-      requirePlexInActivity: false,
-      password: '',
-      publicWeb: true,
-    },
-  });
-  const browser = f.browser(),
-    activity = f.browser();
-  await browser.discord('guest');
+test('Activity viewers keep the entry password and Discord recheck, and watch through the source credential', async t => {
+  const f = await fixture(t);
+  const activity = f.browser();
   const headers = { Origin: 'https://' + f.config.clientId + '.discordsays.com' };
   const issued = await activity.request('/api/watch/activity-login', { code: 'guest' }, headers);
   assert.equal(issued.status, 200);
   headers.Authorization = 'Bearer ' + issued.body.token;
-  assert.equal((await activity.request('/api/watch/admission', undefined, headers)).body.plexRequired, false);
   const me = await activity.request('/api/watch/me', undefined, headers);
   assert.equal(me.status, 200);
-  assert.equal((await browser.request('/api/watch/admission')).body.plexRequired, true);
-  assert.equal((await browser.request('/api/watch/me?frame_id=spoof&activity=true')).status, 401);
   assert.equal(
     (await activity.request('/api/watch/rooms', {}, headers)).status,
     201,
     'Activity room lifecycle preserves its verified context',
   );
   assert.equal((await activity.request('/api/watch/rooms', undefined, headers)).body.rooms.length, 1);
-  assert.equal(
-    (await browser.request('/api/watch/rooms')).status,
-    401,
-    'Activity admission cannot authorize a browser for the same account',
-  );
-  assert.equal(f.app.access.canWatch(me.body.account.id), false);
-  assert.equal(f.app.access.canWatch(me.body.account.id, { activity: true }), true);
-  const handoff = (await activity.request('/api/watch/handoff', {}, headers)).body;
-  await browser.request('/auth/handoff');
-  const proof = randomBytes(32).toString('hex');
-  const claim = await browser.request('/api/watch/handoff/claim', { code: new URL(handoff.url).hash.slice(1), proof });
-  assert.equal(claim.status, 200);
-  assert.equal(
-    (
-      await activity.request(
-        '/api/watch/handoff/action',
-        { id: handoff.id, action: 'approve', verification: claim.body.verification },
-        headers,
-      )
-    ).status,
-    200,
-  );
-  assert.equal((await browser.request('/api/watch/handoff/redeem', { id: handoff.id, proof })).status, 200);
-  assert.equal(
-    (await browser.request('/api/watch/me')).status,
-    401,
-    'an approved browser handoff still requires personal Plex access',
-  );
 
-  // Activity Plex exemption keeps the extra password and default Plex requirement
   f.config.accessPolicy.password = 'fixture-password';
   assert.equal((await activity.request('/api/watch/me', undefined, headers)).status, 401);
   assert.equal((await activity.request('/api/watch/entry', { password: 'fixture-password' }, headers)).status, 200);
   assert.equal((await activity.request('/api/watch/me', undefined, headers)).status, 200);
   f.config.accessPolicy.password = '';
-  f.config.accessPolicy.requirePlexInActivity = true;
-  assert.equal((await activity.request('/api/watch/me', undefined, headers)).status, 401);
-  delete f.config.accessPolicy.requirePlexInActivity;
-  assert.equal(
-    (await activity.request('/api/watch/me', undefined, headers)).status,
-    401,
-    'omitted setting keeps required Plex access in Activity',
-  );
-  f.config.accessPolicy.requirePlexInActivity = false;
 
-  // Sponsors confirmed nonmembers but never revoked credentials
+  // A linked Plex account that cannot reach the server, or is revoked, changes no media access.
   f.app.registry.link(me.body.account.id, 'plex', '103', 'Denied');
   f.app.registry.credential('103', { token: 'fixture-server-103', authType: 'traditional' });
   assert.equal((await f.app.hub.mediaFor({ userId: me.body.account.id, activity: true })).principal, 'discord-shared');
-  await assert.rejects(f.app.hub.mediaFor({ userId: me.body.account.id }), /access|server/i);
   f.provider.revoked.add('103');
   f.app.plexAuth.clear();
-  await assert.rejects(f.app.hub.mediaFor({ userId: me.body.account.id, activity: true }), /expired|revoked/);
-  f.provider.revoked.delete('103');
-  f.app.plexAuth.clear();
+  assert.equal((await f.app.hub.mediaFor({ userId: me.body.account.id, activity: true })).principal, 'discord-shared');
 
   f.members.clear();
   const now = Date.now();
@@ -911,7 +838,7 @@ test('Plex-only single room derives its fixed leader from token or explicit ID, 
 
   const f = await fixture(t, {
     singleRoom: true,
-    accessPolicy: { discord: false, plex: true, requirePlex: false, password: '', publicWeb: true },
+    accessPolicy: { discord: false, plex: true, password: '', publicWeb: true },
     ownerId: '',
     roomAdministrators: { discord: [], plex: ['102'], discordRoles: [] },
   });
@@ -966,7 +893,7 @@ test('Plex-only single room derives its fixed leader from token or explicit ID, 
 
 test('provider removal rejects leaving only a disabled login provider; owner exception preserves Discord', async t => {
   const fPlexOff = await fixture(t, {
-    accessPolicy: { discord: true, plex: false, requirePlex: false, password: '', publicWeb: true },
+    accessPolicy: { discord: true, plex: false, password: '', publicWeb: true },
   });
   const b1 = fPlexOff.browser();
   await b1.discord('guest');
@@ -980,7 +907,7 @@ test('provider removal rejects leaving only a disabled login provider; owner exc
   assert.equal(fPlexOff.app.registry.identities(u1.id).length, 2, 'identities preserved');
 
   const fDiscordOff = await fixture(t, {
-    accessPolicy: { discord: false, plex: true, requirePlex: false, password: '', publicWeb: true },
+    accessPolicy: { discord: false, plex: true, password: '', publicWeb: true },
   });
   const bGuest = fDiscordOff.browser();
   await bGuest.plex('alice');
@@ -1009,7 +936,6 @@ test('provider removal rejects leaving only a disabled login provider; owner exc
 test('Plex nonmembers can verify identity for a signed-in room invite without standalone admission', async t => {
   const f = await fixture(t, {
     guests: { enabled: true, requireSignIn: true, maxPerRoom: 10, sessionHours: 1 },
-    plexFallback: { enabled: false, token: '' },
   });
   const host = f.browser();
   await host.discord();
@@ -1026,8 +952,11 @@ test('Plex nonmembers can verify identity for a signed-in room invite without st
   const me = await visitor.request('/api/watch/me');
   assert.equal(me.status, 200);
   assert.equal(me.body.guestRoomId, id);
-  f.config.plexFallback.enabled = true;
-  assert.equal((await f.app.hub.mediaFor({ userId: me.body.account.id, guestRoomId: id })).principal, 'discord-shared');
+  assert.equal(
+    (await f.app.hub.mediaFor({ userId: me.body.account.id, guestRoomId: id })).principal,
+    'discord-shared',
+    'a room guest watches through the source credential',
+  );
 });
 
 test('room guests cannot authorize native clients, escape to former rooms or browse after close', async t => {

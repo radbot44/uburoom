@@ -297,7 +297,7 @@ test(
   async t => {
     const settings = normalizeConfig({
       rooms: { max_members: 12 },
-      directory: { expose_plex_members: true },
+      directory: { expose_discord_members: false },
       transcoding: { encoder: 'software', qualities: [[480, 1]] },
     });
     const f = await fixture(t, undefined, {
@@ -344,8 +344,7 @@ test(
     f.config.tlsKey = secret;
     f.config.ffmpegPath = secret;
     f.config.ffprobePath = secret;
-    f.config.plexFallback = { enabled: true, token: secret };
-    f.config.plexDelivery = { mode: 'proxy', clientUrl: secret, lanClientUrl: secret };
+    f.config.plexDelivery = { mode: 'proxy', clientUrl: secret, lanClientUrl: secret, token: secret };
     f.config.accessPolicy.password = secret;
     for (const object of [
       f.config.accessPolicy,
@@ -365,13 +364,11 @@ test(
     assert.deepEqual(response.body.settings.access, {
       discord: true,
       plex: true,
-      requirePlex: false,
-      requirePlexInActivity: true,
       publicWeb: true,
     });
     assert.equal(response.body.settings.rooms.limits.maxMembers, 12);
     assert.equal(response.body.settings.rooms.hostPermissions.seek, true);
-    assert.deepEqual(response.body.settings.directory, { discord: true, plex: true });
+    assert.deepEqual(response.body.settings.directory, { discord: false });
     assert.deepEqual(response.body.settings.transcoding.qualities, [{ height: 480, mbps: 1 }]);
     assert.equal(response.body.settings.transcoding.encoder, 'software');
     const serialized = JSON.stringify(response.body);
@@ -413,8 +410,6 @@ test(
       accessPolicy: {
         discord: true,
         plex: true,
-        requirePlex: false,
-        requirePlexInActivity: true,
         password: '',
         publicWeb: true,
       },
@@ -429,14 +424,6 @@ test(
       200,
       'verified Discord operator is independent of room Admin mode',
     );
-    f.config.accessPolicy.requirePlex = true;
-    assert.equal((await browser.request(endpoint)).status, 200);
-    assert.equal(
-      (await browser.request('/api/watch/me')).status,
-      401,
-      'operator authority cannot satisfy required personal Plex admission',
-    );
-    f.config.accessPolicy.requirePlex = false;
     const duringFlush = async change => {
       const flush = f.app.registry.flush.bind(f.app.registry);
       let entered, release;
@@ -476,13 +463,9 @@ test(
     f.provider.revoked.add('102');
     f.app.plexAuth.clear();
     assert.equal((await browser.request(endpoint)).status, 200);
-    const deniedMedia = await browser.request('/api/watch/library');
-    // A revoked personal Plex sign-in (for example after a Plex password change) is refused
-    // as such, with the one fix named, never as a generic configuration failure.
-    assert.equal(deniedMedia.status, 403);
-    assert.equal(deniedMedia.body.reconnect, 'plex');
-    assert.match(deniedMedia.body.error, /Reconnect Plex/);
-    assert.deepEqual(Object.keys(deniedMedia.body).sort(), ['error', 'reconnect']);
+    // A revoked personal Plex sign-in takes no media from someone Discord admits:
+    // every library is served with the source's own credential.
+    assert.equal((await browser.request('/api/watch/library')).status, 200);
     f.provider.revoked.clear();
     f.app.plexAuth.clear();
     const staleCookie = browser.jar.get('uburoom');

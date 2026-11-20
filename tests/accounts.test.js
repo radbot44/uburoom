@@ -139,14 +139,13 @@ test('previous JWT credentials still renew through their registered signing key'
   assert.ok(provider.requests.some(r => r.path === '/api/v2/auth/token'));
 });
 
-test('configured account fallback resolves its own PMS token and keeps discovery credentials separate', async t => {
+test('the dedicated direct-delivery account resolves its own PMS token and keeps discovery credentials separate', async t => {
   const provider = accountFixture(),
     accounts = new Accounts(undefined, credentialVault()),
     config = {
       plexUrl: 'http://plex-fixture.invalid:32400',
       plexToken: 'fixture-owner',
-      plexFallback: { enabled: true, token: 'fixture-user-102' },
-      plexDelivery: { mode: 'auto', clientUrl: 'https://plex.example', fallback: true },
+      plexDelivery: { mode: 'auto', clientUrl: 'https://plex.example', token: 'fixture-user-102' },
     };
   let rawChecks = 0,
     rawStatus = 401;
@@ -159,7 +158,7 @@ test('configured account fallback resolves its own PMS token and keeps discovery
     }
     if (url.pathname === '/security/token') {
       assert.equal(token, 'fixture-server-102', 'only the resolved non-owner PMS credential delegates');
-      return Response.json({ MediaContainer: { token: 'transient-resolved-fallback' } });
+      return Response.json({ MediaContainer: { token: 'transient-resolved-direct' } });
     }
     if (url.pathname === '/api/v2/resources') {
       assert.equal(token, 'fixture-user-102', 'discovery uses the account credential');
@@ -181,14 +180,14 @@ test('configured account fallback resolves its own PMS token and keeps discovery
     accounts.close();
     plex.close();
   });
-  const scopes = await Promise.all([auth.fallback(), auth.fallback()]);
-  assert.equal(rawChecks, 1, 'concurrent fallback discovery is collapsed');
+  const scopes = await Promise.all([auth.dedicated(), auth.dedicated()]);
+  assert.equal(rawChecks, 1, 'concurrent dedicated-account discovery is collapsed');
   assert.equal(scopes[0], scopes[1]);
   const scope = scopes[0];
   assert.equal(scope.token, 'fixture-server-102');
   assert.equal(scope.discoveryToken, 'fixture-user-102');
   const { PlexDelivery } = require('../server/plex/delivery'),
-    delivery = new PlexDelivery(config, plex, auth, async () => auth.fallback());
+    delivery = new PlexDelivery(config, plex, auth, async () => auth.dedicated());
   const direct = await delivery.file(
     {
       kind: 'plex',
@@ -199,7 +198,7 @@ test('configured account fallback resolves its own PMS token and keeps discovery
     { identity: {}, actor: {} },
     async () => true,
   );
-  assert.equal(new URL(direct).searchParams.get('X-Plex-Token'), 'transient-resolved-fallback');
+  assert.equal(new URL(direct).searchParams.get('X-Plex-Token'), 'transient-resolved-direct');
   await assert.rejects(
     scope.json('/library/metadata/999'),
     error => error.status === 404,
@@ -207,12 +206,12 @@ test('configured account fallback resolves its own PMS token and keeps discovery
   );
   provider.revoked.add('102');
   auth.clear();
-  await assert.rejects(auth.fallback(), error => error.revoked === true);
+  await assert.rejects(auth.dedicated(), error => error.revoked === true);
   provider.revoked.clear();
   auth.clear();
   rawStatus = 403;
   await assert.rejects(
-    auth.fallback(),
+    auth.dedicated(),
     error => error.status === 403,
     'library denials do not trigger token resolution',
   );
@@ -272,15 +271,18 @@ test('direct original delivery isolates delegated credentials and fences private
       delegated.push(options.headers['X-Plex-Token']);
       return Response.json({ MediaContainer: { token: 'transient-fixture-' + delegated.length } });
     }
+    // Plex user 102 is the dedicated account: it can reach the server but does not own it.
+    if (url.pathname === '/api/v2/resources' && options.headers['X-Plex-Token'] === 'fixture-user-102') {
+      const response = await provider.fetch(input, options);
+      return Response.json((await response.json()).map(resource => ({ ...resource, owned: false })));
+    }
     return provider.fetch(input, options);
   });
-  f.config.plexDelivery = { mode: 'auto', clientUrl: 'https://plex-client.invalid:32400', fallback: false };
+  f.config.plexDelivery = { mode: 'auto', clientUrl: 'https://plex-client.invalid:32400', token: 'fixture-user-102' };
   const alice = f.browser(),
-    bob = f.browser(),
-    guest = f.browser();
+    member = f.browser();
   await alice.plex('alice');
-  await bob.plex('bob');
-  await guest.discord('guest');
+  await member.discord('guest');
   const roomId = (await alice.post('/api/watch/rooms', {})).body.id,
     viewerId = randomUUID(),
     other = randomUUID();
@@ -295,17 +297,22 @@ test('direct original delivery isolates delegated credentials and fences private
   assert.equal(state.directDelivery, true);
   assert.equal(new URL(state.mediaUrl).origin, f.config.plexDelivery.clientUrl);
   assert.equal(new URL(state.mediaUrl).searchParams.get('X-Plex-Token'), 'transient-fixture-1');
-  assert.deepEqual(delegated, ['fixture-server-101']);
-  assert.equal(JSON.stringify(state).includes('fixture-server-101'), false);
-  assert.equal(JSON.stringify(state).includes('fixture-owner'), false);
-  const personal = (await bob.request(`/api/watch/rooms/${roomId}?viewer=${other}`)).body;
-  assert.equal(personal.directDelivery, true);
-  assert.notEqual(personal.mediaUrl, state.mediaUrl);
-  const sponsored = (await guest.request(`/api/watch/rooms/${roomId}?viewer=${randomUUID()}`)).body;
-  assert.match(sponsored.mediaUrl, /^\/api\/watch\/media\//);
-  assert.equal(delegated.includes('fixture-owner'), false);
+  // A Discord member with no Plex link watches through the same dedicated account.
+  const shared = (await member.request(`/api/watch/rooms/${roomId}?viewer=${other}`)).body;
+  assert.equal(shared.directDelivery, true);
+  assert.notEqual(shared.mediaUrl, state.mediaUrl);
+  assert.equal(delegated.length, 2, 'each viewer gets its own delegated token');
+  assert.ok(
+    delegated.every(token => token === 'fixture-user-102'),
+    'only the dedicated account delegates',
+  );
+  for (const body of [state, shared]) {
+    const text = JSON.stringify(body);
+    for (const secret of ['fixture-owner', 'fixture-user-102', 'fixture-server-101', 'fixture-server-102'])
+      assert.equal(text.includes(secret), false, secret + ' never reaches a browser');
+  }
   const recover = { viewerId, mediaVersion: state.mediaVersion, streamVersion: state.streamVersion };
-  assert.equal((await bob.post(`/api/watch/rooms/${roomId}/delivery`, recover)).status, 403);
+  assert.equal((await member.post(`/api/watch/rooms/${roomId}/delivery`, recover)).status, 403);
   assert.equal(
     (await alice.post(`/api/watch/rooms/${roomId}/delivery`, { ...recover, streamVersion: randomUUID() })).status,
     409,
@@ -317,10 +324,11 @@ test('direct original delivery isolates delegated credentials and fences private
   assert.equal(recovered.mediaVersion, state.mediaVersion);
   assert.equal(recovered.state.paused, state.state.paused);
   assert.equal((await alice.post(`/api/watch/rooms/${roomId}/delivery`, recover)).status, 409);
-  assert.equal((await bob.request(`/api/watch/rooms/${roomId}?viewer=${other}`)).body.mediaUrl, personal.mediaUrl);
-  f.provider.revoked.add('102');
+  assert.equal((await member.request(`/api/watch/rooms/${roomId}?viewer=${other}`)).body.mediaUrl, shared.mediaUrl);
+  // Revoking the viewer's own admission still ends their access; the shared account is unaffected.
+  f.provider.revoked.add('101');
   f.app.plexAuth.clear();
-  assert.equal((await bob.request(`/api/watch/rooms/${roomId}?viewer=${other}`)).status, 401);
+  assert.equal((await alice.request(`/api/watch/rooms/${roomId}?viewer=${viewerId}`)).status, 401);
 });
 
 test(
@@ -338,6 +346,10 @@ test(
       if (url.pathname === '/security/token') {
         delegated.push(options.headers['X-Plex-Token']);
         return json({ token: 'transient-hls-' + delegated.length });
+      }
+      if (url.pathname === '/api/v2/resources' && options.headers['X-Plex-Token'] === 'fixture-user-102') {
+        const response = await provider.fetch(input, options);
+        return Response.json((await response.json()).map(resource => ({ ...resource, owned: false })));
       }
       if (url.pathname === '/library/metadata/1')
         return json({
@@ -416,7 +428,7 @@ test(
       mode: 'auto',
       clientUrl: 'https://plex-client.invalid:32400',
       lanClientUrl: 'https://plex-lan.invalid:32400',
-      fallback: false,
+      token: 'fixture-user-102',
     };
     f.config.trustedProxies = ['127.0.0.1', '::1'];
     f.config.trustedProxyHeader = 'cf-connecting-ip';
@@ -425,7 +437,7 @@ test(
     const alice = f.browser(),
       bob = f.browser();
     await alice.plex('alice');
-    await bob.plex('bob');
+    await bob.discord('guest');
     const roomId = (await alice.post('/api/watch/rooms', {})).body.id,
       a = randomUUID(),
       b = randomUUID();
@@ -446,7 +458,7 @@ test(
     assert.equal(left.directHls.origin, 'https://plex-lan.invalid:32400');
     assert.equal(right.directHls.origin, 'https://plex-client.invalid:32400');
     assert.equal(left.directHls.session, right.directHls.session);
-    assert.deepEqual(delegated, ['fixture-server-101', 'fixture-server-102']);
+    assert.deepEqual(delegated, ['fixture-user-102', 'fixture-user-102'], 'only the dedicated account delegates');
     assert.notEqual(left.directHls.token, right.directHls.token);
     assert.equal(starts.length, 1);
     assert.equal(segments, 0);
@@ -470,6 +482,8 @@ test(
     assert.equal(wanCsp.includes('https://plex-lan.invalid:32400'), false, 'WAN CSP must not expose the LAN origin');
     assert.equal(master.body.includes(right.directHls.token), false);
     assert.equal(master.body.includes('fixture-server-'), false);
+    assert.equal(master.body.includes('fixture-user-'), false);
+    assert.equal(master.body.includes('fixture-owner'), false);
     const recover = { viewerId: a, mediaVersion: left.mediaVersion, streamVersion: left.streamVersion };
     assert.equal((await bob.post(`/api/watch/rooms/${roomId}/delivery`, recover)).status, 403);
     assert.equal((await alice.post(`/api/watch/rooms/${roomId}/delivery`, recover)).status, 200);
@@ -492,20 +506,19 @@ test(
       true,
       'forwarding headers are ignored when trustedProxies is empty',
     );
-    f.provider.revoked.add('102');
+    f.provider.revoked.add('101');
     f.app.plexAuth.clear();
-    assert.equal((await state(bob, b)).status, 401);
+    assert.equal((await state(alice, a)).status, 401);
   },
 );
 
-test('direct fallback requires verified non-ownership and never delegates configured owner credentials', async t => {
+test('direct delivery requires a verified non-owner dedicated account and never delegates owner credentials', async t => {
   const { PlexDelivery } = require('../server/plex/delivery');
   const { clientAddress } = require('../server/client-address');
   const config = {
     plexUrl: 'http://plex.invalid:32400',
     plexToken: 'owner',
-    plexDelivery: { mode: 'auto', clientUrl: 'https://plex.example', fallback: true },
-    plexFallback: { enabled: true, token: 'dedicated' },
+    plexDelivery: { mode: 'auto', clientUrl: 'https://plex.example', token: 'dedicated' },
   };
   let owned = false,
     requests = 0,
@@ -530,10 +543,10 @@ test('direct fallback requires verified non-ownership and never delegates config
     assert.equal(options.headers['X-Plex-Token'], 'dedicated');
     requests++;
     if (revokeOnDelegate) live = false;
-    return Response.json({ MediaContainer: { token: 'transient-fallback' } });
+    return Response.json({ MediaContainer: { token: 'transient-direct' } });
   });
   t.after(() => plex.close());
-  let scope = plex.scope('dedicated', 'configured-fallback');
+  let scope = plex.scope('dedicated', 'configured-direct');
   const auth = {
     machine: async () => 'machine',
     request: async () => [
@@ -548,7 +561,7 @@ test('direct fallback requires verified non-ownership and never delegates config
     provider: scope,
   });
   const delivery = () => new PlexDelivery(config, plex, auth, async () => scope);
-  assert.match(await delivery().file(media(), context, async () => true), /transient-fallback/);
+  assert.match(await delivery().file(media(), context, async () => true), /transient-direct/);
   publicMachine = 'another-server';
   assert.equal(await delivery().file(media(), context, async () => true), undefined);
   publicMachine = 'machine';
@@ -584,7 +597,7 @@ test('direct fallback requires verified non-ownership and never delegates config
   const probes = identityRequests;
   assert.match(
     await delivery().file(media(), context, async () => true),
-    /transient-fallback/,
+    /transient-direct/,
     'authenticated discovery permits direct delivery without server NAT loopback',
   );
   assert.equal(identityRequests, probes, 'a verified advertised origin does not need server-side public connectivity');
@@ -604,15 +617,15 @@ test('direct fallback requires verified non-ownership and never delegates config
     undefined,
     'relay metadata does not attest a direct endpoint',
   );
-  config.plexFallback.token = '';
+  config.plexDelivery.token = '';
   assert.equal(await delivery().file(media(), context, async () => true), undefined);
-  config.plexFallback.token = 'owner';
-  scope = plex.scope('owner', 'configured-fallback');
+  config.plexDelivery.token = 'owner';
+  scope = plex.scope('owner', 'configured-direct');
   assert.equal(await delivery().file(media(), context, async () => true), undefined);
   scope = plex;
   assert.equal(await delivery().file(media(), context, async () => true), undefined);
-  config.plexFallback.token = 'dedicated';
-  scope = plex.scope('dedicated', 'configured-fallback');
+  config.plexDelivery.token = 'dedicated';
+  scope = plex.scope('dedicated', 'configured-direct');
   config.plexDelivery.clientUrl = 'https://plex.example';
   advertised = [
     { uri: 'https://plex.example', protocol: 'https', relay: false, local: false },
@@ -947,7 +960,7 @@ test(
 );
 
 test(
-  'Discord/Plex link ownership, stable accounts and Plex-only room authorization preserve provider-specific media restrictions',
+  'Discord/Plex link ownership, stable accounts and Plex-only room authorization give every admitted person every item',
   tls,
   async t => {
     let holdMedia = false;
@@ -1051,36 +1064,17 @@ test(
       });
     assert.equal(
       (await command('media.load', { mediaId: '999', quality: 'direct' })).body.status,
-      'failed',
-      'Plex-only host cannot load a denied item through the owner token',
+      'applied',
+      "a viewer's own Plex restrictions play no part: the source's credential serves every admitted person",
     );
     assert.equal((await command('media.load', { mediaId: '123', quality: 'direct' })).body.status, 'applied');
     state = (await bob.request(`/api/watch/rooms/${roomId}?viewer=${viewer}`)).body;
     assert.equal((await bob.request(state.mediaUrl)).status, 200);
     const reads = f.provider.requests.filter(r => r.path === '/library/parts/123/file.mp4');
     assert.ok(reads.length);
-    assert.ok(reads.every(r => r.token === 'fixture-server-102'));
-    const scoped = await f.app.plexAuth.forUser(b.id),
-      hls = await scoped.prepare('123', '720p4');
-    assert.ok(hls.transcodeId);
     assert.ok(
-      f.provider.requests.some(
-        r => r.path.includes('/transcode/universal/decision') && r.token === 'fixture-server-102',
-      ),
-    );
-    await f.app.watch.providers.primary.root.stop(hls);
-    f.app.watch.pipeline.av1.ffmpeg = 'fixture-only';
-    const av1 = await scoped.prepare('123', 'direct', true, undefined, 'av1');
-    assert.equal(
-      av1.av1Lease.group.source.provider.token,
-      'fixture-server-102',
-      'shared encoder input uses an authorized user context',
-    );
-    await f.app.watch.providers.primary.root.stop(av1);
-    const ownerSource = await f.app.watch.providers.primary.root.prepare('999', 'direct');
-    await assert.rejects(
-      scoped.prepare('999', 'direct', false, ownerSource),
-      'owner metadata cannot bypass a restricted user context',
+      reads.every(r => r.token === 'fixture-owner'),
+      'media is read with the source credential, never the viewer token',
     );
     const actor = { userId: b.id, name: 'Bob' };
     assert.equal(f.app.access.isMember(b.id), false);
@@ -1099,20 +1093,14 @@ test(
       command: { action: 'media.load', args: { mediaId: '999', quality: 'direct' } },
     });
     aliceState = (await alice.request(`/api/watch/rooms/${aliceRoom}?viewer=${aliceViewer}`)).body;
-    const restrictedRoom = f.app.watch.rooms.get(aliceRoom);
-    restrictedRoom.permissions.allHosts = true;
-    assert.equal(await f.app.watch.canView(restrictedRoom, actor), false, 'All hosts grants no item entitlement');
-    restrictedRoom.permissions.allHosts = false;
-    restrictedRoom.hosts.push(b.id);
     assert.equal(
-      await f.app.watch.canView(restrictedRoom, actor),
-      false,
-      'explicit host assignment grants no item entitlement',
+      await f.app.watch.canView(f.app.watch.rooms.get(aliceRoom), actor),
+      true,
+      'every admitted person may watch the item the room picked',
     );
     f.config.roomAdministrators = { discord: [], plex: ['102'], discordRoles: [] };
     assert.equal((await bob.post('/api/watch/admin-mode', { enabled: true })).status, 200);
     assert.equal(f.app.hub.isAdmin(actor), true);
-    assert.equal(await f.app.watch.canView(restrictedRoom, actor), false, 'Admin mode grants no item entitlement');
     for (const endpoint of ['/api/operator/settings', '/api/operator/settings/saved'])
       assert.equal(
         (await bob.request(endpoint)).status,
@@ -1134,18 +1122,8 @@ test(
     assert.equal((await alice.request('/api/watch/me')).status, 200, 'Discord still provides uburoom account access');
     assert.equal(
       (await alice.request(aliceState.mediaUrl)).status,
-      403,
-      'a linked Plex denial does not fall back to the owner token',
-    );
-    assert.equal(
-      (
-        await f.app.hub.dispatch(
-          { userId: f.config.ownerId, name: 'Owner' },
-          { roomId: aliceRoom, action: 'media.pause' },
-        )
-      ).status,
-      'forbidden',
-      'Room commands enforce the same media entitlement',
+      200,
+      'a Plex denial of someone Discord admits takes no media away',
     );
     const grantBase = state.mediaUrl.slice(0, state.mediaUrl.lastIndexOf('/') + 1),
       captionVersion = randomUUID();

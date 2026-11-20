@@ -6,7 +6,7 @@ const fs = require('node:fs'),
 const { createApp } = require('../../server/app');
 const { accountFixture } = require('../../scripts/account-fixture');
 
-async function fixture(t, deliveryFetch, overrides = {}) {
+async function fixture(t, deliveryFetch, overrides = {}, services = {}) {
   const provider = accountFixture(),
     cert = fs.readFileSync(path.join(__dirname, '../../certs/server-cert.pem'));
   const config = {
@@ -29,6 +29,7 @@ async function fixture(t, deliveryFetch, overrides = {}) {
     plexFetch: deliveryFetch ? (input, options) => deliveryFetch(input, options, provider) : provider.fetch,
     plexDemo: provider,
     oauthFetch: provider.discordFetch,
+    ...services,
   });
   const members = new Set(Object.values(provider.subjects));
   app.access.connect({

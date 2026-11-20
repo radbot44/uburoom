@@ -44,7 +44,6 @@ function pageBootstrap({
       identity: !!identity,
       passwordNeeded: !entryPolicy.password(req, identity),
       activityOnly: !config.accessPolicy.publicWeb && !identity?.activity,
-      plexRequired: entryPolicy.requiresPlex(identity),
       admitted: !!identity && !!(await login(req)),
       csrf: identity?.csrf,
       pendingIdentity: identity

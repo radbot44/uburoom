@@ -23,7 +23,7 @@ function runningSettings(config) {
   return {
     source: 'running',
     settings: {
-      access: select(config.accessPolicy, ['discord', 'plex', 'requirePlex', 'requirePlexInActivity', 'publicWeb']),
+      access: select(config.accessPolicy, ['discord', 'plex', 'publicWeb']),
       rooms: {
         singleRoom: !!config.singleRoom,
         limits: select(config.roomLimits, [
@@ -40,7 +40,7 @@ function runningSettings(config) {
         hostPermissions: permissions(config.roomPermissions?.host),
         viewerPermissions: permissions(config.roomPermissions?.viewer),
       },
-      directory: select(config.directory, ['discord', 'plex']),
+      directory: select(config.directory, ['discord']),
       transcoding: {
         ...select(transcoding, ['policy', 'provider', 'uburoom', 'encoder', 'cpuFallback', 'maxJobs']),
         formats: transcoding?.formats?.slice() || [],
