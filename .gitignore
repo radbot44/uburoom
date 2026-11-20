@@ -9,6 +9,7 @@ config*.yml
 *.env.*
 !.env.example
 # Runtime identity, account databases and TLS/key material.
+/config/
 /data/
 /certs/
 *.sqlite

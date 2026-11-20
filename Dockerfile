@@ -39,15 +39,17 @@ COPY --chown=node:node scripts/doctor.js ./scripts/doctor.js
 COPY --chown=node:node config.example.yaml LICENSE ./
 
 ENV XDG_DATA_HOME=/var/lib/uburoom
-RUN mkdir -p /var/lib/uburoom /app/data && \
-    chown -R node:node /var/lib/uburoom /app/data && \
-    chmod 700 /var/lib/uburoom
+# /config holds config.yaml, certs/ and data/. Mount it as a writable folder:
+# Server settings saves write a new config.yaml beside the old one and swap it in.
+RUN mkdir -p /var/lib/uburoom /config && \
+    chown -R node:node /var/lib/uburoom /config && \
+    chmod 700 /var/lib/uburoom /config
 
 USER node
 
 EXPOSE 5756
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD node -e "const https = require('node:https'); let port = 5756; try { port = require('./server/config').loadConfig().port; } catch {} const req = https.request({ host: '127.0.0.1', port, path: '/health', method: 'GET', rejectUnauthorized: false }, res => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.end();"
+    CMD node -e "const https = require('node:https'); let port = 5756; try { port = require('./server/config').loadConfig('/config/config.yaml', []).port; } catch {} const req = https.request({ host: '127.0.0.1', port, path: '/health', method: 'GET', rejectUnauthorized: false }, res => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.end();"
 
-CMD ["node", "server/index.js"]
+CMD ["node", "server/index.js", "--config", "/config/config.yaml"]

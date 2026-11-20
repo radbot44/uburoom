@@ -12,9 +12,9 @@ services:
     ports:
       - "5756:5756"
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./data:/app/data
-      - ./certs:/app/certs:ro
+      # config.yaml, certs/ and data/ (writable: Server settings save here)
+      - ./config:/config
+      # credentials.key; back up together with config/
       - ./secrets:/var/lib/uburoom
     # Optional: Hardware transcoding acceleration for Intel / AMD GPUs (VAAPI/QSV)
     # devices:

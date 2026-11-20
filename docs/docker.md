@@ -19,61 +19,64 @@ Create a working directory for your uburoom instance or use the root of your rep
 ```
 uburoom/
 ├── docker-compose.yml
-├── config.yaml
-├── certs/
-│   ├── server-cert.pem
-│   └── server-key.pem
-├── data/
-└── secrets/
+├── config/              → /config in the container (writable)
+│   ├── config.yaml
+│   ├── certs/
+│   │   ├── server-cert.pem
+│   │   └── server-key.pem
+│   └── data/            (created on first start)
+└── secrets/             → /var/lib/uburoom
 ```
+
+The container starts with `--config /config/config.yaml`, and relative paths in `config.yaml` resolve beside it, so the default `certs/...` and `data` settings point into `config/`. Mount the **folder**, not a single file: Server settings saves write a new `config.yaml` beside the old one and swap it in, which fails on a read-only or single-file mount.
 
 ### 1. Persistent Data and Secrets
 
 Docker will create directories for missing volume sources if they do not already exist on the host (often owned by `root` on Linux). Because the container runs as the non-root `node` user (`UID 1000`, `GID 1000`), create and set ownership on the mounted directories on Linux hosts before starting the container:
 
 ```sh
-# Create directories for persistent SQLite databases, TLS certificates, and secrets:
-mkdir -p data certs secrets
+# Create the configuration folder (config, certificates, data) and the secrets folder:
+mkdir -p config/certs secrets
 
-# Grant ownership to the container's non-root user (UID/GID 1000) and restrict secrets/:
-chown -R 1000:1000 data secrets
-chmod 700 secrets
+# Grant ownership to the container's non-root user (UID/GID 1000) and keep both private:
+chown -R 1000:1000 config secrets
+chmod 700 config secrets
 ```
 
 > [!IMPORTANT]
-> **Preserve `secrets/` and `data/`:**
-> `credentials.key` is a 32-byte encryption key generated automatically on first startup inside `secrets/` (persisted from `/var/lib/uburoom/uburoom/credentials.key`) and used to protect stored provider tokens in `data/accounts.sqlite`. If you lose this key, encrypted credentials cannot be decrypted and will need to be re-authenticated. Back up `secrets/` and `data/` together.
+> **Preserve `secrets/` and `config/`:**
+> `credentials.key` is a 32-byte encryption key generated automatically on first startup inside `secrets/` (persisted from `/var/lib/uburoom/uburoom/credentials.key`) and used to protect stored provider tokens in `config/data/accounts.sqlite`. If you lose this key, encrypted credentials cannot be decrypted and will need to be re-authenticated. Back up `secrets/` and `config/` together.
 
 ### 2. TLS Certificates
 
-uburoom requires TLS certificates to establish an HTTPS listener. Place your PEM-formatted certificate and private key in the `certs/` folder:
+uburoom requires TLS certificates to establish an HTTPS listener. Place your PEM-formatted certificate and private key in the `config/certs/` folder:
 
-- `certs/server-cert.pem`
-- `certs/server-key.pem`
+- `config/certs/server-cert.pem`
+- `config/certs/server-key.pem`
 
 If testing locally without a public domain, you can generate self-signed certificates using `mkcert` or OpenSSL:
 
 ```sh
 openssl req -x509 -newkey rsa:2048 -nodes \
-  -keyout certs/server-key.pem \
-  -out certs/server-cert.pem \
+  -keyout config/certs/server-key.pem \
+  -out config/certs/server-cert.pem \
   -days 365 \
   -subj "/CN=localhost"
 ```
 
-On Linux hosts, ensure `certs/` and both PEM files are readable by UID `1000` (for example, `chown 1000:1000 certs/server-cert.pem certs/server-key.pem && chmod 600 certs/server-key.pem`, or grant group read access to GID `1000`).
+On Linux hosts, ensure both PEM files are readable by UID `1000` (for example, `chown 1000:1000 config/certs/*.pem && chmod 600 config/certs/server-key.pem`).
 
 ---
 
 ## Configuration (`config.yaml`)
 
-Copy `config.example.yaml` to `config.yaml`:
+Copy `config.example.yaml` to `config/config.yaml`:
 
 ```sh
-cp config.example.yaml config.yaml
+cp config.example.yaml config/config.yaml
 ```
 
-On Linux hosts, ensure `config.yaml` is readable by UID `1000` while keeping it restricted from other host users (for example, `chown 1000:1000 config.yaml && chmod 600 config.yaml`).
+On Linux hosts, ensure `config.yaml` is readable and writable by UID `1000` while keeping it restricted from other host users (for example, `chown 1000:1000 config/config.yaml && chmod 600 config/config.yaml`).
 
 Key configuration adjustments for Docker deployments:
 
@@ -108,7 +111,7 @@ server:
 
 ### Storage Paths
 
-Leave `storage.data_directory` set to default `'data'`. When mounted via Compose, this maps directly to `/app/data`.
+Leave `storage.data_directory` set to default `'data'`. It resolves beside `config.yaml`, so data is stored in `config/data/` on the host.
 
 ```yaml
 storage:
@@ -131,9 +134,9 @@ services:
     ports:
       - "5756:5756"
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./data:/app/data
-      - ./certs:/app/certs:ro
+      # config.yaml, certs/ and data/ (writable: Server settings save here)
+      - ./config:/config
+      # credentials.key; back up together with config/
       - ./secrets:/var/lib/uburoom
     # Optional: Hardware transcoding acceleration for Intel / AMD GPUs (VAAPI/QSV)
     # devices:
@@ -184,7 +187,7 @@ curl -k https://localhost:5756/health
 docker compose down
 ```
 
-*Stopping or removing the container does not delete your database or encryption key as long as `./data` and `./secrets` are persisted on the host.*
+*Stopping or removing the container does not delete your configuration, database or encryption key as long as `./config` and `./secrets` are persisted on the host.*
 
 ---
 
@@ -233,9 +236,7 @@ services:
     expose:
       - "5756"
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./data:/app/data
-      - ./certs:/app/certs:ro
+      - ./config:/config
       - ./secrets:/var/lib/uburoom
 
   caddy:

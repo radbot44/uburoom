@@ -2,6 +2,7 @@ node_modules
 .git
 personal/
 artifacts/
+config/
 data/
 certs/
 secrets/

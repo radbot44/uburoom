@@ -546,6 +546,8 @@ test('.dockerignore excludes secrets, keys, databases and config backups while k
     'backup/accounts.sqlite-wal',
     'backup/archive.db',
     'config.yaml',
+    'config/config.yaml',
+    'config/data/accounts.sqlite',
   ]) {
     assert.equal(ignored(sensitive), true, `expected .dockerignore to exclude ${sensitive}`);
   }
