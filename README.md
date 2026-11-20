@@ -1,32 +1,62 @@
 # uburoom
 
-Self-hosted Plex watch parties in a browser or Discord Activity. No managed hosting service is included.
+Watch together, in sync. uburoom is a server you run yourself: friends join a room in their browser (or as a Discord Activity) and everyone sees the same moment of the same video, with shared pause, seek and queue. It plays from the media you already have in Plex, Jellyfin or a folder on your disk. There is no subscription and no hosted service.
 
-**Pre-release:** Real Plex, Discord, browser/device and distribution verification is still open. See the [testing status](docs/testing.md) and [roadmap](ROADMAP.md) for evidence and release gates.
+**Pre-release:** Real Plex, Discord, browser/device and distribution verification is still open. See the [testing status](docs/testing.md) and [roadmap](ROADMAP.md) for evidence and release gates. Easier setup (a first-run wizard and installer) is in progress; until then, installation means editing a config file.
 
-## Local demo
+## Install
 
-Requires Node **22.13.0+** and npm. In PowerShell:
+You need a computer that stays on, [Node.js](https://nodejs.org/) **22.13.0 or later**, and a media source: a Plex server (and its token), a Jellyfin server (and an API key) or a folder of videos. FFmpeg is needed for subtitles and for converting video a browser cannot play.
 
-```powershell
+**Windows, from source**
+
+1. Download or clone this repository.
+2. Run `install-uburoom.bat` once. It installs dependencies.
+3. Finish [first-time setup](#first-time-setup) below.
+4. Run `run-uburoom.bat` to start the server. Keep its window open.
+
+**Linux or macOS, from source**
+
+```sh
 npm ci
-.\scripts\new-dev-cert.ps1 -DnsNames @('localhost')
-node scripts/watch-demo.js --accounts
+npm start
 ```
 
-Open `https://localhost:6768/watch?demo=host` and `https://localhost:6768/watch?demo=guest` in separate browsers or profiles. Accept the local development certificate exception, create or join a room, and try shared playback controls. The demo uses disposable accounts and synthetic media, with no Plex or Discord credentials. See [development](docs/development.md) for test commands.
+Do this after first-time setup.
 
-## Capabilities and limits
+**Docker**
 
-- Shared playback, late-join synchronization, public/private rooms, host permissions and persistent rooms/queues.
-- Plex browsing and media-access checks, linked Plex/Discord accounts, browser/Activity handoff and personal volume, quality and track choices.
-- Native per-viewer playback observations and history, plus decoupled Plex session reporting (activity-only by default for connected Plex accounts, with explicit per-viewer opt-in for personal watch-state sync and local-only isolation for sponsored viewers).
+Follow the [Docker guide](docs/docker.md). It mounts one `config/` folder for your settings, certificates and data, and a `secrets/` folder for the encryption key.
 
-## Self-hosting
+## First-time setup
 
-Follow the [self-hosting guide](docs/self-hosting.md) (or the [Docker guide](docs/docker.md)) to configure Plex, HTTPS and optional Discord integration. Copy [`config.example.yaml`](config.example.yaml) to a **private** `config.yaml`, supply your settings, verify with `npm run doctor`, then run `npm start` or `node server/index.js --config /path/to/config.yaml`.
+1. Copy [`config.example.yaml`](config.example.yaml) to `config.yaml` (in Docker, `config/config.yaml`). Keep it private.
+2. Connect a media source in `config.yaml`: `plex` (URL and token), `jellyfin` (URL and API key) or `local_media` (folders). See [self-hosting](docs/self-hosting.md) for each.
+3. Set `server.public_url` to the HTTPS address people will use, and give uburoom a certificate and key (`server.tls_cert`, `server.tls_key`). uburoom always serves HTTPS. For a quick test on your own computer, [development](docs/development.md) shows how to make a local certificate.
+4. Run `npm run doctor`. It checks your configuration, tools and storage and tells you what to fix.
+5. Start uburoom and open `https://<your address>/watch`. Check sign-in and playback from another device, not just your own computer.
 
-Never commit or share configuration, tokens, databases or encryption keys. Preserve the **original encryption key** when restoring existing state; see [upgrading](docs/upgrading.md). Shared Plex fallback is off by default; turning it on can expand eligible viewers' media access, so review its [access implications](docs/self-hosting.md#shared-plex-fallback) first.
+To invite people from outside your home network, you need a public HTTPS address. [Self-hosting](docs/self-hosting.md#network-and-deployment) covers reverse proxies and trusted proxies.
+
+> [!WARNING]
+> Never commit or share configuration, tokens, databases or encryption keys. Preserve the **original encryption key** when restoring or moving existing state; see [upgrading](docs/upgrading.md).
+
+## What you get
+
+- Rooms where everyone watches in sync. Late joiners catch up. Rooms can be public or private, with host permissions and a shared queue that can last between sessions.
+- Plex, Jellyfin and local folders, browsed from one library view. uburoom converts video a browser cannot play.
+- Sign in with Plex or Discord, or invite guests to a room. Each viewer chooses their own volume, quality, audio and subtitles without affecting the room.
+- Use it in a browser, or as an Activity inside a Discord voice channel. Optionally post rooms and watch nights to Discord.
+- Each person's watch history and, if they opt in, their own Plex watch state.
+
+## Documentation
+
+- [Self-hosting](docs/self-hosting.md): configuration, access, Discord, backups, troubleshooting.
+- [Docker](docs/docker.md) and [upgrading](docs/upgrading.md).
+- [Accounts and access](docs/accounts-and-access.md) and [rooms and queues](docs/rooms-and-queues.md).
+- [Product spec](SPEC.md), [roadmap](ROADMAP.md) and [testing status](docs/testing.md).
+
+Developers: build, tests and a local demo with disposable accounts and synthetic media are in [development](docs/development.md#local-demo).
 
 ## License
 

@@ -14,6 +14,19 @@ node scripts/watch-demo.js --accounts
 
 The certificate script refuses to overwrite an existing keypair. Demo accounts/media are disposable and do not load production credentials. Normal startup uses private YAML; see [self-hosting](self-hosting.md). Keep generated artifacts, state and secrets out of Git.
 
+## Local demo
+
+Requires Node **22.13.0+** and npm. In PowerShell:
+
+```powershell
+npm ci
+.\scripts
+ew-dev-cert.ps1 -DnsNames @('localhost')
+node scripts/watch-demo.js --accounts
+```
+
+Open `https://localhost:6768/watch?demo=host` and `https://localhost:6768/watch?demo=guest` in separate browsers or profiles. Accept the local development certificate exception, create or join a room, and try shared playback controls. The demo uses disposable accounts and synthetic media, with no Plex or Discord credentials.
+
 ## Browser client
 
 The watch page is one ES module graph from `web/watch.js` (`web/package.json` marks `web/` as modules; the server and tests `require` the ones they share). The entry builds the page bootstrap, the scheduler (`web/watch/scheduler.js`, one 250 ms tick for all periodic work), the time base (`web/watch/time.js`: room clock, monotonic and wall time and timers; nothing else reads `Date.now()` or `performance.now()`) and mounts each module in `web/watch/` with `mount(host, deps)`. A module returns the functions other modules call through `deps`; state that more than one module needs lives in `web/watch/store.js`, by area. `shared/` modules are imported directly from `/shared/…`. `theme.js` and `watch-layout.js` stay classic scripts because they run before first paint. `tests/helpers/watch-module.js` mounts one module in Node with stand-in elements, so tests exercise the real code.
