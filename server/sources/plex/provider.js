@@ -1,7 +1,7 @@
 'use strict';
-const { PlexDelivery } = require('./plex/delivery');
-const { PlexReporting } = require('./plex-reporting');
-const { serverName } = require('./media-providers');
+const { PlexDelivery } = require('./delivery');
+const { PlexReporting } = require('./reporting');
+const { serverName } = require('../../media-providers');
 
 const failure = (message, status = 409) => Object.assign(new Error(message), { status });
 
@@ -11,7 +11,7 @@ const failure = (message, status = 409) => Object.assign(new Error(message), { s
  * account and direct delivery from the Plex server. Catalog, sessions and transcodes
  * stay in server/plex.js.
  * @param {{plex: any, config?: any, registry?: any, plexAuth?: any}} services
- * @returns {import('./media-providers').MediaProvider}
+ * @returns {import('../../media-providers').MediaProvider}
  */
 function plexProvider({ plex, config = {}, registry, plexAuth }) {
   let identifying;

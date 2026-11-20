@@ -2,15 +2,15 @@
 const fs = require('node:fs');
 const fsp = fs.promises;
 const path = require('node:path');
-const { fileStream } = require('./file-stream');
+const { fileStream } = require('../../file-stream');
 const { createHash, randomUUID } = require('node:crypto');
-const { PlaybackError } = require('./errors');
-const { classifyHdr } = require('./media-tools');
-const Tracks = require('./media-tracks');
-const { LocalIndex } = require('./local/index');
-const { LocalArt } = require('./local/art');
-const { prepareStream } = require('./media-delivery');
-const { runOperation, currentSignal } = require('./operation');
+const { PlaybackError } = require('../../errors');
+const { classifyHdr } = require('../../media-tools');
+const Tracks = require('../../media-tracks');
+const { LocalIndex } = require('./index');
+const { LocalArt } = require('./art');
+const { prepareStream } = require('../../media-delivery');
+const { runOperation, currentSignal } = require('../../operation');
 
 /** The server id every local library is recorded under. */
 const LOCAL_SERVER = 'local-media';
@@ -692,7 +692,7 @@ class LocalMedia {
 /**
  * The configured local libraries as a media provider, or nothing when none are configured.
  * @param {{config: any, pipeline: any, logger?: any}} services
- * @returns {import('./media-providers').MediaProvider | undefined}
+ * @returns {import('../../media-providers').MediaProvider | undefined}
  */
 function localProvider({ config, pipeline, logger }) {
   const libraries = config.localMedia?.libraries || [];

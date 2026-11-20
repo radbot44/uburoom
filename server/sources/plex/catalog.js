@@ -1,8 +1,8 @@
 'use strict';
 const { createHash } = require('node:crypto');
-const Sources = require('../plex-source');
+const Sources = require('../../plex-source');
 const { plexIdentity } = require('./identity');
-const { SharedTask } = require('../operation');
+const { SharedTask } = require('../../operation');
 
 /** How many items a Media Home row holds. */
 const SHELF = 20;

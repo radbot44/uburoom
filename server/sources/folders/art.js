@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
-const { classifyHdr, cpuTonemap } = require('../media-tools');
+const { classifyHdr, cpuTonemap } = require('../../media-tools');
 
 /** Picture sizes (width, height), the same as Plex's, so local tiles look like the others. */
 const SIZES = { poster: [300, 450], landscape: [400, 225], backdrop: [1280, 720], logo: [720, 280] };

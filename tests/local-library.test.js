@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { normalizeConfig } = require('../server/config');
-const { LocalIndex, token } = require('../server/local/index');
+const { LocalIndex, token } = require('../server/sources/folders/index');
 
 function folder(t, files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-local-'));
@@ -126,7 +126,7 @@ test('Recently added lists local videos newest first, by when each file arrived'
   fs.utimesSync(path.join(films, 'Old.mkv'), old, old);
   await new Promise(resolve => setTimeout(resolve, 30));
   fs.writeFileSync(path.join(films, 'New.mkv'), '');
-  const { LocalMedia } = require('../server/local-provider');
+  const { LocalMedia } = require('../server/sources/folders/provider');
   const local = new LocalMedia([{ id: 'film', name: 'Film', paths: [films] }], { pipeline: {} });
   t.after(() => local.close());
   const recent = await local.recentlyAdded();
@@ -139,7 +139,7 @@ test('Recently added lists local videos newest first, by when each file arrived'
 
 test('a local library sorts by release year, date added and title, and filters by year', async t => {
   const films = folder(t, ['Heat.1995.mkv', 'Alien.1979.mkv', 'Arrival.2016.mkv', 'Home video.mkv']);
-  const { LocalMedia } = require('../server/local-provider');
+  const { LocalMedia } = require('../server/sources/folders/provider');
   const local = new LocalMedia([{ id: 'film', name: 'Film', paths: [films] }], { pipeline: {} });
   t.after(() => local.close());
   const titles = async query => (await local.browse({ section: 'film', ...query })).items.map(item => item.title);
@@ -164,7 +164,7 @@ test('a shows library groups episodes into shows and seasons in playing order', 
     'Show (2005)/Specials/Behind the scenes.mkv',
     'Other.Show.S01E01.720p.mkv',
   ]);
-  const { LocalMedia } = require('../server/local-provider');
+  const { LocalMedia } = require('../server/sources/folders/provider');
   const local = new LocalMedia([{ id: 'tv', name: 'TV', paths: [tv], type: 'shows' }], { pipeline: {} });
   t.after(() => local.close());
   const [library] = (await local.browse({})).items;

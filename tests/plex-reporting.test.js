@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { PlexReporting } = require('../server/plex-reporting');
+const { PlexReporting } = require('../server/sources/plex/reporting');
 const { Accounts, credentialVault } = require('../server/accounts');
 
 test('reporting coalesces queued states, applies current consent and drains retired sessions', async () => {

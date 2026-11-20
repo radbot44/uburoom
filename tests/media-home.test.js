@@ -1,8 +1,8 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Plex } = require('../server/plex');
-const { plexProvider } = require('../server/plex-provider');
+const { Plex } = require('../server/sources/plex/plex');
+const { plexProvider } = require('../server/sources/plex/provider');
 const { MediaProviders } = require('../server/media-providers');
 
 test("Continue watching is only ever a viewer's own Plex progress, never the shared account's", async () => {

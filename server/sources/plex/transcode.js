@@ -1,10 +1,10 @@
 'use strict';
 const { randomUUID } = require('node:crypto');
-const { qualityId } = require('../../shared/engine.mjs');
-const { PlaybackError } = require('../errors');
-const Sources = require('../plex-source');
+const { qualityId } = require('../../../shared/engine.mjs');
+const { PlaybackError } = require('../../errors');
+const Sources = require('../../plex-source');
 const { plexIdentity } = require('./identity');
-const { runOperation, SharedTask } = require('../operation');
+const { runOperation, SharedTask } = require('../../operation');
 // Above any Blu-ray remux (the UHD format peaks at 128 Mbps), in kbps.
 const COPY_BITRATE = 200000;
 const policyFailure = message => Object.assign(new PlaybackError(message), { playbackPolicy: true });

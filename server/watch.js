@@ -14,7 +14,7 @@ const { randomUUID } = require('node:crypto');
 const { canWatch, Hub } = require('./core');
 const { PlaybackTracking } = require('./playback-tracking');
 const { MediaProviders } = require('./media-providers');
-const { plexProvider } = require('./plex-provider');
+const { plexProvider } = require('./sources/plex/provider');
 const { WatchRooms } = require('./watch-rooms');
 const { clearPlaybackEnd } = require('./playback-end');
 const {

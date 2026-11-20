@@ -1,12 +1,12 @@
 'use strict';
 const { createHash } = require('node:crypto');
-const { MediaPipeline } = require('./media-pipeline');
-const { PlexClient } = require('./plex/client');
-const { PlexAccess } = require('./plex/access');
-const { PlexCatalog } = require('./plex/catalog');
-const { PlexTranscode } = require('./plex/transcode');
-const { PlexSessions } = require('./plex/sessions');
-const { PlexChecks } = require('./plex/checks');
+const { MediaPipeline } = require('../../media-pipeline');
+const { PlexClient } = require('./client');
+const { PlexAccess } = require('./access');
+const { PlexCatalog } = require('./catalog');
+const { PlexTranscode } = require('./transcode');
+const { PlexSessions } = require('./sessions');
+const { PlexChecks } = require('./checks');
 
 // One Plex server, seen through one token. The work is split by concern:
 // client (HTTP to the configured server), access (what this token may see),

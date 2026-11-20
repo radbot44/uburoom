@@ -436,7 +436,7 @@ test('single room fixes creator, assigns configured hosts and requires explicit 
 test('conversion policy follows Plex, fails closed when unknown and counts jobs rather than users', async () => {
   let disabled = '1',
     reads = 0;
-  const { Plex } = require('../server/plex');
+  const { Plex } = require('../server/sources/plex/plex');
   const server = settings =>
     new Plex({ plexUrl: 'http://plex-fixture.invalid:32400', plexToken: 'fixture-owner' }, async () => {
       reads++;
@@ -492,7 +492,7 @@ test('Plex conversions reserve/release shared global capacity and follow video-c
   const provider = accountFixture();
   let onlyRemux = '0',
     copy = false;
-  const plex = new (require('../server/plex').Plex)(
+  const plex = new (require('../server/sources/plex/plex').Plex)(
     {
       plexUrl: 'http://plex-fixture.invalid:32400',
       plexToken: 'fixture-owner',
@@ -551,7 +551,7 @@ test('Plex conversions reserve/release shared global capacity and follow video-c
 test('Plex requests opportunistic directStream when burn and fallback compatible are inactive, recording decisions', async () => {
   const provider = accountFixture();
   const decisions = [];
-  const plex = new (require('../server/plex').Plex)(
+  const plex = new (require('../server/sources/plex/plex').Plex)(
     {
       plexUrl: 'http://plex-fixture.invalid:32400',
       plexToken: 'fixture-owner',

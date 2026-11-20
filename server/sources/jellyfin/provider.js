@@ -1,13 +1,13 @@
 'use strict';
 const { createHash, randomUUID } = require('node:crypto');
-const { PlaybackError } = require('./errors');
-const { classifyHdr } = require('./media-tools');
-const Tracks = require('./media-tracks');
-const { prepareStream } = require('./media-delivery');
-const { resilientFetch } = require('./resilience');
-const { runOperation } = require('./operation');
-const { serverName } = require('./media-providers');
-const { version } = require('../package.json');
+const { PlaybackError } = require('../../errors');
+const { classifyHdr } = require('../../media-tools');
+const Tracks = require('../../media-tracks');
+const { prepareStream } = require('../../media-delivery');
+const { resilientFetch } = require('../../resilience');
+const { runOperation } = require('../../operation');
+const { serverName } = require('../../media-providers');
+const { version } = require('../../../package.json');
 
 const GUID = /^[a-f0-9]{32}$/i;
 const TICKS = 10000000;
@@ -725,7 +725,7 @@ class Jellyfin {
 /**
  * The configured Jellyfin server as a media provider, or nothing when none is configured.
  * @param {{config: any, pipeline: any, registry?: any, logger?: any, fetcher?: typeof fetch}} services
- * @returns {import('./media-providers').MediaProvider | undefined}
+ * @returns {import('../../media-providers').MediaProvider | undefined}
  */
 function jellyfinProvider({ config, pipeline, registry, logger, fetcher }) {
   if (!config.jellyfin?.url) return;

@@ -901,7 +901,7 @@ async function checkJellyfin(config) {
   /** @type {DoctorCheck[]} */
   const checks = [];
   if (!config.jellyfin) return checks;
-  const { Jellyfin } = require('../server/jellyfin-provider');
+  const { Jellyfin } = require('../server/sources/jellyfin/provider');
   const jellyfin = new Jellyfin(config.jellyfin, { pipeline: {} });
   const check = async (name, action, remediation) => {
     try {

@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Jellyfin } = require('../server/jellyfin-provider');
+const { Jellyfin } = require('../server/sources/jellyfin/provider');
 
 test('Jellyfin requests stay on the configured server, carry the key only as a header and act as the configured user', async () => {
   const user = 'a'.repeat(32),

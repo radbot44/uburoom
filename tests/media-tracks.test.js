@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { Plex } = require('../server/plex');
+const { Plex } = require('../server/sources/plex/plex');
 const { liveWatch } = require('./helpers/live-room');
 const { Hub } = require('../server/core');
 const Tracks = require('../server/media-tracks');
@@ -14,7 +14,7 @@ const path = require('node:path');
 const https = require('node:https');
 const { createApp } = require('../server/app');
 
-const catalogPart = (part, options) => Tracks.catalog(require('../server/plex/tracks').streams(part), options);
+const catalogPart = (part, options) => Tracks.catalog(require('../server/sources/plex/tracks').streams(part), options);
 function provider() {
   const state = {
     selected: undefined,
@@ -1183,7 +1183,7 @@ test('codecMatches and trackItem handle PCM audio and embedded closed captions w
 
   // Buster Keaton / PCM scenario: Plex says pcm at index 1, file has pcm_s16le at index 1
   const pcmMedia = {
-    provider: { checks: new (require('../server/plex/checks').PlexChecks)({}) },
+    provider: { checks: new (require('../server/sources/plex/checks').PlexChecks)({}) },
     tracks: {
       audio: [{ id: '1', index: 1, codec: 'pcm' }],
       subtitles: [],

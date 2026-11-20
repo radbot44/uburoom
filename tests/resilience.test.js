@@ -9,7 +9,7 @@ const https = require('node:https');
 const { DatabaseSync } = require('node:sqlite');
 const { createApp } = require('../server/app');
 const { CircuitBreaker, resilientFetch } = require('../server/resilience');
-const { Plex } = require('../server/plex');
+const { Plex } = require('../server/sources/plex/plex');
 const { run } = require('../server/media-tools');
 const { runOperation, currentSignal, SharedTask } = require('../server/operation');
 

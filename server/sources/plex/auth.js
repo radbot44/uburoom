@@ -1,7 +1,7 @@
 'use strict';
 const { randomUUID, sign } = require('node:crypto');
-const { resilientFetch, isProviderOutage } = require('./resilience');
-const { runOperation } = require('./operation');
+const { resilientFetch, isProviderOutage } = require('../../resilience');
+const { runOperation } = require('../../operation');
 class PlexAccessError extends Error {
   constructor(message, revoked = false) {
     super(message);

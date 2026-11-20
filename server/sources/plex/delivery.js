@@ -1,7 +1,7 @@
 'use strict';
 const net = require('node:net');
-const { isLocalAddress, normalizeAddress } = require('../client-address');
-const { DIRECT_CLIENT } = require('../plex-auth');
+const { isLocalAddress, normalizeAddress } = require('../../client-address');
+const { DIRECT_CLIENT } = require('./auth');
 
 // Browsers get delegated tokens only from the dedicated non-owner account
 // (`plex.direct_token`), never from the owner's plex.token. Issued tokens belong to one

@@ -9,8 +9,8 @@ const { randomUUID } = require('node:crypto');
 const { Accounts, credentialVault } = require('../server/accounts');
 const { createApp } = require('../server/app');
 const { accountFixture } = require('../scripts/account-fixture');
-const { Plex } = require('../server/plex');
-const { PlexAuth } = require('../server/plex-auth');
+const { Plex } = require('../server/sources/plex/plex');
+const { PlexAuth } = require('../server/sources/plex/auth');
 const { isServerOperator } = require('../server/operator-policy');
 const { normalizeConfig } = require('../server/config');
 const RoomPolicy = require('../server/room-policy');
@@ -186,7 +186,7 @@ test('the dedicated direct-delivery account resolves its own PMS token and keeps
   const scope = scopes[0];
   assert.equal(scope.token, 'fixture-server-102');
   assert.equal(scope.discoveryToken, 'fixture-user-102');
-  const { PlexDelivery } = require('../server/plex/delivery'),
+  const { PlexDelivery } = require('../server/sources/plex/delivery'),
     delivery = new PlexDelivery(config, plex, auth, async () => auth.dedicated());
   const direct = await delivery.file(
     {
@@ -513,7 +513,7 @@ test(
 );
 
 test('direct delivery requires a verified non-owner dedicated account and never delegates owner credentials', async t => {
-  const { PlexDelivery } = require('../server/plex/delivery');
+  const { PlexDelivery } = require('../server/sources/plex/delivery');
   const { clientAddress } = require('../server/client-address');
   const config = {
     plexUrl: 'http://plex.invalid:32400',

@@ -2,7 +2,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { SharedTask } = require('../operation');
+const { SharedTask } = require('../../operation');
 const { filmName, sortTitle, episodeName } = require('./names');
 
 const VIDEO = new Set(['.mkv', '.mp4', '.m4v', '.webm', '.mov', '.avi', '.ts', '.m2ts', '.mpg', '.mpeg', '.wmv']);

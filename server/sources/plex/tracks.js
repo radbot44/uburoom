@@ -30,7 +30,7 @@ function sidecar(stream) {
  * A Plex media part's audio and subtitle streams as the neutral descriptors
  * server/media-tracks.js catalogs. A stream Plex gives no usable id is left out.
  * @param {any} part
- * @returns {import('../media-tracks').TrackSource[]}
+ * @returns {import('../../media-tracks').TrackSource[]}
  */
 function streams(part) {
   const sources = [];

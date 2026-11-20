@@ -1,6 +1,6 @@
 'use strict';
 const { plexIdentity } = require('./identity');
-const { SharedTask } = require('../operation');
+const { SharedTask } = require('../../operation');
 
 // Access scoping: whether this token may play or see an item, with short-lived positive
 // answers and coalesced checks. Invalidated when access changes.

@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Plex } = require('../server/plex');
+const { Plex } = require('../server/sources/plex/plex');
 const { watchHttp } = require('../server/watch-http');
 const { MediaProviders } = require('../server/media-providers');
 const movie = (id, more = {}) => ({

@@ -9,7 +9,7 @@ const { inspect } = require('node:util');
 const { createApp } = require('../server/app');
 const { Hub } = require('../server/core');
 const { liveWatch } = require('./helpers/live-room');
-const { Plex } = require('../server/plex');
+const { Plex } = require('../server/sources/plex/plex');
 
 test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the same reporting occurrence', async () => {
   const hub = new Hub({ ownerId: 'host' }, []);

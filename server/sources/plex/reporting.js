@@ -1,10 +1,10 @@
 // @ts-check
 'use strict';
-const { runOperation } = require('./operation');
+const { runOperation } = require('../../operation');
 const { randomUUID } = require('node:crypto');
-const { plexIdentity } = require('./plex/identity');
-const { DIRECT_CLIENT } = require('./plex-auth');
-const { RECONNECT_GRACE_MS } = require('../shared/sync');
+const { plexIdentity } = require('./identity');
+const { DIRECT_CLIENT } = require('./auth');
+const { RECONNECT_GRACE_MS } = require('../../../shared/sync');
 const RECOVERABLE = new Set(['stream-changed', 'delivery-changed', 'observation-timeout']);
 
 class PlexReporting {
@@ -50,7 +50,7 @@ class PlexReporting {
   }
 
   /**
-   * @param {import('./types').Viewer|string} viewer
+   * @param {import('../../types').Viewer|string} viewer
    * @returns {Object|undefined}
    */
   _findSession(viewer) {
@@ -174,8 +174,8 @@ class PlexReporting {
   }
 
   /**
-   * @param {import('./types').Room} room
-   * @param {import('./types').Viewer} viewer
+   * @param {import('../../types').Room} room
+   * @param {import('../../types').Viewer} viewer
    * @param {string} viewerId
    * @param {Object} data Decoded observation payload
    * @param {Object} observed Accepted tracking result
@@ -448,7 +448,7 @@ class PlexReporting {
 
   /**
    * Update consent dynamically for an active viewer session.
-   * @param {import('./types').Viewer|string} viewer
+   * @param {import('../../types').Viewer|string} viewer
    * @param {{activity?: boolean, watchState?: boolean}} consent
    */
   updateConsent(viewer, consent) {
@@ -464,7 +464,7 @@ class PlexReporting {
   /**
    * Classify lifecycle changes centrally. Recoverable changes suspend the
    * occurrence; terminal teardown never uses the shared producer's identity.
-   * @param {import('./types').Viewer|string} viewer
+   * @param {import('../../types').Viewer|string} viewer
    * @param {string} [reason]
    */
   async end(viewer, reason) {
