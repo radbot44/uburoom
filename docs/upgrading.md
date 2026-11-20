@@ -22,7 +22,7 @@ File-backed databases have a cooperative instance lock beside the canonical data
 4. If the layout is rejected, use a reviewed private transfer or an explicitly approved reset. Never delete state or replace its key merely to make startup pass. Keep private migration scripts outside distributed source and verify repeat-run idempotence.
 5. Install dependencies on the runtime host and restart only in an approved maintenance window. Verify health, accounts and durable state before declaring success.
 
-Set `storage.credential_key_file` outside the project or preserve the existing platform-default location; see [self-hosting](self-hosting.md#configuration). Keep state independent of replaceable code directories. No automatic key discovery/relocation is performed.
+Set `storage.credential_key_file` outside the project or preserve the existing platform-default location; see [self-hosting](self-hosting.md#backups-and-upgrades). Keep state independent of replaceable code directories. No automatic key discovery/relocation is performed.
 
 ## Rollback
 
