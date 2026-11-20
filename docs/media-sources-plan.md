@@ -1,6 +1,8 @@
 # Media sources and admission: implementation plan
 
-**Status: approved by the owner on 2026-11-20, with the recommended answers to O1–O3. Not started.** This plan implements the approved [media sources and admission](media-sources.md) design. The [first-run setup](first-run-setup.md) wizard comes after it. The answers to O1–O3 are recorded at the end.
+**Status: approved by the owner on 2026-11-20, with the recommended answers to O1–O3. In progress.**
+
+**Progress:** phase 1 merged into `main` on 2026-11-20 (`45fa188`; full suite 599 pass, 0 fail, 0 skip). Its Vigrid config migration is written but not run (`personal/migrations/admitted-everything-v2w.cjs`). Phase 2 is in progress. This plan implements the approved [media sources and admission](media-sources.md) design. The [first-run setup](first-run-setup.md) wizard comes after it. The answers to O1–O3 are recorded at the end.
 
 ## Approach
 
