@@ -10,7 +10,7 @@ const SERVER_MARKS = {
 };
 /**
  * One card per library on Libraries home, described once for the server's first paint and the page's own
- * render: its icon, its name, the server it is on (that server's mark and name, or "Local folders"), and
+ * render: its icon, its name, the source it is on (its mark and name, or the folders source's name), and
  * whether it has a Collections page, which opens from a button on the card.
  * @returns {{id: string, title: string, icon: string, collections: boolean,
  *   source?: {text: string, logo?: string, label?: string}}[]}
@@ -20,7 +20,7 @@ function homeCards(items = []) {
     const mark = SERVER_MARKS[section.serverKind];
     const source =
       section.source === 'folder'
-        ? { text: 'Local folders' }
+        ? { text: section.serverName || 'Local folders' }
         : mark
           ? { text: section.serverName || mark.label, logo: mark.logo, label: mark.label }
           : undefined;

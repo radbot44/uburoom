@@ -55,7 +55,7 @@ class Watch extends WatchParts {
     this.hub = hub;
     // Rooms reach media only through the providers; what one of them alone offers hangs off it.
     this.providers =
-      providers || new MediaProviders([plexProvider({ plex, config: hub?.config, registry, plexAuth })], pipeline);
+      providers || new MediaProviders(plex ? [plexProvider({ plex, registry, plexAuth })] : [], pipeline);
     /** @type {InstanceType<typeof import('./media-pipeline').MediaPipeline> | undefined} Conversion and pooling shared by every provider. */
     this.pipeline = pipeline;
     this.demoMedia = demoMedia;

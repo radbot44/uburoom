@@ -1,4 +1,5 @@
 'use strict';
+const { validateSources } = require('../server/sources');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createApp } = require('../server/app');
@@ -17,8 +18,8 @@ const config = {
   guildId: 'demo-guild',
   channels: ['demo-commands'],
   demo: true,
-  plexUrl: provider.plexUrl,
-  plexToken: provider.plexToken,
+  // --plex plays from the sources of the selected config.yaml; the plain demo has none.
+  sources: provider.sources || [],
 };
 const fixture = process.argv.includes('--accounts') ? require('./account-fixture').accountFixture() : undefined;
 if (fixture)
@@ -28,8 +29,9 @@ if (fixture)
     demoSubjects: fixture.subjects,
     clientId: '100000000000000010',
     clientSecret: 'fixture-secret',
-    plexUrl: 'http://plex-fixture.invalid:32400',
-    plexToken: 'fixture-owner',
+    sources: validateSources([
+      { id: 'plex', type: 'plex', url: 'http://plex-fixture.invalid:32400', token: 'fixture-owner' },
+    ]),
   });
 const app = createApp(
   config,

@@ -97,15 +97,19 @@ server:
 
 - **Plex on another machine or LAN IP:** Use the LAN IP directly:
   ```yaml
-  plex:
-    url: 'http://192.168.1.100:32400'
-    token: 'YOUR_PLEX_TOKEN'
+  sources:
+    - id: 'living-room'
+      type: 'plex'
+      url: 'http://192.168.1.100:32400'
+      token: 'YOUR_PLEX_TOKEN'
   ```
 - **Plex on the same host machine:** Container loopback (`127.0.0.1`) cannot reach the host. Use `host.docker.internal`:
   ```yaml
-  plex:
-    url: 'http://host.docker.internal:32400'
-    token: 'YOUR_PLEX_TOKEN'
+  sources:
+    - id: 'living-room'
+      type: 'plex'
+      url: 'http://host.docker.internal:32400'
+      token: 'YOUR_PLEX_TOKEN'
   ```
   *(On Linux hosts, ensure `extra_hosts` is enabled in `docker-compose.yml` to resolve `host.docker.internal`).*
 

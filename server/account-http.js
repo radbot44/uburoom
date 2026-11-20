@@ -91,7 +91,6 @@ function accountHttp({
     return { linked: true };
   }
   async function startPlex(req, res, login, returnTo) {
-    if (!plexAuth.plex.configured) throw new Error('Configure Plex on the server first');
     if (attempts.size >= 200) throw new Error('Plex sign-in is busy');
     const state = secret(),
       attempt = await plexAuth.start(config.publicUrl + '/auth/plex/callback?state=' + state);

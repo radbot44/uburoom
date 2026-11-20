@@ -91,15 +91,8 @@ function fixture({ reportingEnabled = true, watchStateEnabled = true } = {}) {
     },
   };
 
-  const config = {
-    plexReporting: {
-      enabled: reportingEnabled,
-      watchState: watchStateEnabled,
-    },
-  };
-
   const reporting = new PlexReporting({
-    config,
+    settings: { enabled: reportingEnabled, watchState: watchStateEnabled },
     plexAuth,
     registry,
     now: () => now,

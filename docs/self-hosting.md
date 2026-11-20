@@ -29,13 +29,12 @@ Set these values in your private `config.yaml`:
 
 | Setting | Value |
 | --- | --- |
-| `plex.url` | Plex address reachable from the uburoom host (not necessarily its public URL). |
-| `plex.token` | Plex access token used by the server. |
+| `sources` | One entry per media source: Plex, Jellyfin or folders on this machine; see [media sources](#media-sources). |
 | `server.public_url` | Public HTTPS origin, with port if needed; no path. |
 | `server.tls_cert` / `server.tls_key` | Certificate and key paths for uburoom's HTTPS listener. |
 | `access.discord` | Set `false` for a Plex-only installation; otherwise configure Discord below. |
 
-**Everyone uburoom admits can watch every library of every media source through that source's own account.** Choose who gets in with the [sign-in and access](#sign-in-and-access) settings, and give `plex.token` (or the Jellyfin user) only the libraries people may watch here.
+**Everyone uburoom admits can watch every library of every media source through that source's own account.** Choose who gets in with the [sign-in and access](#sign-in-and-access) settings, and give each source's account (a Plex token, a Jellyfin user) only the libraries people may watch here.
 
 Open `https://your-origin/watch`. The health endpoint is `/health`. For a config file outside the checkout, run `node server/index.js --config /path/to/config.yaml`.
 
@@ -61,7 +60,7 @@ Sign-in, permission to enter uburoom and server administration are separate chec
 
 | Setting | Behavior |
 | --- | --- |
-| `access.plex` / `access.discord` | Enable Plex and/or Discord login; both default to `true`. Discord login checks membership in the configured guild; standalone Plex login checks access to the pinned Plex server. Outside visitors without either membership need a `/join/<code>` room invite with `guests.enabled: true`. |
+| `access.plex` / `access.discord` | Enable Plex and/or Discord login; both default to `true`. Discord login checks membership in the configured guild; standalone Plex login checks access to any configured Plex source. Outside visitors without either membership need a `/join/<code>` room invite with `guests.enabled: true`. |
 | `secrets.entry_password` | Optional extra entry password alongside provider rules. Access lasts 12 hours and resets on restart; it does not grant admin access. |
 | `server.max_connections: 256` | Open room connections (one per browser tab or app window) accepted at once; 1–4096. Further connections are refused until one closes. |
 | `server.public_web_app: false` | Restrict playback to verified Discord Activity. Browser handoff remains available for account linking/management. |
@@ -90,21 +89,75 @@ Turning Allow guests off keeps current guests. **Remove all guests** removes the
 
 See [accounts and access](accounts-and-access.md) for the authorization model.
 
+## Media sources
+
+`sources:` lists every media source, all equal: any number of Plex servers, Jellyfin servers and folders sources, in the order their libraries are shown. Each entry has:
+
+| Setting | Behavior |
+| --- | --- |
+| `id` | Quoted permanent name for the source in config and logs (letters, digits, dots, hyphens, underscores). Never reuse it for a different server. |
+| `type` | `plex`, `jellyfin` or `folders`. |
+| `name` | Optional label on its libraries' cards; blank uses the name the server reports (folders: "Local folders"). |
+
+and its type's settings below. Queue entries, resume positions and bookmarks are recorded under the **server identity** a source reports (Plex machine id, Jellyfin server id, `folders:<id>` for a folders source), so renaming or reordering entries orphans nothing. Each Plex and Jellyfin source remembers its server's identity the first time it answers; a different server at the same address is refused. Two entries with the same address, or reporting the same server, are refused: their media stays unavailable until one is removed. A source that is offline or removed leaves its queue entries and resume positions in place, shown as unavailable; adding the same server back, under any `id`, restores them. Adding or removing a source takes effect after a restart. A source never lets anyone in by itself.
+
+### Plex source
+
+| Setting | Behavior |
+| --- | --- |
+| `url` | Plex address reachable from the uburoom host (not necessarily its public URL); no path. |
+| `token` | The Plex token uburoom reads this server with. |
+| `machine_identifier` | Optional; blank detects the server once and remembers it. |
+| `delivery`, `client_url`, `lan_client_url`, `direct_token` | See [delivery](#delivery). |
+| `reporting_enabled`, `reporting_watch_state` | See [reporting](#reporting). |
+
+Until per-source entry rules arrive, a Plex sign-in admits people whose Plex account can reach **any** configured Plex source. With no Plex source, signing in with Plex still proves who someone is but admits nobody.
+
+### Jellyfin source
+
+A `type: 'jellyfin'` entry adds a Jellyfin server. Each movie or show library that user may see appears as a card on Libraries home, with seasons, posters, genre and year filters, sorting and auto-queue sources.
+
+| Setting | Behavior |
+| --- | --- |
+| `url` | The server's address, including any base path. |
+| `api_key` | A key from the Jellyfin dashboard (API Keys). It is sent only as a request header to that server. |
+| `user` | A Jellyfin username. Libraries and parental limits follow this user, so give it only what people may watch here. |
+
+Jellyfin accounts are not linked to uburoom accounts: everyone uburoom admits, including guests in their room, watches through the configured user, and Jellyfin never becomes another way in.
+
+Original files play as they are, and files a browser cannot play need FFmpeg and a local output in `transcoding.outputs`: uburoom converts them itself and Jellyfin's transcoder is not used. When only the sound is the problem, or a viewer picks another audio track, the picture is copied untouched (HDR included) and only the chosen track is converted. Embedded subtitles are read from the file; external text subtitles (SRT, WebVTT, ASS) are offered as tracks and other external formats are left out. Nothing is reported back to Jellyfin: no play state, progress or watched marks. Collections, multiple versions of one item, intro and credit markers and personal Jellyfin sign-in are not supported. `npm run doctor` checks the address, key and user.
+
+### Folders source
+
+A `type: 'folders'` entry lists, under `libraries:`, libraries of videos in folders on the server's own disk. Its media is recorded under `folders:<id>`, so changing a folders source's `id` forgets its queue history. Each library appears as a card on Libraries home and opens one title-sorted list of every video beneath it, subfolders included.
+
+| Setting | Behavior |
+| --- | --- |
+| `id` | Short permanent name (lowercase letters, digits and hyphens, starting with a letter), unique across all folders sources. Queue entries and resume positions are recorded under it: the folder may move, but a changed `id` forgets them. |
+| `name` | The card's title. |
+| `paths` | One or more folders (up to 16), shown together as one library. Relative paths resolve beside `config.yaml`. Symbolic links are not followed. A file is known by its place inside its folder, so a folder can move to another drive and keep its queues and resume positions; when two folders hold a file at the same place, the first listed is used. |
+| `parse_names` | `true` (default) reads each name as a film's title, year and edition, the way Plex reads file names: everything after the year (resolution, source, codec, release group) is dropped, so `65.2023.2160p.UHD.BluRay.x265-GROUP.mkv` is *65* (2023) and `Blade Runner 2049 (2017).mkv` is *Blade Runner 2049* (2017). Plex's `{edition-…}` marker sets the edition. A file without a year that is the only video in its folder takes the folder's name, as in `Heat (1995)/movie.mkv`. Nothing is looked up online. `false` shows each file name as it is. |
+| `type` | `movies` (default) or `shows`. A shows library groups episodes into shows and seasons the way Plex does: the show is the first folder inside the library (`Show (2005)/…`, its year taken from the name) or else the name before the episode number; `S01E02`, `s1e2`, `S01E02E03` or `1x02` give season and episode, and in a `Season 2` folder a name starting with a number (`03 - Title.mkv`) is that episode; `Specials` is season 0, and a file with no number is a special. The text after the number, up to the first release tag, is the episode's title. Pictures in a show's own folder (`poster.jpg`, `fanart.jpg`, `logo.png`) are the show's; otherwise its first episode's frame is used. Episodes step to their neighbours, whole shows and seasons queue in order (Specials only when asked), and a new episode shows in Recently added as its show. |
+
+Local media has no accounts of its own: everyone uburoom admits, including guests in their room, may browse and watch it, and it never becomes another way in. Viewers name a file only by an opaque token, never a path.
+
+FFprobe is required to read a file's duration and tracks. Files a browser cannot play as they are need FFmpeg and a local output in `transcoding.outputs`; there is no Plex transcode for local files. When only the sound is the problem, or a viewer picks another audio track, the picture is copied untouched (HDR included) and only the chosen track is converted, which costs little; Dolby Vision Profile 5 and video the browser cannot decode are still converted. Subtitle files beside a video that share its name (`Film.srt`, `Film.en.srt`, `Film.en.forced.ass`, `.vtt`, `.sup`, `.sub` with `.idx`) are offered as tracks. Folders are re-read at most once a minute. Pictures need FFmpeg. A picture file beside a video is used first: `Film-poster.jpg` (or `Film.jpg`), `Film-fanart.jpg`, `Film-landscape.jpg` and `Film-logo.png` beside `Film.mkv`, and in a film's own folder also `poster`, `folder`, `cover`, `fanart`, `backdrop`, `logo` and similar (`.jpg`, `.png` or `.webp`). Otherwise uburoom looks at 5%, 10%, 15% and 20% of the running time (never later, so nothing is spoiled) and uses the best-lit, most detailed of those frames, tone-mapping HDR (Dolby Vision Profile 5 gets none). Pictures are made ahead of time in the background, newest files first and one at a time, pausing while uburoom converts video for playback (and on demand, two at a time, for anything not yet made), and kept in `local-art` in the data folder (up to 256 MB, least recently shown removed first); nothing is ever written beside the media. Local libraries sort by title, release year, date added (the file's creation time), runtime and at random, filter by release year when `parse_names` is on, and their newest files join Media Home's Recently added. There are no collections and no genres; a shows library filters by its shows' years. `npm run doctor` checks each folder and the tools.
+
 ## Plex delivery, reporting and transcoding
 
 ### Delivery
 
-`plex.delivery: proxy` (default) sends Plex media through uburoom. `plex.delivery: auto` attempts direct Original/HLS delivery in supported browsers, with authorized proxy recovery when direct delivery fails.
+Delivery is set per Plex source. `delivery: proxy` (default) sends Plex media through uburoom. `delivery: auto` attempts direct Original/HLS delivery in supported browsers, with authorized proxy recovery when direct delivery fails.
 
-For `auto`, configure `plex.client_url` as a trusted, viewer-reachable HTTPS origin belonging to your selected Plex server (no path/query). LAN clients use authenticated origin discovery or `plex.lan_client_url`. Browser reachability, CORS, range handling and decoding support still apply. Discord Activity, native-HLS-only clients, captions and local conversions retain their respective proxy/conversion paths; there is no direct-only mode.
+For `auto`, configure `client_url` as a trusted, viewer-reachable HTTPS origin belonging to your selected Plex server (no path/query). LAN clients use authenticated origin discovery or `lan_client_url`. Browser reachability, CORS, range handling and decoding support still apply. Discord Activity, native-HLS-only clients, captions and local conversions retain their respective proxy/conversion paths; there is no direct-only mode.
 
-`auto` also needs `plex.direct_token`: a dedicated Plex account with access to your libraries that does **not** own the server. Browsers receive temporary tokens derived from it, never from `plex.token`, so with `auto` everyone watches through that account and sees what it can see. Startup rejects `auto` without it, a `direct_token` equal to `plex.token`, or one set with `proxy`; plex.tv must also confirm the account is not the owner before any token is issued, otherwise playback stays on the proxy. To get its token, sign in at app.plex.tv as that account in a private window and run `localStorage.myPlexAccessToken` in the browser console (F12). It works only while that browser sign-in exists; once it stops working, Plex media is unavailable until you replace it or switch back to `proxy`. Temporary Plex tokens are not restricted to the current movie or room; they can remain valid for up to 48 hours or until PMS restart, and revoking uburoom access may not revoke them immediately. Keep all tokens out of logs and persistent client storage.
+`auto` also needs `direct_token`: a dedicated Plex account with access to your libraries that does **not** own the server. Browsers receive temporary tokens derived from it, never from the source's `token`, so with `auto` everyone watches that source through that account and sees what it can see. Startup rejects `auto` without it, a `direct_token` equal to `token`, or one set with `proxy`; plex.tv must also confirm the account is not the owner before any token is issued, otherwise playback stays on the proxy. To get its token, sign in at app.plex.tv as that account in a private window and run `localStorage.myPlexAccessToken` in the browser console (F12). It works only while that browser sign-in exists; once it stops working, that source's media is unavailable until you replace it or switch back to `proxy`. Temporary Plex tokens are not restricted to the current movie or room; they can remain valid for up to 48 hours or until PMS restart, and revoking uburoom access may not revoke them immediately. Keep all tokens out of logs and persistent client storage.
 
 Technical details, failure budgets and provider boundaries: [Plex delivery](playback-reliability.md#direct-plex-delivery-hls-and-direct-file) and [Plex developer reference](https://developer.plex.tv/pms/).
 
 ### Reporting
 
-`plex.reporting_enabled: true` (default) reports active playback sessions to Plex for viewers with verified personal Plex credentials using a decoupled viewer session ID so individual viewer departures never stop shared HLS transcodes. Connected Plex accounts default to activity-only reporting (omitting timeline duration so playback appears in Now Playing without mutating personal resume offsets or watch history). `plex.reporting_watch_state: true` (default) allows viewers with connected Plex accounts to explicitly opt in to personal watch-state synchronization in player settings. Viewers without their own Plex sign-in, guests included, remain local-only and never report to Plex.
+Per Plex source, `reporting_enabled: true` (default) reports active playback sessions to Plex for viewers with verified personal Plex credentials using a decoupled viewer session ID so individual viewer departures never stop shared HLS transcodes. Connected Plex accounts default to activity-only reporting (omitting timeline duration so playback appears in Now Playing without mutating personal resume offsets or watch history). `reporting_watch_state: true` (default) allows viewers with connected Plex accounts to explicitly opt in to personal watch-state synchronization in player settings. Viewers without their own Plex sign-in, guests included, remain local-only and never report to Plex.
 
 ### Transcoding
 
@@ -123,36 +176,6 @@ The `transcoding` section controls Plex conversion and uburoom's local encoder i
 FFmpeg and FFprobe are found on the service user's PATH or at `tools.ffmpeg`/`tools.ffprobe`. Missing tools disable the features that depend on them. Software conversion needs the corresponding AV1/VP9/VP8 encoders and Opus; capability detection is not proof of successful playback.
 
 At capacity, a conversion may wait briefly or reuse an existing compatible output. uburoom will not evict viewers or exceed its job limit; conversions started by other Plex applications are outside that counter. See [playback decisions](playback-reliability.md#playback-decisions).
-
-## Jellyfin
-
-`jellyfin.url`, `jellyfin.api_key` and `jellyfin.user` add one Jellyfin server beside Plex. Each movie or show library that user may see appears as a card on Libraries home, with seasons, posters, genre and year filters, sorting and auto-queue sources.
-
-| Setting | Behavior |
-| --- | --- |
-| `url` | The server's address, including any base path. Blank leaves Jellyfin out. |
-| `api_key` | A key from the Jellyfin dashboard (API Keys). It is sent only as a request header to that server. |
-| `user` | A Jellyfin username. Libraries and parental limits follow this user, so give it only what people may watch here. |
-
-Jellyfin accounts are not linked to uburoom accounts: everyone uburoom admits, including guests in their room, watches through the configured user, and Jellyfin never becomes another way in. The server is remembered by its own id the first time it answers; a different server at the same address is refused.
-
-Original files play as they are, and files a browser cannot play need FFmpeg and a local output in `transcoding.outputs`: uburoom converts them itself and Jellyfin's transcoder is not used. When only the sound is the problem, or a viewer picks another audio track, the picture is copied untouched (HDR included) and only the chosen track is converted. Embedded subtitles are read from the file; external text subtitles (SRT, WebVTT, ASS) are offered as tracks and other external formats are left out. Nothing is reported back to Jellyfin: no play state, progress or watched marks. Collections, multiple versions of one item, intro and credit markers and personal Jellyfin sign-in are not supported. `npm run doctor` checks the address, key and user.
-
-## Local media
-
-`local_media.libraries` lists libraries of videos in folders on the server's own disk. Each appears as a card on Libraries home beside the Plex libraries and opens one title-sorted list of every video beneath it, subfolders included.
-
-| Setting | Behavior |
-| --- | --- |
-| `id` | Short permanent name (lowercase letters, digits and hyphens, starting with a letter). Queue entries and resume positions are recorded under it: the folder may move, but a changed `id` forgets them. |
-| `name` | The card's title. |
-| `paths` | One or more folders (up to 16), shown together as one library. Relative paths resolve beside `config.yaml`. Symbolic links are not followed. A file is known by its place inside its folder, so a folder can move to another drive and keep its queues and resume positions; when two folders hold a file at the same place, the first listed is used. |
-| `parse_names` | `true` (default) reads each name as a film's title, year and edition, the way Plex reads file names: everything after the year (resolution, source, codec, release group) is dropped, so `65.2023.2160p.UHD.BluRay.x265-GROUP.mkv` is *65* (2023) and `Blade Runner 2049 (2017).mkv` is *Blade Runner 2049* (2017). Plex's `{edition-…}` marker sets the edition. A file without a year that is the only video in its folder takes the folder's name, as in `Heat (1995)/movie.mkv`. Nothing is looked up online. `false` shows each file name as it is. |
-| `type` | `movies` (default) or `shows`. A shows library groups episodes into shows and seasons the way Plex does: the show is the first folder inside the library (`Show (2005)/…`, its year taken from the name) or else the name before the episode number; `S01E02`, `s1e2`, `S01E02E03` or `1x02` give season and episode, and in a `Season 2` folder a name starting with a number (`03 - Title.mkv`) is that episode; `Specials` is season 0, and a file with no number is a special. The text after the number, up to the first release tag, is the episode's title. Pictures in a show's own folder (`poster.jpg`, `fanart.jpg`, `logo.png`) are the show's; otherwise its first episode's frame is used. Episodes step to their neighbours, whole shows and seasons queue in order (Specials only when asked), and a new episode shows in Recently added as its show. |
-
-Local media has no accounts of its own: everyone uburoom admits, including guests in their room, may browse and watch it, and it never becomes another way in. Viewers name a file only by an opaque token, never a path.
-
-FFprobe is required to read a file's duration and tracks. Files a browser cannot play as they are need FFmpeg and a local output in `transcoding.outputs`; there is no Plex transcode for local files. When only the sound is the problem, or a viewer picks another audio track, the picture is copied untouched (HDR included) and only the chosen track is converted, which costs little; Dolby Vision Profile 5 and video the browser cannot decode are still converted. Subtitle files beside a video that share its name (`Film.srt`, `Film.en.srt`, `Film.en.forced.ass`, `.vtt`, `.sup`, `.sub` with `.idx`) are offered as tracks. Folders are re-read at most once a minute. Pictures need FFmpeg. A picture file beside a video is used first: `Film-poster.jpg` (or `Film.jpg`), `Film-fanart.jpg`, `Film-landscape.jpg` and `Film-logo.png` beside `Film.mkv`, and in a film's own folder also `poster`, `folder`, `cover`, `fanart`, `backdrop`, `logo` and similar (`.jpg`, `.png` or `.webp`). Otherwise uburoom looks at 5%, 10%, 15% and 20% of the running time (never later, so nothing is spoiled) and uses the best-lit, most detailed of those frames, tone-mapping HDR (Dolby Vision Profile 5 gets none). Pictures are made ahead of time in the background, newest files first and one at a time, pausing while uburoom converts video for playback (and on demand, two at a time, for anything not yet made), and kept in `local-art` in the data folder (up to 256 MB, least recently shown removed first); nothing is ever written beside the media. Local libraries sort by title, release year, date added (the file's creation time), runtime and at random, filter by release year when `parse_names` is on, and their newest files join Media Home's Recently added. There are no collections and no genres; a shows library filters by its shows' years. `npm run doctor` checks each folder and the tools.
 
 ## Discord (optional)
 

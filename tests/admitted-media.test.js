@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { fixture } = require('./helpers/account-app');
+const { validateSources } = require('../server/sources');
 
 const tls = { skip: !fs.existsSync(path.join(__dirname, '../certs/server-cert.pem')) };
 const JELLYFIN_SERVER = 'f'.repeat(32),
@@ -43,11 +44,20 @@ async function sources(t) {
         maxPerRoom: 10,
         sessionHours: 1,
       },
-      jellyfin: { url: 'http://jellyfin.invalid:8096', apiKey: 'fixture-jellyfin-key', user: 'Viewer' },
-      localMedia: {
-        artDirectory: path.join(dir, 'art'),
-        libraries: [{ id: 'films', name: 'Folder Films', paths: [dir], parseNames: true, type: 'movies' }],
-      },
+      sources: validateSources(
+        [
+          { id: 'plex', type: 'plex', url: 'http://plex-fixture.invalid:32400', token: 'fixture-owner' },
+          {
+            id: 'jellyfin',
+            type: 'jellyfin',
+            url: 'http://jellyfin.invalid:8096',
+            api_key: 'fixture-jellyfin-key',
+            user: 'Viewer',
+          },
+          { id: 'films', type: 'folders', libraries: [{ id: 'films', name: 'Folder Films', paths: [dir] }] },
+        ],
+        { base: dir, platform: process.platform, dataDirectory: path.join(dir, 'data') },
+      ),
     },
     { jellyfinFetch },
   );

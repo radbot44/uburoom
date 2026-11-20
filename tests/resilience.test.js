@@ -110,7 +110,7 @@ test('circuit breaker bounds failures, respects rate limits and allows exactly o
 
 test('Plex circuits isolate principals and bound 429 retries without exposing upstream bodies', async () => {
   let calls = 0;
-  const plex = new Plex({ plexUrl: 'https://plex.invalid', plexToken: 'owner' }, async (url, options) => {
+  const plex = new Plex({ url: 'https://plex.invalid', token: 'owner' }, async (url, options) => {
     calls++;
     return options.headers['X-Plex-Token'] === 'bad'
       ? new Response('secret', { status: 429, headers: { 'Retry-After': '60' } })

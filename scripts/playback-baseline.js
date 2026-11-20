@@ -1,5 +1,6 @@
 /* Actual watch player + synthetic Plex responses. Never loads .env or live credentials. */
 'use strict';
+const { validateSources } = require('../server/sources');
 const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -506,8 +507,9 @@ async function main() {
     guildId: 'synthetic-guild',
     channels: ['synthetic-commands'],
     demo: true,
-    plexUrl: 'http://playback-fixture.invalid:32400',
-    plexToken: 'synthetic-playback-only',
+    sources: validateSources([
+      { id: 'plex', type: 'plex', url: 'http://playback-fixture.invalid:32400', token: 'synthetic-playback-only' },
+    ]),
   };
   const mediaControl = { requests: [], blocked: false };
   const app = createApp(config, {

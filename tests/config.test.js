@@ -21,8 +21,7 @@ test('example YAML is usable, private inputs are absent and defaults preserve ex
   assert.equal(config.host, '127.0.0.1');
   assert.deepEqual(config.trustedProxies, []);
   assert.equal(config.trustedProxyHeader, 'x-forwarded-for');
-  assert.equal(config.plexToken, '');
-  assert.deepEqual(config.plexDelivery, { mode: 'proxy', clientUrl: '', lanClientUrl: '', token: '' });
+  assert.deepEqual(config.sources, [], 'the example configures no source until one is filled in');
   assert.equal(config.botToken, '');
   assert.deepEqual(config.channels, []);
   assert.deepEqual(config.roomPermissions, Policy.policy());
@@ -49,8 +48,11 @@ test('custom file, mount paths, native lists and quoted snowflakes survive from 
   fs.writeFileSync(
     file,
     `
-plex:
-  token: 'token:#with punctuation'
+sources:
+  - id: 'living-room'
+    type: 'plex'
+    url: 'http://127.0.0.1:32400'
+    token: 'token:#with punctuation'
 operator:
   discord_id: '456789012345678901'
   plex_id: '102'
@@ -76,7 +78,7 @@ rooms:
   assert.equal(config.tlsCert, path.join(dir, 'tls/cert.pem'));
   assert.equal(config.accountFile, path.join(dir, 'persist/accounts.sqlite'));
   assert.equal(config.credentialKeyFile, path.join(dir, 'private/original.key'));
-  assert.equal(config.plexToken, 'token:#with punctuation');
+  assert.equal(config.sources[0].token, 'token:#with punctuation');
   assert.deepEqual(config.serverOperator, { discordId: '456789012345678901', plexId: '102' });
   assert.deepEqual(config.channels, ['234567890123456789']);
   assert.deepEqual(config.roomAdministrators.plex, ['101']);
@@ -89,21 +91,22 @@ rooms:
   assert.throws(() => configPath(['--config=a', '--config=b']), /once/);
 });
 
-test('direct Plex delivery requires an explicit secure origin and a dedicated non-owner token', () => {
+test('direct Plex delivery is per source: a secure origin and a dedicated non-owner token', () => {
+  const plex = settings => normalizeConfig({ sources: [{ id: 'p', type: 'plex', ...settings }] }).sources[0];
   const direct = { url: 'http://plex.example', token: 'owner', direct_token: 'dedicated' };
+  assert.deepEqual(plex({ ...direct, delivery: 'auto', client_url: 'https://plex.example:32400/' }).delivery, {
+    mode: 'auto',
+    clientUrl: 'https://plex.example:32400',
+    lanClientUrl: '',
+    token: 'dedicated',
+  });
   assert.deepEqual(
-    normalizeConfig({ plex: { ...direct, delivery: 'auto', client_url: 'https://plex.example:32400/' } }).plexDelivery,
-    { mode: 'auto', clientUrl: 'https://plex.example:32400', lanClientUrl: '', token: 'dedicated' },
-  );
-  assert.deepEqual(
-    normalizeConfig({
-      plex: {
-        ...direct,
-        delivery: 'auto',
-        client_url: 'https://plex.example:32400',
-        lan_client_url: 'https://plex-lan.example:32400/',
-      },
-    }).plexDelivery,
+    plex({
+      ...direct,
+      delivery: 'auto',
+      client_url: 'https://plex.example:32400',
+      lan_client_url: 'https://plex-lan.example:32400/',
+    }).delivery,
     {
       mode: 'auto',
       clientUrl: 'https://plex.example:32400',
@@ -111,53 +114,84 @@ test('direct Plex delivery requires an explicit secure origin and a dedicated no
       token: 'dedicated',
     },
   );
-  for (const [plex, message] of [
-    [{ delivery: 'direct' }],
+  const base = { url: 'http://plex.example', token: 'owner' };
+  for (const [settings, message] of [
+    [{ ...base, delivery: 'direct' }, /delivery must be proxy or auto/],
     [{ ...direct, delivery: 'auto' }, /client_url/],
-    [{ client_url: 'http://plex.example' }],
-    [{ client_url: 'https://user:secret@plex.example' }],
-    [{ client_url: 'https://plex.example/path' }],
+    [{ ...base, client_url: 'http://plex.example' }, /HTTPS origin/],
+    [{ ...base, client_url: 'https://user:secret@plex.example' }, /HTTPS origin/],
+    [{ ...base, client_url: 'https://plex.example/path' }, /HTTPS origin/],
     [
-      {
-        ...direct,
-        delivery: 'auto',
-        client_url: 'https://plex.example:32400',
-        lan_client_url: 'http://plex-lan.example',
-      },
+      { ...direct, delivery: 'auto', client_url: 'https://plex.example', lan_client_url: 'http://plex-lan.example' },
+      /HTTPS/,
     ],
-    [
-      {
-        ...direct,
-        delivery: 'auto',
-        client_url: 'https://plex.example:32400',
-        lan_client_url: 'https://plex-lan.example/path',
-      },
-    ],
-    // auto needs the dedicated account, never the owner's token, and the token means nothing without auto.
-    [
-      { url: 'http://plex.example', token: 'owner', delivery: 'auto', client_url: 'https://plex.example' },
-      /direct_token is required/,
-    ],
-    [
-      {
-        url: 'http://plex.example',
-        token: 'owner',
-        direct_token: 'owner',
-        delivery: 'auto',
-        client_url: 'https://plex.example',
-      },
-      /non-owner/,
-    ],
-    [{ ...direct }, /only with plex.delivery: 'auto'/],
-    [{ direct_token: 'dedicated', delivery: 'auto', client_url: 'https://plex.example' }, /plex.url/],
+    // auto needs the dedicated account, never the source's own token, and the token means nothing without auto.
+    [{ ...base, delivery: 'auto', client_url: 'https://plex.example' }, /direct_token is required/],
+    [{ ...base, direct_token: 'owner', delivery: 'auto', client_url: 'https://plex.example' }, /non-owner/],
+    [{ ...direct }, /only with delivery: 'auto'/],
+    [{ token: 'owner' }, /url must be/],
+    [{ url: 'http://plex.example' }, /token is required/],
+    [{ ...base, fallback_token: 'x' }, /unknown Plex setting/],
   ])
-    assert.throws(() => normalizeConfig({ plex }), message);
-  // The old shared fallback settings are gone.
-  for (const plex of [{ fallback_enabled: true }, { fallback_token: 'x' }, { direct_fallback_enabled: true }])
-    assert.throws(() => normalizeConfig({ plex }), /Unknown|unknown/);
+    assert.throws(() => plex(settings), message);
+  // The old single-source sections and phase 1's removed keys are gone.
+  for (const section of [{ plex: { url: 'http://plex.example' } }, { jellyfin: {} }, { local_media: {} }])
+    assert.throws(() => normalizeConfig(section), /Unknown|unknown/);
   for (const access of [{ require_plex: true }, { require_plex_in_activity: false }])
     assert.throws(() => normalizeConfig({ access }), /Unknown|unknown/);
   assert.throws(() => normalizeConfig({ directory: { expose_plex_members: true } }), /Unknown|unknown/);
+});
+
+test('sources: ids, types and names are checked, and two entries cannot be the same server', () => {
+  const plex = (id, extra = {}) => ({ id, type: 'plex', url: 'http://' + id + '.example', token: 't', ...extra });
+  const config = normalizeConfig({
+    sources: [
+      plex('living-room', { name: 'Living Room' }),
+      plex('cabin'),
+      { id: 'jf', type: 'jellyfin', url: 'http://jf.example/base/', api_key: 'k', user: 'Viewer' },
+      { id: 'films', type: 'folders', libraries: [{ id: 'films', name: 'Films', paths: ['films'] }] },
+      { id: 'tv', type: 'folders', libraries: [{ id: 'tv', name: 'TV', type: 'shows', paths: ['tv'] }] },
+    ],
+  });
+  assert.deepEqual(
+    config.sources.map(source => [source.id, source.type, source.name]),
+    [
+      ['living-room', 'plex', 'Living Room'],
+      ['cabin', 'plex', ''],
+      ['jf', 'jellyfin', ''],
+      ['films', 'folders', ''],
+      ['tv', 'folders', ''],
+    ],
+  );
+  assert.equal(config.sources[2].url, 'http://jf.example/base');
+  assert.equal(config.sources[4].libraries[0].type, 'shows');
+  for (const [sources, message] of [
+    ['plex', /sources must be a list/],
+    [[{ type: 'plex' }], /id must be/],
+    [[{ id: 'bad id', type: 'plex' }], /id must be/],
+    [[{ id: 'x', type: 'emby' }], /type must be one of/],
+    [[{ ...plex('x'), name: 7 }], /name must be/],
+    [[plex('x'), plex('x', { url: 'http://other.example' })], /must not repeat an id/],
+    [[plex('a'), plex('b', { url: 'http://a.example' })], /same url/],
+    [[plex('a', { machine_identifier: 'm' }), plex('b', { machine_identifier: 'm' })], /same machine_identifier/],
+    [
+      [
+        { id: 'a', type: 'folders', libraries: [{ id: 'films', name: 'A', paths: ['a'] }] },
+        { id: 'b', type: 'folders', libraries: [{ id: 'films', name: 'B', paths: ['b'] }] },
+      ],
+      /repeat a library id/,
+    ],
+    [
+      [
+        { id: 'a', type: 'folders', libraries: [{ id: 'one', name: 'A', paths: ['same'] }] },
+        { id: 'b', type: 'folders', libraries: [{ id: 'two', name: 'B', paths: ['same'] }] },
+      ],
+      /repeat a folder/,
+    ],
+    [[{ id: 'f', type: 'folders', libraries: [] }], /libraries requires/],
+    [[{ id: 'j', type: 'jellyfin', url: 'http://jf.example' }], /api_key is required/],
+  ])
+    assert.throws(() => normalizeConfig({ sources }), message);
 });
 
 test('malformed YAML and unsupported structures never echo secret source text', () => {
@@ -221,9 +255,16 @@ test('malformed YAML and unsupported structures never echo secret source text', 
     '101',
   );
   assert.equal(
-    normalizeConfig({ access: { discord: false }, plex: { token: 'fixture-token' }, rooms: { single_room: true } })
-      .singleRoom,
+    normalizeConfig({
+      access: { discord: false },
+      sources: [{ id: 'p', type: 'plex', url: 'http://plex.example', token: 'fixture-token' }],
+      rooms: { single_room: true },
+    }).singleRoom,
     true,
+  );
+  assert.throws(
+    () => normalizeConfig({ access: { discord: false }, rooms: { single_room: true } }),
+    /requires a Plex source/,
   );
 });
 
@@ -533,7 +574,7 @@ test('discord.rich_presence validates boolean configuration and defaults enabled
   const boot = config =>
     pageBootstrap({
       config,
-      watch: { providers: { has: () => false }, demoMedia: false },
+      watch: { providers: { summary: () => [] }, demoMedia: false },
       hub: { guestsEnabled: () => false },
     }).publicConfig();
   assert.equal(boot(normalizeConfig({})).discordRichPresence, true);

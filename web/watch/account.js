@@ -106,9 +106,7 @@ export function mount(host, deps) {
           label = provider === 'discord' ? 'Discord' : 'Plex';
         const connected = identity?.authenticated && (provider !== 'plex' || identity.credentialStored);
         const name = identity && identity.name !== identity.subject ? identity.name : '';
-        const disabledServer =
-          store.identity.config.access?.[provider] === false ||
-          (provider === 'plex' && !store.identity.config.plexConfigured);
+        const disabledServer = store.identity.config.access?.[provider] === false;
         const button = $('connect-' + provider);
         button.disabled = disabledServer;
         button.removeAttribute('title');
@@ -156,12 +154,7 @@ export function mount(host, deps) {
         }
         function isSurvivingProvider(i) {
           if (!i || !i.authenticated) return false;
-          if (i.provider === 'plex')
-            return (
-              store.identity.config.access?.plex !== false &&
-              store.identity.config.plexConfigured !== false &&
-              !!i.credentialStored
-            );
+          if (i.provider === 'plex') return store.identity.config.access?.plex !== false && !!i.credentialStored;
           if (i.provider === 'discord') return store.identity.config.access?.discord !== false || isOwner;
           return false;
         }

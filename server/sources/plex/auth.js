@@ -17,11 +17,35 @@ const DIRECT_CLIENT = 'configured-direct';
 function plexReconnectError(message = RECONNECT_PLEX) {
   return Object.assign(new PlexAccessError(message, true), { status: 403, reconnect: 'plex' });
 }
+/** A pin kept only in memory, for a source built without the account database. */
+function memoryPin() {
+  let value;
+  return {
+    get: () => value,
+    set: async identity => {
+      value = identity;
+    },
+  };
+}
+
+/**
+ * plex.tv sign-in, and one Plex source's server seen through a person's own Plex account:
+ * whether that account can reach this source's pinned server, and the scope it gets there.
+ * Built per Plex source; `PlexSignIn` combines them for the people side.
+ */
 class PlexAuth {
-  constructor(config, accounts, plex, fetcher = fetch) {
-    this.config = config;
+  /**
+   * @param {any} source - The Plex source entry (`token`, `machineIdentifier`, `delivery`); absent for plex.tv only.
+   * @param {any} accounts
+   * @param {any} plex - That source's Plex.
+   * @param {typeof fetch} [fetcher]
+   * @param {{pin?: {get(): string|undefined, set(id: string): Promise<void>}}} [services]
+   */
+  constructor(source, accounts, plex, fetcher = fetch, { pin } = {}) {
+    this.source = source || {};
     this.accounts = accounts;
     this.plex = plex;
+    this.pin = pin || memoryPin();
     this.fetch = resilientFetch(fetcher, { timeoutMs: 10000 });
     this.cache = new Map();
     this.inflight = new Map();
@@ -79,7 +103,8 @@ class PlexAuth {
     });
     return { credential, pinId: String(pin.id), url: 'https://app.plex.tv/auth#?' + params };
   }
-  async finish(attempt) {
+  /** The plex.tv account a finished PIN belongs to; says nothing about any server. */
+  async identify(attempt) {
     const { credential } = attempt,
       pin = await this.request(
         '/pins/' +
@@ -94,16 +119,10 @@ class PlexAuth {
     const profile = await this.request('/user', { token: credential.token, clientId: credential.clientId });
     if (!/^\d{1,20}$/.test(String(profile.id))) throw new Error('Plex account identity unavailable');
     const name = String(profile.username || profile.friendlyName || 'Plex user').slice(0, 100);
-    try {
-      await this.validate(credential);
-    } catch (error) {
-      // Someone outside the server may still sign in to use a room invite as a guest.
-      if (!(this.config.accessPolicy && this.config.guests?.enabled && error.noServerAccess)) throw error;
-    }
     return { subject: String(profile.id), name, credential };
   }
   async machine() {
-    const pinned = this.config.plexMachineIdentifier || this.accounts.meta('plexMachineIdentifier');
+    const pinned = this.source.machineIdentifier || this.pin.get();
     let root;
     try {
       root = await this.plex.json('/');
@@ -120,7 +139,7 @@ class PlexAuth {
     const id = root.machineIdentifier;
     if (typeof id !== 'string' || !id) throw new Error('Plex server identity unavailable');
     if (pinned && pinned !== id) throw new Error('Configured Plex server identity changed; check server configuration');
-    if (!pinned) this.accounts.meta('plexMachineIdentifier', id);
+    if (!pinned) await this.pin.set(id);
     return id;
   }
   async validate(credential, expectedSubject) {
@@ -185,9 +204,8 @@ class PlexAuth {
    * Everyone admitted watches through it when delivery is direct; it is never the owner token.
    */
   async dedicated() {
-    const token = this.config.plexDelivery?.token;
-    if (!token || token === this.config.plexToken)
-      throw new PlexAccessError('Direct delivery has no dedicated account');
+    const token = this.source.delivery?.token;
+    if (!token || token === this.source.token) throw new PlexAccessError('Direct delivery has no dedicated account');
     if (this.dedicatedCache?.token === token && this.dedicatedCache.until > Date.now()) return this.dedicatedCache.plex;
     if (this.dedicatedInflight?.token === token) return this.dedicatedInflight.job;
     const generation = this.generation;
@@ -262,4 +280,85 @@ class PlexAuth {
     this.dedicatedInflight = undefined;
   }
 }
-module.exports = { PlexAuth, PlexAccessError, plexReconnectError, RECONNECT_PLEX, DIRECT_CLIENT };
+/**
+ * Plex sign-in across every Plex source: plex.tv proves who someone is, and until admission
+ * has its own entry rules (phase 3) a Plex account is let in when it can reach **any**
+ * configured Plex source. With no Plex source, signing in still proves who someone is, but
+ * admits nobody.
+ */
+class PlexSignIn {
+  /**
+   * @param {any} config - Reads `accessPolicy` and `guests` for who may finish signing in.
+   * @param {any} accounts
+   * @param {PlexAuth[]} sources - One per Plex source, in config order.
+   * @param {typeof fetch} [fetcher]
+   */
+  constructor(config, accounts, sources, fetcher = fetch) {
+    this.config = config;
+    this.accounts = accounts;
+    this.sources = sources;
+    this.account = new PlexAuth(undefined, accounts, undefined, fetcher);
+  }
+  /** Whether any Plex source is configured, so a Plex sign-in can let anyone in. */
+  get admits() {
+    return this.sources.some(source => source.plex?.configured);
+  }
+  request(resource, options) {
+    return this.account.request(resource, options);
+  }
+  start(forwardUrl) {
+    return this.account.start(forwardUrl);
+  }
+  async finish(attempt) {
+    const identity = await this.account.identify(attempt);
+    if (!this.sources.length) return identity;
+    try {
+      await this.any(source => source.validate(identity.credential));
+    } catch (error) {
+      // Someone outside every server may still sign in to use a room invite as a guest.
+      if (!(this.config.accessPolicy && this.config.guests?.enabled && error.noServerAccess)) throw error;
+    }
+    return identity;
+  }
+  /**
+   * The first source that answers yes. With none: a source that gave no answer is the answer
+   * (so an outage is not a denial), then a revoked sign-in, then "no access to any server".
+   */
+  async any(ask) {
+    const errors = [];
+    for (const source of this.sources) {
+      try {
+        const answer = await ask(source);
+        if (answer) return answer;
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    const unanswered = errors.find(error => !error.noServerAccess && !error.revoked);
+    if (unanswered) throw unanswered;
+    const revoked = errors.find(error => error.revoked && !error.noServerAccess);
+    if (revoked) throw revoked;
+    if (errors.length || !this.sources.length)
+      throw Object.assign(new PlexAccessError('This Plex account does not have access to this server', true), {
+        noServerAccess: true,
+      });
+  }
+  /** This person's own scope on the first Plex source their account can reach. */
+  forUser(userId) {
+    return this.any(source => source.forUser(userId));
+  }
+  fresh(userId) {
+    return this.sources.some(source => source.fresh(userId));
+  }
+  clear() {
+    for (const source of this.sources) source.clear();
+  }
+  /** The plex.tv account the first Plex source's own token belongs to. */
+  async ownerProfile() {
+    const token = this.sources.find(source => source.source.token)?.source.token;
+    if (!token) throw new Error('No Plex source token');
+    return this.request('/user', { token });
+  }
+}
+
+module.exports = { PlexAuth, PlexSignIn, PlexAccessError, plexReconnectError, RECONNECT_PLEX, DIRECT_CLIENT };

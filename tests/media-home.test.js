@@ -73,7 +73,7 @@ test('the Plex catalog reads On Deck and recent additions twenty at a time, keep
     duration: 1800000,
     viewOffset: 900000,
   };
-  const plex = new Plex({ plexUrl: 'http://127.0.0.1:32400', plexToken: 'fixture-private-token' }, url => {
+  const plex = new Plex({ url: 'http://127.0.0.1:32400', token: 'fixture-private-token' }, url => {
     requests.push(url.pathname + '?' + url.searchParams.get('X-Plex-Container-Size'));
     return new Response(JSON.stringify({ MediaContainer: { Metadata: [episode] } }));
   });

@@ -114,8 +114,8 @@ module.exports = {
         plexReporting: {
           eligible: !!this.reporting?.isEligible(actor.userId),
           activity: viewer.plexReporting !== false,
-          watchState: !!(viewer.plexWatchState && this.hub?.config?.plexReporting?.watchState !== false),
-          watchStateAllowed: this.hub?.config?.plexReporting?.watchState !== false,
+          watchState: !!(viewer.plexWatchState && this.reporting?.watchStateAllowed(room.media)),
+          watchStateAllowed: !!this.reporting?.watchStateAllowed(room.media),
         },
       };
     }

@@ -601,7 +601,7 @@ export function mount(host, deps) {
     }
     const providers = {
       discord: preview.providers.discord && store.identity.config.access?.discord !== false,
-      plex: preview.providers.plex && store.identity.config.unifiedAccounts && store.identity.config.plexConfigured,
+      plex: preview.providers.plex && store.identity.config.unifiedAccounts && store.identity.config.plexSignIn,
     };
     if (preview.member || (preview.signedIn && preview.guestsAllowed)) {
       show(

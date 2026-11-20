@@ -1,4 +1,5 @@
 'use strict';
+const { validateSources } = require('../server/sources');
 const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -96,8 +97,9 @@ async function runBrowserBufferTests(browserName) {
     ownerId: 'demo-host',
     guildId: 'synthetic-guild',
     channels: ['synthetic-commands'],
-    plexUrl: 'http://playback-fixture.invalid:32400',
-    plexToken: 'synthetic-playback-only',
+    sources: validateSources([
+      { id: 'plex', type: 'plex', url: 'http://playback-fixture.invalid:32400', token: 'synthetic-playback-only' },
+    ]),
   };
 
   const app = createApp(config, {
@@ -237,8 +239,9 @@ async function runPlexSessionLifecycleTests() {
     ownerId: 'demo-host',
     guildId: 'synthetic-guild',
     channels: ['synthetic-commands'],
-    plexUrl: 'http://playback-fixture.invalid:32400',
-    plexToken: 'synthetic-playback-only',
+    sources: validateSources([
+      { id: 'plex', type: 'plex', url: 'http://playback-fixture.invalid:32400', token: 'synthetic-playback-only' },
+    ]),
   };
 
   const app = createApp(config, {

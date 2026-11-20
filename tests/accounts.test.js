@@ -10,7 +10,7 @@ const { Accounts, credentialVault } = require('../server/accounts');
 const { createApp } = require('../server/app');
 const { accountFixture } = require('../scripts/account-fixture');
 const { Plex } = require('../server/sources/plex/plex');
-const { PlexAuth } = require('../server/sources/plex/auth');
+const { PlexAuth, PlexSignIn } = require('../server/sources/plex/auth');
 const { isServerOperator } = require('../server/operator-policy');
 const { normalizeConfig } = require('../server/config');
 const RoomPolicy = require('../server/room-policy');
@@ -62,7 +62,7 @@ test('server operator authority requires an explicit verified provider identity 
 test('traditional PIN sign-in works when PMS rejects JWT resource tokens, with safe stage-specific access errors', async t => {
   const provider = accountFixture(),
     accounts = new Accounts(undefined, credentialVault()),
-    config = { plexUrl: 'http://plex-fixture.invalid:32400', plexToken: 'fixture-owner' };
+    config = { url: 'http://plex-fixture.invalid:32400', token: 'fixture-owner' };
   let jwkRegistered = false,
     failure;
   const fetcher = async (input, options = {}) => {
@@ -77,14 +77,15 @@ test('traditional PIN sign-in works when PMS rejects JWT resource tokens, with s
     return provider.fetch(input, options);
   };
   const plex = new Plex(config, fetcher),
-    auth = new PlexAuth(config, accounts, plex, fetcher);
+    auth = new PlexAuth(config, accounts, plex, fetcher),
+    signIn = new PlexSignIn({}, accounts, [auth], fetcher);
   t.after(() => {
     accounts.close();
     plex.close();
   });
-  const attempt = await auth.start('https://uburoom.example/auth/plex/callback');
+  const attempt = await signIn.start('https://uburoom.example/auth/plex/callback');
   provider.choose(attempt.pinId, 'bob');
-  const verified = await auth.finish(attempt);
+  const verified = await signIn.finish(attempt);
   assert.equal(verified.subject, '102');
   assert.equal(jwkRegistered, false);
   assert.equal(verified.credential.authType, 'traditional');
@@ -113,9 +114,10 @@ test('traditional PIN sign-in works when PMS rejects JWT resource tokens, with s
 test('previous JWT credentials still renew through their registered signing key', async t => {
   const provider = accountFixture(),
     accounts = new Accounts(undefined, credentialVault()),
-    config = { plexUrl: 'http://plex-fixture.invalid:32400', plexToken: 'fixture-owner' },
+    config = { url: 'http://plex-fixture.invalid:32400', token: 'fixture-owner' },
     plex = new Plex(config, provider.fetch),
-    auth = new PlexAuth(config, accounts, plex, provider.fetch);
+    auth = new PlexAuth(config, accounts, plex, provider.fetch),
+    signIn = new PlexSignIn({}, accounts, [auth], provider.fetch);
   t.after(() => {
     accounts.close();
     plex.close();
@@ -129,7 +131,7 @@ test('previous JWT credentials still renew through their registered signing key'
     data: { strong: true, jwk: { ...publicKey.export({ format: 'jwk' }), kid, alg: 'EdDSA' } },
   });
   provider.choose(String(pin.id), 'alice');
-  const verified = await auth.finish({
+  const verified = await signIn.finish({
     pinId: String(pin.id),
     credential: { clientId, kid, privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }) },
   });
@@ -143,9 +145,9 @@ test('the dedicated direct-delivery account resolves its own PMS token and keeps
   const provider = accountFixture(),
     accounts = new Accounts(undefined, credentialVault()),
     config = {
-      plexUrl: 'http://plex-fixture.invalid:32400',
-      plexToken: 'fixture-owner',
-      plexDelivery: { mode: 'auto', clientUrl: 'https://plex.example', token: 'fixture-user-102' },
+      url: 'http://plex-fixture.invalid:32400',
+      token: 'fixture-owner',
+      delivery: { mode: 'auto', clientUrl: 'https://plex.example', token: 'fixture-user-102' },
     };
   let rawChecks = 0,
     rawStatus = 401;
@@ -278,7 +280,11 @@ test('direct original delivery isolates delegated credentials and fences private
     }
     return provider.fetch(input, options);
   });
-  f.config.plexDelivery = { mode: 'auto', clientUrl: 'https://plex-client.invalid:32400', token: 'fixture-user-102' };
+  f.config.sources[0].delivery = {
+    mode: 'auto',
+    clientUrl: 'https://plex-client.invalid:32400',
+    token: 'fixture-user-102',
+  };
   const alice = f.browser(),
     member = f.browser();
   await alice.plex('alice');
@@ -295,7 +301,7 @@ test('direct original delivery isolates delegated credentials and fences private
   });
   state = (await alice.request(`/api/watch/rooms/${roomId}?viewer=${viewerId}`)).body;
   assert.equal(state.directDelivery, true);
-  assert.equal(new URL(state.mediaUrl).origin, f.config.plexDelivery.clientUrl);
+  assert.equal(new URL(state.mediaUrl).origin, f.config.sources[0].delivery.clientUrl);
   assert.equal(new URL(state.mediaUrl).searchParams.get('X-Plex-Token'), 'transient-fixture-1');
   // A Discord member with no Plex link watches through the same dedicated account.
   const shared = (await member.request(`/api/watch/rooms/${roomId}?viewer=${other}`)).body;
@@ -424,7 +430,7 @@ test(
       }
       return provider.fetch(input, options);
     });
-    f.config.plexDelivery = {
+    f.config.sources[0].delivery = {
       mode: 'auto',
       clientUrl: 'https://plex-client.invalid:32400',
       lanClientUrl: 'https://plex-lan.invalid:32400',
@@ -516,9 +522,9 @@ test('direct delivery requires a verified non-owner dedicated account and never 
   const { PlexDelivery } = require('../server/sources/plex/delivery');
   const { clientAddress } = require('../server/client-address');
   const config = {
-    plexUrl: 'http://plex.invalid:32400',
-    plexToken: 'owner',
-    plexDelivery: { mode: 'auto', clientUrl: 'https://plex.example', token: 'dedicated' },
+    url: 'http://plex.invalid:32400',
+    token: 'owner',
+    delivery: { mode: 'auto', clientUrl: 'https://plex.example', token: 'dedicated' },
   };
   let owned = false,
     requests = 0,
@@ -601,9 +607,9 @@ test('direct delivery requires a verified non-owner dedicated account and never 
     'authenticated discovery permits direct delivery without server NAT loopback',
   );
   assert.equal(identityRequests, probes, 'a verified advertised origin does not need server-side public connectivity');
-  config.plexDelivery.clientUrl = 'https://plex.example.attacker.invalid';
+  config.delivery.clientUrl = 'https://plex.example.attacker.invalid';
   assert.equal(await delivery().file(media(), context, async () => true), undefined, 'origin comparison is exact');
-  config.plexDelivery.clientUrl = 'https://plex.example';
+  config.delivery.clientUrl = 'https://plex.example';
   resourceMachine = 'other-machine';
   assert.equal(
     await delivery().file(media(), context, async () => true),
@@ -617,16 +623,16 @@ test('direct delivery requires a verified non-owner dedicated account and never 
     undefined,
     'relay metadata does not attest a direct endpoint',
   );
-  config.plexDelivery.token = '';
+  config.delivery.token = '';
   assert.equal(await delivery().file(media(), context, async () => true), undefined);
-  config.plexDelivery.token = 'owner';
+  config.delivery.token = 'owner';
   scope = plex.scope('owner', 'configured-direct');
   assert.equal(await delivery().file(media(), context, async () => true), undefined);
   scope = plex;
   assert.equal(await delivery().file(media(), context, async () => true), undefined);
-  config.plexDelivery.token = 'dedicated';
+  config.delivery.token = 'dedicated';
   scope = plex.scope('dedicated', 'configured-direct');
-  config.plexDelivery.clientUrl = 'https://plex.example';
+  config.delivery.clientUrl = 'https://plex.example';
   advertised = [
     { uri: 'https://plex.example', protocol: 'https', relay: false, local: false },
     { uri: 'https://plex-lan.example:32400', protocol: 'https', relay: false, local: true },
@@ -863,7 +869,7 @@ test(
       const yaml = path.join(directory, 'config.yaml');
       fs.writeFileSync(
         yaml,
-        "# Matched private fixture\nplex:\n  token: 'fixture-only'\nstorage:\n  credential_key_file: './credentials.key'\n",
+        "# Matched private fixture\nsources:\n  - id: 'plex'\n    type: 'plex'\n    url: 'http://127.0.0.1:32400'\n    token: 'fixture-only'\nstorage:\n  credential_key_file: './credentials.key'\n",
       );
       const editor = require('../server/config-editor').createConfigEditor(yaml);
       await editor.save({ revision: (await editor.readEditable()).revision, changes: { 'rooms.max_members': 12 } });

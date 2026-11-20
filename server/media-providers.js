@@ -14,7 +14,10 @@ const DEMO_SERVER = 'local-demo';
  * first one that is configured.
  *
  * @typedef {Object} MediaProvider
- * @property {string} kind
+ * @property {string} kind - The kind of media it prepares (plex, jellyfin, local).
+ * @property {string} [id] - The `sources:` entry it was built from; set by server/sources.
+ * @property {string} [type] - That entry's source type.
+ * @property {string} [label] - That entry's optional name.
  * @property {any} root - The provider seen with its configured credential.
  * @property {() => Promise<string>} identity - The stable server id media from this provider is recorded under.
  * @property {string} [serverName] - The name the server gives itself (Plex's "VIGRID"), once `identity()` has
@@ -27,6 +30,12 @@ const DEMO_SERVER = 'local-demo';
  *   Lets a viewer fetch media straight from this provider's server with a credential of
  *   their own: `file`, `hlsPlan` and `deliveryOrigins`. Absent when it has no such path.
  */
+
+/** Two sources report the same server identity. */
+function duplicate(providers) {
+  const names = providers.map(provider => provider.id || provider.kind).join(' and ');
+  return failure(`Sources ${names} report the same server; keep one of them in sources`, 503);
+}
 
 /** A server's own name as it reports it, made safe to show: one line, at most 60 characters. */
 function serverName(value) {
@@ -48,6 +57,10 @@ class ProviderReporting {
   }
   isEligible(userId) {
     return this.reporters.some(reporter => reporter.isEligible(userId));
+  }
+  /** Whether viewers may opt in to personal watch-state sync for this media (or, with none, for any source). */
+  watchStateAllowed(media) {
+    return this.reporters.some(reporter => reporter.watchStateAllowed?.(media));
   }
   reconnect(...args) {
     for (const reporter of this.reporters) reporter.reconnect(...args);
@@ -72,11 +85,85 @@ class ProviderReporting {
   }
 }
 
+/** Media recorded under a server no configured source answers for. Kept, never deleted; it plays again once that server is back. */
+const unavailable = () =>
+  Object.assign(failure("This media's source is unavailable: it is not configured on this server"), {
+    unavailable: true,
+  });
+
+/**
+ * What a request that names no server reaches on an installation with no sources (the built-in demo
+ * still plays): a scope with nothing in it that refuses every item.
+ */
+function noSource(pipeline) {
+  const none = () => Promise.reject(failure('No media source is configured', 404));
+  const root = {
+    kind: 'none',
+    configured: false,
+    principal: 'none',
+    pipeline,
+    get root() {
+      return root;
+    },
+    browse: async () => ({ items: [], total: 0, offset: 0, nextOffset: null }),
+    filters: async () => ({ genres: [], years: [] }),
+    details: none,
+    playableItem: none,
+    // Says nothing about any item, the built-in demo included.
+    availability: async () => new Map(),
+    queueItems: async () => [],
+    artwork: none,
+    allows: async () => false,
+    visible: async () => false,
+    url: () => {
+      throw failure('No media source is configured', 404);
+    },
+    request: none,
+    prepare: none,
+    source: none,
+    stop: async () => {},
+  };
+  return {
+    kind: 'none',
+    root,
+    identity: () => Promise.reject(failure('No media source is configured', 404)),
+    scopeFor: async () => root,
+  };
+}
+
 class MediaProviders {
   /** @param {MediaProvider[]} [list] @param {any} [pipeline] - What every provider plays through. */
   constructor(list = [], pipeline) {
-    this.list = list;
+    // With no source configured, requests that name no server reach an empty one (the demo still plays).
+    this.list = list.length ? list : [noSource(pipeline)];
     this.pipeline = pipeline;
+    /** @type {Map<MediaProvider, boolean>} Whether each source's last identity check answered. */
+    this.answered = new Map();
+  }
+  /** A provider's identity, remembering whether it answered for the source list's availability. */
+  async identityOf(provider) {
+    try {
+      const id = await provider.identity();
+      this.answered.set(provider, true);
+      return id;
+    } catch (error) {
+      this.answered.set(provider, false);
+      throw error;
+    }
+  }
+  /**
+   * Every configured source for the page: id, name, type and whether it is available (its server
+   * last answered, or has not been asked yet). Never a credential, address or path.
+   */
+  summary() {
+    return this.list
+      .filter(provider => provider.id)
+      .map(provider => ({
+        id: provider.id,
+        name: provider.label || provider.serverName || provider.id,
+        type: provider.type,
+        available: !!provider.root?.configured && this.answered.get(provider) !== false,
+      }));
   }
   /** The provider a request reaches by naming no server: the first one that is configured. */
   get primary() {
@@ -85,22 +172,39 @@ class MediaProviders {
   get configured() {
     return this.list.some(provider => provider.root?.configured);
   }
-  /** Whether a provider of this kind is set up. */
-  has(kind) {
-    return this.list.some(provider => provider.kind === kind && !!provider.root?.configured);
-  }
-  // A provider that cannot say who it is right now must not hide the ones that can.
+  /**
+   * The provider that answers for a server id. A provider that cannot say who it is right now must
+   * not hide the ones that can. Two sources answering for the same server are a configuration
+   * error, refused rather than guessed between: their media would be one server's twice.
+   */
   async find(serverId) {
     let unanswered;
+    const found = [];
     for (const provider of this.list) {
       try {
-        if ((await provider.identity()) === serverId) return provider;
+        if ((await this.identityOf(provider)) === serverId) found.push(provider);
       } catch (error) {
         // One that is not set up has no id to give; that is not a failure to answer.
         if (provider.root?.configured !== false) unanswered ||= error;
       }
     }
+    if (found.length > 1) throw duplicate(found);
+    if (found.length) return found[0];
     if (unanswered) throw unanswered;
+  }
+  /** Asks every source who it is and refuses two that report the same server (startup and the doctor). */
+  async verify() {
+    const seen = new Map();
+    for (const provider of this.list) {
+      let id;
+      try {
+        id = await this.identityOf(provider);
+      } catch {
+        continue;
+      }
+      if (seen.has(id)) throw duplicate([seen.get(id), provider]);
+      seen.set(id, provider);
+    }
   }
   /** The provider recorded under a server id. */
   async select(serverId) {
@@ -109,7 +213,7 @@ class MediaProviders {
       return this.primary;
     }
     const provider = await this.find(serverId);
-    if (!provider) throw failure('This media belongs to a server that is no longer configured');
+    if (!provider) throw unavailable();
     return provider;
   }
   /** The provider, as this person may use it. */
@@ -124,6 +228,14 @@ class MediaProviders {
     if (media?.id === 'demo' || media?.mediaId === 'demo') return DEMO_SERVER;
     const owner = media?.provider && this.owner(media.provider);
     return (owner || (await this.select(media?.roomServerId ?? media?.serverId))).identity();
+  }
+  /** Whether a server id names a configured source that answers for it now. */
+  async available(serverId) {
+    try {
+      return !!(await this.find(serverId));
+    } catch {
+      return false;
+    }
   }
   /** Whether a saved reference still names a server configured here. */
   async recorded(saved) {
@@ -148,14 +260,16 @@ class MediaProviders {
         // The first provider is the one a request reaches by naming no server, so its
         // libraries stay listed even while it cannot say which server it is.
         const first = provider === this.primary,
-          serverId = await provider.identity().catch(error => {
+          serverId = await this.identityOf(provider).catch(error => {
             if (!first) throw error;
           });
         const scope = await scopeFor(actor, first ? undefined : serverId);
-        // Each library names the kind and name of the server it is on, for its card on Libraries home.
+        // Each library names the kind and name of the source it is on, for its card on Libraries home.
+        const name = provider.label || provider.serverName;
         const server = {
           serverKind: provider.kind,
-          ...(provider.serverName ? { serverName: provider.serverName } : {}),
+          ...(provider.id ? { sourceId: provider.id } : {}),
+          ...(name ? { serverName: name } : {}),
         };
         for (const item of (await scope.browse({})).items || [])
           items.push(serverId ? { ...item, serverId, ...server } : { ...item, ...server });
@@ -177,7 +291,7 @@ class MediaProviders {
       if (!provider.root?.configured) continue;
       try {
         const first = provider === this.primary,
-          serverId = await provider.identity().catch(error => {
+          serverId = await this.identityOf(provider).catch(error => {
             if (!first) throw error;
           });
         const named = item => (serverId ? { ...item, serverId } : item);
@@ -233,7 +347,7 @@ class MediaProviders {
     const reports = {};
     for (const provider of this.list)
       if (provider.root?.configured && provider.root.reconcileSessions)
-        reports[provider.kind] = await provider.root.reconcileSessions(inUse);
+        reports[provider.id || provider.kind] = await provider.root.reconcileSessions(inUse);
     return reports;
   }
   close() {

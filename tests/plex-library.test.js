@@ -15,7 +15,7 @@ const movie = (id, more = {}) => ({
 });
 const json = data => new Response(JSON.stringify({ MediaContainer: data }));
 function fixture(handler, files) {
-  return new Plex({ plexUrl: 'http://127.0.0.1:32400', plexToken: 'fixture-private-token' }, (url, options) => {
+  return new Plex({ url: 'http://127.0.0.1:32400', token: 'fixture-private-token' }, (url, options) => {
     if (files && url.searchParams.get('checkFiles') === '1') {
       const ids = url.pathname.split('/').pop().split(',');
       return json({ Metadata: files.filter(item => ids.includes(item.ratingKey)) });

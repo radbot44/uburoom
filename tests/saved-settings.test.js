@@ -26,9 +26,11 @@ discord:
   client_secret: 'fixture-private-client-secret'
   owner_id: '100000000000000001'
   guild_id: '100000000000000020'
-plex:
-  url: 'http://plex-fixture.invalid:32400'
-  token: 'fixture-owner'
+sources:
+  - id: 'plex'
+    type: 'plex'
+    url: 'http://plex-fixture.invalid:32400'
+    token: 'fixture-owner'
 storage:
   credential_key_file: './original.key'
 rooms:
@@ -344,7 +346,7 @@ test(
     f.config.tlsKey = secret;
     f.config.ffmpegPath = secret;
     f.config.ffprobePath = secret;
-    f.config.plexDelivery = { mode: 'proxy', clientUrl: secret, lanClientUrl: secret, token: secret };
+    f.config.sources[0].delivery = { mode: 'proxy', clientUrl: secret, lanClientUrl: secret, token: secret };
     f.config.accessPolicy.password = secret;
     for (const object of [
       f.config.accessPolicy,
@@ -374,8 +376,8 @@ test(
     const serialized = JSON.stringify(response.body);
     for (const privateValue of [
       secret,
-      f.config.plexToken,
-      f.config.plexUrl,
+      f.config.sources[0].token,
+      f.config.sources[0].url,
       f.config.publicUrl,
       f.config.clientSecret,
       f.config.clientId,

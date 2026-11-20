@@ -1,5 +1,6 @@
 /* Long local watch-player soak. Procedural media and simulated Plex only. */
 'use strict';
+const { validateSources } = require('../server/sources');
 const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -89,8 +90,9 @@ async function main() {
     ownerId: 'demo-host',
     guildId: 'synthetic-guild',
     channels: ['synthetic-commands'],
-    plexUrl: 'http://playback-fixture.invalid:32400',
-    plexToken: 'synthetic-playback-only',
+    sources: validateSources([
+      { id: 'plex', type: 'plex', url: 'http://playback-fixture.invalid:32400', token: 'synthetic-playback-only' },
+    ]),
   };
   if (identitySeconds) config.demoIdentityMs = identitySeconds * 1000;
   const app = createApp(config, {

@@ -8,15 +8,16 @@ const { DIRECT_CLIENT } = require('./auth');
 // viewer, including consumers of shared HLS, and never enter shared room state, shared
 // producers or persistent state.
 class PlexDelivery {
-  constructor(config, plex, plexAuth, resolve) {
-    this.config = config;
+  /** @param {any} source - The Plex source entry: `token` and `delivery` (`mode`, `clientUrl`, `lanClientUrl`, `token`). */
+  constructor(source, plex, plexAuth, resolve) {
+    this.source = source;
     this.plex = plex;
     this.plexAuth = plexAuth;
     this.resolve = resolve;
     this.files = new WeakMap();
     this.resources = new WeakMap();
     this.plans = new WeakMap();
-    this.discoveredLanOrigin = this.config.plexDelivery?.lanClientUrl || undefined;
+    this.discoveredLanOrigin = this.source.delivery?.lanClientUrl || undefined;
     this.publicAddresses = new Set();
     this.rememberConfiguredPublicOrigin();
     this.discoveryJob = undefined;
@@ -28,9 +29,9 @@ class PlexDelivery {
   }
   /** Whether the owner turned direct delivery on with a dedicated account; off, nothing here is asked. */
   get enabled() {
-    const delivery = this.config.plexDelivery;
+    const delivery = this.source.delivery;
     return (
-      delivery?.mode === 'auto' && !!delivery.clientUrl && !!delivery.token && delivery.token !== this.config.plexToken
+      delivery?.mode === 'auto' && !!delivery.clientUrl && !!delivery.token && delivery.token !== this.source.token
     );
   }
   rememberPublicAddress(raw) {
@@ -38,7 +39,7 @@ class PlexDelivery {
     if (ip && net.isIP(ip) !== 0 && !isLocalAddress(ip)) this.publicAddresses.add(ip);
   }
   rememberConfiguredPublicOrigin() {
-    const raw = this.config.plexDelivery?.clientUrl;
+    const raw = this.source.delivery?.clientUrl;
     if (!raw) return;
     try {
       const host = new URL(raw).hostname.replace(/^\[|\]$/g, '');
@@ -54,8 +55,8 @@ class PlexDelivery {
         this.rememberPublicAddress(conn.address);
       }
     }
-    if (this.config.plexDelivery?.lanClientUrl) {
-      this.discoveredLanOrigin = this.config.plexDelivery.lanClientUrl;
+    if (this.source.delivery?.lanClientUrl) {
+      this.discoveredLanOrigin = this.source.delivery.lanClientUrl;
       return;
     }
     const connection = resource?.connections?.find(conn => {
@@ -87,12 +88,12 @@ class PlexDelivery {
   }
   async discoverLanOrigin() {
     if (this.discoveredLanOrigin) return this.discoveredLanOrigin;
-    if (this.config.plexDelivery?.lanClientUrl) {
-      return (this.discoveredLanOrigin = this.config.plexDelivery.lanClientUrl);
+    if (this.source.delivery?.lanClientUrl) {
+      return (this.discoveredLanOrigin = this.source.delivery.lanClientUrl);
     }
     if (Date.now() < (this.lanCheckedUntil || 0)) return;
     if (this.discoveryJob) return this.discoveryJob;
-    const token = this.config.plexDelivery?.token;
+    const token = this.source.delivery?.token;
     if (!token || !this.plexAuth) return;
     this.discoveryJob = (async () => {
       try {
@@ -114,8 +115,8 @@ class PlexDelivery {
   }
   async lanOrigin(scope) {
     if (this.discoveredLanOrigin) return this.discoveredLanOrigin;
-    if (this.config.plexDelivery?.lanClientUrl) {
-      return (this.discoveredLanOrigin = this.config.plexDelivery.lanClientUrl);
+    if (this.source.delivery?.lanClientUrl) {
+      return (this.discoveredLanOrigin = this.source.delivery.lanClientUrl);
     }
     const resource = scope ? await this.resource(scope) : undefined;
     if (resource) this.rememberDiscoveredLan(resource);
@@ -124,29 +125,29 @@ class PlexDelivery {
   }
   origins() {
     const list = [];
-    if (this.config.plexDelivery?.clientUrl) list.push(this.config.plexDelivery.clientUrl);
+    if (this.source.delivery?.clientUrl) list.push(this.source.delivery.clientUrl);
     if (this.discoveredLanOrigin && !list.includes(this.discoveredLanOrigin)) {
       list.push(this.discoveredLanOrigin);
     }
     return list;
   }
   async deliveryOrigins(remoteAddress) {
-    if (!this.discoveredLanOrigin && this.config.plexDelivery?.mode === 'auto') await this.discoverLanOrigin();
+    if (!this.discoveredLanOrigin && this.source.delivery?.mode === 'auto') await this.discoverLanOrigin();
     if (remoteAddress !== undefined && !this.isLocalViewer(remoteAddress)) {
-      return this.config.plexDelivery?.clientUrl ? [this.config.plexDelivery.clientUrl] : [];
+      return this.source.delivery?.clientUrl ? [this.source.delivery.clientUrl] : [];
     }
     return this.origins();
   }
   async originFor(scope, remoteAddress) {
-    if (!remoteAddress) return this.config.plexDelivery?.clientUrl;
+    if (!remoteAddress) return this.source.delivery?.clientUrl;
     if (isLocalAddress(remoteAddress)) {
       const lan = await this.lanOrigin(scope);
       if (lan) return lan;
-    } else if (this.config.plexDelivery?.mode === 'auto') {
+    } else if (this.source.delivery?.mode === 'auto') {
       const lan = await this.lanOrigin(scope);
       if (lan && this.isLocalViewer(remoteAddress)) return lan;
     }
-    return this.config.plexDelivery?.clientUrl;
+    return this.source.delivery?.clientUrl;
   }
   async resource(scope) {
     const cached = this.resources.get(scope);
@@ -174,12 +175,12 @@ class PlexDelivery {
   }
   /** Whether this scope is the dedicated account and plex.tv confirms it does not own the server. */
   async dedicatedAllowed(scope) {
-    const token = this.config.plexDelivery?.token;
+    const token = this.source.delivery?.token;
     if (
       !this.enabled ||
       scope?.clientId !== DIRECT_CLIENT ||
       (scope.discoveryToken || scope.token) !== token ||
-      scope.token === this.config.plexToken
+      scope.token === this.source.token
     )
       return false;
     // A different string alone does not prove a non-owner account.
@@ -368,9 +369,7 @@ class PlexDelivery {
         typeof delegated.token !== 'string' ||
         !delegated.token.startsWith('transient-') ||
         delegated.token.length > 1024 ||
-        [scope.token, scope.discoveryToken, this.config.plexToken, this.config.plexDelivery?.token].includes(
-          delegated.token,
-        )
+        [scope.token, scope.discoveryToken, this.source.token, this.source.delivery?.token].includes(delegated.token)
       )
         return;
       return (await valid()) ? { origin, token: delegated.token } : undefined;

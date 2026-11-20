@@ -1,4 +1,5 @@
 'use strict';
+const { validateSources } = require('../server/sources');
 const test = require('node:test'),
   assert = require('node:assert/strict');
 const { Plex } = require('../server/sources/plex/plex');
@@ -129,7 +130,7 @@ function fixture() {
     }
     return json({});
   };
-  const plex = new Plex({ plexUrl: 'http://pool-fixture.invalid', plexToken: 'alpha' }, fetch),
+  const plex = new Plex({ url: 'http://pool-fixture.invalid', token: 'alpha' }, fetch),
     a = plex.scope('alpha', 'alice'),
     b = plex.scope('beta', 'bob');
   const prepare = (scope, quality = '1080p20', choices = {}) =>
@@ -584,8 +585,7 @@ test('shared HTTP delivery retains viewer grants and own-scope access checks, an
     guildId: 'guild',
     channels: ['commands'],
     demo: true,
-    plexUrl: 'http://pool-fixture.invalid',
-    plexToken: 'alpha',
+    sources: validateSources([{ id: 'plex', type: 'plex', url: 'http://pool-fixture.invalid', token: 'alpha' }]),
   };
   const app = createApp(config, { plexFetch: f.fetch }),
     root = app.watch.providers.primary.root;

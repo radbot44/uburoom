@@ -3,8 +3,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
-const http = require('node:http');
-const https = require('node:https');
 const crypto = require('node:crypto');
 const cp = require('node:child_process');
 const { ROOT, parseConfig, normalizeConfig } = require('../server/config');
@@ -761,54 +759,6 @@ async function checkProviderConnectivity(config) {
   /** @type {DoctorCheck[]} */
   const checks = [];
 
-  // Plex reachability probe (non-destructive)
-  if (config.plexUrl) {
-    await new Promise(resolve => {
-      let client = config.plexUrl.startsWith('https:') ? https : http;
-      const targetUrl = new URL('/identity', config.plexUrl);
-      const req = client.get(targetUrl, { timeout: 3500 }, res => {
-        if (res.statusCode >= 200 && res.statusCode < 500) {
-          checks.push({
-            category: 'Providers',
-            name: 'Plex Media Server reachability',
-            status: 'pass',
-            message: `Plex server reachable at ${config.plexUrl} (HTTP ${res.statusCode})`,
-          });
-        } else {
-          checks.push({
-            category: 'Providers',
-            name: 'Plex Media Server reachability',
-            status: 'warn',
-            message: `Plex server returned HTTP ${res.statusCode} at ${config.plexUrl}`,
-          });
-        }
-        res.resume();
-        resolve();
-      });
-      req.on('timeout', () => {
-        req.destroy();
-        checks.push({
-          category: 'Providers',
-          name: 'Plex Media Server reachability',
-          status: 'warn',
-          message: `Connection timed out reaching Plex server at ${config.plexUrl}`,
-          remediation: 'Verify Plex server URL and that PMS is running and accessible on the local network.',
-        });
-        resolve();
-      });
-      req.on('error', err => {
-        checks.push({
-          category: 'Providers',
-          name: 'Plex Media Server reachability',
-          status: 'warn',
-          message: `Could not connect to Plex server at ${config.plexUrl}: ${err.message}`,
-          remediation: 'Verify plex.url in config.yaml and network routing.',
-        });
-        resolve();
-      });
-    });
-  }
-
   if (config.shareChannelId)
     checks.push({
       category: 'Providers',
@@ -897,138 +847,27 @@ function checkEvents(config) {
   ];
 }
 
-async function checkJellyfin(config) {
+/** Every media source's own checks, through its type's module (server/sources/). */
+async function checkSources(config) {
   /** @type {DoctorCheck[]} */
   const checks = [];
-  if (!config.jellyfin) return checks;
-  const { Jellyfin } = require('../server/sources/jellyfin/provider');
-  const jellyfin = new Jellyfin(config.jellyfin, { pipeline: {} });
-  const check = async (name, action, remediation) => {
-    try {
-      checks.push({ category: 'Jellyfin', name, status: 'pass', message: await action() });
-      return true;
-    } catch (error) {
-      checks.push({ category: 'Jellyfin', name, status: 'fail', message: String(error.message || error), remediation });
-      return false;
-    }
-  };
-  const reached = await check(
-    'Server',
-    async () => {
-      const info = await jellyfin.json('System/Info/Public');
-      return `Reached ${String(info.ServerName || 'Jellyfin').slice(0, 60)} ${String(info.Version || '').slice(0, 20)} at ${config.jellyfin.url}`;
-    },
-    'Check jellyfin.url (include any base path) and that the server is running.',
-  );
-  if (reached)
-    await check(
-      'API key and user',
-      async () => {
-        await jellyfin.userId();
-        const libraries = await jellyfin.libraries();
-        return `User "${config.jellyfin.user}" offers ${libraries.length} movie or show ${libraries.length === 1 ? 'library' : 'libraries'}`;
+  const sources = config.sources || [];
+  if (!sources.length)
+    return [
+      {
+        category: 'Sources',
+        name: 'Media source',
+        status: 'warn',
+        message: 'No media source is configured, so the library will be empty.',
+        remediation: 'Add a plex, jellyfin or folders entry under sources: in config.yaml.',
       },
-      'Create an API key in the Jellyfin dashboard and set jellyfin.user to an existing username.',
-    );
-  if (!(config.ffmpegPath || findOnPath('ffmpeg')))
-    checks.push({
-      category: 'Jellyfin',
-      name: 'Media tools',
-      status: 'warn',
-      message: 'Without FFmpeg, only files a browser plays as they are can be watched.',
-      remediation: 'Install FFmpeg on PATH or set tools.ffmpeg.',
-    });
-  return checks;
-}
-
-function checkLocalMedia(config) {
-  /** @type {DoctorCheck[]} */
-  const checks = [];
-  const libraries = config.localMedia?.libraries || [];
-  if (!libraries.length) return checks;
-  for (const library of libraries)
-    for (const folder of library.paths) {
-      let status = 'pass',
-        message = `"${library.name}" (${library.id}) reads ${folder}`,
-        remediation;
-      try {
-        if (!fs.statSync(folder).isDirectory()) throw new Error('not a folder');
-        fs.accessSync(folder, fs.constants.R_OK);
-      } catch {
-        status = 'fail';
-        message = `"${library.name}" (${library.id}) cannot read ${folder}`;
-        remediation = 'Point each local_media.libraries path at a folder the uburoom account can read.';
-      }
-      checks.push({ category: 'Local Media', name: 'Library folder', status, message, remediation });
-    }
-  const ffprobe = config.ffprobePath || findOnPath('ffprobe'),
-    ffmpeg = config.ffmpegPath || findOnPath('ffmpeg');
-  checks.push({
-    category: 'Local Media',
-    name: 'Media tools',
-    status: !ffprobe ? 'fail' : ffmpeg ? 'pass' : 'warn',
-    message: !ffprobe
-      ? 'Local media cannot be read without FFprobe.'
-      : ffmpeg
-        ? 'FFprobe reads local files and FFmpeg converts those a browser cannot play.'
-        : 'Without FFmpeg, only files a browser plays as they are can be watched.',
-    remediation:
-      !ffprobe || !ffmpeg ? 'Install FFmpeg (with FFprobe) on PATH or set tools.ffmpeg and tools.ffprobe.' : undefined,
-  });
-  // Pictures for local videos: the filters their frames need (zscale and tonemap only for HDR), and the folder.
-  if (ffmpeg) {
-    let missing;
-    try {
-      const filters = cp.execFileSync(ffmpeg, ['-hide_banner', '-filters'], {
-        timeout: 4000,
-        encoding: 'utf8',
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
-      missing = ['thumbnail', 'boxblur', 'overlay', 'zscale', 'tonemap'].filter(
-        name => !new RegExp('^\\s*\\S+\\s+' + name + '\\s', 'm').test(filters),
-      );
-    } catch {
-      missing = undefined;
-    }
-    // zscale and tonemap only matter for HDR frames; the rest are needed for every picture.
-    const hdrOnly = !!missing?.length && missing.every(name => ['zscale', 'tonemap'].includes(name));
-    checks.push({
-      category: 'Local Media',
-      name: 'Pictures',
-      status: missing?.length === 0 ? 'pass' : 'warn',
-      message: !missing
-        ? 'Could not list FFmpeg filters; local videos may get no pictures.'
-        : missing.length
-          ? `FFmpeg lacks ${missing.join(', ')}: ${hdrOnly ? 'HDR videos' : 'local videos'} get no picture of their own.`
-          : 'FFmpeg can make pictures for local videos, HDR included.',
-      remediation: missing?.length
-        ? 'Use an FFmpeg build with zimg (for zscale), such as the gyan.dev or BtbN full builds.'
-        : undefined,
-    });
-  }
-  const art = config.localMedia?.artDirectory;
-  if (art) {
-    let bytes = 0,
-      files = 0;
-    try {
-      for (const name of fs.readdirSync(art)) {
-        const stat = fs.statSync(path.join(art, name));
-        if (stat.isFile()) {
-          bytes += stat.size;
-          files++;
-        }
-      }
-    } catch {
-      /* Not made yet: pictures are saved there once local videos are browsed. */
-    }
-    checks.push({
-      category: 'Local Media',
-      name: 'Picture folder',
-      status: 'pass',
-      message: `${files} pictures, ${(bytes / 1024 / 1024).toFixed(1)} MB of 256 MB in ${art}`,
-    });
-  }
+    ];
+  const { checkSources: check } = require('../server/sources');
+  const tools = {
+    ffmpeg: config.ffmpegPath || findOnPath('ffmpeg'),
+    ffprobe: config.ffprobePath || findOnPath('ffprobe'),
+  };
+  checks.push(...(await check(sources, tools)));
   return checks;
 }
 
@@ -1060,16 +899,7 @@ async function runDoctor(options = {}) {
     allChecks.push(...checkStorageAndKey(config));
     allChecks.push(...checkTlsCertificates(config));
     allChecks.push(...checkMediaTools(config));
-    allChecks.push(...checkLocalMedia(config));
-    allChecks.push(...(await checkJellyfin(config)));
-    if (!config.plexUrl && !config.jellyfin && !config.localMedia?.libraries?.length)
-      allChecks.push({
-        category: 'Media',
-        name: 'Media source',
-        status: 'warn',
-        message: 'No media source is configured, so the library will be empty.',
-        remediation: 'Set plex.url and plex.token, the jellyfin settings, or local_media.libraries.',
-      });
+    allChecks.push(...(await checkSources(config)));
     allChecks.push(...checkGuestPasses(config));
     allChecks.push(...checkEvents(config));
     allChecks.push(...(await checkProviderConnectivity(config)));
@@ -1145,4 +975,5 @@ module.exports = {
   checkTlsCertificates,
   checkMediaTools,
   checkProviderConnectivity,
+  checkSources,
 };

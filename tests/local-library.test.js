@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { normalizeConfig } = require('../server/config');
-const { LocalIndex, token } = require('../server/sources/folders/index');
+const { LocalIndex, token } = require('../server/sources/folders/library-index');
 
 function folder(t, files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-local-'));
@@ -82,10 +82,12 @@ test('a folder that cannot be read leaves the library its other folders', async 
   );
 });
 
-test('local_media libraries take a list of folders, resolved beside the config, each used once', () => {
+test('folders sources take a list of folders, resolved beside the config, each used once', () => {
   const base = path.resolve(os.tmpdir(), 'uburoom-base');
-  const library = paths => ({ local_media: { libraries: [{ id: 'film', name: 'Film', paths }] } });
-  assert.deepEqual(normalizeConfig(library(['films', 'more']), { base, discoverTools: false }).localMedia.libraries, [
+  const library = paths => ({
+    sources: [{ id: 'local', type: 'folders', libraries: [{ id: 'film', name: 'Film', paths }] }],
+  });
+  assert.deepEqual(normalizeConfig(library(['films', 'more']), { base, discoverTools: false }).sources[0].libraries, [
     {
       id: 'film',
       name: 'Film',
@@ -94,12 +96,24 @@ test('local_media libraries take a list of folders, resolved beside the config, 
       type: 'movies',
     },
   ]);
-  const plain = { local_media: { libraries: [{ id: 'home', name: 'Home', paths: ['home'], parse_names: false }] } };
-  assert.equal(normalizeConfig(plain, { base, discoverTools: false }).localMedia.libraries[0].parseNames, false);
+  const plain = {
+    sources: [
+      { id: 'local', type: 'folders', libraries: [{ id: 'home', name: 'Home', paths: ['home'], parse_names: false }] },
+    ],
+  };
+  assert.equal(normalizeConfig(plain, { base, discoverTools: false }).sources[0].libraries[0].parseNames, false);
   assert.throws(
     () =>
       normalizeConfig(
-        { local_media: { libraries: [{ id: 'home', name: 'Home', paths: ['home'], parse_names: 'yes' }] } },
+        {
+          sources: [
+            {
+              id: 'local',
+              type: 'folders',
+              libraries: [{ id: 'home', name: 'Home', paths: ['home'], parse_names: 'yes' }],
+            },
+          ],
+        },
         { base, discoverTools: false },
       ),
     /parse_names/,
@@ -109,7 +123,7 @@ test('local_media libraries take a list of folders, resolved beside the config, 
   assert.throws(
     () =>
       normalizeConfig(
-        { local_media: { libraries: [{ id: 'film', name: 'Film', path: 'films' }] } },
+        { sources: [{ id: 'local', type: 'folders', libraries: [{ id: 'film', name: 'Film', path: 'films' }] }] },
         { base, discoverTools: false },
       ),
     /paths/,

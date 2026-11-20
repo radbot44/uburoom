@@ -182,8 +182,8 @@ test('local VP8/VP9 preparation enforces allowed formats, Plex policy and subtit
     settings = normalizeConfig({ transcoding: { policy: 'override', outputs: ['vp9', 'vp8'] } }).transcoding;
   const plex = new Plex(
     {
-      plexUrl: 'http://plex-fixture.invalid:32400',
-      plexToken: 'fixture-owner',
+      url: 'http://plex-fixture.invalid:32400',
+      token: 'fixture-owner',
       ffmpegPath: 'fixture',
       transcoding: settings,
     },
