@@ -23,11 +23,11 @@ plex:
   client_url: '' # Required for auto: viewer-reachable HTTPS Plex origin, no path.
   lan_client_url: '' # Optional LAN HTTPS Plex origin override; blank auto-detects from Plex.
 
-  # SHARING: enabled by default. Viewers without a Plex account or confirmed
-  # server membership can access the fallback account's libraries and media.
-  # This can grant more media access than their personal account has.
+  # SHARING: off by default. When true, viewers without a Plex account or
+  # confirmed server membership can access the fallback account's libraries
+  # and media. This can grant more media access than their personal account has.
   # Expired/revoked credentials, outages and item denials NEVER use fallback.
-  fallback_enabled: true
+  fallback_enabled: false
   # Blank uses token above. Prefer a dedicated account that has access to your
   # libraries but does not own the server. To get its token: open a private
   # browser window, sign in at https://app.plex.tv as that account, press F12,

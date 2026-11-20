@@ -26,7 +26,7 @@ Open `https://localhost:6768/watch?demo=host` and `https://localhost:6768/watch?
 
 Follow the [self-hosting guide](docs/self-hosting.md) (or the [Docker guide](docs/docker.md)) to configure Plex, HTTPS and optional Discord integration. Copy [`config.example.yaml`](config.example.yaml) to a **private** `config.yaml`, supply your settings, verify with `npm run doctor`, then run `npm start` or `node server/index.js --config /path/to/config.yaml`.
 
-Never commit or share configuration, tokens, databases or encryption keys. Preserve the **original encryption key** when restoring existing state; see [upgrading](docs/upgrading.md). Shared Plex fallback is enabled by default and can expand eligible viewers' media access; review its [access implications](docs/self-hosting.md#shared-plex-fallback).
+Never commit or share configuration, tokens, databases or encryption keys. Preserve the **original encryption key** when restoring existing state; see [upgrading](docs/upgrading.md). Shared Plex fallback is off by default; turning it on can expand eligible viewers' media access, so review its [access implications](docs/self-hosting.md#shared-plex-fallback) first.
 
 ## License
 

@@ -35,7 +35,7 @@ Set these values in your private `config.yaml`:
 | `server.tls_cert` / `server.tls_key` | Certificate and key paths for uburoom's HTTPS listener. |
 | `access.discord` | Set `false` for a Plex-only installation; otherwise configure Discord below. |
 
-**Before inviting viewers, check [shared Plex fallback](#shared-plex-fallback): it is enabled by default and may give viewers media access through the configured Plex account.**
+**Before turning on [shared Plex fallback](#shared-plex-fallback), check its access implications: it is off by default and, when enabled, may give viewers media access through the configured Plex account.**
 
 Open `https://your-origin/watch`. The health endpoint is `/health`. For a config file outside the checkout, run `node server/index.js --config /path/to/config.yaml`.
 
@@ -94,10 +94,10 @@ See [accounts and access](accounts-and-access.md) for the authorization model.
 
 ## Shared Plex fallback
 
-`plex.fallback_enabled` is **true by default**. With `access.require_plex: false`, admitted Discord members and room guests without a linked Plex account, or with confirmed lack of server membership, can use a fallback account's media access. Fallback does not grant standalone Plex admission. **That may expose libraries or items beyond the viewer's personal Plex permissions.**
+`plex.fallback_enabled` is **false by default**. When it is true and `access.require_plex: false`, admitted Discord members and room guests without a linked Plex account, or with confirmed lack of server membership, can use a fallback account's media access. Fallback does not grant standalone Plex admission. **That may expose libraries or items beyond the viewer's personal Plex permissions.**
 
-- Set `plex.fallback_enabled: false` to require personal media entitlement.
-- Leave it enabled only if you intend to share the fallback account's scope.
+- Leave `plex.fallback_enabled: false` to require personal media entitlement.
+- Enable it only if you intend to share the fallback account's scope.
 - Set `plex.fallback_token` to a dedicated, restricted Plex account token to limit that scope. If blank, uburoom uses `plex.token`. To get that account's token, sign in at app.plex.tv as it in a private window and run `localStorage.myPlexAccessToken` in the browser console (F12). The token works only while that browser sign-in exists; signing out or removing the device from the account stops sharing. The startup log warns when sharing would use the owner's token.
 
 Fallback does not bypass `access.require_plex: true`. Revoked/expired credentials, Plex errors or outages, and item-level restrictions fail closed. Viewers already in a room keep their place during an outage, and the next answer from Plex applies any real denial; nobody new is admitted meanwhile. Personal entitlement takes priority. Shared access does not link the fallback identity to the viewer or write their personal Plex history.

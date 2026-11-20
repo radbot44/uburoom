@@ -124,7 +124,12 @@ test('direct Plex delivery requires an explicit secure origin and cannot inherit
     assert.throws(() => normalizeConfig({ plex }));
   assert.equal(
     normalizeConfig({
-      plex: { url: 'http://plex.example', fallback_token: 'dedicated', direct_fallback_enabled: true },
+      plex: {
+        url: 'http://plex.example',
+        fallback_enabled: true,
+        fallback_token: 'dedicated',
+        direct_fallback_enabled: true,
+      },
     }).plexDelivery.fallback,
     true,
   );

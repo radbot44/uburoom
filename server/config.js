@@ -264,7 +264,7 @@ function normalizeConfig(
     throw new Error('operator.discord_id must be a quoted Discord account ID');
   if (config.serverOperator.plexId && !/^\d{1,20}$/.test(config.serverOperator.plexId))
     throw new Error('operator.plex_id must be a quoted Plex account ID');
-  config.plexFallback = { enabled: boolean('plex.fallback_enabled', true), token: get('plex.fallback_token') };
+  config.plexFallback = { enabled: boolean('plex.fallback_enabled', false), token: get('plex.fallback_token') };
   // Folders of videos on this machine. Each library keeps its id for as long as its
   // queue entries and resume positions should survive, wherever its folder moves.
   const libraries = value.local_media?.libraries ?? [];
