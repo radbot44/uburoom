@@ -275,7 +275,6 @@ function watchHttp({
             accountRevision: identity.accountRevision,
             activity: false,
             native: true,
-            entryAuthorized: true,
           },
           7 * 86400000,
         );
@@ -456,9 +455,6 @@ function watchHttp({
           name: EngineName(identity.global_name || identity.username),
           activity: true,
         });
-        const previous = await rawLogin(req);
-        if (previous?.activity && previous.userId === login.userId && previous.entryAuthorized)
-          login.entryAuthorized = true;
         json(res, 200, {
           ...issue(login),
           accessToken: tokens.access_token,
