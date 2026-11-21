@@ -351,14 +351,21 @@ async function startSetup({
     server.listen(port, host, () => resolve(undefined));
   });
   const address = () => /** @type {import('node:net').AddressInfo} */ (server.address());
-  const shown = (secure ? 'https' : 'http') + '://localhost:' + address().port;
+  const localHost = ['127.0.0.1', '0.0.0.0', '::'].includes(host) ? 'localhost' : host;
+  const shown =
+    (secure ? 'https' : 'http') +
+    '://' +
+    (net.isIPv6(localHost) ? '[' + localHost + ']' : localHost) +
+    ':' +
+    address().port;
   guard = createSetupGuard({
     announce(code) {
       log.info(`No config file at ${configFile}: setup mode.`);
       if (published) log.info('In a browser, open https://<Docker host address>:<published port>/setup.');
       else {
         log.info(`Open ${shown}/setup#code=${code}`);
-        if (secure) log.info(`From another device, open https://<this computer's address>:${address().port}/setup`);
+        if (secure && localHost === 'localhost')
+          log.info(`From another device, open https://<this computer's address>:${address().port}/setup`);
       }
       log.info(`Setup code: ${code}`);
     },
