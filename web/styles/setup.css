@@ -1,0 +1,485 @@
+/* First-run setup wizard (web/setup/), built to the approved mockup (docs/first-run-setup.md). Tokens only. */
+@layer components {
+  .visually-hidden {
+    position: absolute;
+    width: var(--space-1);
+    height: var(--space-1);
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .setup-page {
+    max-width: 560px;
+    margin: var(--space-40) auto;
+  }
+  .setup-page > header {
+    display: flex;
+    justify-content: center;
+    margin-bottom: var(--space-24);
+  }
+  .setup-card {
+    padding: var(--space-28);
+  }
+  .setup-card[hidden] {
+    display: none;
+  }
+  .setup-step {
+    margin: 0 0 var(--space-6);
+  }
+  .setup-card h1 {
+    margin: 0;
+  }
+  .setup-card > p {
+    margin: var(--space-12) 0 0;
+  }
+  .setup-body {
+    margin-top: var(--space-24);
+  }
+  .setup-footer {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    margin-top: var(--space-28);
+  }
+  .setup-footer .setup-next {
+    margin-left: auto;
+  }
+  .setup-code-input {
+    box-sizing: border-box;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-12);
+    background: var(--elevated);
+    color: var(--text);
+    padding: var(--space-14);
+    font: inherit;
+    font-size: var(--font-size-20);
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-align: center;
+    text-transform: uppercase;
+  }
+  .setup-code-input[aria-invalid='true'] {
+    border-color: var(--error);
+  }
+  .setup-text-input {
+    box-sizing: border-box;
+    flex: 1;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+    background: var(--elevated);
+    color: var(--text);
+    padding: var(--space-12);
+    font: inherit;
+  }
+  .setup-error {
+    display: flex;
+    gap: var(--space-8);
+    align-items: flex-start;
+    color: var(--error);
+    margin: var(--space-12) 0 0;
+  }
+  .setup-error > svg {
+    width: 20px;
+    height: 20px;
+    flex: none;
+  }
+  .setup-panel {
+    box-sizing: border-box;
+    background: color-mix(in srgb, var(--card), var(--elevated) 42%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-12);
+    padding: var(--space-16);
+  }
+  .setup-panel .settings-row > div > strong {
+    display: block;
+  }
+  .setup-account {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+  }
+  .setup-account > div {
+    flex: 1;
+    min-width: 0;
+  }
+  .setup-account .hint,
+  .setup-server .hint,
+  .setup-check .hint {
+    display: block;
+    margin-top: var(--space-2);
+  }
+  @media (max-width: 500px) {
+    .setup-page {
+      margin: var(--space-24) var(--space-12);
+    }
+    .setup-card {
+      padding: var(--space-20);
+    }
+    .setup-account {
+      flex-wrap: wrap;
+    }
+    .setup-account > button {
+      flex-basis: 100%;
+    }
+  }
+  .setup-waiting {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+  }
+  .setup-spinner {
+    width: 20px;
+    height: 20px;
+    flex: none;
+    animation: setup-spin 2s linear infinite;
+  }
+  @keyframes setup-spin {
+    to {
+      transform: rotate(-360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .setup-spinner {
+      animation: none;
+    }
+  }
+  .setup-servers {
+    margin: 0;
+    padding-block: var(--space-4);
+  }
+  .setup-server {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    padding: var(--space-12) 0;
+  }
+  .setup-server + .setup-server {
+    border-top: 1px solid var(--border);
+  }
+  .setup-server input {
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    accent-color: var(--primary);
+    flex: none;
+  }
+  .setup-server[aria-disabled='true'] strong {
+    color: var(--muted);
+  }
+  .setup-manual {
+    margin-top: var(--space-16);
+  }
+  .setup-manual summary {
+    cursor: pointer;
+    color: var(--muted);
+  }
+  .setup-manual-row {
+    display: flex;
+    gap: var(--space-8);
+    margin-top: var(--space-12);
+  }
+  .setup-checks {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .setup-check {
+    display: flex;
+    gap: var(--space-12);
+    align-items: flex-start;
+    padding: var(--space-12) var(--space-16);
+  }
+  .setup-check + .setup-check {
+    border-top: 1px solid var(--border);
+  }
+  .setup-check > svg {
+    width: 20px;
+    height: 20px;
+    flex: none;
+  }
+  .setup-check[data-status='pass'] > svg {
+    color: var(--success);
+  }
+  .setup-check[data-status='fail'] > svg {
+    color: var(--error);
+  }
+  .setup-check .setup-path {
+    overflow-wrap: anywhere;
+  }
+  .setup-where {
+    margin-top: var(--space-16);
+  }
+  .setup-where p {
+    margin: 0;
+  }
+  .setup-where p + p {
+    margin-top: var(--space-8);
+  }
+  .setup-where a,
+  .setup-link {
+    color: var(--accent-text);
+  }
+  .setup-ready {
+    text-align: center;
+  }
+  .setup-ready .primary {
+    display: inline-block;
+    margin-top: var(--space-24);
+  }
+}
+
+@layer components {
+  .setup-choices {
+    display: grid;
+    gap: var(--space-12);
+  }
+  .setup-or {
+    text-align: center;
+    color: var(--muted);
+    margin: var(--space-4) 0;
+  }
+  .setup-field {
+    display: grid;
+    gap: var(--space-6);
+    margin-top: var(--space-14);
+  }
+  .setup-field:first-child {
+    margin-top: 0;
+  }
+  .setup-field .setup-text-input,
+  .setup-field select {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .setup-field select {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+    background: var(--elevated);
+    color: var(--text);
+    padding: var(--space-12);
+    font: inherit;
+  }
+  .setup-sources {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .setup-source {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    padding: var(--space-12) 0;
+  }
+  .setup-source + .setup-source {
+    border-top: 1px solid var(--border);
+  }
+  .setup-source > img,
+  .setup-source > svg,
+  .setup-type > img,
+  .setup-type > svg {
+    width: 28px;
+    height: 28px;
+    flex: none;
+  }
+  .setup-source > div {
+    flex: 1;
+    min-width: 0;
+  }
+  .setup-source .hint {
+    display: block;
+    margin-top: var(--space-2);
+  }
+  .setup-add {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-8);
+    margin-top: var(--space-16);
+  }
+  .setup-type {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-6);
+    padding: var(--space-14) var(--space-8);
+  }
+  .setup-panel > h2 {
+    font-size: var(--font-size-16);
+    margin: 0 0 var(--space-12);
+  }
+  .setup-panel + .setup-panel,
+  .setup-panel + .setup-add {
+    margin-top: var(--space-16);
+  }
+  .setup-qc {
+    font-size: var(--font-size-24);
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-align: center;
+    margin: var(--space-12) 0;
+  }
+  .setup-folder-path {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .setup-folders {
+    list-style: none;
+    margin: var(--space-8) 0 0;
+    padding: 0;
+    max-height: 180px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+  }
+  .setup-folders button {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    width: 100%;
+    background: none;
+    color: var(--text);
+    padding: var(--space-10) var(--space-12);
+    text-align: left;
+    min-height: var(--watch-control-height);
+  }
+  .setup-folders button:hover {
+    background: var(--hover);
+  }
+  .setup-folders li + li {
+    border-top: 1px solid var(--border);
+  }
+  .setup-folders svg {
+    width: 18px;
+    height: 18px;
+    color: var(--muted);
+  }
+  .setup-rules .form-checkbox {
+    margin: 0;
+    align-items: flex-start;
+  }
+  .setup-rules .form-checkbox input {
+    margin-top: var(--space-1);
+  }
+  .setup-rule {
+    padding: var(--space-12) 0;
+  }
+  .setup-rule + .setup-rule {
+    border-top: 1px solid var(--border);
+  }
+  .setup-rule .hint {
+    margin: var(--space-4) 0 0 var(--space-30);
+  }
+  .setup-rule .setup-field {
+    margin-left: var(--space-30);
+  }
+  .setup-rule[aria-disabled='true'] .form-checkbox span {
+    color: var(--muted);
+  }
+  .setup-inline-actions {
+    display: flex;
+    gap: var(--space-8);
+    margin-top: var(--space-14);
+  }
+  .setup-inline-actions .primary {
+    margin-left: auto;
+  }
+}
+@layer components {
+  .setup-account > svg {
+    width: 32px;
+    height: 32px;
+    flex: none;
+    color: var(--muted);
+  }
+  .setup-source-actions {
+    display: flex;
+    gap: var(--space-8);
+    flex: none;
+  }
+  .setup-libraries {
+    border: 0;
+    margin: var(--space-14) 0 0;
+    padding: 0;
+  }
+  .setup-libraries legend {
+    padding: 0;
+    margin-bottom: var(--space-6);
+  }
+  .setup-libraries .form-checkbox {
+    margin: var(--space-8) 0;
+  }
+  .setup-libraries .form-checkbox .hint {
+    margin-left: var(--space-6);
+  }
+  .setup-port {
+    max-width: 140px;
+  }
+  .setup-steps {
+    margin: var(--space-8) 0 0 var(--space-30);
+    padding-left: var(--space-18);
+    color: var(--muted);
+    font-size: var(--font-size-14);
+  }
+  .setup-steps li + li {
+    margin-top: var(--space-4);
+  }
+  .setup-guilds {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .setup-guilds li {
+    padding: var(--space-8) var(--space-16);
+  }
+  .setup-guilds li + li {
+    border-top: 1px solid var(--border);
+  }
+  .setup-guilds + .hint {
+    margin-left: 0;
+  }
+}
+
+@layer components {
+  /* Classes for what the mockup set inline (the setup page's CSP allows no inline styles). */
+  .setup-flush {
+    margin: 0;
+  }
+  .setup-lead {
+    margin-top: 0;
+  }
+  .setup-gap {
+    margin-top: var(--space-16);
+  }
+  .setup-invite {
+    justify-self: start;
+  }
+  .setup-waiting .hint {
+    display: block;
+  }
+  .setup-servers {
+    border: 0;
+    padding-inline: 0;
+  }
+  .setup-error[hidden],
+  .setup-waiting[hidden] {
+    display: none;
+  }
+  /* The 128-bit setup code is 32 characters long; it fits the card at every width. */
+  .setup-code-input {
+    font-size: clamp(var(--font-size-14), 3.6vw, var(--font-size-20));
+    letter-spacing: 0.08em;
+    padding-inline: var(--space-8);
+  }
+  .setup-check strong,
+  .setup-check .hint,
+  .setup-source strong,
+  .setup-source .hint,
+  .setup-steps code,
+  .setup-where strong {
+    overflow-wrap: anywhere;
+  }
+  .setup-rule input:disabled + span {
+    color: var(--muted);
+  }
+}
