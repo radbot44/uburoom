@@ -59,7 +59,7 @@ const status = code => failure => failure.status === code;
 
 test('persistent room restart retains identities, host permissions and a paused bookmark without runtime authority', async t => {
   const f = fixture(t, { disk: true });
-  f.registry.credential('101', { token: 'private-room-credential' });
+  f.registry.credential('plex', '101', { token: 'private-room-credential' });
   const before = f.registry.db.prepare('SELECT value FROM credentials WHERE subject=?').get('101').value;
   let room = await f.store.create(f.creator, { name: 'Friday films', visibility: 'private' });
   room = await f.store.edit(room.id, f.creator, room.revision, { action: 'host.add', userId: f.host });
@@ -81,7 +81,7 @@ test('persistent room restart retains identities, host permissions and a paused 
   assert.equal(restored.paused, true);
   assert.deepEqual(restored.bookmark, savedVideo);
   assert.equal(f.registry.db.prepare('SELECT value FROM credentials WHERE subject=?').get('101').value, before);
-  assert.equal(f.registry.credential('101').token, 'private-room-credential');
+  assert.equal(f.registry.credential('plex', '101').token, 'private-room-credential');
   const serialized = JSON.stringify(restored);
   for (const value of ['private-token', 'private.invalid', 'private-viewer', 'mediaUrl', 'enabled'])
     assert.ok(!serialized.includes(value));

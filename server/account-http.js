@@ -83,7 +83,7 @@ function accountHttp({
     const result = registry.link(login.userId, provider, subject, name);
     if (result.conflict)
       return mergePreview(req, login, { ...result, provider, subject, name, credential, oauth: oauth || login.oauth });
-    if (credential) registry.credential(subject, credential);
+    if (credential) registry.credential(provider, subject, credential);
     plexAuth.clear();
     registry.audit(login.userId, 'self-link', { provider, subject });
     await invalidate([login.userId]);
@@ -217,7 +217,7 @@ function accountHttp({
           if (previous && logins.has(previous) && registry.isGuest(logins.get(previous).userId))
             logins.delete(previous);
           const account = registry.resolve('plex', identity.subject, identity.name);
-          registry.credential(identity.subject, identity.credential);
+          registry.credential('plex', identity.subject, identity.credential);
           plexAuth.clear();
           session(res, account, account.name);
         }
@@ -280,7 +280,10 @@ function accountHttp({
           data = await body(req),
           identities = registry.identities(login.userId);
         const remaining = identities.find(
-          i => i.provider !== provider && i.verified && (i.provider !== 'plex' || registry.hasCredential(i.subject)),
+          i =>
+            i.provider !== provider &&
+            i.verified &&
+            (i.provider !== 'plex' || registry.hasCredential('plex', i.subject)),
         );
         if (!remaining) throw new Error('Connect another sign-in method before removing this account');
         if (!providerEnabled(remaining))
@@ -324,7 +327,7 @@ function accountHttp({
           subject: merge.subject,
           name: merge.name,
         });
-        if (merge.credential) registry.credential(merge.subject, merge.credential);
+        if (merge.credential) registry.credential(merge.provider, merge.subject, merge.credential);
         await invalidate([a.id, b.id]);
         merges.delete(sourceHash(req));
         session(res, registry.canonical(a.id), a.name, merge.oauth || login.oauth);

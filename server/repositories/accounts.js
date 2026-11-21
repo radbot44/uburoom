@@ -56,7 +56,7 @@ class AccountsRepo {
     this.statements.deleteIdentitiesByUserIdProviderSubject = db.prepare(
       'DELETE FROM identities WHERE userId=? AND provider=? AND subject=?',
     );
-    this.statements.deleteCredentialsBySubject = db.prepare('DELETE FROM credentials WHERE subject=?');
+    this.statements.deleteCredential = db.prepare('DELETE FROM credentials WHERE provider=? AND subject=?');
     this.statements.updateIdentitiesSetUserIdByUserId = db.prepare('UPDATE identities SET userId=? WHERE userId=?');
     this.statements.updateIdentitiesSetVerifiedNameByUserIdProviderSubject = db.prepare(
       'UPDATE identities SET verified=1,name=COALESCE(?,name) WHERE userId=? AND provider=? AND subject=?',
@@ -73,11 +73,11 @@ class AccountsRepo {
     this.statements.listUsersByRetiredInto = db.prepare(
       'SELECT id FROM users WHERE retiredInto IS NULL ORDER BY name LIMIT 200',
     );
-    this.statements.hasCredential = db.prepare('SELECT 1 FROM credentials WHERE subject=?');
+    this.statements.hasCredential = db.prepare('SELECT 1 FROM credentials WHERE provider=? AND subject=?');
     this.statements.insertCredentials = db.prepare(
-      'INSERT INTO credentials(subject,value) VALUES(?,?) ON CONFLICT(subject) DO UPDATE SET value=excluded.value',
+      'INSERT INTO credentials(provider,subject,value) VALUES(?,?,?) ON CONFLICT(provider,subject) DO UPDATE SET value=excluded.value',
     );
-    this.statements.findCredential = db.prepare('SELECT value FROM credentials WHERE subject=?');
+    this.statements.findCredential = db.prepare('SELECT value FROM credentials WHERE provider=? AND subject=?');
     this.statements.insertMeta = db.prepare(
       'INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
     );
@@ -142,8 +142,8 @@ class AccountsRepo {
   deleteIdentitiesByUserIdProviderSubject(...values) {
     return this.statements.deleteIdentitiesByUserIdProviderSubject.run(...values);
   }
-  deleteCredentialsBySubject(...values) {
-    return this.statements.deleteCredentialsBySubject.run(...values);
+  deleteCredential(...values) {
+    return this.statements.deleteCredential.run(...values);
   }
   updateIdentitiesSetUserIdByUserId(...values) {
     return this.statements.updateIdentitiesSetUserIdByUserId.run(...values);

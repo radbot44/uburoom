@@ -7,7 +7,7 @@ Uburoom's account, administration, and access architecture enforces layered auth
 | Layer | Authority |
 | --- | --- |
 | Identity | Canonical UUID plus verified provider subjects; names grant nothing |
-| Sign-in | Configured Plex/Discord methods; both off allows anonymous guest visitors |
+| Sign-in | Configured Plex/Discord methods and operator-made uburoom accounts; both providers off allows anonymous guest visitors |
 | Room invite | One code per room; reaches private rooms and admits guests where the room allows them; never a role or Admin mode |
 | Admission | Current provider/Plex/password rules and verified Activity context |
 | Media | Admitted: every library of every source, through the source's own credential |
@@ -26,7 +26,20 @@ Recheck authority around awaited work across sockets, catalogs, artwork, caption
 - One canonical UUID per account, seeded at first sign-in. Provider refresh, linking, or unlinking preserves the UUID; verified account merging keeps the surviving account's display name. Cosmetic rename operations do not invalidate sessions or sign users out.
 - Display names are normalized, trimmed plain text, 1–80 Unicode characters (NFC), without control or invisible characters (`/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u`). Duplicate names are allowed; directory search and member listings append a short account discriminator (`· Account ` + `userId.slice(0, 8)`) when names collide. Names and email addresses never prove identity or grant authority.
 - Discovery creates no accounts. `signedInAt: null` indicates an account that has never authenticated (such as a pending assigned placeholder); `0` indicates a known account from historical records with an unknown sign-in timestamp. Placeholders are never treated as authenticated users.
-- Authentication relies on configured external providers (Discord and Plex); native username/password logins and owner name-lock rules remain deferred.
+- Authentication relies on configured external providers (Discord and Plex) and on [uburoom accounts](#uburoom-accounts) the operator creates. Owner name-lock rules remain deferred.
+
+## uburoom accounts
+
+The server operator creates uburoom accounts in Server settings → Accounts; nobody signs up. Each is a verified identity with provider `uburoom` and a random, stable subject (never the username), attached to an ordinary canonical account UUID, so rooms, hosts, history and Admin rules treat it like any other account. Which entry rule admits uburoom accounts belongs to admission, not to this section; `createUburoomAccounts(...).admits(userId)` in `server/identity/accounts.js` answers whether an account is currently enabled with a password.
+
+- **Usernames:** 1–32 lowercase ASCII letters, digits, dots, dashes and underscores, starting and ending with a letter or digit. Input is trimmed and lowercased, so case never distinguishes two accounts. Display names follow the ordinary rules and default to the username.
+- **Passwords:** 10–1024 characters (NFC). Stored as a Node `crypto.scrypt` hash (N 2^15, r 8, p 1, 64 bytes) with a per-account salt and its parameters, compared in constant time. At most four hashes run at once; more answer 429 rather than queue.
+- **One-time links:** creating an account returns `/account/password#<token>` once, to the operator; afterwards only the token's SHA-256 hash is stored. The token travels in the URL fragment, which browsers never send, so it never reaches request logs; the page removes it from the address bar. A link lasts 72 hours and works once: the password is written only if the same link is still current after hashing. Issuing a new link replaces the old one and is the only recovery; the current password keeps working until the new link is used. Setting a password advances the account revision, ending its earlier sessions, and signs the browser in.
+- **Sign-in:** `POST /api/uburoom-accounts/sign-in` (same origin) creates the ordinary browser session and replaces a guest session in that browser. Unknown, disabled and passwordless accounts cost the same hash as real ones, and every failure answers 401 "Wrong username or password". Five failures per username, or twenty per address, within 15 minutes answer 429 until the window ends, even for the right password. Wrong link tokens count against the address.
+- **Disable and enable:** disabling unverifies the identity, drops any link, advances the account revision and removes every browser session and room connection of the account; sign-in then fails like a wrong password. Enabling verifies it again once a password is set. Disabled accounts can't be sent a link.
+- **Operator API:** `GET/POST /api/operator/accounts` (list; create with `username` and `name`) and `POST /api/operator/accounts/{link,disable,enable}` with `subject`. They use the browser session, origin and CSRF proof, and check operator authority before and again after awaited work. Answers never contain hashes, salts or link tokens except the new link in the answer that made it. Audit events record the actor, action, subject and username only.
+- **Setup:** `createFirst({username, name, password})` creates a verified account directly, with no link, for the first-run wizard.
+- **Storage:** table `uburoom_accounts` (schema 13) holds username, password hash, salt and parameters, link hash, expiry and purpose, and the disabled flag. Provider credentials are keyed by `(provider, subject)`.
 
 ## Provider directory and member search
 

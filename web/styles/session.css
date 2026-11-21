@@ -108,6 +108,16 @@
   .entry-submit {
     min-height: 44px;
   }
+  /* uburoom account forms: the set-password page and the sign-in form (web/account-sign-in.js). */
+  /* Outranks .card p, which mutes paragraphs on cards. */
+  .form-error,
+  .card .form-error {
+    margin: 0;
+    color: var(--danger);
+  }
+  .form-error:empty {
+    display: none;
+  }
   .welcome:has(.entry-form:not([hidden])) .login-options {
     margin-top: 0;
   }

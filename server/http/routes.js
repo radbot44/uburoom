@@ -8,11 +8,11 @@ const version = require('../../package.json').version;
 
 /**
  * The server's route table, in the order requests are tried: page redirects, the watch and account APIs,
- * the request budget, operator settings, the watch page, static files, media, health and sign-in.
+ * the request budget, operator settings, uburoom accounts, the watch page, static files, media, health and sign-in.
  * `rooms` finds the Watch when called; the route sets are passed built.
  * @param {{config: any, registry: any, accounts: any, sessions: any, access: any, hub: any, rooms: () => any,
  *   files: any, signIn: any, setOwnerName: (name: string) => void, watchRoutes: any, accountRoutes: any,
- *   operatorRoutes: any}} services
+ *   operatorRoutes: any, uburoomAccountRoutes: import('./router').Route[]}} services
  */
 function createRoutes({
   config,
@@ -28,6 +28,7 @@ function createRoutes({
   watchRoutes,
   accountRoutes,
   operatorRoutes,
+  uburoomAccountRoutes,
 }) {
   const { json, throttle } = sessions;
   const pages = pageRoutes({ config, rooms, watchRoutes: () => watchRoutes, sessions, files });
@@ -53,6 +54,7 @@ function createRoutes({
         handle: ({ req, res, url, flushed }) => operatorRoutes.route(req, res, url, flushed),
       },
     ],
+    uburoomAccountRoutes,
     pages.documents,
     files.routes(),
     mediaRoutes({ config, hub, watchRoutes: () => watchRoutes }),
