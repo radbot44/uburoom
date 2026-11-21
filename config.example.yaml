@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2z
+# Config schema v2za
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -141,6 +141,12 @@ server:
   # Header read when the connection comes from a trusted proxy:
   # x-forwarded-for | cf-connecting-ip | x-real-ip
   trusted_proxy_header: 'x-forwarded-for'
+  # https: uburoom serves HTTPS itself with the certificate below.
+  # http-proxy: plain HTTP for a proxy or tunnel that serves public_url over
+  # HTTPS (Cloudflare Tunnel, Tailscale, Caddy; docs/remote-access.md). Only
+  # trusted_proxies may connect (required), the proxy must send
+  # X-Forwarded-Proto: https, and no certificate is read. public_url stays HTTPS.
+  listen: 'https' # https | http-proxy
   tls_cert: 'certs/server-cert.pem'
   tls_key: 'certs/server-key.pem'
 tools:

@@ -8,7 +8,11 @@ const { Logger } = require('./logger');
 async function main() {
   const config = require('./config').loadConfig();
   const logger = new Logger(config.logging);
-  const tls = { cert: fs.readFileSync(config.tlsCert), key: fs.readFileSync(config.tlsKey) };
+  // Behind a trusted proxy (server.listen: 'http-proxy') uburoom speaks plain HTTP and needs no certificate.
+  const tls =
+    config.listen === 'http-proxy'
+      ? undefined
+      : { cert: fs.readFileSync(config.tlsCert), key: fs.readFileSync(config.tlsKey) };
   const app = createApp(config, { logger, tls });
   try {
     await new Promise((resolve, reject) => {
