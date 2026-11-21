@@ -74,6 +74,8 @@ export function mount(
     } catch (failure) {
       error.textContent = failure.name === 'TimeoutError' ? 'Sign-in timed out; try again' : failure.message;
       password.select();
+      // Every Sign in shows a result: the error, wherever the form sits in a scrolling panel.
+      submit.scrollIntoView({ block: 'nearest' });
     } finally {
       submit.disabled = false;
     }

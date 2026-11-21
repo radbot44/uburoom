@@ -194,19 +194,7 @@
                   <section id="welcome" class="welcome card auth-card" hidden>
                     <h2 id="welcome-title">Welcome to uburoom</h2>
                     <p id="entry-status" role="status">Sign in to browse your library and join a room.</p>
-                    <!-- uburoom account sign-in (access.accounts) goes here. -->
-                    <div id="account-sign-in" class="account-sign-in" hidden></div>
-                    <form id="entry-form" class="entry-form" hidden>
-                      <label for="entry-password">Server password</label
-                      ><input
-                        id="entry-password"
-                        class="entry-password"
-                        type="password"
-                        autocomplete="current-password"
-                        maxlength="1024"
-                        required
-                      /><button id="entry-submit" class="entry-submit primary" type="submit">Continue</button>
-                    </form>
+                    <!-- Guest name: room invites (lobby.js) and, after the server password, moved under it (session.js). -->
                     <form id="guest-join" class="guest-join" hidden>
                       <label for="guest-name">Guest username</label>
                       <div class="guest-name-row">
@@ -220,6 +208,82 @@
                       </div>
                       <button id="guest-join-submit" class="guest-join-submit primary" type="submit">Join</button>
                     </form>
+                    <!-- Every enabled way in, one button each; forms open inline under their button (web/watch/entry-ways.js). -->
+                    <div id="entry-ways" class="login-options">
+                      <a class="provider-button discord-button" href="/auth/discord"
+                        ><img src="/assets/discord-symbol-white.svg" alt="" width="24" height="18" />Log in with
+                        Discord</a
+                      ><a id="plex-login" class="provider-button quiet" href="/auth/plex" hidden
+                        ><img src="/assets/plex-icon.png" alt="" width="24" height="24" />Log in with Plex</a
+                      ><button
+                        id="account-sign-in-open"
+                        class="provider-button quiet"
+                        type="button"
+                        aria-expanded="false"
+                        aria-controls="account-sign-in"
+                        hidden
+                      >
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          aria-hidden="true"
+                          data-tabler-icon="user"
+                        >
+                          <use href="#icon-user"></use></svg
+                        >Sign in with a uburoom account
+                      </button>
+                      <div id="account-sign-in" class="entry-way-panel" hidden></div>
+                      <button
+                        id="entry-password-open"
+                        class="provider-button quiet"
+                        type="button"
+                        aria-expanded="false"
+                        aria-controls="entry-form"
+                        hidden
+                      >
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          aria-hidden="true"
+                          data-tabler-icon="lock"
+                        >
+                          <use href="#icon-lock"></use></svg
+                        >Enter the server password
+                      </button>
+                      <form id="entry-form" class="entry-form entry-way-panel" hidden>
+                        <label for="entry-password">Server password</label
+                        ><input
+                          id="entry-password"
+                          class="entry-password"
+                          type="password"
+                          autocomplete="current-password"
+                          maxlength="1024"
+                          required
+                        /><button id="entry-submit" class="entry-submit primary" type="submit">Continue</button>
+                      </form>
+                      <!-- Jellyfin's status, Quick Connect code and password form; moved under the chosen source's button. -->
+                      <div id="jellyfin-sign-in" class="entry-way-panel jellyfin-sign-in" hidden>
+                        <p id="jellyfin-sign-in-status" role="status" hidden></p>
+                        <div id="jellyfin-quick-connect" class="jellyfin-quick-connect" hidden>
+                          <p>Open Jellyfin → Quick Connect and enter this code</p>
+                          <p id="jellyfin-quick-connect-code" class="handoff-code"></p>
+                          <p id="jellyfin-quick-connect-expiry" class="hint"></p>
+                          <button id="jellyfin-quick-connect-cancel" class="quiet" type="button">Cancel</button>
+                        </div>
+                        <div id="jellyfin-sign-in-form" hidden></div>
+                      </div>
+                      <button id="entry-plex-activity" class="primary" type="button" hidden>
+                        Connect Plex in your browser</button
+                      ><button id="entry-recheck" class="quiet" type="button" hidden>Check access again</button>
+                    </div>
                     <form id="invite-code-form" class="invite-code-form" hidden>
                       <label for="invite-code">Have an invite code?</label>
                       <div class="guest-name-row">
@@ -234,18 +298,6 @@
                         /><button id="invite-code-submit" class="invite-code-submit quiet" type="submit">Go</button>
                       </div>
                     </form>
-                    <div class="login-options">
-                      <a class="provider-button discord-button" href="/auth/discord"
-                        ><img src="/assets/discord-symbol-white.svg" alt="" width="24" height="18" />Log in with
-                        Discord</a
-                      ><a id="plex-login" class="provider-button quiet" href="/auth/plex" hidden
-                        ><img src="/assets/plex-icon.png" alt="" width="24" height="24" />Log in with Plex</a
-                      ><button id="entry-plex-activity" class="primary" type="button" hidden>
-                        Connect Plex in your browser</button
-                      ><button id="entry-recheck" class="quiet" type="button" hidden>Check access again</button>
-                    </div>
-                    <p id="jellyfin-sign-in-status" role="status" hidden></p>
-                    <div id="jellyfin-sign-in-form" hidden></div>
                   </section>
                 </div>
                 <button id="empty-browse" class="empty-browse primary" type="button" hidden>

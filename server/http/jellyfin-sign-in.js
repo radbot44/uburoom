@@ -18,6 +18,12 @@ function jellyfinSignInRoute({ config, registry, entryPolicy, body, cookie, cook
 
       const signIn = source.signIn;
       let identity;
+      if (action === 'cancel') {
+        // Ends this browser's Quick Connect attempt: its code stops working here at once.
+        signIn.cancel(cookies(req)[binding]);
+        res.setHeader('Set-Cookie', cookie(binding, '', 0));
+        return json(res, 200, { ok: true });
+      }
       if (action === 'poll') {
         // The only handle understood here comes from the browser's HttpOnly cookie.
         const id = cookies(req)[binding];
@@ -31,7 +37,7 @@ function jellyfinSignInRoute({ config, registry, entryPolicy, body, cookie, cook
           try {
             const { id, code, expires } = await signIn.startQuickConnect();
             res.setHeader('Set-Cookie', cookie(binding, id, Math.ceil((expires - Date.now()) / 1000)));
-            return json(res, 200, { code });
+            return json(res, 200, { code, expiresIn: Math.max(0, Math.floor((expires - Date.now()) / 1000)) });
           } catch (error) {
             if (error.code !== 'JELLYFIN_NO_QUICK_CONNECT') throw error;
             res.setHeader('Set-Cookie', cookie(binding, '', 0));

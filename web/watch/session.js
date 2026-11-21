@@ -3,6 +3,7 @@ import * as uburoomDialogs from '../watch-dialogs.js';
 import * as uburoomUbumfa from '../ubumfa.js';
 import * as accountSignIn from '../account-sign-in.js';
 import { jellyfinEntry } from './jellyfin-entry.js';
+import { entryWays, reveal } from './entry-ways.js';
 import { WatchTransport as uburoomWatchTransport } from '../watch-transport.js';
 import * as discordPresence from './discord-presence.js';
 import { $ } from './page.js';
@@ -192,7 +193,29 @@ export function mount(host, deps) {
   });
   // The name a password guest last used in this browser, offered again after the password.
   let passwordName = '';
-  const showJellyfin = jellyfinEntry((...args) => deps.api(...args));
+  // The list of ways in, with their forms opening inline under their buttons.
+  const ways = entryWays();
+  const showJellyfin = jellyfinEntry((...args) => deps.api(...args), ways);
+  ways.bind($('account-sign-in-open'), $('account-sign-in'), () => {
+    if (!$('account-sign-in').firstChild)
+      accountSignIn.mount($('account-sign-in'), {
+        onSignedIn: () => {
+          store.identity.pageBootstrap = undefined;
+          void start().catch(error => deps.fail(error.message));
+        },
+      });
+    return {};
+  });
+  // The server password panel also holds the name step that follows it.
+  ways.bind($('entry-password-open'), $('entry-form'), {
+    onClose: () => {
+      const join = $('guest-join');
+      if ($('entry-ways').contains(join)) {
+        join.hidden = true;
+        $('entry-ways').before(join);
+      }
+    },
+  });
   async function start() {
     store.identity.config = store.identity.pageBootstrap?.config || (await deps.api('/api/watch/config'));
     if (store.identity.config.keepDiagnostics)
@@ -255,23 +278,16 @@ export function mount(host, deps) {
           jellyfin = !deps.activity && !admission.activityOnly ? access.jellyfin || [] : [],
           signIns =
             access.discord !== false || !!store.identity.config.plexSignIn || !!access.accounts || jellyfin.length;
+        ways.close();
         showJellyfin(jellyfin);
-        // uburoom accounts sign in with a username and password, above the server password.
-        const accountSlot = $('account-sign-in');
-        accountSlot.hidden = !access.accounts || admission.activityOnly;
-        if (!accountSlot.hidden && !accountSlot.firstChild)
-          accountSignIn.mount(accountSlot, {
-            onSignedIn: () => {
-              store.identity.pageBootstrap = undefined;
-              void start().catch(error => deps.fail(error.message));
-            },
-          });
+        // uburoom accounts and the server password are buttons in the list; their forms open on demand.
+        $('account-sign-in-open').hidden = !access.accounts || admission.activityOnly;
+        $('entry-password-open').hidden = !access.password || admission.activityOnly;
         $('empty-title').textContent = admission.activityOnly
           ? 'Discord Activity only'
           : access.password && !signIns
             ? 'Enter uburoom'
             : 'Sign in to join';
-        $('entry-form').hidden = !access.password || admission.activityOnly;
         $('guest-join').hidden = true;
         $('entry-status').textContent = admission.activityOnly
           ? 'Open uburoom through Discord Activity. Browser playback is disabled.'
@@ -297,6 +313,15 @@ export function mount(host, deps) {
         $('entry-plex-activity').hidden = !deps.activity || !admission.identity || !store.identity.config.plexSignIn;
         $('entry-recheck').hidden = !admission.identity;
         if (!deps.activity && !admission.activityOnly) deps.showInviteCodeBox();
+        // When a form is the only way in, open it.
+        // (Only a form: a provider button would leave the page or contact the provider unasked.)
+        const shown = [...$('entry-ways').querySelectorAll(':scope > .provider-button')].filter(item => !item.hidden);
+        if (
+          shown.length === 1 &&
+          ['account-sign-in-open', 'entry-password-open'].includes(shown[0].id) &&
+          shown[0].getAttribute('aria-expanded') === 'false'
+        )
+          shown[0].click();
         if (
           admission.identity &&
           !deps.activity &&
@@ -306,7 +331,7 @@ export function mount(host, deps) {
           await deps.showAccount();
         return;
       }
-      $('entry-form').hidden = true;
+      ways.close();
     }
     try {
       if (store.identity.pageBootstrap?.me) {
@@ -555,8 +580,9 @@ export function mount(host, deps) {
     if (!password) return;
     $('entry-form').hidden = true;
     $('entry-status').textContent = 'Pick a name to show in rooms. You enter as a guest.';
-    const join = $('guest-join'),
-      name = $('guest-name'),
+    const join = $('guest-join');
+    $('entry-form').after(join);
+    const name = $('guest-name'),
       roll = $('guest-name-roll');
     if (!roll.firstChild)
       uburoomControls.content(roll, { label: 'New random name', icon: 'arrows-shuffle', iconOnly: true });
@@ -567,7 +593,8 @@ export function mount(host, deps) {
     if (!name.value) rollName();
     roll.onclick = rollName;
     join.hidden = false;
-    name.focus();
+    name.focus({ preventScroll: true });
+    reveal(join);
     join.onsubmit = async submit => {
       submit.preventDefault();
       const button = $('guest-join-submit');
@@ -585,6 +612,7 @@ export function mount(host, deps) {
           join.hidden = true;
           $('entry-form').hidden = false;
           $('entry-password').select();
+          reveal($('entry-form'));
         }
       } finally {
         button.disabled = false;
