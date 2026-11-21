@@ -2,7 +2,7 @@
 
 **Status: approved by the owner on 2026-11-20, with the recommended answers to O1–O3. In progress.**
 
-**Progress (2026-11-21):** phases 1–5 are merged into `main` (latest `c647775`; full suite 630 pass, 0 fail, 0 skip). Phase 1 `45fa188`, phase 2 `c8715b2`, phase 4 `6138f77`, phase 5 part one `619a159`, phase 3 and phase 5 part two (Jellyfin browser sign-in) `c647775`. Vigrid runs `19a9c08` (phases 1–4 and phase 3, without Jellyfin browser sign-in) with config schema v2z; its migration was run outside the scripts in `personal/migrations`. Phases 6 (manage sources in Server settings) and 7 (setup wizard) are not started. Waiting on the owner: the entry, Accounts, Jellyfin sign-in and setup screens, the TLS proposal (`docs/tls-and-remote-access.md`) and the watch-status switch wording.
+**Progress (2026-11-21):** phases 1–5 are merged into `main`, along with the entry page rework (one list of ways in) and the approved TLS change (`server.listen: 'http-proxy'`, `docs/remote-access.md`); latest merge `7f24413`, full suite 636 pass, 0 fail, 0 skip, and the Docker health check passes in both listen modes. Phase 1 `45fa188`, phase 2 `c8715b2`, phase 4 `6138f77`, phase 5 part one `619a159`, phase 3 and phase 5 part two `c647775`. Vigrid runs `19a9c08` (through phase 3, without Jellyfin browser sign-in) with config schema v2z. Phase 6 (Sources panel and per-source library selection, owner-requested) is in progress; phase 7 (setup wizard) follows it. The owner approved the Accounts section and the guest join form; the entry page and Jellyfin sign-in screenshots are with the owner.
 
 ## Approach
 
