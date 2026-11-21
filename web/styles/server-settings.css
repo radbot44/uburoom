@@ -272,6 +272,8 @@
   }
   .server-source-library-head > .button-group {
     flex: none;
+    /* The shared group margin would lift it above the name field and the remove button. */
+    margin: 0;
   }
   .server-source-paths {
     display: grid;
