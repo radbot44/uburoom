@@ -461,11 +461,34 @@ class YouTubeMedia {
     }
 
     const sources = [];
-    if (prepared.audioCodec) {
+    if (Array.isArray(prepared.streams)) {
+      for (const stream of prepared.streams) {
+        const kind =
+          stream.codec_type === 'audio' ? 'audio' : stream.codec_type === 'subtitle' ? 'subtitles' : undefined;
+        if (!kind || !Number.isSafeInteger(stream.index)) continue;
+        const lang = stream.language && stream.language !== 'und' ? stream.language : undefined;
+        sources.push({
+          kind,
+          id: (kind === 'audio' ? 'a' : 's') + stream.index,
+          index: stream.index,
+          codec: stream.codec_name,
+          language: stream.language,
+          title: stream.title,
+          label: [stream.title || lang?.toUpperCase(), kind === 'audio' && stream.codec_name?.toUpperCase()]
+            .filter(Boolean)
+            .join(' · '),
+          default: !!stream.default,
+          forced: !!stream.forced,
+          sdh: !!stream.sdh,
+          commentary: !!stream.commentary,
+          description: !!stream.description,
+          channels: stream.channels,
+        });
+      }
+    } else if (prepared.audioCodec) {
       sources.push({
         kind: 'audio',
         id: 'a0',
-        index: 0,
         codec: prepared.audioCodec,
         language: 'und',
         label: prepared.audioCodec.toUpperCase(),
@@ -488,6 +511,8 @@ class YouTubeMedia {
     }
 
     const container = prepared.container || 'mp4';
+    const hdr = prepared.hdr || { hdr: false, kind: 'sdr', label: 'SDR', doviProfile: null };
+    const bitDepth = Number(prepared.bitDepth) || (hdr.hdr ? 10 : 8);
     const media = {
       title: cached?.title || prepared.title || 'YouTube video',
       subtitle: cached?.channelTitle || prepared.channelTitle || 'YouTube',
@@ -503,14 +528,15 @@ class YouTubeMedia {
       container,
       videoCodec: prepared.videoCodec,
       audioCodec: prepared.audioCodec,
-      hdr: false,
-      hdrKind: 'sdr',
-      hdrLabel: 'SDR',
-      doviProfile: null,
-      bitDepth: 8,
-      sourceHdr: false,
-      sourceHdrKind: 'sdr',
-      sourceHdrLabel: 'SDR',
+      hdr: !!hdr.hdr,
+      hdrKind: hdr.kind || 'sdr',
+      hdrLabel: hdr.label || 'SDR',
+      doviProfile: hdr.doviProfile ?? null,
+      bitDepth,
+      sourceHdr: !!hdr.hdr,
+      sourceHdrKind: hdr.kind || 'sdr',
+      sourceHdrLabel: hdr.label || 'SDR',
+      sourceBitrate: prepared.bitrate,
       sourceWidth: prepared.width,
       sourceHeight: prepared.height,
       size: prepared.size,
@@ -519,7 +545,7 @@ class YouTubeMedia {
     };
     media.tracks = Tracks.catalog(sources, {
       browserSubtitles: choices.browserSubtitles,
-      extractSubtitles: false,
+      extractSubtitles: !!this.pipeline?.av1?.ffmpeg,
     });
     media.selection = Tracks.select(media.tracks, choices);
     const name = prepared.filename || `${id}.${container}`;

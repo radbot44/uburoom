@@ -5,7 +5,7 @@ const fsp = fs.promises;
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
-const { findOnPath } = require('../../media-tools');
+const { findOnPath, classifyHdr } = require('../../media-tools');
 const { VIDEO_ID, parseYouTubeUrl, isAllowedThumbnailUrl } = require('./urls');
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -592,6 +592,11 @@ class YouTubeCache {
     if (cached) {
       const safe = await safeCacheFile(this.cacheDirectory, cached.filename);
       if (safe) {
+        if (!Array.isArray(cached.streams)) {
+          const probed = await this.probeMedia(safe.file);
+          Object.assign(cached, probed, ...(Array.isArray(probed.streams) ? [] : [{ streams: [] }]));
+          await this.writeMeta(cached).catch(() => {});
+        }
         this.touchRecord(cached);
         return cached;
       }
@@ -697,16 +702,47 @@ class YouTubeCache {
       );
       if (res.code !== 0) return {};
       const data = JSON.parse(res.stdout);
-      const streams = Array.isArray(data?.streams) ? data.streams : [];
-      const video = streams.find(s => s.codec_type === 'video');
-      const audio = streams.find(s => s.codec_type === 'audio');
+      const rawStreams = Array.isArray(data?.streams) ? data.streams : [];
+      const video = rawStreams.find(s => s.codec_type === 'video');
+      const audio = rawStreams.find(s => s.codec_type === 'audio');
       const duration = Number(data?.format?.duration || 0);
+      const bitrateRaw = Number(data?.format?.bit_rate || 0);
+      const hdr = classifyHdr(video);
+      const bitDepth = Number(video?.bits_per_raw_sample) || (hdr.hdr ? 10 : 8);
+      const streams = [];
+      for (const s of rawStreams) {
+        if ((s.codec_type !== 'audio' && s.codec_type !== 'subtitle') || !Number.isSafeInteger(s.index)) continue;
+        const lang = typeof s.tags?.language === 'string' ? s.tags.language.trim() : undefined;
+        const title = typeof s.tags?.title === 'string' ? s.tags.title.trim() : undefined;
+        streams.push({
+          index: s.index,
+          codec_type: s.codec_type,
+          codec_name: s.codec_name ? String(s.codec_name) : undefined,
+          channels: Number.isFinite(Number(s.channels)) ? Number(s.channels) : undefined,
+          ...(lang ? { language: lang } : {}),
+          ...(title ? { title } : {}),
+          default: s.disposition?.default === 1,
+          forced: s.disposition?.forced === 1,
+          sdh: s.disposition?.hearing_impaired === 1,
+          commentary: s.disposition?.comment === 1,
+          description: s.disposition?.visual_impaired === 1,
+        });
+      }
       return {
         ...(Number.isFinite(duration) && duration > 0 ? { duration } : {}),
+        ...(Number.isFinite(bitrateRaw) && bitrateRaw > 0 ? { bitrate: Math.round(bitrateRaw / 1000) } : {}),
         ...(video?.codec_name ? { videoCodec: String(video.codec_name) } : {}),
         ...(audio?.codec_name ? { audioCodec: String(audio.codec_name) } : {}),
         ...(video?.width ? { width: Number(video.width) } : {}),
         ...(video?.height ? { height: Number(video.height) } : {}),
+        hdr: {
+          hdr: hdr.hdr,
+          kind: hdr.kind,
+          label: hdr.label,
+          doviProfile: hdr.doviProfile ?? null,
+        },
+        bitDepth,
+        streams,
       };
     } catch {
       return {};

@@ -16,6 +16,7 @@ const { YouTubeMedia, YOUTUBE_SERVER } = require('../server/sources/youtube/prov
 const { validateSources } = require('../server/sources');
 const { loadConfig } = require('../server/config');
 const { checkSources } = require('../scripts/doctor');
+const { MediaChecks } = require('../server/media-check');
 const subtitles = require('../server/subtitles');
 const { fixture } = require('./helpers/account-app');
 
@@ -51,10 +52,10 @@ function makeYoutubeRunner({
       return {
         code: 0,
         stdout: JSON.stringify({
-          format: { duration: String(42 + durationOffset) },
+          format: { duration: String(42 + durationOffset), bit_rate: '2000000' },
           streams: [
-            { codec_type: 'video', codec_name: 'h264', width: 1280, height: 720 },
-            { codec_type: 'audio', codec_name: 'aac' },
+            { index: 0, codec_type: 'video', codec_name: 'av1', width: 1280, height: 720 },
+            { index: 1, codec_type: 'audio', codec_name: 'opus', channels: 2, disposition: { default: 1 } },
           ],
           file: base,
         }),
@@ -346,6 +347,17 @@ test('YouTubeCache coalesces downloads, probes media, evicts LRU items, and bloc
   assert.equal(fs.existsSync(path.join(dir, 'dQw4w9WgXcQ.meta.json')), false);
   assert.equal(fs.existsSync(path.join(dir, 'jNQXAC9IVRw.mp4')), true);
 
+  // Legacy .meta.json lacking streams self-heals via ffprobe without re-downloading.
+  const legacyRec = cache.ready.get('jNQXAC9IVRw');
+  delete legacyRec.streams;
+  await cache.writeMeta(legacyRec);
+  const downloadsBefore = yt.downloads.length;
+  const healed = await cache.prepare('jNQXAC9IVRw');
+  assert.equal(yt.downloads.length, downloadsBefore);
+  assert.equal(healed.streams.length, 1);
+  assert.equal(healed.streams[0].index, 1);
+  assert.equal(healed.streams[0].codec_name, 'opus');
+
   // Path traversal and symlinks in cacheDirectory are refused.
   await fsp.writeFile(path.join(outsideDir, 'secret.mp4'), 'OUTSIDE');
   assert.equal(await safeCacheFile(dir, '../secret.mp4'), null);
@@ -428,6 +440,16 @@ test('YouTubeMedia prepares disk downloads, serves Range & VTT subtitles, and re
   assert.equal(oldChecks[0].status, 'warn');
   assert.match(oldChecks[0].message, /outdated/i);
   assert.equal(media.durationTolerance, 2);
+  assert.equal(media.sourceBitrate, 2000);
+  assert.equal(media.tracks.audio.length, 1);
+  assert.equal(media.tracks.audio[0].index, 1);
+  assert.equal(
+    new MediaChecks().trackItem(media, [
+      { index: 0, codec_type: 'video', codec_name: 'av1' },
+      { index: 1, codec_type: 'audio', codec_name: 'opus' },
+    ]).level,
+    'ok',
+  );
   assert.equal(media.tracks.subtitles.length, 1);
   assert.equal(media.tracks.subtitles[0].delivery, 'text');
   assert.equal(await provider.filePath(media), path.resolve(dir, 'dQw4w9WgXcQ.mp4'));
