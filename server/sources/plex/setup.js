@@ -68,10 +68,20 @@ async function reach(fetcher, resource) {
 
 /** The steps, each given the flow (server-held state) and what the browser sent. */
 const steps = {
-  /** Starts a plex.tv PIN sign-in; the browser opens the returned page. */
-  async start(flow, data, { plexTv, publicUrl }) {
-    flow.attempt = await plexTv.start(publicUrl + '/');
+  /**
+   * Starts a plex.tv PIN sign-in; the browser opens the returned page and plex.tv sends it back to
+   * `signInReturn`. When the person already signed in with Plex here (the setup wizard's own
+   * account), that sign-in is used instead (`signedIn`), and the servers can be listed at once.
+   */
+  async start(flow, data, { plexTv, signInReturn, signedIn }) {
     flow.servers = new Map();
+    const account = signedIn?.('plex');
+    if (account) {
+      flow.attempt = {};
+      flow.account = account;
+      return { signedIn: true };
+    }
+    flow.attempt = await plexTv.start(signInReturn);
     return { url: flow.attempt.url };
   },
   /**

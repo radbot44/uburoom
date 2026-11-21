@@ -4,41 +4,18 @@
  * Server settings → Sources: the operator lists, edits, adds and removes media sources. Changes are
  * written to `sources:` in config.yaml (server/config-editor.js) and apply after a restart (S8).
  *
- * Nothing here knows a source type: each module's `check` and `libraries` describe a saved source,
- * and its `setup` drives adding one (`steps`, each given a flow held here; `entry`, the settings to
- * save; `summary`, what the panel may show). Tokens, API keys and passwords stay in flows and in the
- * file: no answer carries them. Every request is the operator's, checked again after awaited work.
+ * Adding and describing a source is ./source-flows.js, shared with the first-run setup wizard; this
+ * file adds the operator check, the saved file and its revision. Tokens, API keys and passwords stay
+ * in flows and in the file: no answer carries them. Every request is the operator's, checked again
+ * after awaited work.
  */
-const { randomBytes } = require('node:crypto');
 const path = require('node:path');
 const { hash } = require('./core');
 const { isServerOperator } = require('./operator-policy');
-const { sourceType, TYPES } = require('./sources');
+const { sourceType } = require('./sources');
+const flowsCore = require('./source-flows');
 
-const FLOW_MS = 20 * 60000,
-  MAX_FLOWS = 20;
-const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-const CONTROL = /[\u0000-\u001f\u007f]/;
-const STEP = /^[a-zA-Z]{1,32}$/;
 const fail = (message, status = 400) => Object.assign(new Error(message), { status, expose: true });
-
-/** A source's name as the owner typed it: trimmed, up to 60 characters, no control characters. */
-function sourceName(value) {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'string' || value.length > 200 || CONTROL.test(value)) throw fail('Use a shorter name');
-  const name = value.trim();
-  if (name.length > 60) throw fail('Use a name of up to 60 characters');
-  return name;
-}
-
-/** The worst of a module's checks, as one status line. */
-function summarize(checks) {
-  const rank = { fail: 2, warn: 1, pass: 0 };
-  const worst = checks.reduce((a, b) => ((rank[b.status] ?? 1) > (rank[a?.status] ?? -1) ? b : a), undefined);
-  return worst
-    ? { status: worst.status, message: String(worst.message || '').slice(0, 300) }
-    : { status: 'pass', message: 'Ready' };
-}
 
 /**
  * @param {{config: any, registry: any, editor?: ReturnType<typeof import('./config-editor').createConfigEditor>,
@@ -67,23 +44,12 @@ function sourceSettings({
     get publicUrl() {
       return config.publicUrl;
     },
+    get signInReturn() {
+      return config.publicUrl + '/';
+    },
   };
-  /** @type {Map<string, {userId: string, type: string, expires: number, state: any}>} */
-  const flows = new Map();
-
-  function closeFlow(id) {
-    const flow = flows.get(id);
-    if (!flow) return;
-    flows.delete(id);
-    try {
-      sourceType(flow.type).setup.close?.(flow.state);
-    } catch {
-      /* Nothing more to end. */
-    }
-  }
-  function sweep() {
-    for (const [id, flow] of flows) if (flow.expires <= Date.now()) closeFlow(id);
-  }
+  const flows = flowsCore.createSourceFlows({ stepServices });
+  const pinned = id => registry?.meta?.('source:' + id + ':identity') || undefined;
 
   /** The operator's request, checked now and again by `still()` after any awaited work. */
   async function operator(req, res) {
@@ -140,29 +106,21 @@ function sourceSettings({
     const running = new Map((config.sources || []).map(entry => [entry.id, JSON.stringify(entry)]));
     return { revision, sources, running };
   }
-  function describe(entry, running) {
-    const setup = sourceType(entry.type).setup;
-    return {
-      id: entry.id,
-      type: entry.type,
-      name: entry.name || '',
-      ...setup.summary(entry),
-      selectLibraries: !!setup.selectLibraries,
-      // Saved but not yet what the server runs: it applies after a restart.
-      pending: running.get(entry.id) !== JSON.stringify(entry),
-    };
-  }
   async function list() {
     const { revision, sources, running } = await saved();
     const ids = new Set(sources.map(entry => entry.id));
     return {
       revision,
-      sources: sources.map(entry => describe(entry, running)),
+      sources: sources.map(entry => ({
+        ...flowsCore.describe(entry),
+        // Saved but not yet what the server runs: it applies after a restart.
+        pending: running.get(entry.id) !== JSON.stringify(entry),
+      })),
       // Running sources that are no longer saved: they go at the next restart.
       removed: (config.sources || [])
         .filter(entry => !ids.has(entry.id))
         .map(entry => ({ id: entry.id, type: entry.type, name: entry.name || '' })),
-      types: Object.keys(TYPES).filter(type => TYPES[type].setup),
+      types: flowsCore.addableTypes(),
     };
   }
   /** A saved source's status and its server's libraries, each marked offered or not. */
@@ -170,54 +128,7 @@ function sourceSettings({
     const { sources } = await saved();
     const entry = sources.find(source => source.id === id);
     if (!entry) throw fail('That source is no longer saved; read the list again', 404);
-    const module = sourceType(entry.type);
-    const [status, libraries] = await Promise.all([
-      module
-        .check(entry, { ...tools, connectionOnly: true })
-        .then(summarize)
-        .catch(() => ({ status: 'warn', message: 'Could not check this source' })),
-      module.libraries(entry, tools).then(
-        listed => listed,
-        () => undefined,
-      ),
-    ]);
-    const offered = entry.libraries === null || entry.libraries === undefined ? null : new Set(entry.libraries);
-    return {
-      status,
-      ...(libraries
-        ? {
-            libraries: libraries.map(library => ({
-              ...library,
-              offered: !module.setup.selectLibraries || !offered || offered.has(library.id),
-            })),
-          }
-        : { librariesError: 'Couldn’t read this server’s libraries; check that it is running' }),
-    };
-  }
-  /** A new id for a source: from its name, unused, and never one pinned to a different server. */
-  function newId(name, type, sources, identity) {
-    const base =
-      String(name || type)
-        .toLowerCase()
-        .normalize('NFKD')
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 40) || type;
-    const taken = id => {
-      if (sources.some(source => source.id === id)) return true;
-      const pinned = registry?.meta?.('source:' + id + ':identity');
-      return !!pinned && identity !== undefined && pinned !== identity;
-    };
-    let id = base;
-    for (let n = 2; taken(id) || !ID.test(id); n++) id = base + '-' + n;
-    return id;
-  }
-  function offeredList(value, allowed) {
-    if (!Array.isArray(value) || value.length > 500 || value.some(id => typeof id !== 'string'))
-      throw fail('Choose the libraries to offer');
-    const ids = [...new Set(value)];
-    if (allowed && ids.some(id => !allowed.has(id))) throw fail('A chosen library is not on this server');
-    return ids;
+    return flowsCore.details(entry, tools);
   }
   async function change(data, auth) {
     const { revision, action } = data;
@@ -228,19 +139,11 @@ function sourceSettings({
       if (!entry) throw fail('That source is no longer saved; read the list again', 404);
       if (action === 'remove') request = { action, id: entry.id };
       else {
-        const module = sourceType(entry.type);
-        const libraries =
-          data.libraries === undefined
-            ? undefined
-            : module.setup.selectLibraries
-              ? offeredList(data.libraries)
-              : (() => {
-                  throw fail('This source’s libraries are its folders');
-                })();
-        request = { action, id: entry.id, name: sourceName(data.name), libraries };
+        request = { action, id: entry.id, ...flowsCore.updateRequest(entry, data) };
         // A type's own settings (folders: its libraries and their folders), checked by its module and
         // applied to the entry as written, so whatever it leaves alone stays as it was.
         if (data.settings !== undefined) {
+          const module = sourceType(entry.type);
           if (!module.setup.update) throw fail('This source has no other settings to change');
           transform = await module.setup.update(data.settings, {
             base: path.dirname(config.configFile || path.resolve('config.yaml')),
@@ -250,24 +153,8 @@ function sourceSettings({
         }
       }
     } else if (action === 'add') {
-      const flow = typeof data.flow === 'string' ? flows.get(data.flow) : undefined;
-      if (!flow || flow.userId !== auth.login.userId || flow.expires <= Date.now() || !flow.state.draft)
-        throw fail('Start adding the source again');
-      const module = sourceType(flow.type);
       const { sources } = await editor.readSources();
-      const draft = flow.state.draft;
-      const name = sourceName(data.name) || draft.name || '';
-      const libraries = module.setup.selectLibraries
-        ? offeredList(data.libraries, new Set(draft.libraries.map(library => library.id)))
-        : undefined;
-      const id = newId(name, flow.type, sources, draft.identity);
-      const settings = module.setup.entry(draft, {
-        id,
-        name,
-        libraries,
-        existing: sources.filter(source => source.type === flow.type),
-      });
-      request = { action, entry: { id, type: flow.type, ...(name ? { name } : {}), ...settings } };
+      request = { action, entry: flows.entry(auth.login.userId, data, sources, pinned) };
     } else throw fail('Choose add, update or remove');
     const result = await editor.saveSources(
       { revision, change: request },
@@ -276,7 +163,7 @@ function sourceSettings({
         transform,
       },
     );
-    if (action === 'add') closeFlow(data.flow);
+    if (action === 'add') flows.close(data.flow);
     try {
       registry.audit(auth.login.userId, 'operator-sources-' + action, { source: request.id || request.entry.id });
       await registry.flush();
@@ -304,42 +191,24 @@ function sourceSettings({
       name: 'operator source setup',
       methods: ['POST'],
       path: '/api/operator/sources/setup',
-      handle: ({ req, res }) =>
-        answer(req, res, (data, auth) => {
-          if (typeof data.type !== 'string' || !TYPES[data.type]?.setup)
-            throw fail('Choose Plex, Jellyfin or a folder');
-          sweep();
-          // One flow per operator at a time: a new one ends the last.
-          for (const [id, flow] of flows) if (flow.userId === auth.login.userId) closeFlow(id);
-          if (flows.size >= MAX_FLOWS) throw fail('Too many sources are being added; try again shortly', 429);
-          const id = randomBytes(18).toString('base64url');
-          flows.set(id, { userId: auth.login.userId, type: data.type, expires: Date.now() + FLOW_MS, state: {} });
-          return { flow: id };
-        }),
+      // One flow per operator at a time: a new one ends the last.
+      handle: ({ req, res }) => answer(req, res, (data, auth) => flows.open(auth.login.userId, data.type)),
     },
     {
       name: 'operator source setup step',
       methods: ['POST'],
       path: '/api/operator/sources/setup/step',
       handle: ({ req, res }) =>
-        answer(req, res, async (data, auth) => {
-          const flow = typeof data.flow === 'string' ? flows.get(data.flow) : undefined;
-          if (!flow || flow.userId !== auth.login.userId || flow.expires <= Date.now())
-            throw fail('Start adding the source again', 410);
-          const steps = sourceType(flow.type).setup.steps;
-          if (typeof data.step !== 'string' || !STEP.test(data.step) || !Object.hasOwn(steps, data.step))
-            throw fail('Unknown step');
-          const { flow: _flow, step: _step, ...input } = data;
-          const reply = await steps[data.step](flow.state, input, stepServices);
-          if (!auth.still()) {
-            closeFlow(data.flow);
-            throw fail('Operator authorization changed', 403);
-          }
-          return { ...reply, ready: !!flow.state.draft };
-        }),
+        answer(req, res, (data, auth) => flows.step(auth.login.userId, data, auth.still).catch(rename)),
     },
   ];
-  return { routes, sweep, close: () => [...flows.keys()].forEach(closeFlow) };
+  return { routes, sweep: flows.sweep, close: flows.closeAll };
 }
 
-module.exports = { sourceSettings, sourceName };
+/** The operator wording for a flow that ended because authorization changed. */
+function rename(error) {
+  if (error?.status === 403 && error.expose) error.message = 'Operator authorization changed';
+  throw error;
+}
+
+module.exports = { sourceSettings };
