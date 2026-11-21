@@ -2,7 +2,7 @@
 
 **Status: approved by the owner on 2026-11-20, with the recommended answers to O1–O3. In progress.**
 
-**Progress:** phase 1 merged into `main` on 2026-11-20 (`45fa188`; full suite 599 pass, 0 fail, 0 skip). Phase 2 merged on 2026-11-20 (`c8715b2`; 605 pass, 0 fail, 0 skip). Their Vigrid config and database migrations are written and tested on copies but not run (`personal/migrations/admitted-everything-v2w.cjs`, `media-sources-v2x.cjs`; steps in `personal/migrations/README.md`). Phase 3 is in progress.
+**Progress:** phase 1 merged into `main` on 2026-11-20 (`45fa188`; full suite 599 pass, 0 fail, 0 skip). Phase 2 merged on 2026-11-20 (`c8715b2`; 605 pass, 0 fail, 0 skip). Their Vigrid config and database migrations are written and tested on copies but not run (`personal/migrations/admitted-everything-v2w.cjs`, `media-sources-v2x.cjs`; steps in `personal/migrations/README.md`). Phase 4 merged on 2026-11-20 (`6138f77`; 613 pass, 0 fail, 0 skip); its database migration (`uburoom-accounts-v13.cjs`) is written and tested on a synthetic database, not run. Phase 3 and phase 5 are in progress.
 
 ## Approach
 
