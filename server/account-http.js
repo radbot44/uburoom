@@ -280,7 +280,10 @@ function accountHttp({
           data = await body(req),
           identities = registry.identities(login.userId);
         const remaining = identities.find(
-          i => i.provider !== provider && i.verified && (i.provider !== 'plex' || registry.hasCredential('plex', i.subject)),
+          i =>
+            i.provider !== provider &&
+            i.verified &&
+            (i.provider !== 'plex' || registry.hasCredential('plex', i.subject)),
         );
         if (!remaining) throw new Error('Connect another sign-in method before removing this account');
         if (!providerEnabled(remaining))

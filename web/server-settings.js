@@ -2,6 +2,7 @@
 import * as uburoomControls from './watch-controls.js';
 import * as uburoomDialogs from './watch-dialogs.js';
 import * as uburoomIcons from './icons.js';
+import * as uburoomServerAccounts from './server-settings-accounts.js';
 
 function mount({ request, trigger }) {
   const popups = uburoomDialogs,
@@ -94,13 +95,15 @@ function mount({ request, trigger }) {
     revision = undefined;
     conflicts.clear();
     busy = saving = false;
+    accountsPanel.reset();
   });
   function state() {
     save.disabled = busy || !revision || !dirty() || conflicts.size > 0;
     cancel.disabled = close.disabled = saving;
     save.setAttribute('aria-busy', String(saving));
+    // Accounts act at once and keep their own busy state; only the saved-settings fields wait for a draft.
     for (const control of content.querySelectorAll('input,select,button'))
-      control.disabled = busy || !draft || control.dataset.fixed === 'true';
+      if (!panels.accounts.contains(control)) control.disabled = busy || !draft || control.dataset.fixed === 'true';
     for (const item of permissionControls) {
       const own = draft?.[item.key]?.includes(item.cap),
         inherited = item.role === 'host' && draft?.['rooms.viewer_permissions']?.includes(item.cap);
@@ -120,7 +123,11 @@ function mount({ request, trigger }) {
   }
   function selectSection(key) {
     if (section !== key) content.scrollTop = 0;
+    if (key === 'accounts' && section !== key && dialog.open) void accountsPanel.load();
     section = key;
+    // Accounts do not depend on the saved settings, so they show even before (or without) them.
+    if (key === 'accounts') content.hidden = false;
+    else if (!draft) content.hidden = true;
     for (const name of Object.keys(panels)) {
       panels[name].hidden = name !== key;
       tabs[name].setAttribute('aria-selected', String(name === key));
@@ -131,6 +138,7 @@ function mount({ request, trigger }) {
     ['rooms', 'Rooms'],
     ['directory', 'Directory'],
     ['transcoding', 'Transcoding'],
+    ['accounts', 'Accounts'],
   ]) {
     const button = node('button', nav, label, 'quiet');
     button.type = 'button';
@@ -200,6 +208,7 @@ function mount({ request, trigger }) {
     });
     return input;
   }
+  const accountsPanel = uburoomServerAccounts.mount(panels.accounts, { request });
   const capacity = node('div', panels.rooms, null, 'server-settings-grid');
   for (const [name, label] of [
     ['max_saved', 'Saved rooms limit'],

@@ -23,6 +23,8 @@ const { createHubPorts } = require('./hub-ports');
 const { createSessions } = require('./http/sessions');
 const { createStaticFiles } = require('./http/static');
 const { createHttpServer } = require('./http/server');
+const { createUburoomAccounts } = require('./identity/accounts');
+const { uburoomAccountRoutes } = require('./http/uburoom-accounts');
 
 const DEMO_MEDIA = path.join(__dirname, '../assets/demo/sync-test.mp4');
 
@@ -100,6 +102,8 @@ function createApp(config, options = {}) {
       ...{ config, registry, pipeline, logger, plexFetch, jellyfinFetch },
     });
     const plexAuth = sources.signIn.plex;
+    // uburoom accounts: operator-made username/password identities (provider 'uburoom').
+    const uburoomAccounts = createUburoomAccounts({ registry });
     if (config.demo) plexAuth.demo = plexDemo;
     // Who may enter. The rooms and routes are built last, so earlier services find them when called.
     let hub, watch, watchRoutes, accountRoutes;
@@ -143,9 +147,14 @@ function createApp(config, options = {}) {
     accountRoutes = accountHttp({ ...web, watchRoutes, loginStore: accounts, discordStart: signIn.start });
     const editor = config.configFile ? createConfigEditor(config.configFile) : undefined;
     const files = createStaticFiles({ config });
+    const uburoomAccountsHttp = uburoomAccountRoutes({
+      ...{ config, registry, uburoomAccounts, sessions, loginStore: accounts, hub, files },
+      watchRoutes: () => watchRoutes,
+    });
     const route = createRoutes({
       ...{ config, registry, accounts, sessions, access, hub, rooms, files, signIn, setOwnerName },
       ...{ watchRoutes, accountRoutes, operatorRoutes: operatorHttp({ config, registry, editor, ...sessions }) },
+      uburoomAccountRoutes: uburoomAccountsHttp.routes,
     });
     const server = createHttpServer({ config, logger, tls, json: sessions.json, route });
     const sockets = watchSockets({
@@ -156,7 +165,7 @@ function createApp(config, options = {}) {
     });
     const sweep = setInterval(() => {
       watch.maintainProviderSessions();
-      for (const service of [watchRoutes, accountRoutes, signIn, sessions]) service.sweep();
+      for (const service of [watchRoutes, accountRoutes, signIn, sessions, uburoomAccountsHttp]) service.sweep();
       void guests.sweep();
     }, 1000);
     sweep.unref();
@@ -195,7 +204,7 @@ function createApp(config, options = {}) {
       });
       return closing;
     }
-    return { server, hub, watch, access, close, registry, plexAuth, setOwnerName };
+    return { server, hub, watch, access, close, registry, plexAuth, setOwnerName, uburoomAccounts };
   } catch (error) {
     // Construction may fail before the registry exists.
     Promise.resolve(registry?.persistence.abort()).catch(() => {});
