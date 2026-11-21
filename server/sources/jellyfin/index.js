@@ -2,16 +2,19 @@
 // A Jellyfin server, seen through one of its users, as a media source. See server/sources/index.js.
 const { Jellyfin, jellyfinProvider } = require('./provider');
 
-const SETTINGS = ['url', 'api_key', 'user'];
+const TEXT = ['url', 'api_key', 'user'];
+const SETTINGS = [...TEXT, 'reporting_watch_state'];
 
-/** One `type: 'jellyfin'` entry. Returns `{url, apiKey, user}`. */
+/** One `type: 'jellyfin'` entry. Returns `{url, apiKey, user, reporting: {watchState}}`. */
 function validate(raw, { id }) {
   const where = 'sources ' + id + ': ';
   for (const key of Object.keys(raw))
     if (!SETTINGS.includes(key)) throw new Error(where + 'unknown Jellyfin setting; check config.example.yaml');
-  for (const key of SETTINGS)
+  for (const key of TEXT)
     if (raw[key] !== undefined && typeof raw[key] !== 'string')
       throw new Error(where + key + ' must be a quoted string');
+  if (raw.reporting_watch_state !== undefined && typeof raw.reporting_watch_state !== 'boolean')
+    throw new Error(where + 'reporting_watch_state must be true or false');
   let url;
   try {
     url = new URL(raw.url || '');
@@ -26,7 +29,13 @@ function validate(raw, { id }) {
     throw new Error(where + 'api_key is required');
   if (!user || user.length > 100 || /[\u0000-\u001f\u007f]/.test(user))
     throw new Error(where + 'user is required: the Jellyfin user whose libraries are offered');
-  return { url: url.origin + url.pathname.replace(/\/+$/, ''), apiKey, user };
+  return {
+    url: url.origin + url.pathname.replace(/\/+$/, ''),
+    apiKey,
+    user,
+    // Viewers who signed in to this server may opt in to resume/watched sync on their own user.
+    reporting: { watchState: raw.reporting_watch_state !== false },
+  };
 }
 
 function validateAll(entries) {
@@ -34,8 +43,8 @@ function validateAll(entries) {
   if (new Set(addresses).size !== addresses.length) throw new Error('Two Jellyfin sources must not use the same url');
 }
 
-function create(entry, { pipeline, logger, pin, jellyfinFetch = fetch }) {
-  return jellyfinProvider({ source: entry, pipeline, pin, logger, fetcher: jellyfinFetch });
+function create(entry, { pipeline, logger, pin, registry, jellyfinFetch = fetch }) {
+  return jellyfinProvider({ source: entry, pipeline, pin, logger, registry, fetcher: jellyfinFetch });
 }
 
 /** The server answers, and the API key and user can list libraries. */
@@ -80,4 +89,4 @@ async function check(entry, { ffmpeg } = {}) {
   return checks;
 }
 
-module.exports = { validate, validateAll, create, check };
+module.exports = { validate, validateAll, create, check, connect: require('./connect') };

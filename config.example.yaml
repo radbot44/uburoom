@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2x
+# Config schema v2y
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -55,6 +55,9 @@ sources: []
 #    url: 'http://127.0.0.1:8096' # Including any base path.
 #    api_key: '' # Jellyfin Dashboard -> API Keys.
 #    user: '' # A Jellyfin username; give it only the libraries people may watch here.
+#    # Let viewers who signed in to this Jellyfin opt in to resume/watched sync on
+#    # their own Jellyfin user. Nobody else's playback is ever reported.
+#    reporting_watch_state: true
 #
 #  # Folders of videos on this machine (needs FFprobe, and FFmpeg for files a
 #  # browser cannot play as they are). Each library: a short id, the name shown,
