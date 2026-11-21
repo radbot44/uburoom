@@ -67,7 +67,7 @@ Sign-in proves who someone is; **entry rules** decide whether they get in, and *
 | `secrets.server_password` | The password for `access.password`; required with it and refused without it. |
 | `server.max_connections: 256` | Open room connections (one per browser tab or app window) accepted at once; 1–4096. Further connections are refused until one closes. |
 | `server.public_web_app: false` | Restrict playback to verified Discord Activity. Browser handoff remains available for account linking/management. |
-| `operator.identities` | Exact verified identities, quoted `'discord:<id>'`, `'plex:<id>'` or `'uburoom:<subject>'`, authorized to open **Server settings** in the browser (the 18-key allowlist across Rooms, Directory and Transcoding). Saved edits write to `config.yaml` and require a manual restart to take effect. |
+| `operator.identities` | Exact verified identities, quoted `'discord:<id>'`, `'plex:<id>'`, `'uburoom:<subject>'` or `'jellyfin:<server id>:<user id>'`, authorized to open **Server settings** in the browser (the 18-key allowlist across Rooms, Directory and Transcoding). Saved edits write to `config.yaml` and require a manual restart to take effect. |
 
 The entry page shows only what the rules offer: Discord sign-in with `discord_server`, Plex sign-in when a member rule names a Plex source, and the password step with `password`. Plex can still be linked from Account for personal watch-state sync whenever a Plex source is configured. Outside visitors who match no rule can come in through a `/join/<code>` room invite with `guests.enabled: true`. Changing the rules signs everyone out. `/auth/owner` supports the configured Discord owner's OAuth recovery; the owner is always admitted.
 
@@ -125,10 +125,11 @@ A `type: 'jellyfin'` entry adds a Jellyfin server. Each movie or show library th
 | `url` | The server's address, including any base path. |
 | `api_key` | A key from the Jellyfin dashboard (API Keys). It is sent only as a request header to that server. |
 | `user` | A Jellyfin username. Libraries and parental limits follow this user, so give it only what people may watch here. |
+| `reporting_watch_state` | Default `true`: viewers signed in to this Jellyfin server may opt in to resume and watched sync on their own Jellyfin user. `false` turns it off for everyone. Has no effect until Jellyfin sign-in is offered. |
 
 Jellyfin accounts are not linked to uburoom accounts: everyone uburoom admits, including guests in their room, watches through the configured user, and Jellyfin never becomes another way in.
 
-Original files play as they are, and files a browser cannot play need FFmpeg and a local output in `transcoding.outputs`: uburoom converts them itself and Jellyfin's transcoder is not used. When only the sound is the problem, or a viewer picks another audio track, the picture is copied untouched (HDR included) and only the chosen track is converted. Embedded subtitles are read from the file; external text subtitles (SRT, WebVTT, ASS) are offered as tracks and other external formats are left out. Nothing is reported back to Jellyfin: no play state, progress or watched marks. Collections, multiple versions of one item, intro and credit markers and personal Jellyfin sign-in are not supported. `npm run doctor` checks the address, key and user.
+Original files play as they are, and files a browser cannot play need FFmpeg and a local output in `transcoding.outputs`: uburoom converts them itself and Jellyfin's transcoder is not used. When only the sound is the problem, or a viewer picks another audio track, the picture is copied untouched (HDR included) and only the chosen track is converted. Embedded subtitles are read from the file; external text subtitles (SRT, WebVTT, ASS) are offered as tracks and other external formats are left out. The source's key never reports anything back to Jellyfin: no play state, progress or watched marks. Collections, multiple versions of one item and intro and credit markers are not supported, and personal Jellyfin sign-in is not offered yet. `npm run doctor` checks the address, key and user.
 
 ### Folders source
 

@@ -18,6 +18,7 @@ function accessPolicy({
     publicWeb,
     discord: discordServer,
     plex: sourceMembers.length > 0,
+    jellyfin: false,
   };
 }
 

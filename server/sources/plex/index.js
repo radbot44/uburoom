@@ -111,21 +111,21 @@ function create(entry, { registry, pipeline, logger, pin, plexFetch = fetch, ple
   const plex = new Plex(entry, plexFetch, { logger, pipeline });
   const plexAuth = new PlexAuth(entry, registry, plex, plexTv, { pin });
   const provider = plexProvider({ plex, source: entry, registry, plexAuth, pin });
-  return Object.assign(provider, { plexAuth, members: userId => members(plexAuth, userId, logger) });
+  return Object.assign(provider, { plexAuth, members: identity => members(plexAuth, identity) });
 }
 
 /**
- * Whether a person's own verified Plex sign-in can reach this source's pinned server: true, false,
- * or undefined when Plex gives no answer (so an outage is not a denial).
+ * Whether a verified Plex identity can reach this source's pinned server through its own stored
+ * sign-in: resolves true, or throws flagged `noServerAccess` (another kind of identity, no stored
+ * sign-in, or no access) or `revoked`; any other error is Plex giving no answer.
+ * @param {any} plexAuth
+ * @param {{provider: string, subject: string, userId: string}} identity
  */
-async function members(plexAuth, userId, logger) {
-  try {
-    return !!(await plexAuth.forUser(userId));
-  } catch (error) {
-    if (error.noServerAccess || error.revoked) return false;
-    logger?.warn('Access', 'Plex check got no answer: ' + error.message);
-    return undefined;
-  }
+async function members(plexAuth, identity) {
+  const notMember = message => Object.assign(new Error(message), { noServerAccess: true });
+  if (identity?.provider !== 'plex') throw notMember('Not a Plex identity');
+  if (!(await plexAuth.forUser(identity.userId))) throw notMember('No stored Plex sign-in');
+  return true;
 }
 
 /** Every Plex source's server access together (see `PlexMembers`). */

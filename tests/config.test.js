@@ -289,6 +289,7 @@ test('access: entry rules are checked, and each sign-in method is offered only f
     publicWeb: true,
     discord: true,
     plex: false,
+    jellyfin: false,
   });
   const members = policy({ discord_server: false, source_members: ['living-room'] });
   assert.deepEqual([members.discord, members.plex], [false, true], 'a Plex member rule offers Plex sign-in');

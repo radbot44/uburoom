@@ -237,6 +237,8 @@ function normalizeConfig(
   // The sign-in methods the entry page offers; derived from the rules above.
   config.accessPolicy.discord = config.accessPolicy.discordServer;
   config.accessPolicy.plex = memberSignIn.includes('plex');
+  // Jellyfin sign-in (per Jellyfin source) is offered when a member rule names a Jellyfin source.
+  config.accessPolicy.jellyfin = memberSignIn.includes('jellyfin');
   config.serverPassword = get('secrets.server_password');
   if (config.serverPassword.length > 1024)
     throw new Error('secrets.server_password must contain at most 1024 characters');
@@ -255,17 +257,19 @@ function normalizeConfig(
   const operators = list('operator.identities') || [];
   config.serverOperator = {
     identities: operators.map(value => {
-      const match = /^(discord|plex|uburoom):(.+)$/.exec(value);
+      const match = /^(discord|plex|uburoom|jellyfin:[0-9a-f]{32}):(.+)$/.exec(value);
       const valid =
         match &&
         (match[1] === 'discord'
           ? /^\d{17,20}$/.test(match[2])
           : match[1] === 'plex'
             ? /^\d{1,20}$/.test(match[2])
-            : /^[A-Za-z0-9._@-]{1,100}$/.test(match[2]));
+            : match[1].startsWith('jellyfin:')
+              ? /^[0-9a-f]{32}$/.test(match[2])
+              : /^[A-Za-z0-9._@-]{1,100}$/.test(match[2]));
       if (!valid)
         throw new Error(
-          "operator.identities entries are quoted 'discord:<id>', 'plex:<id>' or 'uburoom:<subject>' account identities",
+          "operator.identities entries are quoted 'discord:<id>', 'plex:<id>', 'uburoom:<subject>' or 'jellyfin:<server id>:<user id>' account identities",
         );
       return { provider: match[1], subject: match[2] };
     }),

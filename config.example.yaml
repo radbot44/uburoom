@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2y
+# Config schema v2z
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -57,6 +57,9 @@ sources: []
 #    url: 'http://127.0.0.1:8096' # Including any base path.
 #    api_key: '' # Jellyfin Dashboard -> API Keys.
 #    user: '' # A Jellyfin username; give it only the libraries people may watch here.
+#    # Let viewers who signed in to this Jellyfin opt in to resume/watched sync on
+#    # their own Jellyfin user. Nobody else's playback is ever reported.
+#    reporting_watch_state: true
 #
 #  # Folders of videos on this machine (needs FFprobe, and FFmpeg for files a
 #  # browser cannot play as they are). Each library: a short id, the name shown,
@@ -109,7 +112,8 @@ operator:
   # Who may open Server settings: exact verified identities written provider:id,
   # never names, emails or tokens. Any one listed is enough; none grants nobody.
   # Separate from the Discord owner, room Admin mode and room ownership.
-  # e.g. ['discord:123456789012345678', 'plex:12345678', 'uburoom:alice']
+  # e.g. ['discord:123456789012345678', 'plex:12345678', 'uburoom:alice'];
+  # a Jellyfin user is 'jellyfin:<server id>:<user id>'.
   identities: []
 
 access:

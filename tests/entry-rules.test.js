@@ -162,7 +162,13 @@ test('a rule that cannot get an answer keeps admitted people in and lets nobody 
   try {
     const known = registry.resolve('discord', '100000000000000005', 'Known'),
       fresh = registry.resolve('plex', '555', 'New');
-    const source = { id: 'living-room', memberIdentity: 'plex', members: async () => undefined };
+    const source = {
+      id: 'living-room',
+      memberIdentity: 'plex',
+      members: async () => {
+        throw new Error('Plex is offline');
+      },
+    };
     const admission = new Admission(
       { ownerId: '', accessPolicy: accessPolicy({ sourceMembers: ['living-room'] }) },
       registry,
@@ -177,6 +183,56 @@ test('a rule that cannot get an answer keeps admitted people in and lets nobody 
     answer = false;
     admission.confirmed.get(known.id).recheck = 0;
     assert.equal(await admission.admit(known.id, {}), false, "Discord's own no removes them");
+  } finally {
+    registry.close();
+  }
+});
+
+test('a member rule asks each named source about each verified identity, whatever its type', async () => {
+  const registry = new Accounts(undefined, credentialVault());
+  try {
+    const viewer = registry.resolve('discord', '100000000000000007', 'Viewer');
+    registry.link(viewer.id, 'jellyfin:' + 'f'.repeat(32), 'a'.repeat(32), 'Viewer on Jellyfin');
+    const asked = [];
+    // A Jellyfin-like source: only its own server's identities can be members.
+    const jellyfin = {
+      id: 'jf',
+      memberIdentity: 'jellyfin',
+      members: async identity => {
+        asked.push(identity.provider);
+        if (identity.provider !== 'jellyfin:' + 'f'.repeat(32))
+          throw Object.assign(new Error('another server'), { noServerAccess: true });
+        return true;
+      },
+    };
+    const other = {
+      id: 'cabin',
+      memberIdentity: 'plex',
+      members: async () => Promise.reject(Object.assign(new Error('no'), { noServerAccess: true })),
+    };
+    const admit = members =>
+      new Admission(
+        { ownerId: '', accessPolicy: accessPolicy({ discordServer: false, sourceMembers: members }) },
+        registry,
+        { list: [jellyfin, other] },
+      ).admit(viewer.id, {});
+    assert.equal(await admit(['jf']), true, "the Jellyfin server's own user is its member");
+    assert.ok(asked.includes('jellyfin:' + 'f'.repeat(32)));
+    assert.equal(await admit(['cabin']), false, 'membership of one source never admits through a rule naming another');
+    const revoked = new Admission(
+      { ownerId: '', accessPolicy: accessPolicy({ discordServer: false, sourceMembers: ['jf'] }) },
+      registry,
+      {
+        list: [
+          {
+            id: 'jf',
+            memberIdentity: 'jellyfin',
+            members: async () => Promise.reject(Object.assign(new Error('revoked'), { revoked: true })),
+          },
+        ],
+      },
+    );
+    assert.equal(await revoked.admit(viewer.id, {}), false, 'a revoked sign-in is a denial');
   } finally {
     registry.close();
   }

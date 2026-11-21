@@ -143,13 +143,21 @@ class Admission {
       if (member) return true;
       if (member === undefined) unanswered = true;
     }
-    // Members of a source the owner named: only that source can say.
-    for (const source of this.memberSources()) {
-      if (!identities.some(identity => identity.provider === source.memberIdentity)) continue;
-      const member = await source.members(account.id);
-      if (member) return true;
-      if (member === undefined) unanswered = true;
-    }
+    // Members of a source the owner named: only that source can say, and only about identities of
+    // its own sign-in kind ('plex', or 'jellyfin:<server id>' for Jellyfin), so one source's outage
+    // never keeps someone in whom every rule that applies to them has refused.
+    for (const source of this.memberSources())
+      for (const identity of identities) {
+        const kind = source.memberIdentity;
+        if (kind && identity.provider !== kind && !identity.provider.startsWith(kind + ':')) continue;
+        try {
+          if ((await source.members({ ...identity, userId: account.id })) === true) return true;
+        } catch (error) {
+          if (error?.noServerAccess || error?.revoked) continue;
+          this.logger.warn('Access', `Source ${source.id} gave no membership answer: ${error?.message || error}`);
+          unanswered = true;
+        }
+      }
     return unanswered ? undefined : false;
   }
   fresh(id, context) {

@@ -8,6 +8,10 @@ const { resilientFetch } = require('../../resilience');
 const { runOperation } = require('../../operation');
 const { serverName } = require('../../media-providers');
 const { version } = require('../../../package.json');
+const { jellyfinClient } = require('./client');
+const { jellyfinMembers } = require('./members');
+const { jellyfinSignIn } = require('./sign-in');
+const { JellyfinReporting } = require('./reporting');
 
 const GUID = /^[a-f0-9]{32}$/i;
 const TICKS = 10000000;
@@ -721,21 +725,39 @@ class Jellyfin {
 }
 
 /**
- * One Jellyfin source as a media provider.
- * @param {{source: any, pipeline: any, pin?: any, logger?: any, fetcher?: typeof fetch}} services
- * @returns {import('../../media-providers').MediaProvider}
+ * One Jellyfin source as a media provider, with what its server offers people who sign in to it:
+ * `members(identity)` (is this Jellyfin identity a user of this server?), `signIn` (Quick Connect or
+ * password, see ./sign-in.js) and personal watch-state sync (`reporting`, see ./reporting.js).
+ * @param {{source: any, pipeline: any, pin?: any, logger?: any, fetcher?: typeof fetch, registry?: any}} services
+ * @returns {import('../../media-providers').MediaProvider & {members: (identity: {provider: string, subject: string}) => Promise<true>,
+ *   signIn: ReturnType<typeof jellyfinSignIn>, serverId: string|undefined}}
  */
-function jellyfinProvider({ source, pipeline, pin, logger, fetcher }) {
+function jellyfinProvider({ source, pipeline, pin, logger, fetcher, registry }) {
   const jellyfin = new Jellyfin(source, { pipeline, pin, logger, fetcher });
-  return {
+  const client = jellyfinClient({ url: source.url, fetcher, device: jellyfin.device });
+  const serverId = async () => (provider.serverId = await jellyfin.identity());
+  const provider = {
     kind: 'jellyfin',
     root: jellyfin,
-    identity: () => jellyfin.identity(),
+    /** The server id, once `identity()` has answered (or as pinned before). */
+    serverId: pin?.get(),
+    identity: serverId,
     get serverName() {
       return jellyfin.serverName || '';
     },
     scopeFor: async () => jellyfin,
+    members: jellyfinMembers({ client, apiKey: source.apiKey, serverId, registry }),
+    signIn: jellyfinSignIn({ client, serverId, registry }),
+    reporting: services =>
+      new JellyfinReporting({
+        settings: source.reporting,
+        serverId: () => provider.serverId,
+        client,
+        registry,
+        ...services,
+      }),
   };
+  return provider;
 }
 
 module.exports = { Jellyfin, jellyfinProvider, jellyfinIdentity };

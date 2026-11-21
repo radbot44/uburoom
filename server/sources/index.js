@@ -10,13 +10,15 @@
  *   already checked here) and returns the normalized entry its other functions take.
  * - `create(entry, services)`: the source as a `MediaProvider` (server/media-providers.js).
  * - `check(entry, services)`: a connection and credential test for the doctor, as doctor checks.
- * - optionally `memberIdentity` (the identity provider whose accounts can be its members, such as
- *   'plex') with a `members(userId)` method on the provider it creates: does this person's verified
- *   identity have access to this server? True, false, or undefined when the server gives no answer.
- *   Only admission asks it, and only for sources named in `access.source_members`.
- * - optionally `signIn(providers, services)`: what combines this type's sources for its members
+ * - optionally `memberIdentity`: the sign-in method whose identities can be this type's members
+ *   (`'plex'`, `'jellyfin'`). A source named in `access.source_members` must have one.
+ * - optionally `signIn(providers, services)`: what combines this type's sources for the people side
  *   (Plex today).
- * A later phase adds `connect` (guided setup).
+ * - optionally `connect`: guided-setup services for the wizard and Server settings (Jellyfin today).
+ * A provider of a type with members offers `members(identity)`: is this verified identity a member
+ * of this server? It resolves true, or throws an error flagged `noServerAccess` (not a member, or an
+ * identity of another kind) or `revoked`; any other error means no answer (an outage), never a
+ * denial. Only admission asks it, and only for sources named in `access.source_members`.
  *
  * @typedef {{id: string, type: string, name: string, [key: string]: any}} SourceEntry
  * @typedef {{base: string, platform: string, dataDirectory: string}} ValidateContext
