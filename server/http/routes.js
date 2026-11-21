@@ -12,7 +12,8 @@ const version = require('../../package.json').version;
  * `rooms` finds the Watch when called; the route sets are passed built.
  * @param {{config: any, registry: any, accounts: any, sessions: any, access: any, hub: any, rooms: () => any,
  *   files: any, signIn: any, setOwnerName: (name: string) => void, watchRoutes: any, accountRoutes: any,
- *   operatorRoutes: any, uburoomAccountRoutes: import('./router').Route[]}} services
+ *   operatorRoutes: any, uburoomAccountRoutes: import('./router').Route[],
+ *   sourceSettingsRoutes?: import('./router').Route[]}} services
  */
 function createRoutes({
   config,
@@ -29,6 +30,7 @@ function createRoutes({
   accountRoutes,
   operatorRoutes,
   uburoomAccountRoutes,
+  sourceSettingsRoutes = [],
 }) {
   const { json, throttle } = sessions;
   const pages = pageRoutes({ config, rooms, watchRoutes: () => watchRoutes, sessions, files });
@@ -55,6 +57,7 @@ function createRoutes({
       },
     ],
     uburoomAccountRoutes,
+    sourceSettingsRoutes,
     pages.documents,
     files.routes(),
     mediaRoutes({ config, hub, watchRoutes: () => watchRoutes }),

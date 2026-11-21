@@ -26,6 +26,7 @@ const { createStaticFiles } = require('./http/static');
 const { createHttpServer } = require('./http/server');
 const { createUburoomAccounts } = require('./identity/accounts');
 const { uburoomAccountRoutes } = require('./http/uburoom-accounts');
+const { sourceSettings } = require('./source-settings');
 
 const DEMO_MEDIA = path.join(__dirname, '../assets/demo/sync-test.mp4');
 
@@ -156,10 +157,15 @@ function createApp(config, options = {}) {
       ...{ config, registry, uburoomAccounts, sessions, loginStore: accounts, hub, files },
       watchRoutes: () => watchRoutes,
     });
+    // Server settings → Sources: saved to config.yaml, applied after a restart.
+    const sourceSettingsHttp = sourceSettings({
+      ...{ config, registry, editor, sessions, plexFetch, jellyfinFetch, plexTv: plexIdentity },
+    });
     const route = createRoutes({
       ...{ config, registry, accounts, sessions, access, hub, rooms, files, signIn, setOwnerName },
       ...{ watchRoutes, accountRoutes, operatorRoutes: operatorHttp({ config, registry, editor, ...sessions }) },
       uburoomAccountRoutes: uburoomAccountsHttp.routes,
+      sourceSettingsRoutes: sourceSettingsHttp.routes,
     });
     const server = createHttpServer({ config, logger, tls, json: sessions.json, route });
     const sockets = watchSockets({
@@ -170,7 +176,8 @@ function createApp(config, options = {}) {
     });
     const sweep = setInterval(() => {
       watch.maintainProviderSessions();
-      for (const service of [watchRoutes, accountRoutes, signIn, sessions, uburoomAccountsHttp]) service.sweep();
+      for (const service of [watchRoutes, accountRoutes, signIn, sessions, uburoomAccountsHttp, sourceSettingsHttp])
+        service.sweep();
       void guests.sweep();
     }, 1000);
     sweep.unref();
@@ -183,6 +190,7 @@ function createApp(config, options = {}) {
       watchRoutes.close();
       accountRoutes.close();
       hub.close();
+      sourceSettingsHttp.close();
       files.close();
       untapLogger?.();
       const serverClosed = server.listening

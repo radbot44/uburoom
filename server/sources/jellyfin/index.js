@@ -53,9 +53,9 @@ function create(entry, { pipeline, logger, pin, registry, jellyfinFetch = fetch 
 }
 
 /** The server answers, and the API key and user can list libraries. */
-async function check(entry, { ffmpeg } = {}) {
+async function check(entry, { ffmpeg, connectionOnly = false, jellyfinFetch } = {}) {
   const checks = [];
-  const jellyfin = new Jellyfin(entry, { pipeline: {} });
+  const jellyfin = new Jellyfin(entry, { pipeline: {}, ...(jellyfinFetch ? { fetcher: jellyfinFetch } : {}) });
   const step = async (name, action, remediation) => {
     try {
       checks.push({ category: 'Sources', name, status: 'pass', message: await action() });
@@ -83,7 +83,7 @@ async function check(entry, { ffmpeg } = {}) {
       },
       "Create an API key in the Jellyfin dashboard and set the source's user to an existing username.",
     );
-  if (!ffmpeg)
+  if (!ffmpeg && !connectionOnly)
     checks.push({
       category: 'Sources',
       name: 'Jellyfin media tools',
@@ -111,5 +111,6 @@ module.exports = {
   check,
   libraries,
   connect: require('./connect'),
+  setup: require('./setup'),
   memberIdentity: 'jellyfin',
 };

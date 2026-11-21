@@ -7,6 +7,7 @@ const { PlexAuth, PlexMembers } = require('./auth');
 const { PlexTv } = require('../../identity/plex');
 const { plexProvider } = require('./provider');
 const { validateLibraries } = require('../libraries');
+const { libraries, SECTION } = require('./libraries');
 
 const SETTINGS = [
   'url',
@@ -20,7 +21,6 @@ const SETTINGS = [
   'reporting_watch_state',
   'libraries',
 ];
-const SECTION = /^\d{1,20}$/;
 
 /** An HTTPS origin (no path, query or credentials), or undefined when blank. */
 function httpsOrigin(value, label) {
@@ -142,9 +142,41 @@ function signIn(providers, { registry, plexFetch = fetch, plexTv = new PlexTv(pl
   );
 }
 
-/** Whether the server answers at its address (non-destructive: `/identity` needs no token). */
-async function check(entry) {
+/**
+ * Whether the server answers at its address (non-destructive: `/identity` needs no token). With
+ * `plexFetch` (Server settings, tests) the request goes through it; the doctor uses plain HTTP.
+ */
+async function check(entry, { plexFetch } = {}) {
   const name = 'Plex Media Server reachability';
+  if (plexFetch) {
+    try {
+      const response = await plexFetch(new URL('/identity', entry.url), {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(3500),
+      });
+      void response.body?.cancel().catch(() => {});
+      return [
+        response.status >= 200 && response.status < 500
+          ? { category: 'Sources', name, status: 'pass', message: `Plex server reachable at ${entry.url}` }
+          : {
+              category: 'Sources',
+              name,
+              status: 'warn',
+              message: `Plex server returned HTTP ${response.status} at ${entry.url}`,
+            },
+      ];
+    } catch {
+      return [
+        {
+          category: 'Sources',
+          name,
+          status: 'warn',
+          message: `Could not connect to Plex server at ${entry.url}`,
+          remediation: 'Check the source url and that Plex Media Server is running and reachable.',
+        },
+      ];
+    }
+  }
   return new Promise(resolve => {
     const client = entry.url.startsWith('https:') ? https : http;
     const req = client.get(new URL('/identity', entry.url), { timeout: 3500 }, res => {
@@ -191,46 +223,13 @@ async function check(entry) {
   });
 }
 
-/**
- * Every movie and show library on the server, whether this source offers it or not, for the
- * operator choosing which to offer: `{id, name, type, count?}`. A count Plex does not give is left out.
- * @param {any} entry
- * @param {{plexFetch?: typeof fetch}} [services]
- */
-async function libraries(entry, { plexFetch = fetch } = {}) {
-  const plex = new Plex({ url: entry.url, token: entry.token }, plexFetch, { pipeline: {} });
-  const sections = ((await plex.client.rawJson('/library/sections')).Directory || []).filter(
-    section => ['movie', 'show'].includes(section?.type) && SECTION.test(String(section.key)),
-  );
-  return Promise.all(
-    sections.slice(0, 200).map(async section => {
-      const id = String(section.key);
-      let count;
-      try {
-        const page = await plex.client.rawJson(
-          '/library/sections/' + id + '/all?X-Plex-Container-Start=0&X-Plex-Container-Size=0',
-        );
-        const total = Number(page.totalSize ?? page.size);
-        if (Number.isSafeInteger(total) && total >= 0) count = total;
-      } catch {
-        /* Listed without a count. */
-      }
-      return {
-        id,
-        name: String(section.title || 'Library').slice(0, 100),
-        type: section.type === 'show' ? 'shows' : 'movies',
-        ...(count === undefined ? {} : { count }),
-      };
-    }),
-  );
-}
-
 module.exports = {
   validate,
   validateAll,
   create,
   check,
   libraries,
+  setup: require('./setup'),
   signIn,
   ownerAccount: true,
   memberIdentity: 'plex',

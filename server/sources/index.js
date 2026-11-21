@@ -10,6 +10,7 @@
  *   already checked here) and returns the normalized entry its other functions take.
  * - `create(entry, services)`: the source as a `MediaProvider` (server/media-providers.js).
  * - `check(entry, services)`: a connection and credential test for the doctor, as doctor checks.
+ *   `services.connectionOnly` leaves out media-tool checks (Server settings asks only "does it answer?").
  * - `libraries(entry, services)`: every library the server has, offered or not, as
  *   `{id, name, type: 'movies'|'shows', count?}`, for the operator choosing which to offer. A Plex or
  *   Jellyfin entry's `libraries:` list (server/sources/libraries.js) limits what it offers; the module
