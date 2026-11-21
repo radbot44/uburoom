@@ -250,6 +250,7 @@ export function mount(panel, { request }) {
       });
   }
   function renderEdit({ source }) {
+    if (source.folders) return renderEditFolders(view);
     const known = details.get(source.id);
     node('h3', body, 'Edit ' + sourceLabel(source));
     const name = nameField(body, source.name, source.id);
@@ -278,6 +279,138 @@ export function mount(panel, { request }) {
       }),
     );
     if (source.selectLibraries && !chosen && save) save.dataset.blocked = 'true';
+  }
+
+  // ----- Edit a folders source: its libraries, each with a name, Movies or Shows and its folders -----
+  /** Opens the folder browser to pick a folder for library `index`, or for a new library ('new'). */
+  function pickFolder(index) {
+    view.picking = index;
+    void act(async current => {
+      if (!view.flow) view.flow = (await request('/api/operator/sources/setup', { type: 'folders' })).flow;
+      if (!current()) return;
+      view.listing = await step(view.flow, 'browse', { path: view.listing?.path || '' });
+      if (current()) render();
+    });
+    render();
+  }
+  function renderPicker(libraries) {
+    const forNew = view.picking === 'new';
+    node(
+      'h3',
+      body,
+      forNew ? 'Add a library: choose its first folder' : 'Add a folder to ' + libraries[view.picking].name,
+    );
+    if (!view.listing) node('p', body, 'Reading folders…', 'hint');
+    else folderList(body, view.listing);
+    const row = node('div', body, null, 'server-source-actions');
+    const back = button(row, 'Back', 'quiet', () => {
+      view.picking = undefined;
+      render();
+    });
+    back.id = 'server-source-back';
+    back.dataset.keep = 'true';
+    const use = button(row, 'Use this folder', 'primary', () => {
+      const at = view.listing.path;
+      if (forNew) libraries.push({ name: folderName(at), type: 'movies', paths: [at] });
+      else if (!libraries[view.picking].paths.includes(at)) libraries[view.picking].paths.push(at);
+      view.picking = undefined;
+      render();
+    });
+    use.id = 'server-source-use-folder';
+    if (!view.listing?.path) use.dataset.blocked = 'true';
+  }
+  function renderEditFolders(state) {
+    const { source } = state;
+    state.libraries ||= source.folders.map(library => ({ ...library, paths: [...library.paths] }));
+    const libraries = state.libraries;
+    if (state.picking !== undefined) return renderPicker(libraries);
+    node('h3', body, 'Edit ' + sourceLabel(source));
+    state.sourceName ??= source.name;
+    const name = nameField(body, state.sourceName, source.id);
+    name.addEventListener('input', () => (state.sourceName = name.value));
+    libraries.forEach((library, index) => {
+      const box = node('fieldset', body, null, 'server-source-libraries server-source-library');
+      box.dataset.library = library.id || 'new-' + index;
+      node('legend', box, library.id ? 'Library' : 'New library');
+      const head = node('div', box, null, 'server-source-library-head');
+      const field = node('label', head, null, 'server-settings-field');
+      node('span', field, 'Name');
+      const input = node('input', field);
+      Object.assign(input, { type: 'text', maxLength: 100, autocomplete: 'off', value: library.name });
+      input.addEventListener('input', () => (library.name = input.value));
+      kindPicker(head, null, library.type, value => (library.type = value)).setAttribute(
+        'aria-label',
+        'What ' + (library.name || 'this library') + ' contains',
+      );
+      const remove = uburoomControls.button(doc, {
+        label: 'Remove library ' + library.name,
+        icon: 'trash',
+        iconOnly: true,
+        action: () => {
+          libraries.splice(index, 1);
+          render();
+        },
+      });
+      head.append(remove);
+      if (libraries.length === 1) {
+        remove.dataset.blocked = 'true';
+        remove.title = 'A source keeps at least one library; remove the whole source instead';
+      }
+      const list = node('ul', box, null, 'server-source-paths');
+      list.setAttribute('aria-label', 'Folders in ' + (library.name || 'this library'));
+      library.paths.forEach((at, at_index) => {
+        const item = node('li', list);
+        item.append(uburoomIcons.icon(doc, 'folder'));
+        node('span', item, at, 'server-source-path-text');
+        const drop = uburoomControls.button(doc, {
+          label: 'Remove folder ' + at,
+          icon: 'x',
+          iconOnly: true,
+          action: () => {
+            library.paths.splice(at_index, 1);
+            render();
+          },
+        });
+        if (library.paths.length === 1) {
+          drop.dataset.blocked = 'true';
+          drop.title = 'A library keeps at least one folder';
+        }
+        item.append(drop);
+      });
+      button(box, 'Add a folder', 'quiet', () => pickFolder(index)).classList.add('server-source-add-path');
+    });
+    const addLibrary = button(body, 'Add a library', 'quiet server-source-add-library', () => pickFolder('new'));
+    addLibrary.id = 'server-source-add-library';
+    node(
+      'p',
+      body,
+      'Videos keep their history when a library is renamed or changes type. A removed library’s history stays, unavailable.',
+      'hint',
+    );
+    inlineActions(body, 'Save source', () =>
+      act(async current => {
+        const result = await request('/api/operator/sources', {
+          revision,
+          action: 'update',
+          id: source.id,
+          name: state.sourceName,
+          settings: {
+            libraries: libraries.map(library => ({
+              ...(library.id ? { id: library.id } : {}),
+              name: library.name,
+              type: library.type,
+              paths: library.paths,
+            })),
+          },
+        });
+        if (!current()) return;
+        accept(result);
+        details.clear();
+        status.textContent = 'Saved. Restart uburoom to apply it.';
+        show({ name: 'list' });
+        checkAll();
+      }),
+    );
   }
 
   // ----- Remove -----
@@ -608,15 +741,11 @@ export function mount(panel, { request }) {
       render();
     });
   }
-  function renderAddFolder() {
-    node('h3', body, 'Add a folder');
-    if (!view.listing) {
-      node('p', body, 'Reading folders…', 'hint');
-      return;
-    }
-    const { listing } = view;
-    node('p', body, listing.path || 'This computer', 'server-source-path').id = 'server-source-path';
-    const list = node('ul', body, null, 'server-source-folders');
+  const folderName = at => at.split(/[\\/]/).filter(Boolean).pop() || at;
+  /** Where the browser is, and the folders inside it as buttons that open them. */
+  function folderList(parent, listing) {
+    node('p', parent, listing.path || 'This computer', 'server-source-path').id = 'server-source-path';
+    const list = node('ul', parent, null, 'server-source-folders');
     list.setAttribute('aria-label', 'Folders in ' + (listing.path || 'this computer'));
     const entry = (label, icon, path) => {
       const item = node('li', list);
@@ -627,25 +756,39 @@ export function mount(panel, { request }) {
     if (listing.parent !== null) entry('Up one level', 'arrow-back-up', listing.parent);
     for (const folder of listing.folders) entry(folder.name, 'folder', folder.path);
     if (!listing.folders.length) node('li', list, 'No folders here.', 'hint');
-    if (!listing.path) return void inlineActions(body);
-    const name = nameField(body, '', listing.path.split(/[\\/]/).filter(Boolean).pop() || listing.path);
-    const kind = node('div', body, null, 'server-settings-field');
-    const label = node('span', kind, 'Contains');
-    label.id = 'server-source-kind';
-    const group = node('div', kind, null, 'button-group watch-segmented');
+  }
+  /** Movies or Shows, as a segmented selector. */
+  function kindPicker(parent, labelledBy, value, onChange) {
+    const group = node('div', parent, null, 'button-group watch-segmented');
     group.setAttribute('role', 'group');
-    group.setAttribute('aria-labelledby', label.id);
-    view.kind ||= 'movies';
-    for (const [value, text] of [
+    if (labelledBy) group.setAttribute('aria-labelledby', labelledBy);
+    for (const [kind, text] of [
       ['movies', 'Movies'],
       ['shows', 'Shows'],
     ]) {
       const option = button(group, text, 'group-button', () => {
-        view.kind = value;
+        onChange(kind);
         for (const other of group.children) other.setAttribute('aria-pressed', String(other === option));
       });
-      option.setAttribute('aria-pressed', String(view.kind === value));
+      option.setAttribute('aria-pressed', String(kind === value));
     }
+    return group;
+  }
+  function renderAddFolder() {
+    node('h3', body, 'Add a folder');
+    if (!view.listing) {
+      node('p', body, 'Reading folders…', 'hint');
+      return;
+    }
+    const { listing } = view;
+    folderList(body, listing);
+    if (!listing.path) return void inlineActions(body);
+    const name = nameField(body, '', folderName(listing.path));
+    const kind = node('div', body, null, 'server-settings-field');
+    const label = node('span', kind, 'Contains');
+    label.id = 'server-source-kind';
+    view.kind ||= 'movies';
+    kindPicker(kind, label.id, view.kind, value => (view.kind = value));
     inlineActions(body, 'Add folder', () =>
       act(async current => {
         await step(view.flow, 'choose', { path: listing.path, type: view.kind });
