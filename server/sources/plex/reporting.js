@@ -47,8 +47,8 @@ class PlexReporting {
     const cred =
       identity &&
       (this.registry.credential
-        ? this.registry.credential(identity.subject)
-        : this.registry.hasCredential?.(identity.subject));
+        ? this.registry.credential('plex', identity.subject)
+        : this.registry.hasCredential?.('plex', identity.subject));
     return !!(cred && (typeof cred !== 'object' || cred.serverToken || cred.authType !== 'traditional'));
   }
 

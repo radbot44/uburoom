@@ -3,11 +3,24 @@ const { repositories } = require('./repositories');
 // First-release baseline. Future published schemas add explicit forward migrations.
 // Never repair or upgrade an unpublished layout implicitly: earlier pre-release
 // layouts move forward only through reviewed, explicitly run transfer scripts.
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 const COLUMNS = Object.freeze({
   users: ['id', 'name', 'revision', 'retiredInto', 'signedInAt', 'guest'],
   identities: ['provider', 'subject', 'userId', 'name', 'verified', 'assigned'],
-  credentials: ['subject', 'value'],
+  credentials: ['provider', 'subject', 'value'],
+  uburoom_accounts: [
+    'subject',
+    'username',
+    'passwordHash',
+    'passwordSalt',
+    'passwordParams',
+    'linkHash',
+    'linkExpires',
+    'linkPurpose',
+    'disabled',
+    'createdAt',
+    'updatedAt',
+  ],
   meta: ['key', 'value'],
   audit: ['id', 'at', 'actor', 'action', 'detail'],
   browser_logins: ['id', 'record'],
@@ -89,6 +102,12 @@ const INVITE_SQL = `CREATE UNIQUE INDEX watch_rooms_invite ON watch_rooms(invite
 const EVENTS_SQL = `CREATE TABLE watch_room_events(id TEXT PRIMARY KEY,roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,creatorId TEXT NOT NULL REFERENCES users(id),title TEXT NOT NULL,description TEXT NOT NULL,start TEXT NOT NULL,end TEXT NOT NULL,timeZone TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('scheduled','canceling')),createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL,discord TEXT);
     CREATE INDEX watch_room_events_room ON watch_room_events(roomId,start);
     CREATE INDEX watch_room_events_end ON watch_room_events(end);`;
+// A uburoom account's password and its one-time link. The account's identity is
+// identities('uburoom', subject); the subject is a stable id, never the username.
+// Usernames are stored lowercased (ASCII only), so uniqueness ignores case. The
+// password is a scrypt hash with its own salt and parameters; the link is stored
+// only as a SHA-256 hash and lasts until linkExpires or its first use.
+const UBUROOM_ACCOUNTS_SQL = `CREATE TABLE uburoom_accounts(subject TEXT PRIMARY KEY,username TEXT NOT NULL COLLATE NOCASE UNIQUE,passwordHash TEXT,passwordSalt TEXT,passwordParams TEXT,linkHash TEXT UNIQUE,linkExpires INTEGER,linkPurpose TEXT CHECK(linkPurpose IN ('set','reset')),disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0,1)),createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL);`;
 function initializeSchema(db, { checkOnly = false } = {}) {
   const version = db.prepare('PRAGMA user_version').get().user_version;
   if (version > SCHEMA_VERSION) throw new Error('Account database requires a newer uburoom version');
@@ -116,7 +135,8 @@ function initializeSchema(db, { checkOnly = false } = {}) {
   db.exec(`BEGIN IMMEDIATE;
     CREATE TABLE users(id TEXT PRIMARY KEY,name TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0,retiredInto TEXT,signedInAt INTEGER,guest INTEGER NOT NULL DEFAULT 0 CHECK(guest IN (0,1)));
     CREATE TABLE identities(provider TEXT NOT NULL,subject TEXT NOT NULL,userId TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,verified INTEGER NOT NULL DEFAULT 0,assigned INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(provider,subject),UNIQUE(provider,userId));
-    CREATE TABLE credentials(subject TEXT PRIMARY KEY,value TEXT NOT NULL);
+    CREATE TABLE credentials(provider TEXT NOT NULL,subject TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(provider,subject));
+    ${UBUROOM_ACCOUNTS_SQL}
     CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
     CREATE TABLE audit(id INTEGER PRIMARY KEY,at INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,detail TEXT NOT NULL);
     CREATE TABLE browser_logins(id TEXT PRIMARY KEY,record TEXT NOT NULL);
@@ -192,4 +212,12 @@ function loginStore(context, vault, registry) {
   }
   return store;
 }
-module.exports = { loginStore, initializeSchema, SCHEMA_VERSION, COLUMNS, INVITE_SQL, EVENTS_SQL };
+module.exports = {
+  loginStore,
+  initializeSchema,
+  SCHEMA_VERSION,
+  COLUMNS,
+  INVITE_SQL,
+  EVENTS_SQL,
+  UBUROOM_ACCOUNTS_SQL,
+};

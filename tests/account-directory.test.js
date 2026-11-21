@@ -21,7 +21,7 @@ test('display names survive provider refresh, link/unlink and merge while identi
   registry.rename(host.id, '  Custom name  ');
   registry.resolve('discord', '100000000000000002', 'Changed provider');
   registry.link(host.id, 'plex', '102', 'Plex alias');
-  registry.credential('102', { token: 'fixture-only' });
+  registry.credential('plex', '102', { token: 'fixture-only' });
   registry.unlink(host.id, 'discord', '100000000000000002');
   assert.equal(registry.canonical(host.id).name, 'Custom name');
   assert.equal(
