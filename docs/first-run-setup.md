@@ -84,7 +84,7 @@ One checkbox per entry rule, with a one-line hint each:
 | Anyone who knows the server password (shows a password field when ticked) | Off |
 | uburoom accounts you create | On |
 | Guests with a room invite | On |
-| Members of your Discord server (when ticked, shows setup: create an application in the Discord Developer Portal, add the redirect URL, paste Application ID, client secret and bot token, add the bot to a server, then pick the server) | Off |
+| Members of your Discord servers (when ticked, shows setup: create an application in the Discord Developer Portal, add the redirect URL, paste Application ID, client secret and bot token, add the bot to a server; then lists the servers the bot has joined. Members of any of them can get in, with no server to pick) | Off |
 
 ### 5. Where will people watch?
 
@@ -158,3 +158,8 @@ The end-to-end wizard can run against the fake Plex in `uburoom-demo`. Whether t
 - **D6:** In-process handoff from setup to the normal app, not exit-and-restart.
 - **D7:** v1 requires the Plex account to own the chosen server (simplest, and `directory.expose_plex_members` needs the owner token). Non-owner accounts can come later.
 - **D8:** The console prints a URL with the code in the fragment, so the launcher or user can open it without typing.
+
+## Mockup approval (2026-11-21)
+
+The owner approved the revised mockup (`personal/mockups/first-run-setup.html`), with two changes made before approval: the step 6 check marks line up with their titles, and step 4's Discord rule admits members of any server the bot has joined rather than one picked server. The any-server change touches Discord membership, commands, events and sharing beyond setup, so it is its own piece of work ahead of or alongside phase 7; the wizard's step 4 is built against it.
+
