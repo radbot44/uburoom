@@ -7,6 +7,7 @@ import { store } from './store.js';
 export function mount(host, deps) {
   function initializeSync() {
     store.player.sync = createSync({
+      player: deps.activePlayer,
       video: deps.video,
       timing: uburoomTiming,
       playback: uburoomPlayback,
@@ -64,8 +65,8 @@ export function mount(host, deps) {
   const PAUSED_REPORT_MS = 3000;
   let lastReportAt = -Infinity;
   async function reportObservation(immediateStall = false, periodic = false) {
-    if (periodic && deps.video.paused && !deps.video.seeking && deps.time.mono() - lastReportAt < PAUSED_REPORT_MS)
-      return;
+    const active = deps.activePlayer;
+    if (periodic && active.paused() && !active.seeking() && deps.time.mono() - lastReportAt < PAUSED_REPORT_MS) return;
     // While a new stream is held back for a seamless swap, the player still shows the stream the server
     // has already replaced, so the server would reject every report about it.
     if (
@@ -86,28 +87,31 @@ export function mount(host, deps) {
       return;
     }
     const id = store.room.selected;
-    const playerState =
-      store.player.playbackError || deps.video.error
-        ? 'error'
-        : store.player.autoplayBlocked
-          ? 'blocked'
-          : deps.video.ended
-            ? 'ended'
-            : deps.video.seeking
-              ? 'seeking'
-              : store.stream.probing
-                ? 'buffering'
-                : deps.video.paused
-                  ? 'paused'
-                  : store.player.playerWaiting || deps.video.readyState < 3
-                    ? 'buffering'
-                    : 'playing';
+    const ytActive = Boolean(deps.youtube?.isActive());
+    const adPlaying = ytActive && Boolean(deps.youtube?.isAdPlaying());
+    const hasError = Boolean(store.player.playbackError || (ytActive ? deps.youtube.errorCode() : deps.video.error));
+    const playerState = hasError
+      ? 'error'
+      : store.player.autoplayBlocked
+        ? 'blocked'
+        : active.ended()
+          ? 'ended'
+          : active.seeking()
+            ? 'seeking'
+            : store.stream.probing || adPlaying
+              ? 'buffering'
+              : active.paused()
+                ? 'paused'
+                : store.player.playerWaiting || active.readyState() < 3
+                  ? 'buffering'
+                  : 'playing';
     const sampleAt = deps.time.mono(),
       observedAt = deps.time.observation.sample(sampleAt);
     if (observedAt === undefined) {
       deps.diagnostics.record('observation-uncredited', { creditReason: 'clock-unavailable' });
       return;
     }
+    const knownDuration = active.duration();
     const data = {
       viewerId: store.identity.viewerId,
       epoch: store.room.state.epoch,
@@ -117,12 +121,17 @@ export function mount(host, deps) {
       sequence: ++store.player.observationSequence,
       sampleAt,
       observedAt,
-      position: deps.video.currentTime,
-      rate: deps.video.playbackRate,
-      frames: uburoomPlayback.observationFrames(deps.video, store.player.videoFrames),
+      position: active.currentTime(),
+      rate: active.playbackRate(),
+      frames: ytActive
+        ? deps.youtube.frames()
+        : uburoomPlayback.observationFrames(deps.video, store.player.videoFrames),
       discontinuity: store.player.observationBreak,
       state: playerState,
-      ...(playerState === 'buffering' ? { stalled: !store.stream.probing } : {}),
+      ...(playerState === 'buffering' ? { stalled: !store.stream.probing && !adPlaying } : {}),
+      ...(store.room.state.durationUnknown && Number.isFinite(knownDuration) && knownDuration > 0
+        ? { duration: knownDuration }
+        : {}),
     };
     store.player.observationPending++;
     lastReportAt = sampleAt;
@@ -170,21 +179,26 @@ export function mount(host, deps) {
       store.stream.readyQueued = true;
       return;
     }
+    const active = deps.activePlayer,
+      ytActive = Boolean(deps.youtube?.isActive());
     const id = store.room.selected,
       version = store.room.state.mediaVersion,
       readinessVersion = store.room.state.readinessVersion,
       readinessId = store.room.state.readiness?.id,
       streamVersion = store.room.state.streamVersion;
     const target = expected();
-    const { duration, ceiling } = uburoomTiming.nearEndBounds(store.room.state.state.duration, deps.video.duration);
+    const playerDuration = active.duration();
+    const { duration, ceiling } = uburoomTiming.nearEndBounds(store.room.state.state.duration, playerDuration);
     const readyTarget = Math.max(0, Math.min(target, ceiling));
-    const aligned =
-      !deps.video.seeking &&
-      Math.abs(deps.video.currentTime - readyTarget) <= (readyTarget === 0 ? 0.25 : readinessVersion ? 0.15 : 0.65);
+    const alignBand = ytActive ? 0.35 : readyTarget === 0 ? 0.25 : readinessVersion ? 0.15 : 0.65;
+    const aligned = !active.seeking() && Math.abs(active.currentTime() - readyTarget) <= alignBand;
     const bufferedReady =
       !store.room.state.state.paused ||
-      (aligned && uburoomPlayback.readinessBuffered(deps.video.buffered, readyTarget, duration));
-    const hasFrames = deps.video.readyState >= 3 && deps.decodedFrames() > 0;
+      (aligned &&
+        (ytActive
+          ? active.readyState() >= 3 || active.bufferedAhead(readyTarget) >= 0.5
+          : uburoomPlayback.readinessBuffered(deps.video.buffered, readyTarget, duration)));
+    const hasFrames = active.readyState() >= 3 && deps.decodedFrames() > 0;
     const ready = bufferedReady && hasFrames && store.stream.readyVersion === version && !store.player.playbackError;
     let blocker;
     if (!ready && readinessId && streamVersion && !store.player.playbackError && !store.player.autoplayBlocked) {
@@ -198,10 +212,16 @@ export function mount(host, deps) {
               : undefined;
       if (reason) blocker = { id: readinessId, streamVersion, reason };
     }
-    const key = [id, version, readinessVersion, readinessId, streamVersion, ready, blocker?.reason].join(':');
+    const learnDuration =
+      store.room.state.durationUnknown && Number.isFinite(playerDuration) && playerDuration > 0
+        ? Math.round(playerDuration * 10) / 10
+        : undefined;
+    const key = [id, version, readinessVersion, readinessId, streamVersion, ready, blocker?.reason, learnDuration].join(
+      ':',
+    );
     if (
       store.stream.readinessSent === key ||
-      (!store.room.state.readiness && !store.room.state.waitingForReady && !ready)
+      (!store.room.state.readiness && !store.room.state.waitingForReady && !ready && learnDuration === undefined)
     )
       return;
     store.stream.readyPending = true;
@@ -211,6 +231,7 @@ export function mount(host, deps) {
         ready,
         readinessVersion,
         ...(blocker ? { blocker } : {}),
+        ...(learnDuration !== undefined ? { duration: learnDuration } : {}),
       });
       store.stream.readinessSent = key;
     } catch {

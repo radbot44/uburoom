@@ -126,7 +126,12 @@ class PlaybackTracking {
               ? 'local-file'
               : viewer.media.kind === 'demo'
                 ? 'local-fixture'
-                : { file: 'original', hls: 'provider-hls', av1: 'uburoom-av1' }[viewer.media.format] || 'unknown',
+                : {
+                    file: 'original',
+                    hls: 'provider-hls',
+                    av1: 'uburoom-av1',
+                    'youtube-embed': 'youtube-embed',
+                  }[viewer.media.format] || 'unknown',
           startedAt: now,
           lastReceivedAt: now,
           watchedSeconds: 0,

@@ -166,6 +166,12 @@ export function mount(host, deps) {
   function renderMediaInformation(next) {
     if (!next) return;
     const info = next.deliveryInfo;
+    if (info?.format === 'youtube-embed') {
+      $('media-information').textContent = 'YouTube IFrame player';
+      $('delivery-information').textContent =
+        info.reason === 'youtube-embed-fallback' ? 'Direct from YouTube (fallback from yt-dlp)' : 'Direct from YouTube';
+      return;
+    }
     const mediaWidth = deps.video.videoWidth || info?.width,
       mediaHeight = deps.video.videoHeight || info?.height;
     $('media-information').textContent = info
@@ -328,6 +334,17 @@ export function mount(host, deps) {
       }
     }
     renderRichPresence();
+    const isEmbed = store.room.state?.format === 'youtube-embed';
+    const audioModeSelect = $('audio-mode');
+    if (audioModeSelect) {
+      audioModeSelect.disabled = isEmbed;
+      const group = $('audio-mode-group');
+      if (group) {
+        for (const btn of group.querySelectorAll('button')) btn.disabled = isEmbed;
+      }
+      const hint = $('audio-mode-hint');
+      if (hint && isEmbed) hint.textContent = 'Audio mode is unavailable for YouTube embeds.';
+    }
     store.player.playerUI?.render();
   }
   function renderRichPresence() {

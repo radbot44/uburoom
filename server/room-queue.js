@@ -1499,6 +1499,13 @@ class RoomQueue {
   pruneHistory(roomId) {
     repositories(this.db).queue.trimHistory(roomId, roomId, this.maxHistory);
   }
+
+  updateCurrentDuration(roomId, mediaId, duration) {
+    this.healthy();
+    if (!UUID.test(roomId || '') || typeof mediaId !== 'string' || !mediaId) return;
+    if (!Number.isFinite(duration) || duration <= 0 || duration > 1e9) return;
+    repositories(this.db).queue.updateCurrentDuration(duration, this.now(), roomId, mediaId);
+  }
 }
 
 module.exports = { RoomQueue, MAX_PENDING, MAX_HISTORY, validateAuto };

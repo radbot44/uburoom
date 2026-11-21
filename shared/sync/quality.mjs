@@ -66,7 +66,7 @@ export function createQualityApi() {
 
   // Playback health rides on the same report: what a host needs to see a struggling guest.
   // Counts cover the last minute. One place decides "having issues" for every surface.
-  const HEALTH_FORMATS = Object.freeze(['hls', 'file', 'av1', 'vp9', 'vp8']);
+  const HEALTH_FORMATS = Object.freeze(['hls', 'file', 'av1', 'vp9', 'vp8', 'youtube-embed']);
   const HEALTH_BROWSERS = Object.freeze(['chrome', 'edge', 'firefox', 'safari', 'other']);
   const HEALTH_DEVICES = Object.freeze(['desktop', 'phone', 'tablet', 'tv', 'activity']);
   const HEALTH_ERRORS = Object.freeze(['network', 'media', 'decode', 'other']);

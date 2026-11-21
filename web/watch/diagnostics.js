@@ -1,6 +1,5 @@
 import * as uburoomDiagnostics from '../playback-diagnostics.js';
 import * as uburoomIcons from '../icons.js';
-import * as uburoomPlayback from '../playback-policy.js';
 import * as uburoomPopover from '../watch-popover.js';
 import * as uburoomTiming from '../../shared/sync/timing.mjs';
 import { $ } from './page.js';
@@ -102,42 +101,47 @@ export function mount(host, deps) {
   function diagnosticSample(event = 'sample', fields = {}) {
     // Diagnostics must never interrupt playback, even during MediaSource teardown.
     try {
-      const quality = deps.video.getVideoPlaybackQuality?.(),
+      const active = deps.activePlayer,
+        ytActive = Boolean(deps.youtube?.isActive()),
+        quality = ytActive ? undefined : deps.video.getVideoPlaybackQuality?.(),
         tracks = store.room.state?.tracks,
-        rect = deps.video.getBoundingClientRect(),
-        timing = deps.time.clock.read();
+        rect = (ytActive ? $('youtube-stage') || deps.video : deps.video).getBoundingClientRect(),
+        timing = deps.time.clock.read(),
+        buffered = ytActive ? deps.youtube.bufferedRanges() : deps.video.buffered,
+        position = active.currentTime();
       const sharedTarget = uburoomTiming.target(store.room.state, timing.serverTime);
       const control = store.player.sync?.control;
       diagnostics.record(event, {
-        position: deps.video.currentTime,
+        position,
         target: deps.expected(),
-        ready: deps.video.readyState,
-        network: deps.video.networkState,
+        ready: active.readyState(),
+        network: ytActive ? 1 : deps.video.networkState,
         ...timing,
         clockValid: timing.valid,
         sharedTarget,
         timelineRevision: store.room.state?.revision,
-        positionErrorMs: sharedTarget === undefined ? undefined : (deps.video.currentTime - sharedTarget) * 1000,
-        paused: deps.video.paused,
-        seeking: deps.video.seeking,
+        positionErrorMs: sharedTarget === undefined ? undefined : (position - sharedTarget) * 1000,
+        paused: active.paused(),
+        seeking: active.seeking(),
         waiting: store.player.playerWaiting,
-        rate: deps.video.playbackRate,
+        rate: active.playbackRate(),
         syncMode: store.preferences.syncCorrectionMode,
-        ranges: Array.from({ length: Math.min(deps.video.buffered.length, 8) }, (_, i) => [
-          deps.video.buffered.start(i),
-          deps.video.buffered.end(i),
-        ]),
-        bufferAhead: uburoomPlayback.bufferedAhead(deps.video.buffered, deps.video.currentTime),
+        ranges: Array.from({ length: Math.min(buffered.length, 8) }, (_, i) => [buffered.start(i), buffered.end(i)]),
+        bufferAhead: active.bufferedAhead(position),
         frames: quality?.totalVideoFrames,
         dropped: quality?.droppedVideoFrames,
-        decoded: quality ? quality.totalVideoFrames - quality.droppedVideoFrames : store.player.videoFrames,
+        decoded: ytActive
+          ? deps.youtube.frames()
+          : quality
+            ? quality.totalVideoFrames - quality.droppedVideoFrames
+            : store.player.videoFrames,
         jsHeapUsed: performance.memory?.usedJSHeapSize,
         jsHeapTotal: performance.memory?.totalJSHeapSize,
         jsHeapLimit: performance.memory?.jsHeapSizeLimit,
         callbackFrames: store.player.videoFrames,
         width: deps.video.videoWidth,
         height: deps.video.videoHeight,
-        mediaError: deps.video.error?.code,
+        mediaError: ytActive ? deps.youtube.errorCode() || undefined : deps.video.error?.code,
         online: navigator.onLine,
         visibility: document.visibilityState,
         inViewport:
@@ -273,11 +277,11 @@ export function mount(host, deps) {
         quality: store.room.state?.quality,
         preferredQuality: store.preferences.preferredQuality,
         subtitles: tracks?.subtitleDelivery || (tracks?.subtitleId ? 'text' : 'off'),
-        paused: deps.video.paused,
-        readyState: deps.video.readyState,
-        position: +deps.video.currentTime.toFixed(2),
+        paused: deps.activePlayer.paused(),
+        readyState: deps.activePlayer.readyState(),
+        position: +deps.activePlayer.currentTime().toFixed(2),
         target: +(deps.expected() || 0).toFixed(2),
-        bufferedAhead: +uburoomPlayback.bufferedAhead(deps.video.buffered, deps.video.currentTime).toFixed(2),
+        bufferedAhead: +deps.activePlayer.bufferedAhead(deps.activePlayer.currentTime()).toFixed(2),
         size: [deps.video.videoWidth, deps.video.videoHeight],
         frames: quality && { total: quality.totalVideoFrames, dropped: quality.droppedVideoFrames },
         chunkSeconds: store.stream.av1?.chunkTime && +store.stream.av1.chunkTime.toFixed(2),

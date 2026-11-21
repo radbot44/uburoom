@@ -59,6 +59,7 @@ function observePlaybackEnd(room, viewer, data, result, now = Date.now()) {
   const duration = room.media?.duration;
   if (
     !result?.accepted ||
+    room.media?.durationUnknown ||
     !Number.isFinite(duration) ||
     duration <= 0 ||
     !room.viewers.size ||

@@ -306,6 +306,7 @@ export function mount(host, deps) {
     }
   }
   function resumeAudioContext() {
+    if (store.room.state?.format === 'youtube-embed') return;
     if (audioContext && audioContext.state === 'suspended') {
       audioContext.resume().catch(() => {});
     }

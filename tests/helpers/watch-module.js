@@ -5,6 +5,8 @@
 // set `view.hlsRecoveryCount = 2` and read `view.playbackError` after a call. Elements the module looks up
 // are inert stand-ins; a module under test gets its real behaviour from the values the test supplies.
 const { store } = require('../../web/watch/store.js');
+const { createVideoElementAdapter } = require('../../shared/sync/player-adapter.mjs');
+const { bufferedAhead } = require('../../web/playback-policy.js');
 
 const defaults = structuredClone(
   Object.fromEntries(Object.entries(store).map(([area, fields]) => [area, { ...fields }])),
@@ -128,6 +130,41 @@ function mountModule(module, values = {}) {
   deps.video ??= element('video');
   deps.video.addEventListener ??= () => {};
   deps.video.removeEventListener ??= () => {};
+  deps.youtube ??= {
+    isActive: () => false,
+    isAdPlaying: () => false,
+    errorCode: () => 0,
+    frames: () => 0,
+    bufferedRanges: () => ({ length: 0, start: () => 0, end: () => 0 }),
+    attach() {},
+    destroy() {},
+    unlock: () => Promise.resolve(),
+  };
+  const currentAdapter = () =>
+    deps.youtube?.isActive?.() && deps.youtube.adapter
+      ? deps.youtube.adapter
+      : createVideoElementAdapter(deps.video, { bufferedAhead });
+  deps.activePlayer ??= {
+    get supportsRateSync() {
+      return currentAdapter().supportsRateSync !== false;
+    },
+    isAdPlaying: () => Boolean(currentAdapter().isAdPlaying?.()),
+    readyState: () => currentAdapter().readyState(),
+    currentTime: () => currentAdapter().currentTime(),
+    seek: seconds => currentAdapter().seek(seconds),
+    duration: () => currentAdapter().duration(),
+    paused: () => currentAdapter().paused(),
+    ended: () => currentAdapter().ended(),
+    seeking: () => currentAdapter().seeking(),
+    playbackRate: () => currentAdapter().playbackRate(),
+    setPlaybackRate: rate => currentAdapter().setPlaybackRate(rate),
+    setAudio: (volumeUnit, muted) => currentAdapter().setAudio(volumeUnit, muted),
+    play: () => currentAdapter().play(),
+    pause: () => currentAdapter().pause(),
+    measureStart: () => currentAdapter().measureStart?.(),
+    bufferedAhead: position => currentAdapter().bufferedAhead(position),
+    isBufferedAt: (position, tolerance) => currentAdapter().isBufferedAt(position, tolerance),
+  };
   deps.every ??= () => () => {};
   const depsView = new Proxy(deps, {
     get: (target, key) => (key in target ? target[key] : typeof key === 'string' ? () => undefined : undefined),

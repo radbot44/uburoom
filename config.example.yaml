@@ -93,14 +93,14 @@ sources: []
 #        type: 'shows'
 #        paths: ['D:\Media\TV']
 #
-#  # YouTube links & playlists via built-in yt-dlp rolling cache (requires yt-dlp on PATH
-#  # or set below; FFmpeg enables 1080p+ merged MP4 downloads).
+#  # YouTube links & playlists via built-in yt-dlp rolling cache and/or IFrame embed
+#  # (default 'auto' uses yt-dlp cache first for full sync & Web Audio and falls back to IFrame embed).
 #  - id: 'youtube'
 #    type: 'youtube'
 #    name: 'YouTube'
-#    delivery: 'ytdlp' # 'ytdlp' (built-in rolling cache) or 'embed' (YouTube IFrame, requires api_key).
+#    delivery: 'auto' # 'auto' (yt-dlp cache + IFrame fallback), 'ytdlp' (cache only), or 'embed' (IFrame only).
 #    max_cache_gb: 20 # LRU disk cache ceiling in GB (0.1 - 2000).
-#    api_key: '' # Optional for fast metadata & playlists; required when delivery is 'embed'.
+#    api_key: '' # Optional YouTube Data API v3 key for fast metadata, playlists in embed mode, and embeddable checks.
 #    cache_directory: '' # Defaults to <data_directory>/youtube-cache.
 #    yt_dlp: '' # Blank searches PATH; or explicit path to yt-dlp executable.
 #    cookies_file: '' # Optional cookies.txt path for yt-dlp.

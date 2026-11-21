@@ -112,6 +112,7 @@ const VIEWER_KEYS = Object.freeze([
   'fallbackStream',
   'preparingQuality',
   'mediaUrl',
+  'embed',
   'directHls',
   'directDelivery',
   'subtitleUrl',

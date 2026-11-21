@@ -132,11 +132,13 @@ module.exports = {
     }
     const endpointSeek =
       room.media &&
+      !room.media.durationUnknown &&
       (action === 'media.seek.end' ||
         (action === 'media.seek.absolute' && args.seconds >= room.media.duration) ||
         (action === 'media.seek.relative' && this.position(room) + args.seconds >= room.media.duration));
     const endpointPlay =
       room.media &&
+      !room.media.durationUnknown &&
       ['media.play', 'media.toggle'].includes(action) &&
       (room.endedVersion === room.mediaVersion || this.position(room) >= room.media.duration - 0.1);
     if (endpointSeek || endpointPlay) {

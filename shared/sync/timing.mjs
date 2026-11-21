@@ -699,7 +699,7 @@ export function createTimingApi() {
 
   // Opt-in local seeks. Interruptions discard drift evidence, but never erase
   // an outstanding seek or its cooldown. Only a new source/context resets those.
-  function jumpCorrection() {
+  function jumpCorrection({ minErrorSeconds = 0.25, maxErrorSeconds = 0.65, settleToleranceSeconds = 0.2 } = {}) {
     let key,
       last,
       since,
@@ -749,7 +749,7 @@ export function createTimingApi() {
           if (
             position >= pending.target - 0.1 &&
             position <= pending.target + elapsed + 0.1 &&
-            (!Number.isFinite(error) || Math.abs(error) < 0.2)
+            (!Number.isFinite(error) || Math.abs(error) < settleToleranceSeconds)
           ) {
             pending = undefined;
             quietUntil = now + 8000;
@@ -775,8 +775,8 @@ export function createTimingApi() {
         frames <= 0 ||
         now < quietUntil ||
         !Number.isFinite(error) ||
-        magnitude < 0.25 ||
-        magnitude > 0.65 ||
+        magnitude < minErrorSeconds ||
+        magnitude > maxErrorSeconds ||
         !Number.isFinite(uncertaintyMs) ||
         uncertaintyMs < 0 ||
         uncertaintyMs > 125 ||

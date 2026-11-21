@@ -48,7 +48,7 @@ module.exports = {
     if (declared.handler === 'stream') return this.refreshStream(room, viewer, args, actor, ticket);
     if (declared.handler === 'quality') {
       if (!args.compatible && !args.fallback && args.quality) viewer.preferredQuality = Engine.qualityId(args.quality);
-      if (!room.media || room.media.kind === 'demo')
+      if (!room.media || room.media.kind === 'demo' || room.media.format === 'youtube-embed')
         return { status: 'applied', message: 'Preferred quality updated for future videos.' };
       if (viewer.preparing || viewer.change)
         return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };

@@ -19,6 +19,8 @@ import { bufferedAhead as computeBufferedAhead } from './timing.mjs';
  * @property {(position:number)=>number} bufferedAhead Contiguous buffered seconds ahead of position.
  * @property {()=>Promise<number|undefined>} [measureStart] Call just before play(). Resolves with milliseconds from the call to the first presented frame that advanced past the position at the call, or undefined when unsupported, interrupted (pause, seek) or not seen within 2 s.
  * @property {(position:number, toleranceSeconds?:number)=>boolean} isBufferedAt Whether position lies inside any buffered range.
+ * @property {boolean} [supportsRateSync] False when the player cannot honor micro-speed playback-rate nudges (e.g. YouTube IFrame).
+ * @property {()=>boolean} [isAdPlaying] True while the viewer is held by a personal ad inside an embedded player.
  */
 
 /**
@@ -99,6 +101,100 @@ export function createVideoElementAdapter(video, helpers = {}) {
       }
       return false;
     },
+  };
+}
+
+/**
+ * Wrap a YouTube IFrame Player (or controller around YT.Player) behind PlayerAdapter.
+ * Disables rate-based drift nudges (YouTube rounds decimal rates back to 1) and exposes
+ * optional ad-hold detection so personal viewer ads do not fight sync or pause the room.
+ * @param {{
+ *   getPlayerState?:()=>number,
+ *   getCurrentTime?:()=>number,
+ *   getDuration?:()=>number,
+ *   getVideoLoadedFraction?:()=>number,
+ *   seekTo?:(seconds:number, allowSeekAhead?:boolean)=>void,
+ *   playVideo?:()=>void,
+ *   pauseVideo?:()=>void,
+ *   setVolume?:(volumePercent:number)=>void,
+ *   mute?:()=>void,
+ *   unMute?:()=>void,
+ *   isReady?:()=>boolean,
+ *   isSeeking?:()=>boolean,
+ *   isAdPlaying?:()=>boolean,
+ *   hasUnlocked?:()=>boolean,
+ *   play?:()=>Promise<unknown>,
+ *   seek?:(seconds:number)=>void
+ * }} controller
+ * @returns {PlayerAdapter}
+ */
+export function createYouTubePlayerAdapter(controller) {
+  const bufferedAhead = position => {
+    const duration = Number(controller?.getDuration?.());
+    const fraction = Number(controller?.getVideoLoadedFraction?.());
+    if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(fraction) || fraction <= 0) return 0;
+    return Math.max(0, fraction * duration - (Number.isFinite(position) ? position : 0));
+  };
+  let lastVolume, lastMuted;
+  return {
+    supportsRateSync: false,
+    isAdPlaying: () => Boolean(controller?.isAdPlaying?.()),
+    readyState() {
+      if (!controller || (controller.isReady && !controller.isReady())) return 0;
+      if (controller.isAdPlaying?.()) return 2;
+      const state = controller.getPlayerState?.();
+      if (state === 1 || state === 0) return 4;
+      if (state === 2) return controller.hasUnlocked?.() === false ? 2 : 4;
+      return 2;
+    },
+    currentTime() {
+      const value = Number(controller?.getCurrentTime?.());
+      return Number.isFinite(value) && value >= 0 ? value : 0;
+    },
+    seek(seconds) {
+      if (!controller) return;
+      if (typeof controller.seek === 'function') controller.seek(seconds);
+      else controller.seekTo?.(seconds, true);
+    },
+    duration() {
+      const value = Number(controller?.getDuration?.());
+      return Number.isFinite(value) && value > 0 ? value : NaN;
+    },
+    paused() {
+      const state = controller?.getPlayerState?.();
+      return state !== 1 && state !== 3;
+    },
+    ended: () => controller?.getPlayerState?.() === 0,
+    seeking: () => Boolean(controller?.isSeeking?.()),
+    playbackRate: () => 1,
+    setPlaybackRate(_rate) {},
+    setAudio(volumeUnit, muted) {
+      if (!controller) return;
+      if (Number.isFinite(volumeUnit)) {
+        const percent = Math.max(0, Math.min(100, Math.round(volumeUnit * 100)));
+        if (percent !== lastVolume) {
+          lastVolume = percent;
+          controller.setVolume?.(percent);
+        }
+      }
+      if (typeof muted === 'boolean' && muted !== lastMuted) {
+        lastMuted = muted;
+        if (muted) controller.mute?.();
+        else controller.unMute?.();
+      }
+    },
+    play() {
+      if (!controller) return Promise.resolve();
+      if (typeof controller.play === 'function') return controller.play();
+      controller.playVideo?.();
+      return Promise.resolve();
+    },
+    pause() {
+      controller?.pauseVideo?.();
+    },
+    bufferedAhead,
+    isBufferedAt: (position, toleranceSeconds = 0.05) =>
+      bufferedAhead(Math.max(0, (Number.isFinite(position) ? position : 0) - toleranceSeconds)) > 0,
   };
 }
 

@@ -8,7 +8,13 @@ import { store } from './store.js';
 export function mount(host, deps) {
   async function compatibleFallback(reason, preferHLS = false) {
     if (fallbackPlayback.active && fallbackPlayback.failed()) return;
-    if (!store.room.state?.mediaUrl || store.room.state.mediaId === 'demo' || store.stream.fallbackPending) return;
+    if (
+      !store.room.state?.mediaUrl ||
+      store.room.state.mediaId === 'demo' ||
+      store.room.state.format === 'youtube-embed' ||
+      store.stream.fallbackPending
+    )
+      return;
     // Plex would hand a file the browser already failed on the same H.264 again.
     const skipPlex =
       !preferHLS && store.room.state.format === 'file' && /^(h264|avc1)$/i.test(store.room.state.videoCodec || '');
@@ -203,6 +209,8 @@ export function mount(host, deps) {
     if (
       deps.activity ||
       store.player.layout === 'phone' ||
+      next?.format === 'youtube-embed' ||
+      store.room.state?.format === 'youtube-embed' ||
       !(store.stream.hls || store.stream.av1) ||
       !store.room.state?.mediaUrl ||
       store.player.playbackError

@@ -170,10 +170,60 @@ async function checkApiKey({ apiKey, fetch, signal } = {}) {
   return true;
 }
 
+/**
+ * Fetches basic title, channel, and thumbnail metadata via YouTube's keyless oEmbed endpoint.
+ * Duration is not provided by oEmbed (`durationUnknown: true`) and is learned when the embed player loads.
+ */
+async function fetchOEmbed(videoId, { fetch = globalThis.fetch, signal } = {}) {
+  const watchUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+  const url = `https://www.youtube.com/oembed?url=${encodeURIComponent(watchUrl)}&format=json`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      redirect: 'manual',
+      signal: combinedSignal(signal),
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError' || signal?.aborted) throw error;
+    throw Object.assign(new Error('Could not reach YouTube oEmbed'), { status: 502 });
+  }
+  if (!res.ok) {
+    void res.body?.cancel?.().catch(() => {});
+    if (res.status === 401 || res.status === 403) {
+      throw Object.assign(new Error('This video has embedding disabled or is private'), {
+        status: 400,
+        notEmbeddable: true,
+      });
+    }
+    if (res.status === 404) {
+      throw Object.assign(new Error('YouTube video is unavailable or private'), { status: 404 });
+    }
+    throw Object.assign(new Error(`YouTube oEmbed error (${res.status})`), { status: 502 });
+  }
+  const body = await res.json().catch(() => null);
+  if (!body || typeof body !== 'object') {
+    throw Object.assign(new Error('YouTube oEmbed returned an invalid response'), { status: 502 });
+  }
+  return {
+    id: videoId,
+    title: String(body.title || 'YouTube video').slice(0, 200),
+    channelTitle: String(body.author_name || '').slice(0, 120),
+    thumbnailUrl: isAllowedThumbnailUrl(body.thumbnail_url) ? body.thumbnail_url : undefined,
+    duration: 0,
+    durationUnknown: true,
+    hadUnknownDuration: true,
+    embeddable: true,
+    isLive: false,
+  };
+}
+
 module.exports = {
   parseIsoDuration,
   pickThumbnail,
   fetchVideos,
   fetchPlaylist,
   checkApiKey,
+  fetchOEmbed,
 };

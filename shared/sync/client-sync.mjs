@@ -91,10 +91,13 @@ export function createSync(host) {
   } = host;
   const now = host.now || (() => globalThis.performance.now());
   const makeCorrection = () => (timingApi.correction || defaultTiming.correction)();
-  const makeJumpCorrection = () => (timingApi.jumpCorrection || defaultTiming.jumpCorrection)();
+  const makeJumpCorrection = opts => (timingApi.jumpCorrection || defaultTiming.jumpCorrection)(opts);
   const makeAlarm = opts => (timingApi.alarm || defaultTiming.alarm)(opts);
   let driftCorrection = host.driftCorrection || makeCorrection();
   const jumpDriftCorrection = host.jumpDriftCorrection || makeJumpCorrection();
+  const embedJumpDriftCorrection =
+    host.jumpDriftCorrection ||
+    makeJumpCorrection({ minErrorSeconds: 0.35, maxErrorSeconds: 0.9, settleToleranceSeconds: 0.35 });
   const startAlarm = host.startAlarm || makeAlarm({ now: () => playbackClock.read().serverTime });
   const pauseAlarm = host.pauseAlarm || makeAlarm({ now: () => playbackClock.read().serverTime });
   // Per-page start-delay estimates by stream kind (see timing.mjs startDelay); never persisted.
@@ -116,9 +119,13 @@ export function createSync(host) {
       ? Boolean(host.mediaReady(snapshot))
       : Boolean(snapshot.state?.mediaUrl && snapshot.mediaSource === snapshot.state.mediaUrl);
   function resetDriftCorrection(full = false) {
-    if (full) jumpDriftCorrection.reset();
+    if (full) {
+      jumpDriftCorrection.reset();
+      if (embedJumpDriftCorrection !== jumpDriftCorrection) embedJumpDriftCorrection.reset();
+    }
     driftCorrection.reset();
     jumpDriftCorrection.interrupt();
+    if (embedJumpDriftCorrection !== jumpDriftCorrection) embedJumpDriftCorrection.interrupt();
     player.setPlaybackRate(1);
   }
 
@@ -200,6 +207,10 @@ export function createSync(host) {
       syncCorrectionMode,
     } = snapshot;
     if (!state || !hasLoadedMedia(snapshot) || player.readyState() < 1 || probing || playbackError) return;
+    if (player.isAdPlaying?.()) return;
+    const supportsRate = player.supportsRateSync !== false;
+    const effectiveSyncMode = !supportsRate ? 'jumps' : syncCorrectionMode;
+    const activeJump = !supportsRate ? embedJumpDriftCorrection : jumpDriftCorrection;
     if (hlsTimelinePending) {
       player.pause();
       resetDriftCorrection();
@@ -269,14 +280,20 @@ export function createSync(host) {
     // chunks. Retarget it once the new source-time window is buffered.
     const targetBuffered =
       player.bufferedAhead(alignTarget) >= Math.min(0.5, Math.max(0, effectiveDuration - alignTarget));
-    if (!player.seeking() && !playerWaiting && player.readyState() >= 3 && Math.abs(alignTarget - currentTime) <= 0.65)
+    const settleBand = supportsRate ? 0.65 : 0.9;
+    if (
+      !player.seeking() &&
+      !playerWaiting &&
+      player.readyState() >= 3 &&
+      Math.abs(alignTarget - currentTime) <= settleBand
+    )
       syncSeekPending = false;
     // Let an in-flight alignment refill before chasing a moving playing target.
     // Repeated out-of-buffer seeks abort the very HLS fragments needed to recover.
     const canAlign =
       !syncSeekPending || state.state.paused || (!playerWaiting && player.readyState() >= 3 && targetBuffered);
     const jumpContext =
-      syncCorrectionMode === 'jumps'
+      effectiveSyncMode === 'jumps'
         ? [selected, state.mediaVersion, state.streamVersion, state.epoch, state.readinessVersion].join(':')
         : undefined;
     const align = (eventName = 'sync-seek') => {
@@ -297,12 +314,12 @@ export function createSync(host) {
         host.correctionEligible?.() !== false;
       try {
         const seekDeltaMs = (destination - player.currentTime()) * 1000;
-        const frames = syncCorrectionMode === 'jumps' ? decodedFrames() : undefined;
+        const frames = effectiveSyncMode === 'jumps' ? decodedFrames() : undefined;
         player.seek(destination);
         syncSeekPending = true;
         sharedSeekPending = false;
-        if (syncCorrectionMode === 'jumps')
-          jumpDriftCorrection.committed({ now: now(), frames, target: destination, context: jumpContext });
+        if (effectiveSyncMode === 'jumps')
+          activeJump.committed({ now: now(), frames, target: destination, context: jumpContext });
         diagnosticSample(eventName, { seekDeltaMs });
         if (automaticCorrection)
           host.correction?.({ magnitudeMs: Math.abs(seekDeltaMs), kind: eventName === 'sync-jump' ? 'jump' : 'seek' });
@@ -311,11 +328,13 @@ export function createSync(host) {
       }
       return true;
     };
+    const seekThreshold =
+      state.waitingForReady && state.readinessVersion ? (supportsRate ? 0.05 : 0.25) : supportsRate ? 0.65 : 0.9;
     if (
       (clockValid || state.state.paused) &&
       canAlign &&
       (!player.seeking() || bufferedTarget || sharedSeekPending) &&
-      Math.abs(alignTarget - currentTime) > (state.waitingForReady && state.readinessVersion ? 0.05 : 0.65)
+      Math.abs(alignTarget - currentTime) > seekThreshold
     ) {
       align();
     }
@@ -355,8 +374,8 @@ export function createSync(host) {
       frameSeconds: presentationTiming.cadence ? presentationTiming.cadence() : 0,
     };
     if (
-      syncCorrectionMode === 'jumps' &&
-      jumpDriftCorrection.update({
+      effectiveSyncMode === 'jumps' &&
+      activeJump.update({
         ...correctionInput,
         error: difference,
         context: jumpContext,
@@ -373,7 +392,7 @@ export function createSync(host) {
       align('sync-jump');
     }
     const rate =
-      syncCorrectionMode === 'jumps' && !jumpDriftCorrection.suspended?.()
+      !supportsRate || (effectiveSyncMode === 'jumps' && !activeJump.suspended?.())
         ? 1
         : driftCorrection.update(correctionInput);
     player.setPlaybackRate(rate);
@@ -484,6 +503,7 @@ export function createSync(host) {
     syncSeekPending = false;
     sharedSeekPending = true;
     jumpDriftCorrection.reset();
+    if (embedJumpDriftCorrection !== jumpDriftCorrection) embedJumpDriftCorrection.reset();
     presentationTiming.interrupt?.('seek');
     correctionSuppressionUntil = Math.max(correctionSuppressionUntil, now() + 5000);
     if (hlsPreparationUntil) hlsPreparationUntil = now() + 10000;

@@ -671,6 +671,7 @@ function watchHttp({
     rewriteManifest,
     deliveryOrigins: req =>
       watch.providers.directOrigins(typeof req === 'string' || req === undefined ? req : clientAddress(req)),
+    embedPolicy: () => watch.providers.embedPolicy(),
   };
 }
 module.exports = { watchHttp };

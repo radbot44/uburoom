@@ -368,120 +368,124 @@ export function mount(host, deps) {
         $('stage').classList.remove('ending-active');
         $('ending-stage').hidden = true;
         $('empty-stage').hidden = true;
-        deps.watchFrames();
-        if (
-          (next.format === 'file' &&
-            uburoomPlayback.needsCompatible(next, type => deps.video.canPlayType(type), undefined, hdrMode())) ||
-          (next.format === 'hls' &&
-            uburoomPlayback.needsVideoConversion(next, type => deps.video.canPlayType(type), undefined, hdrMode()))
-        ) {
-          const videoUnsupported = uburoomPlayback.needsVideoConversion(
-            next,
-            type => deps.video.canPlayType(type),
-            undefined,
-            hdrMode(),
-          );
-          const reason =
-            next.hdrKind === 'dovi-p5' && videoUnsupported
-              ? 'Dolby Vision Profile 5 is not supported directly by this browser.'
-              : next.hdr && videoUnsupported && hdrMode() === 'sdr'
-                ? 'SDR chosen in Player settings; converting HDR to SDR.'
-                : next.hdr && videoUnsupported && !uburoomPlayback.supportsHdrDisplay(undefined, hdrMode())
-                  ? 'HDR Original requires an HDR display; converting to SDR.'
-                  : 'The browser does not support the original codecs.';
-          queueMicrotask(() => {
-            if (store.room.state === next) void deps.compatibleFallback(reason, !videoUnsupported);
-          });
-        } else if (uburoomPlayback.localFormat(next.format)) {
-          // With no other codec to try, giving up ends playback, so ride out a slow
-          // or briefly unavailable source for about 40 seconds instead of 7.
-          const alternatives = uburoomPlayback.fallbackCodecs(
-            store.identity.config.localFormats || ['av1'],
-            new Set([next.format]),
-            mime => typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(mime),
-          );
-          try {
-            store.stream.av1 = new uburoomAV1(
-              deps.video,
-              next.mediaUrl,
-              deps.expected,
-              message => {
-                void deps.compatibleFallback(message);
-              },
-              alternatives.length ? 3 : 8,
-              {
-                cache:
-                  store.stream.preparedStream?.url === next.mediaUrl ? store.stream.preparedStream.cache : undefined,
-              },
+        if (next.format === 'youtube-embed') {
+          deps.youtube.attach(next);
+        } else {
+          deps.watchFrames();
+          if (
+            (next.format === 'file' &&
+              uburoomPlayback.needsCompatible(next, type => deps.video.canPlayType(type), undefined, hdrMode())) ||
+            (next.format === 'hls' &&
+              uburoomPlayback.needsVideoConversion(next, type => deps.video.canPlayType(type), undefined, hdrMode()))
+          ) {
+            const videoUnsupported = uburoomPlayback.needsVideoConversion(
+              next,
+              type => deps.video.canPlayType(type),
+              undefined,
+              hdrMode(),
+            );
+            const reason =
+              next.hdrKind === 'dovi-p5' && videoUnsupported
+                ? 'Dolby Vision Profile 5 is not supported directly by this browser.'
+                : next.hdr && videoUnsupported && hdrMode() === 'sdr'
+                  ? 'SDR chosen in Player settings; converting HDR to SDR.'
+                  : next.hdr && videoUnsupported && !uburoomPlayback.supportsHdrDisplay(undefined, hdrMode())
+                    ? 'HDR Original requires an HDR display; converting to SDR.'
+                    : 'The browser does not support the original codecs.';
+            queueMicrotask(() => {
+              if (store.room.state === next) void deps.compatibleFallback(reason, !videoUnsupported);
+            });
+          } else if (uburoomPlayback.localFormat(next.format)) {
+            // With no other codec to try, giving up ends playback, so ride out a slow
+            // or briefly unavailable source for about 40 seconds instead of 7.
+            const alternatives = uburoomPlayback.fallbackCodecs(
+              store.identity.config.localFormats || ['av1'],
+              new Set([next.format]),
+              mime => typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(mime),
+            );
+            try {
+              store.stream.av1 = new uburoomAV1(
+                deps.video,
+                next.mediaUrl,
+                deps.expected,
+                message => {
+                  void deps.compatibleFallback(message);
+                },
+                alternatives.length ? 3 : 8,
+                {
+                  cache:
+                    store.stream.preparedStream?.url === next.mediaUrl ? store.stream.preparedStream.cache : undefined,
+                },
+              );
+              store.stream.preparedStream = undefined;
+            } catch (error) {
+              void deps.compatibleFallback('Converted WebM transport unavailable: ' + error.message);
+            }
+          } else if (next.format === 'hls' && typeof Hls === 'undefined') {
+            store.stream.mediaVersion = store.stream.mediaSource = undefined;
+            void deps
+              .ensureHls()
+              .then(() => {
+                if (store.room.state === next) applyState(next, true);
+              })
+              .catch(error => deps.fail(error.message));
+          } else if (next.format === 'hls' && Hls.isSupported()) {
+            store.player.sync.prepare({ timeline: true });
+            const config = deps.hlsClientConfig(
+              next,
+              store.stream.preparedStream?.url === next.mediaUrl ? store.stream.preparedStream.cache : undefined,
             );
             store.stream.preparedStream = undefined;
-          } catch (error) {
-            void deps.compatibleFallback('Converted WebM transport unavailable: ' + error.message);
-          }
-        } else if (next.format === 'hls' && typeof Hls === 'undefined') {
-          store.stream.mediaVersion = store.stream.mediaSource = undefined;
-          void deps
-            .ensureHls()
-            .then(() => {
-              if (store.room.state === next) applyState(next, true);
-            })
-            .catch(error => deps.fail(error.message));
-        } else if (next.format === 'hls' && Hls.isSupported()) {
-          store.player.sync.prepare({ timeline: true });
-          const config = deps.hlsClientConfig(
-            next,
-            store.stream.preparedStream?.url === next.mediaUrl ? store.stream.preparedStream.cache : undefined,
-          );
-          store.stream.preparedStream = undefined;
-          const client = (store.stream.hls = new Hls(config));
-          client.on(Hls.Events.ERROR, (_, data) => deps.handleHlsError(client, data));
-          client.on(Hls.Events.LEVEL_LOADED, (_, data) => {
-            if (store.stream.hls !== client) return;
-            const level = client.levels[data.level];
-            // Only declared output metadata, never source dimensions or a guessed
-            // profile/frame rate. Single media playlists commonly lack these.
-            void deps.probePlaybackCapabilities(
-              {
-                type: 'media-source',
-                video: {
-                  contentType: `video/mp4; codecs="${level?.videoCodec || ''}"`,
-                  width: level?.width,
-                  height: level?.height,
-                  bitrate: level?.bitrate,
-                  framerate: level?.frameRate,
+            const client = (store.stream.hls = new Hls(config));
+            client.on(Hls.Events.ERROR, (_, data) => deps.handleHlsError(client, data));
+            client.on(Hls.Events.LEVEL_LOADED, (_, data) => {
+              if (store.stream.hls !== client) return;
+              const level = client.levels[data.level];
+              // Only declared output metadata, never source dimensions or a guessed
+              // profile/frame rate. Single media playlists commonly lack these.
+              void deps.probePlaybackCapabilities(
+                {
+                  type: 'media-source',
+                  video: {
+                    contentType: `video/mp4; codecs="${level?.videoCodec || ''}"`,
+                    width: level?.width,
+                    height: level?.height,
+                    bitrate: level?.bitrate,
+                    framerate: level?.frameRate,
+                  },
                 },
-              },
-              client,
-            );
-          });
-          // Finish appending the anchor without requesting segment one before
-          // the target seek; aborting that speculative load adds recovery noise.
-          client.on(Hls.Events.FRAG_LOADED, () => {
-            if (store.stream.hls === client && store.player.sync.timelinePending) client.pauseBuffering();
-          });
-          client.on(Hls.Events.FRAG_BUFFERED, () => deps.handleHlsFragmentBuffered(client));
-          client.on(Hls.Events.BUFFER_FLUSHING, (_, data) => {
-            if (store.stream.hls === client)
-              deps.diagnosticSample('hls-buffer-flushing', { target: data.startOffset, position: data.endOffset });
-          });
-          client.loadSource(next.mediaUrl);
-          client.attachMedia(deps.video);
-          if (next.directHls)
-            store.stream.directStartupTimer = deps.time.setTimeout(() => {
-              if (
-                store.stream.hls === client &&
-                store.room.state?.streamVersion === next.streamVersion &&
-                deps.video.readyState < 2
-              )
-                void deps.proxyDirectFile();
-            }, 12000);
-        } else if (next.directHls)
-          queueMicrotask(() => {
-            if (store.room.state === next) void deps.proxyDirectFile();
-          });
-        else if (next.directDelivery) void deps.attachDirectFile(next);
-        else deps.video.src = next.mediaUrl;
-        if (next.format === 'file') void deps.probePlaybackCapabilities({ type: 'file' });
+                client,
+              );
+            });
+            // Finish appending the anchor without requesting segment one before
+            // the target seek; aborting that speculative load adds recovery noise.
+            client.on(Hls.Events.FRAG_LOADED, () => {
+              if (store.stream.hls === client && store.player.sync.timelinePending) client.pauseBuffering();
+            });
+            client.on(Hls.Events.FRAG_BUFFERED, () => deps.handleHlsFragmentBuffered(client));
+            client.on(Hls.Events.BUFFER_FLUSHING, (_, data) => {
+              if (store.stream.hls === client)
+                deps.diagnosticSample('hls-buffer-flushing', { target: data.startOffset, position: data.endOffset });
+            });
+            client.loadSource(next.mediaUrl);
+            client.attachMedia(deps.video);
+            if (next.directHls)
+              store.stream.directStartupTimer = deps.time.setTimeout(() => {
+                if (
+                  store.stream.hls === client &&
+                  store.room.state?.streamVersion === next.streamVersion &&
+                  deps.video.readyState < 2
+                )
+                  void deps.proxyDirectFile();
+              }, 12000);
+          } else if (next.directHls)
+            queueMicrotask(() => {
+              if (store.room.state === next) void deps.proxyDirectFile();
+            });
+          else if (next.directDelivery) void deps.attachDirectFile(next);
+          else deps.video.src = next.mediaUrl;
+          if (next.format === 'file') void deps.probePlaybackCapabilities({ type: 'file' });
+        }
       }
     }
     const nextTarget = deps.expected();
@@ -534,8 +538,8 @@ export function mount(host, deps) {
     $('empty-hint').textContent = "...or he'll be watching you.";
     $('empty-browse').hidden = !isIdle || !next.canBrowse;
     $('close-room').hidden = !!store.identity.config?.singleRoom;
-    $('timeline').max = next.state.duration || 60;
-    $('duration').textContent = deps.clock(next.state.duration);
+    $('timeline').max = next.durationUnknown ? 100 : next.state.duration || 60;
+    $('duration').textContent = next.durationUnknown ? '--:--' : deps.clock(next.state.duration);
     const chaptersSelect = $('chapters');
     if (chaptersSelect) {
       const chapters = next.chapters || [];

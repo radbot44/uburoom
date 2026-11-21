@@ -11,8 +11,8 @@ const isWatchDocument = route =>
   route === '/' || route === '/activity' || ROOM_PAGE.test(route) || JOIN_PAGE.test(route);
 
 /** The browser's content security policy for the page that hosts the player. */
-function playerPolicy({ nonce, mediaOrigins = '' }) {
-  return `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'${nonce ? ` 'nonce-${nonce}'` : ''}; font-src 'self'; connect-src 'self'${mediaOrigins}; media-src 'self' blob:${mediaOrigins}; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`;
+function playerPolicy({ nonce, mediaOrigins = '', scriptOrigins = '', frameOrigins = '' }) {
+  return `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'${scriptOrigins}; style-src 'self'${nonce ? ` 'nonce-${nonce}'` : ''}; font-src 'self'; connect-src 'self'${mediaOrigins}; media-src 'self' blob:${mediaOrigins}; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'${frameOrigins}; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`;
 }
 
 /**
@@ -91,9 +91,16 @@ function pageRoutes({ config, rooms, watchRoutes, sessions, files }) {
         ctx.nonce = document ? randomBytes(16).toString('base64') : undefined;
         // A provider's own server is named only when it delivers to this page directly.
         const origins = document && !activity.context ? (await watchRoutes().deliveryOrigins?.(req)) || [] : [];
+        const embed = document && !activity.context ? watchRoutes().embedPolicy?.() || {} : {};
+        if (embed.referrerPolicy) res.setHeader('Referrer-Policy', embed.referrerPolicy);
         res.setHeader(
           'Content-Security-Policy',
-          playerPolicy({ nonce: ctx.nonce, mediaOrigins: origins.map(origin => ' ' + origin).join('') }),
+          playerPolicy({
+            nonce: ctx.nonce,
+            mediaOrigins: origins.map(origin => ' ' + origin).join(''),
+            scriptOrigins: (embed.scriptSrc || []).map(origin => ' ' + origin).join(''),
+            frameOrigins: (embed.frameSrc || []).map(origin => ' ' + origin).join(''),
+          }),
         );
         return false;
       },

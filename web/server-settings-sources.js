@@ -254,7 +254,8 @@ export function mount(panel, { request }) {
     const name = nameField(parent, draft.sourceName ?? '', 'YouTube');
     name.addEventListener('input', () => (draft.sourceName = name.value));
 
-    if (draft.probe) {
+    const mode = draft.delivery || 'auto';
+    if (draft.probe && mode !== 'embed') {
       node(
         'p',
         parent,
@@ -263,8 +264,10 @@ export function mount(panel, { request }) {
               (draft.probe.ffmpeg
                 ? ' · FFmpeg ready for high-bitrate downloads.'
                 : ' · FFmpeg not found (will use single-stream MP4 fallback).')
-          : draft.probe.error || 'yt-dlp was not found on PATH.',
-        draft.probe.ok ? 'hint' : 'server-source-problem',
+          : mode === 'auto'
+            ? 'yt-dlp was not found on PATH — Auto mode will use IFrame embed playback until yt-dlp is installed.'
+            : draft.probe.error || 'yt-dlp was not found on PATH.',
+        draft.probe.ok || mode === 'auto' ? 'hint' : 'server-source-problem',
       );
     }
 
@@ -272,14 +275,19 @@ export function mount(panel, { request }) {
     node('legend', deliverySet, 'Delivery mode');
     for (const [value, title, hint] of [
       [
+        'auto',
+        'Auto — yt-dlp cache with IFrame fallback (recommended)',
+        'Uses built-in yt-dlp cache for full sync and Web Audio, and falls back to YouTube’s IFrame player if yt-dlp fails or isn’t installed.',
+      ],
+      [
         'ytdlp',
-        'Built-in yt-dlp cache (recommended)',
-        'Managed by uburoom on this server with full sync and Web Audio.',
+        'Built-in yt-dlp cache only',
+        'Always downloads to disk on this server. Keeps YouTube scripts and iframes blocked by CSP.',
       ],
       [
         'embed',
-        'IFrame embed (API key configuration)',
-        'Configures Data API metadata; embed playback is reserved for a later update.',
+        'IFrame embed only',
+        'Streams directly from YouTube in each viewer’s browser with zero server downloads or disk cache.',
       ],
     ]) {
       const row = node('label', deliverySet, null, 'server-source-server');
@@ -288,7 +296,7 @@ export function mount(panel, { request }) {
         type: 'radio',
         name: 'youtube-delivery',
         value,
-        checked: (draft.delivery || 'ytdlp') === value,
+        checked: mode === value,
       });
       radio.addEventListener('change', () => {
         draft.delivery = value;
@@ -310,8 +318,8 @@ export function mount(panel, { request }) {
       return input;
     };
 
-    const mode = draft.delivery || 'ytdlp';
-    if (mode === 'ytdlp') {
+    const usesCache = mode === 'auto' || mode === 'ytdlp';
+    if (usesCache) {
       const limitInput = field(
         parent,
         'Cache limit (GB)',
@@ -327,18 +335,17 @@ export function mount(panel, { request }) {
       limitInput.step = '0.5';
     }
 
-    const keyRequired = mode === 'embed';
     field(
       parent,
-      keyRequired ? 'YouTube Data API v3 key (required)' : 'YouTube Data API v3 key (optional)',
+      'YouTube Data API v3 key (optional)',
       'password',
       'server-youtube-api-key',
       draft.apiKey,
       editing && source?.hasApiKey ? 'Saved — leave blank to keep existing' : 'AIza...',
       v => (draft.apiKey = v),
-      keyRequired
-        ? 'Required for IFrame embed metadata and durations.'
-        : 'Optional fast metadata & playlist lookup without spawning yt-dlp.',
+      mode === 'embed'
+        ? 'Optional: enables playlists and upfront duration/embeddable checks. Without a key, single videos use YouTube oEmbed.'
+        : 'Optional: fast metadata & playlist lookup without spawning yt-dlp.',
       'new-password',
     );
     if (editing && source?.hasApiKey) {
@@ -350,7 +357,7 @@ export function mount(panel, { request }) {
       node('span', clearKeyRow, 'Remove saved API key');
     }
 
-    if (mode === 'ytdlp') {
+    if (usesCache) {
       const advanced = node('details', parent, null, 'server-source-advanced');
       advanced.open = !!draft.advancedOpen;
       advanced.addEventListener('toggle', () => (draft.advancedOpen = advanced.open));
@@ -397,7 +404,7 @@ export function mount(panel, { request }) {
   function renderEditYouTube(state) {
     const { source } = state;
     state.sourceName ??= source.name;
-    state.delivery ??= source.delivery || 'ytdlp';
+    state.delivery ??= source.delivery || 'auto';
     state.maxCacheGb ??= String(source.maxCacheGb ?? 20);
     state.ytDlp ??= source.ytDlp || '';
     state.cacheDirectory ??= source.cacheDirectory || '';
@@ -657,7 +664,7 @@ export function mount(panel, { request }) {
         view.listing = await step(flow, 'browse', { path: '' });
         if (!current()) return;
       } else if (type === 'youtube') {
-        view.delivery = 'ytdlp';
+        view.delivery = 'auto';
         view.maxCacheGb = '20';
         view.ytDlp = '';
         view.cacheDirectory = '';
@@ -1018,7 +1025,7 @@ export function mount(panel, { request }) {
     inlineActions(body, 'Add YouTube', () =>
       act(async current => {
         await step(view.flow, 'configure', {
-          delivery: view.delivery || 'ytdlp',
+          delivery: view.delivery || 'auto',
           maxCacheGb: view.maxCacheGb === '' ? 20 : Number(view.maxCacheGb),
           ytDlp: view.ytDlp || '',
           cacheDirectory: view.cacheDirectory || '',

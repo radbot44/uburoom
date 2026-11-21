@@ -351,36 +351,41 @@ function watchOperations({
         };
       state.preparingQuality = !!viewer.media?.bootstrapFallback;
       viewer.directDelivery = undefined;
-      const grant =
-        !viewer.localDelivery && viewer.media?.format !== 'local'
-          ? mediaGrant(room, auth, context, viewerId, false, renew)
-          : undefined;
-      if (grant) {
-        state.mediaUrl = `/api/watch/media/${grant}/start`;
-        if (viewer.media.bootstrapFallback) state.mediaUrl = undefined;
-        const media = room.viewers.get(viewerId).media;
-        if (media.format === 'hls' && media.directHls) {
-          state.directHls = { ...media.directHls, session: media.transcodeId };
-          state.directDelivery = true;
-          viewer.directDelivery = media;
-        } else if (!media.bootstrapFallback && viewer.directProxyVersion !== room.mediaVersion) {
-          // Only a provider with direct delivery turned on is asked, so nothing else waits on it.
-          const attempt = watch.providers.directFile(media, auth, () => validGrant(grant), viewer.remoteAddress);
-          const direct = attempt && (await attempt);
-          if (attempt && !(await validGrant(grant))) return result(409, { error: 'Playback delivery changed' });
-          if (direct) {
-            state.mediaUrl = direct;
+      if (viewer.media?.embed && !viewer.media.playbackError) {
+        state.mediaUrl = `embed:${viewer.media.embed.provider}:${viewer.media.embed.videoId}`;
+        state.embed = { ...viewer.media.embed };
+      } else {
+        const grant =
+          !viewer.localDelivery && viewer.media?.format !== 'local'
+            ? mediaGrant(room, auth, context, viewerId, false, renew)
+            : undefined;
+        if (grant) {
+          state.mediaUrl = `/api/watch/media/${grant}/start`;
+          if (viewer.media.bootstrapFallback) state.mediaUrl = undefined;
+          const media = room.viewers.get(viewerId).media;
+          if (media.format === 'hls' && media.directHls) {
+            state.directHls = { ...media.directHls, session: media.transcodeId };
             state.directDelivery = true;
             viewer.directDelivery = media;
-          } else viewer.directDelivery = undefined;
+          } else if (!media.bootstrapFallback && viewer.directProxyVersion !== room.mediaVersion) {
+            // Only a provider with direct delivery turned on is asked, so nothing else waits on it.
+            const attempt = watch.providers.directFile(media, auth, () => validGrant(grant), viewer.remoteAddress);
+            const direct = attempt && (await attempt);
+            if (attempt && !(await validGrant(grant))) return result(409, { error: 'Playback delivery changed' });
+            if (direct) {
+              state.mediaUrl = direct;
+              state.directDelivery = true;
+              viewer.directDelivery = media;
+            } else viewer.directDelivery = undefined;
+          }
+          if (media.selection?.subtitle?.available && media.selection.subtitle.delivery === 'text')
+            state.subtitleUrl = `/api/watch/media/${grant}/captions-${media.captionVersion}`;
+          else if (
+            media.selection?.subtitle?.available &&
+            ['ass', 'pgs', 'vobsub', 'cues'].includes(media.selection.subtitle.delivery)
+          )
+            state.subtitleUrl = `/api/watch/media/${grant}/subtitle-${media.captionVersion}`;
         }
-        if (media.selection?.subtitle?.available && media.selection.subtitle.delivery === 'text')
-          state.subtitleUrl = `/api/watch/media/${grant}/captions-${media.captionVersion}`;
-        else if (
-          media.selection?.subtitle?.available &&
-          ['ass', 'pgs', 'vobsub', 'cues'].includes(media.selection.subtitle.delivery)
-        )
-          state.subtitleUrl = `/api/watch/media/${grant}/subtitle-${media.captionVersion}`;
       }
     }
     const lanes = splitView(state);
@@ -531,10 +536,14 @@ function watchOperations({
   /**
    * `ready`: the tab reports whether it has buffered the room's current video.
    * @param {Context} context
-   * @param {{roomId: string, viewerId: string, mediaVersion?: string, ready?: boolean, readinessVersion?: any, blocker?: unknown}} message
+   * @param {{roomId: string, viewerId: string, mediaVersion?: string, ready?: boolean, readinessVersion?: any, blocker?: unknown, duration?: number}} message
    */
   const ready = (context, message) =>
     inRoom(context, message.roomId, async (auth, room) => {
+      const viewer = room.viewers.get(message.viewerId);
+      if (message.duration !== undefined && viewer?.userId === auth.actor.userId) {
+        await watch.learnDuration(room, viewer, message.mediaVersion, message.duration);
+      }
       await watch.ready(
         room,
         auth.actor,
@@ -560,6 +569,9 @@ function watchOperations({
       /** @type {Record<string, any>} */
       const data = { ...observation, viewerId };
       try {
+        if (observation?.duration !== undefined) {
+          await watch.learnDuration(room, viewer, data.mediaVersion, observation.duration);
+        }
         const previous = viewer.tracking?.previous;
         const observed = watch.tracking.observe(room, viewer, viewerId, data);
         watch.observed(room, viewer);

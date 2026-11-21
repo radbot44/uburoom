@@ -8,7 +8,7 @@ const { checkApiKey } = require('./api');
 const { YouTubeCache } = require('./ytdlp');
 
 const CONTROL = /[\u0000-\u001f\u007f]/;
-const DELIVERIES = new Set(['ytdlp', 'embed']);
+const DELIVERIES = new Set(['auto', 'ytdlp', 'embed']);
 const KNOWN_KEYS = new Set([
   'delivery',
   'api_key',
@@ -46,9 +46,9 @@ function validate(settings, context = {}) {
     }
   }
 
-  const delivery = settings.delivery === undefined ? 'ytdlp' : settings.delivery;
+  const delivery = settings.delivery === undefined ? 'auto' : settings.delivery;
   if (typeof delivery !== 'string' || !DELIVERIES.has(delivery)) {
-    throw new Error(`sources ${id}: youtube.delivery must be 'ytdlp' or 'embed'`);
+    throw new Error(`sources ${id}: youtube.delivery must be 'auto', 'ytdlp', or 'embed'`);
   }
 
   const apiKey = cleanOptionalText(settings.api_key, 256, 'youtube.api_key', id);
@@ -69,10 +69,6 @@ function validate(settings, context = {}) {
       throw new Error(`sources ${id}: youtube.po_token_url must be http:// or https:// without credentials`);
     }
     poTokenUrl = poTokenRaw.replace(/\/+$/, '');
-  }
-
-  if (delivery === 'embed' && !apiKey) {
-    throw new Error(`sources ${id}: youtube.api_key is required when delivery is 'embed'`);
   }
 
   let maxCacheGb = 20;
@@ -129,7 +125,7 @@ async function check(entry, { youtubeFetch = fetch, youtubeRunner, ffmpeg, ffpro
   const checks = [];
   const label = entry.name || entry.id;
 
-  if (entry.delivery === 'ytdlp') {
+  if (entry.delivery === 'ytdlp' || entry.delivery === 'auto') {
     const cache = new YouTubeCache({
       cacheDirectory: entry.cacheDirectory,
       ytDlpPath: entry.ytDlp,
@@ -142,14 +138,21 @@ async function check(entry, { youtubeFetch = fetch, youtubeRunner, ffmpeg, ffpro
     checks.push({
       category: 'Sources',
       name: `${label} yt-dlp`,
-      status: !tools.ok ? 'fail' : tools.outdated ? 'warn' : 'pass',
+      status: !tools.ok ? (entry.delivery === 'auto' ? 'warn' : 'fail') : tools.outdated ? 'warn' : 'pass',
       message: !tools.ok
-        ? tools.error
+        ? entry.delivery === 'auto'
+          ? 'yt-dlp not found; falling back to IFrame embed playback'
+          : tools.error
         : tools.outdated
           ? `yt-dlp ${tools.ytdlp} is outdated for current YouTube extraction`
           : `yt-dlp ${tools.ytdlp} ready`,
       ...(!tools.ok
-        ? { remediation: 'Install yt-dlp on PATH or set youtube.yt_dlp.' }
+        ? {
+            remediation:
+              entry.delivery === 'auto'
+                ? 'Install yt-dlp on PATH or set youtube.yt_dlp for cached full-sync playback.'
+                : 'Install yt-dlp on PATH or set youtube.yt_dlp.',
+          }
         : tools.outdated
           ? { remediation: 'Update yt-dlp (e.g. pip install -U "yt-dlp[default]" or yt-dlp -U).' }
           : {}),
@@ -224,10 +227,10 @@ async function check(entry, { youtubeFetch = fetch, youtubeRunner, ffmpeg, ffpro
   } else if (entry.delivery === 'embed') {
     checks.push({
       category: 'Sources',
-      name: `${label} API key`,
-      status: 'fail',
-      message: 'YouTube Data API key is missing',
-      remediation: 'Set youtube.api_key for embed delivery.',
+      name: `${label} IFrame embed`,
+      status: 'pass',
+      message:
+        'IFrame embed ready (using keyless oEmbed; add youtube.api_key for playlists and exact upfront durations)',
     });
   }
 

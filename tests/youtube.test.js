@@ -10,13 +10,20 @@ const path = require('node:path');
 const YAML = require('yaml');
 
 const { parseYouTubeUrl, isAllowedThumbnailUrl } = require('../server/sources/youtube/urls');
-const { parseIsoDuration, fetchVideos, fetchPlaylist, checkApiKey } = require('../server/sources/youtube/api');
+const {
+  parseIsoDuration,
+  fetchVideos,
+  fetchPlaylist,
+  fetchOEmbed,
+  checkApiKey,
+} = require('../server/sources/youtube/api');
 const { YouTubeCache, safeCacheFile, versionAtLeast } = require('../server/sources/youtube/ytdlp');
-const { YouTubeMedia, YOUTUBE_SERVER } = require('../server/sources/youtube/provider');
+const { YouTubeMedia, YOUTUBE_SERVER, UNKNOWN_EMBED_DURATION } = require('../server/sources/youtube/provider');
 const { validateSources } = require('../server/sources');
 const { loadConfig } = require('../server/config');
 const { checkSources } = require('../scripts/doctor');
 const { MediaChecks } = require('../server/media-check');
+const { MediaPipeline } = require('../server/media-pipeline');
 const subtitles = require('../server/subtitles');
 const { fixture } = require('./helpers/account-app');
 
@@ -186,6 +193,22 @@ function makeYoutubeFetch({ apiKey = SECRET_API_KEY, rejectKey = false, nonEmbed
         });
       }
     }
+    if (url.hostname === 'www.youtube.com' && url.pathname === '/oembed') {
+      const targetUrl = url.searchParams.get('url') || '';
+      const vidMatch = /v=([A-Za-z0-9_-]{11})/.exec(targetUrl);
+      const id = vidMatch ? vidMatch[1] : '';
+      if (!id || id === 'MISSING1234') {
+        return jsonResponse({ error: 'Not Found' }, 404);
+      }
+      if (nonEmbeddableIds.has(id)) {
+        return jsonResponse({ error: 'Unauthorized' }, 401);
+      }
+      return jsonResponse({
+        title: `oEmbed Title ${id}`,
+        author_name: 'oEmbed Author',
+        thumbnail_url: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+      });
+    }
     if (url.hostname === 'i.ytimg.com') {
       const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
       return new Response(pngHeader, { status: 200, headers: { 'Content-Type': 'image/png' } });
@@ -241,27 +264,30 @@ test('parseYouTubeUrl and isAllowedThumbnailUrl accept valid YouTube URLs and re
   assert.equal(isAllowedThumbnailUrl('https://evil.invalid/pic.jpg'), false);
 });
 
-test('validateSources enforces built-in ytdlp defaults, embed api_key, bounds, and single-source limit', () => {
-  const ytdlpDefault = validateSources([{ id: 'youtube', type: 'youtube' }], {
+test('validateSources enforces auto default, ytdlp/embed delivery modes, bounds, and single-source limit', () => {
+  const autoDefault = validateSources([{ id: 'youtube', type: 'youtube' }], {
     base: path.resolve('c:/tmp-base'),
     dataDirectory: path.resolve('c:/tmp-base/data'),
     platform: process.platform,
   });
-  assert.equal(ytdlpDefault[0].delivery, 'ytdlp');
-  assert.equal(ytdlpDefault[0].maxCacheGb, 20);
-  assert.equal(ytdlpDefault[0].maxConcurrent, 2);
-  assert.equal(ytdlpDefault[0].cacheDirectory, path.resolve('c:/tmp-base/data', 'youtube-cache'));
-  assert.equal(ytdlpDefault[0].apiKey, '');
+  assert.equal(autoDefault[0].delivery, 'auto');
+  assert.equal(autoDefault[0].maxCacheGb, 20);
+  assert.equal(autoDefault[0].maxConcurrent, 2);
+  assert.equal(autoDefault[0].cacheDirectory, path.resolve('c:/tmp-base/data', 'youtube-cache'));
+  assert.equal(autoDefault[0].apiKey, '');
 
   const embedOk = validateSources([{ id: 'yt', type: 'youtube', delivery: 'embed', api_key: 'AIza123' }]);
   assert.equal(embedOk[0].delivery, 'embed');
   assert.equal(embedOk[0].apiKey, 'AIza123');
 
+  const embedKeyless = validateSources([{ id: 'yt', type: 'youtube', delivery: 'embed' }]);
+  assert.equal(embedKeyless[0].delivery, 'embed');
+  assert.equal(embedKeyless[0].apiKey, '');
+
   assert.throws(
     () => validateSources([{ id: 'yt', type: 'youtube', sidecar_url: 'http://127.0.0.1:8780' }]),
     /unknown youtube setting/,
   );
-  assert.throws(() => validateSources([{ id: 'yt', type: 'youtube', delivery: 'embed' }]), /api_key is required/);
   assert.throws(() => validateSources([{ id: 'yt', type: 'youtube', max_cache_gb: 0.01 }]), /max_cache_gb/);
   assert.throws(() => validateSources([{ id: 'yt', type: 'youtube', max_concurrent: 9 }]), /max_concurrent/);
   assert.throws(
@@ -311,6 +337,18 @@ test('YouTube Data API helper parses durations, batches video calls, and hides A
       return true;
     },
   );
+
+  const oembedOk = await fetchOEmbed('dQw4w9WgXcQ', { fetch: makeYoutubeFetch() });
+  assert.equal(oembedOk.title, 'oEmbed Title dQw4w9WgXcQ');
+  assert.equal(oembedOk.channelTitle, 'oEmbed Author');
+  assert.equal(oembedOk.embeddable, true);
+  assert.equal(oembedOk.duration, 0);
+
+  await assert.rejects(
+    () => fetchOEmbed('NOEMBED1234', { fetch: makeYoutubeFetch({ nonEmbeddableIds: new Set(['NOEMBED1234']) }) }),
+    { status: 400 },
+  );
+  await assert.rejects(() => fetchOEmbed('MISSING1234', { fetch: makeYoutubeFetch() }), { status: 404 });
 });
 
 test('YouTubeCache coalesces downloads, probes media, evicts LRU items, and blocks traversal/symlinks', async t => {
@@ -470,7 +508,7 @@ test('YouTubeMedia prepares disk downloads, serves Range & VTT subtitles, and re
   assert.equal(art.type, 'image/png');
   assert.equal(art.bytes.subarray(1, 4).toString(), 'PNG');
 
-  // Embed delivery validates metadata (and embeddable flag) and refuses playback truthfully until Stage 3.
+  // Embed delivery validates metadata (and embeddable flag) and prepares youtube-embed media records.
   const embedProvider = new YouTubeMedia({
     delivery: 'embed',
     apiKey: SECRET_API_KEY,
@@ -478,7 +516,70 @@ test('YouTubeMedia prepares disk downloads, serves Range & VTT subtitles, and re
     fetch: makeYoutubeFetch({ nonEmbeddableIds: new Set(['NOEMBED1234']) }),
   });
   await assert.rejects(() => embedProvider.resolveUrl('https://youtu.be/NOEMBED1234'), { status: 400 });
-  await assert.rejects(() => embedProvider.source('dQw4w9WgXcQ'), { status: 501 });
+  const embedResolved = await embedProvider.resolveUrl('https://youtu.be/dQw4w9WgXcQ');
+  assert.equal(embedResolved.item.duration, 42);
+  assert.equal(Boolean(embedResolved.item.durationUnknown), false);
+  const { media: embedMedia } = await embedProvider.source('dQw4w9WgXcQ');
+  assert.equal(embedMedia.format, 'youtube-embed');
+  assert.deepEqual(embedMedia.embed, {
+    provider: 'youtube',
+    videoId: 'dQw4w9WgXcQ',
+    watchUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  });
+  assert.equal(embedMedia.sourceKey, undefined);
+
+  // Keyless embed resolves via oEmbed with provisional duration until learned from a viewer.
+  const keylessEmbed = new YouTubeMedia({
+    delivery: 'embed',
+    pipeline: { release: async () => {} },
+    fetch: makeYoutubeFetch({ nonEmbeddableIds: new Set(['NOEMBED1234']) }),
+  });
+  const keylessResolved = await keylessEmbed.resolveUrl('https://youtu.be/dQw4w9WgXcQ');
+  assert.equal(keylessResolved.item.title, 'oEmbed Title dQw4w9WgXcQ');
+  assert.equal(keylessResolved.item.duration, UNKNOWN_EMBED_DURATION);
+  assert.equal(keylessResolved.item.durationUnknown, true);
+  const { media: keylessMedia } = await keylessEmbed.source('dQw4w9WgXcQ');
+  assert.equal(keylessMedia.format, 'youtube-embed');
+  assert.equal(keylessMedia.durationUnknown, true);
+  assert.equal(keylessMedia.durationTolerance, Infinity);
+  keylessEmbed.noteDuration('dQw4w9WgXcQ', 213.5);
+  const { media: afterLearned } = await keylessEmbed.source('dQw4w9WgXcQ');
+  assert.equal(afterLearned.duration, 213.5);
+  assert.equal(Boolean(afterLearned.durationUnknown), false);
+  assert.equal(
+    afterLearned.durationTolerance,
+    Infinity,
+    'keeps Infinity tolerance so bookmarks made pre-learn stay valid',
+  );
+
+  // Auto delivery uses yt-dlp when healthy and falls back to youtube-embed when yt-dlp fails.
+  const autoProvider = new YouTubeMedia({
+    delivery: 'auto',
+    cacheDirectory: path.join(dir, 'auto'),
+    pipeline: new MediaPipeline({}, { logger: { info() {}, warn() {} } }),
+    fetch: makeYoutubeFetch({ nonEmbeddableIds: new Set(['NOEMBED1234']) }),
+    runCommand: yt.runner,
+    logger: testLogger,
+  });
+  t.after(() => autoProvider.close());
+  const autoCached = await autoProvider.prepare('dQw4w9WgXcQ', 'direct');
+  assert.equal(autoCached.format, 'file');
+  const autoFallback = await autoProvider.prepare('FAIL0000001', 'direct');
+  assert.equal(autoFallback.format, 'youtube-embed');
+  assert.equal(autoFallback.deliveryReason, 'youtube-embed-fallback');
+  assert.equal(autoFallback.embed.videoId, 'FAIL0000001');
+
+  // Auto delivery rejects when yt-dlp fails AND video is non-embeddable.
+  const ytFailNoEmbed = makeYoutubeRunner({ failIds: new Set(['NOEMBED1234']) });
+  const autoReject = new YouTubeMedia({
+    delivery: 'auto',
+    cacheDirectory: path.join(dir, 'auto-reject'),
+    pipeline: { release: async () => {} },
+    fetch: makeYoutubeFetch({ nonEmbeddableIds: new Set(['NOEMBED1234']) }),
+    runCommand: ytFailNoEmbed.runner,
+  });
+  t.after(() => autoReject.close());
+  await assert.rejects(() => autoReject.prepare('NOEMBED1234', 'direct'), { status: 400 });
 });
 
 test('library.resolve, playlist bulk queue, warmQueue, streaming, and Source Settings work without leaking secrets', async t => {
@@ -685,4 +786,206 @@ test('library.resolve, playlist bulk queue, warmQueue, streaming, and Source Set
     delivery: 'ytdlp',
     max_cache_gb: 15,
   });
+
+  // In ytdlp-only mode, watch document CSP blocks YouTube iframes/scripts and keeps Referrer-Policy: no-referrer.
+  const ytdlpDoc = await host.request('/');
+  assert.equal(ytdlpDoc.status, 200);
+  assert.equal(ytdlpDoc.headers['referrer-policy'], 'no-referrer');
+  assert.doesNotMatch(ytdlpDoc.headers['content-security-policy'] || '', /youtube\.com/);
+});
+
+test('auto delivery falls back to IFrame embed, learns keyless oEmbed duration on ready, sets embed CSP, and forces jump sync', async t => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-yt-embed-app-'));
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+  const configFile = path.join(dir, 'config.yaml');
+  const yt = makeYoutubeRunner({ missingYtDlp: true });
+  const initialConfig = {
+    access: { password: true },
+    secrets: { server_password: 'fixture-private-password' },
+    operator: { identities: ['discord:100000000000000001'] },
+    discord: {
+      client_id: '100000000000000010',
+      client_secret: 'fixture-private-client-secret',
+      owner_id: '100000000000000001',
+    },
+    sources: [
+      {
+        id: 'youtube',
+        type: 'youtube',
+        name: 'YouTube',
+      },
+    ],
+  };
+  await fsp.writeFile(configFile, YAML.stringify(initialConfig), 'utf8');
+
+  const f = await fixture(
+    t,
+    undefined,
+    {
+      ...loadConfig(configFile),
+      accountFile: undefined,
+      credentialKeyFile: undefined,
+      guildId: 'guild',
+      channels: ['commands'],
+    },
+    { youtubeFetch: makeYoutubeFetch(), youtubeRunner: yt.runner },
+  );
+
+  const host = f.browser();
+  await host.discord('host');
+
+  // Auto mode enables YouTube IFrame CSP and strict-origin-when-cross-origin Referrer-Policy on watch document.
+  const doc = await host.request('/');
+  assert.equal(doc.status, 200);
+  assert.equal(doc.headers['referrer-policy'], 'strict-origin-when-cross-origin');
+  const csp = doc.headers['content-security-policy'] || '';
+  assert.match(csp, /script-src[^;]*https:\/\/www\.youtube\.com/);
+  assert.match(csp, /frame-src[^;]*https:\/\/www\.youtube\.com/);
+
+  // Keyless + missing yt-dlp resolves via oEmbed and prepares youtube-embed fallback with provisional duration.
+  const resolved = await host.request(
+    '/api/watch/library/resolve?url=' + encodeURIComponent('https://youtu.be/dQw4w9WgXcQ'),
+  );
+  assert.equal(resolved.status, 200);
+  assert.equal(resolved.body.item.title, 'oEmbed Title dQw4w9WgXcQ');
+  assert.equal(resolved.body.item.duration, UNKNOWN_EMBED_DURATION);
+  assert.equal(resolved.body.item.durationUnknown, true);
+
+  const created = await host.post('/api/watch/rooms', { name: 'Embed Room' });
+  assert.equal(created.status, 201);
+  const roomId = created.body.id;
+  const viewerId = randomUUID();
+  const initialState = (await host.request(`/api/watch/rooms/${roomId}?viewer=${viewerId}&quality=direct`)).body;
+
+  const setRes = await host.post(`/api/watch/rooms/${roomId}/command`, {
+    viewerId,
+    epoch: initialState.epoch,
+    expiresAt: Date.now() + 2500,
+    command: {
+      action: 'media.load',
+      args: { mediaId: 'dQw4w9WgXcQ', quality: 'direct', serverId: YOUTUBE_SERVER },
+    },
+  });
+  assert.equal(setRes.status, 200);
+  assert.equal(setRes.body.status, 'applied', setRes.body.message);
+
+  const embedView = (await host.request(`/api/watch/rooms/${roomId}?viewer=${viewerId}&quality=direct`)).body;
+  assert.equal(embedView.format, 'youtube-embed');
+  assert.equal(embedView.mediaUrl, 'embed:youtube:dQw4w9WgXcQ');
+  assert.deepEqual(embedView.embed, {
+    provider: 'youtube',
+    videoId: 'dQw4w9WgXcQ',
+    watchUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  });
+  assert.equal(embedView.state.duration, UNKNOWN_EMBED_DURATION);
+  assert.equal(embedView.durationUnknown, true);
+
+  // First viewer ready with real duration updates room.media.duration and clears durationUnknown.
+  const readyRes = await host.post(`/api/watch/rooms/${roomId}/ready`, {
+    viewerId,
+    mediaVersion: embedView.mediaVersion,
+    ready: true,
+    duration: 212.5,
+  });
+  assert.equal(readyRes.status, 200);
+  const afterReadyView = (await host.request(`/api/watch/rooms/${roomId}?viewer=${viewerId}&quality=direct`)).body;
+  assert.equal(afterReadyView.state.duration, 212.5);
+  assert.equal(afterReadyView.durationUnknown, false);
+
+  // Verify createYouTubePlayerAdapter + createSync enforces jump-only sync and pauses sync during ads.
+  const { createYouTubePlayerAdapter, createSync, presentation } = await import('../shared/sync/index.mjs');
+  let curTime = 10;
+  let rate = 1;
+  let adPlaying = false;
+  let nowMs = 10000;
+  const controller = {
+    getPlayerState: () => 1,
+    getCurrentTime: () => curTime,
+    getDuration: () => 212.5,
+    getVideoLoadedFraction: () => 0.5,
+    seekTo: s => {
+      curTime = s;
+    },
+    playVideo: () => {},
+    pauseVideo: () => {},
+    setVolume: () => {},
+    mute: () => {},
+    unMute: () => {},
+    isReady: () => true,
+    isSeeking: () => false,
+    isAdPlaying: () => adPlaying,
+    hasUnlocked: () => true,
+  };
+  const adapter = createYouTubePlayerAdapter(controller);
+  assert.equal(adapter.supportsRateSync, false);
+  const noop = () => {};
+  const roomSnapshot = {
+    mediaUrl: 'embed:youtube:dQw4w9WgXcQ',
+    mediaVersion: 'v1',
+    streamVersion: 's1',
+    epoch: 1,
+    revision: 1,
+    startAt: nowMs - 10600,
+    pauseAt: undefined,
+    serverNow: nowMs,
+    format: 'youtube-embed',
+    waitingForReady: false,
+    state: { duration: 212.5, paused: false, volume: 100, muted: false },
+  };
+  const sync = createSync({
+    player: adapter,
+    read: () => ({
+      state: roomSnapshot,
+      selected: roomId,
+      mediaSource: 'embed:youtube:dQw4w9WgXcQ',
+      receivedAt: nowMs,
+      probing: false,
+      playbackError: '',
+      playerWaiting: false,
+      autoplayBlocked: false,
+      readyVersion: 'v1:s1',
+      syncCorrectionMode: 'proportional',
+    }),
+    clock: {
+      read: () => ({
+        valid: true,
+        serverTime: nowMs,
+        clockRevision: 1,
+        clockUncertaintyMs: 5,
+        clockStabilityMs: 5,
+      }),
+    },
+    presentation: presentation(() => nowMs),
+    expected: () => 10.6,
+    decodedFrames: () => 100,
+    unlockLocal: () => Promise.resolve(),
+    reportReadiness: () => Promise.resolve(),
+    render: noop,
+    checkFrames: noop,
+    sample: noop,
+    error: noop,
+    playing: noop,
+    visibility: () => 'visible',
+    online: () => true,
+    repeat: () => 0,
+    cancelRepeat: noop,
+    now: () => nowMs,
+  });
+  t.after(() => sync.close());
+
+  // During an ad, synchronize() does not touch currentTime or playbackRate.
+  adPlaying = true;
+  await sync.synchronize();
+  assert.equal(curTime, 10);
+  assert.equal(rate, 1);
+
+  // Outside an ad, 0.6s drift (>= 0.35s embed threshold) uses jump sync after dwell and keeps playbackRate = 1.
+  adPlaying = false;
+  await sync.synchronize();
+  nowMs += 900;
+  await sync.synchronize();
+  nowMs += 900;
+  await sync.synchronize();
+  assert.equal(rate, 1);
+  assert.ok(Math.abs(curTime - 10.6) < 0.05);
 });

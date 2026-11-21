@@ -8,7 +8,7 @@ const Tracks = require('../../media-tracks');
 const { prepareStream } = require('../../media-delivery');
 const { runOperation, currentSignal } = require('../../operation');
 const { VIDEO_ID, PLAYLIST_ID, parseYouTubeUrl, isAllowedThumbnailUrl } = require('./urls');
-const { fetchVideos, fetchPlaylist } = require('./api');
+const { fetchVideos, fetchPlaylist, fetchOEmbed } = require('./api');
 const { YouTubeCache, SAFE_ID, SAFE_TRACK, DEFAULT_MAX_CACHE_BYTES } = require('./ytdlp');
 
 const YOUTUBE_SERVER = 'youtube';
@@ -19,16 +19,17 @@ const META_TTL_MS = 10 * 60 * 1000;
 const META_CACHE_MAX = 500;
 const PLAYLIST_CACHE_MAX = 50;
 const PAGE = 30;
+const UNKNOWN_EMBED_DURATION = 3600;
 
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 
 /**
  * MediaProvider implementation for YouTube links and playlists backed by either
- * the built-in `yt-dlp` rolling disk cache or (future) IFrame embed playback.
+ * the built-in `yt-dlp` rolling disk cache, IFrame embed playback, or automatic fallback.
  */
 class YouTubeMedia {
   constructor({
-    delivery = 'ytdlp',
+    delivery = 'auto',
     apiKey = '',
     ytDlp = '',
     ffmpegPath = '',
@@ -50,7 +51,7 @@ class YouTubeMedia {
     this.principal = 'configured';
     this.serverId = YOUTUBE_SERVER;
     this.name = label || 'YouTube';
-    this.delivery = delivery || 'ytdlp';
+    this.delivery = delivery || 'auto';
     this.apiKey = apiKey || '';
     this.cacheDirectory = cacheDirectory || '';
     this.playlistLimit = Math.max(1, Math.min(Number(playlistLimit) || 50, 200));
@@ -64,7 +65,7 @@ class YouTubeMedia {
       : DEFAULT_MAX_CACHE_BYTES;
 
     this.cache =
-      this.delivery === 'ytdlp' && this.cacheDirectory
+      (this.delivery === 'ytdlp' || this.delivery === 'auto') && this.cacheDirectory
         ? new YouTubeCache({
             cacheDirectory: this.cacheDirectory,
             maxCacheBytes: maxBytes,
@@ -79,16 +80,45 @@ class YouTubeMedia {
             logger,
           })
         : null;
-    this.configured = this.delivery === 'embed' ? !!this.apiKey : !!this.cache;
+    this.configured = this.delivery === 'ytdlp' ? !!this.cache : true;
     this.videos = new Map();
     this.playlists = new Map();
     this.inFlight = new Map();
+    this.provisionalDurations = new Set();
     this.closed = false;
+  }
+
+  rememberProvisionalDuration(videoId) {
+    if (!videoId) return;
+    this.provisionalDurations.delete(videoId);
+    this.provisionalDurations.add(videoId);
+    while (this.provisionalDurations.size > META_CACHE_MAX) {
+      this.provisionalDurations.delete(this.provisionalDurations.values().next().value);
+    }
+  }
+
+  noteDuration(videoId, duration) {
+    if (!VIDEO_ID.test(videoId || '') || !Number.isFinite(duration) || duration < 1 || duration > 86400) return;
+    const prev = this.cachedVideo(videoId);
+    this.rememberProvisionalDuration(videoId);
+    this.cacheVideo({
+      ...(prev || { id: videoId }),
+      duration: Math.round(duration * 10) / 10,
+      durationUnknown: false,
+      hadUnknownDuration: true,
+    });
   }
 
   cacheVideo(video) {
     if (!video?.id) return;
     const prev = this.videos.get(video.id)?.value;
+    const hadUnknownDuration = Boolean(
+      prev?.hadUnknownDuration ||
+      video.hadUnknownDuration ||
+      video.durationUnknown ||
+      this.provisionalDurations.has(video.id),
+    );
+    const hasDuration = Number(video.duration) > 0;
     const merged = prev
       ? {
           ...prev,
@@ -96,10 +126,16 @@ class YouTubeMedia {
           thumbnailUrl: video.thumbnailUrl || prev.thumbnailUrl,
           channelTitle: video.channelTitle || prev.channelTitle,
           description: video.description || prev.description,
-          duration: video.duration || prev.duration,
+          duration: hasDuration ? Number(video.duration) : prev.duration,
+          durationUnknown: hasDuration ? false : Boolean(video.durationUnknown ?? prev.durationUnknown),
+          hadUnknownDuration,
           year: video.year || prev.year,
         }
-      : video;
+      : {
+          ...video,
+          durationUnknown: hasDuration ? false : Boolean(video.durationUnknown),
+          hadUnknownDuration,
+        };
     this.videos.delete(video.id);
     this.videos.set(video.id, { value: merged, expiresAt: Date.now() + META_TTL_MS });
     while (this.videos.size > META_CACHE_MAX) {
@@ -148,10 +184,17 @@ class YouTubeMedia {
     return promise;
   }
 
-  async getVideoMeta(videoId) {
+  async getVideoMeta(videoId, { forEmbed = false } = {}) {
     if (!VIDEO_ID.test(videoId || '')) throw fail('Invalid YouTube video ID', 404);
     const cached = this.cachedVideo(videoId);
-    if (cached && cached.duration > 0) return cached;
+    const canUseUnknown = this.delivery === 'embed' || this.delivery === 'auto';
+    if (
+      cached &&
+      (!forEmbed || !this.apiKey || cached.embeddable !== undefined) &&
+      (cached.duration > 0 || (canUseUnknown && cached.durationUnknown))
+    ) {
+      return cached;
+    }
 
     return this.coalesce('video:' + videoId, async () => {
       const url = `https://www.youtube.com/watch?v=${videoId}`;
@@ -161,9 +204,25 @@ class YouTubeMedia {
         if (!found) throw fail('YouTube video is unavailable or private', 404);
         return this.cacheVideo(found);
       }
-      if (!this.cache) throw fail('YouTube metadata source is not configured', 500);
-      const res = await this.cache.metadata(url);
-      return this.cacheVideo(res.video);
+      if (!forEmbed && this.cache) {
+        try {
+          const res = await this.cache.metadata(url);
+          return this.cacheVideo(res.video);
+        } catch (error) {
+          if (this.delivery !== 'auto' || error?.name === 'AbortError') throw error;
+          this.logger?.warn?.(
+            'YouTube',
+            `yt-dlp metadata failed for ${videoId} (${error?.message || error}); falling back to oEmbed`,
+          );
+        }
+      }
+      if (canUseUnknown) {
+        if (cached && cached.duration > 0) return cached;
+        const meta = await fetchOEmbed(videoId, { fetch: this.fetch });
+        this.rememberProvisionalDuration(videoId);
+        return this.cacheVideo(meta);
+      }
+      throw fail('YouTube metadata source is not configured', 500);
     });
   }
 
@@ -185,7 +244,10 @@ class YouTubeMedia {
         pl = await this.cache.metadata(url, { limit: this.playlistLimit });
         if (pl.kind !== 'playlist') throw fail('That link did not resolve to a YouTube playlist', 400);
       } else {
-        throw fail('YouTube metadata source is not configured', 500);
+        throw fail(
+          'YouTube playlists in IFrame embed mode require a YouTube Data API v3 key (or yt-dlp in Auto mode)',
+          400,
+        );
       }
       pl.items = (pl.items || []).map(v => this.cacheVideo(v)).filter(Boolean);
       this.cachePlaylist(pl);
@@ -194,17 +256,20 @@ class YouTubeMedia {
   }
 
   toCatalogItem(video) {
-    const duration = Number(video.duration) > 0 ? Number(video.duration) : 0;
+    const canUseUnknown = this.delivery === 'embed' || this.delivery === 'auto';
+    const unknown = !(Number(video.duration) > 0) && !!video.durationUnknown && canUseUnknown;
+    const duration = Number(video.duration) > 0 ? Number(video.duration) : unknown ? UNKNOWN_EMBED_DURATION : 0;
     return {
       id: video.id,
       type: 'movie',
       title: video.title || 'YouTube video',
       subtitle: video.channelTitle || 'YouTube',
       duration,
+      ...(unknown ? { durationUnknown: true } : {}),
       ...(video.year ? { year: video.year } : {}),
       ...(video.summary || video.description ? { summary: (video.summary || video.description).slice(0, 500) } : {}),
       available:
-        duration > 0 &&
+        (duration > 0 || unknown) &&
         video.status !== 'failed' &&
         !video.isLive &&
         (this.delivery !== 'embed' || video.embeddable !== false),
@@ -236,7 +301,8 @@ class YouTubeMedia {
     if (video.isLive) throw fail('Live streams and upcoming premieres are not supported', 400);
     if (this.delivery === 'embed' && video.embeddable === false)
       throw fail('This video has embedding disabled by its owner', 400);
-    if (!(Number(video.duration) > 0)) throw fail('This YouTube video has no playable duration', 400);
+    const canUseUnknown = (this.delivery === 'embed' || this.delivery === 'auto') && !!video.durationUnknown;
+    if (!(Number(video.duration) > 0) && !canUseUnknown) throw fail('This YouTube video has no playable duration', 400);
     return {
       kind: 'video',
       item: this.toCatalogItem(video),
@@ -351,13 +417,15 @@ class YouTubeMedia {
     if (video.isLive) throw fail('Live streams and upcoming premieres are not supported', 400);
     if (this.delivery === 'embed' && video.embeddable === false)
       throw fail('This video has embedding disabled by its owner', 400);
-    if (!(Number(video.duration) > 0)) throw fail('This YouTube video has no playable duration', 400);
+    const canUseUnknown = (this.delivery === 'embed' || this.delivery === 'auto') && !!video.durationUnknown;
+    if (!(Number(video.duration) > 0) && !canUseUnknown) throw fail('This YouTube video has no playable duration', 400);
     return this.toCatalogItem(video);
   }
 
   async availability(ids) {
     const valid = (ids || []).filter(id => VIDEO_ID.test(id));
     const map = new Map();
+    const canUseUnknown = this.delivery === 'embed' || this.delivery === 'auto';
     if (this.apiKey && valid.length) {
       const found = await fetchVideos(valid, { apiKey: this.apiKey, fetch: this.fetch });
       for (const id of valid) {
@@ -377,7 +445,7 @@ class YouTubeMedia {
           id,
           cached.status !== 'failed' &&
             !cached.isLive &&
-            Number(cached.duration) > 0 &&
+            (Number(cached.duration) > 0 || (canUseUnknown && !!cached.durationUnknown)) &&
             (this.delivery !== 'embed' || cached.embeddable !== false),
         );
       } else {
@@ -388,7 +456,7 @@ class YouTubeMedia {
   }
 
   async warmQueue(items) {
-    if (this.closed || this.delivery !== 'ytdlp' || !this.cache) return;
+    if (this.closed || this.delivery === 'embed' || !this.cache) return;
     const valid = (items || []).filter(item => item?.id && VIDEO_ID.test(item.id)).map(item => ({ id: item.id }));
     if (!valid.length) return;
     await this.cache.warm(valid);
@@ -436,19 +504,106 @@ class YouTubeMedia {
     return type === 'playlist' ? PLAYLIST_ID.test(id || '') : VIDEO_ID.test(id || '');
   }
 
-  prepare(id, quality, compatible = false, source, fallback, choices = {}) {
+  async prepareEmbed(id, _choices = {}, { fallbackFromYtdlp = false } = {}) {
+    if (!VIDEO_ID.test(id || '')) throw Object.assign(new PlaybackError('Invalid YouTube video ID.'), { status: 400 });
+    let video;
+    try {
+      video = await this.getVideoMeta(id, { forEmbed: true });
+    } catch (error) {
+      if (error instanceof PlaybackError) throw error;
+      const msg =
+        fallbackFromYtdlp && error?.notEmbeddable
+          ? 'yt-dlp could not download this video, and embedding is disabled by its owner.'
+          : error?.message || 'Could not load YouTube video for embedded playback.';
+      throw Object.assign(new PlaybackError(msg), { status: error?.status || 502 });
+    }
+    if (video.isLive) {
+      throw Object.assign(new PlaybackError('Live streams and upcoming premieres are not supported.'), { status: 400 });
+    }
+    if (video.embeddable === false) {
+      throw Object.assign(
+        new PlaybackError(
+          fallbackFromYtdlp
+            ? 'yt-dlp could not download this video, and embedding is disabled by its owner.'
+            : 'This video has embedding disabled by its owner.',
+        ),
+        { status: 400 },
+      );
+    }
+    const durationUnknown = !(Number(video.duration) > 0);
+    const duration = durationUnknown ? UNKNOWN_EMBED_DURATION : Number(video.duration);
+    if (durationUnknown) this.rememberProvisionalDuration(id);
+    return {
+      title: video.title || 'YouTube video',
+      subtitle: video.channelTitle || 'YouTube',
+      duration,
+      durationUnknown,
+      durationTolerance:
+        durationUnknown || video.hadUnknownDuration || this.provisionalDurations.has(id) ? Infinity : 2,
+      kind: this.kind,
+      type: 'movie',
+      format: 'youtube-embed',
+      embed: {
+        provider: 'youtube',
+        videoId: id,
+        watchUrl: `https://www.youtube.com/watch?v=${id}`,
+      },
+      qualities: [{ id: 'direct', label: 'YouTube Auto' }],
+      quality: 'direct',
+      deliveryReason: fallbackFromYtdlp ? 'youtube-embed-fallback' : 'youtube-embed',
+      resources: new Map(),
+      id,
+      principal: this.principal,
+      provider: this,
+      chapters: [],
+      markers: [],
+    };
+  }
+
+  async prepare(id, quality, compatible = false, source, fallback, choices = {}) {
+    if (source?.format === 'youtube-embed') {
+      return {
+        ...source,
+        resources: new Map(),
+        quality: 'direct',
+      };
+    }
+    if (this.delivery === 'embed') {
+      return this.prepareEmbed(id, choices);
+    }
+    if (this.delivery === 'auto') {
+      if (!source?.sourceStart) {
+        try {
+          if (!this.cache) throw new Error('YouTube cache directory is not configured');
+          const prepared = await this.cache.prepare(id, { signal: choices.signal || currentSignal() });
+          if (!(Number(prepared.duration) > 0)) {
+            throw Object.assign(new PlaybackError('This YouTube video has no playable duration.'), { status: 400 });
+          }
+        } catch (error) {
+          if (
+            error?.name === 'AbortError' ||
+            choices.signal?.aborted ||
+            currentSignal()?.aborted ||
+            error?.status === 400
+          ) {
+            throw error;
+          }
+          this.logger?.warn?.(
+            'YouTube',
+            `yt-dlp failed for ${id} (${error?.message || error}); falling back to IFrame embed`,
+          );
+          return this.prepareEmbed(id, choices, { fallbackFromYtdlp: true });
+        }
+      }
+      return prepareStream(this, id, quality, compatible, source, fallback, choices);
+    }
     return prepareStream(this, id, quality, compatible, source, fallback, choices);
   }
 
   async source(id, _previous, choices = {}) {
     if (!VIDEO_ID.test(id || '')) throw Object.assign(new PlaybackError('Invalid YouTube video ID.'), { status: 400 });
     if (this.delivery === 'embed') {
-      throw Object.assign(
-        new PlaybackError(
-          'YouTube IFrame embed delivery is not yet supported in this version; switch this YouTube source to built-in yt-dlp cache.',
-        ),
-        { status: 501 },
-      );
+      return { media: await this.prepareEmbed(id, choices), detail: {} };
     }
     if (!this.cache) {
       throw Object.assign(new PlaybackError('YouTube cache directory is not configured.'), { status: 500 });
@@ -517,7 +672,7 @@ class YouTubeMedia {
       title: cached?.title || prepared.title || 'YouTube video',
       subtitle: cached?.channelTitle || prepared.channelTitle || 'YouTube',
       duration: prepared.duration,
-      durationTolerance: 2,
+      durationTolerance: cached?.hadUnknownDuration || this.provisionalDurations.has(id) ? Infinity : 2,
       kind: this.kind,
       type: 'movie',
       resources: new Map(),
@@ -633,7 +788,8 @@ class YouTubeMedia {
   }
 
   stop(media) {
-    return runOperation(undefined, () => this.pipeline.release(media));
+    if (!media || media.format === 'youtube-embed') return Promise.resolve();
+    return runOperation(undefined, () => this.pipeline?.release?.(media));
   }
 
   async close() {
@@ -646,8 +802,9 @@ class YouTubeMedia {
  * One YouTube source as a media provider under the fixed `youtube` server identity.
  */
 function youtubeProvider({ source, config, pipeline, logger, youtubeFetch, youtubeRunner, platform }) {
+  const delivery = source.delivery || 'auto';
   const provider = new YouTubeMedia({
-    delivery: source.delivery,
+    delivery,
     apiKey: source.apiKey,
     ytDlp: source.ytDlp,
     ffmpegPath: config?.ffmpegPath,
@@ -670,7 +827,16 @@ function youtubeProvider({ source, config, pipeline, logger, youtubeFetch, youtu
     root: provider,
     identity: async () => YOUTUBE_SERVER,
     scopeFor: async () => provider,
+    ...(delivery === 'embed' || delivery === 'auto'
+      ? {
+          embedPolicy: {
+            scriptSrc: ['https://www.youtube.com'],
+            frameSrc: ['https://www.youtube.com', 'https://www.youtube-nocookie.com'],
+            referrerPolicy: 'strict-origin-when-cross-origin',
+          },
+        }
+      : {}),
   };
 }
 
-module.exports = { YouTubeMedia, youtubeProvider, YOUTUBE_SERVER };
+module.exports = { YouTubeMedia, youtubeProvider, YOUTUBE_SERVER, UNKNOWN_EMBED_DURATION };

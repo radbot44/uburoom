@@ -3,6 +3,14 @@ import { uburoomAV1 } from './watch-av1.js';
 import * as uburoomPlayback from './playback-policy.js';
 
 function prepare(next, { target, seconds = 1, hlsConfig }) {
+  if (next?.format === 'youtube-embed') {
+    return {
+      cache: { recording: false, bytes: 0, segments: new Map(), windows: new Map() },
+      failed: true,
+      ahead: () => 0,
+      close() {},
+    };
+  }
   const element = document.createElement('video'),
     cache = { recording: true, bytes: 0, segments: new Map(), windows: new Map() };
   element.muted = true;

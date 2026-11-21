@@ -214,6 +214,52 @@ class Watch extends WatchParts {
     });
     if (result.error) throw result.error;
   }
+  async learnDuration(room, viewer, mediaVersion, rawDuration) {
+    if (
+      !room ||
+      !viewer ||
+      room.media?.durationUnknown !== true ||
+      room.mediaVersion !== mediaVersion ||
+      viewer.mediaVersion !== mediaVersion ||
+      !Number.isFinite(rawDuration) ||
+      rawDuration < 1 ||
+      rawDuration > 86400
+    )
+      return;
+    await this.inRoom(
+      room,
+      () => {
+        if (
+          room.media?.durationUnknown !== true ||
+          room.mediaVersion !== mediaVersion ||
+          ![...room.viewers.values()].includes(viewer)
+        )
+          return;
+        const duration = Math.round(rawDuration * 10) / 10;
+        room.media.duration = duration;
+        room.media.durationUnknown = false;
+        room.state.duration = duration;
+        for (const tab of room.viewers.values()) {
+          if (tab.media?.id === room.media.id) {
+            tab.media.duration = duration;
+            tab.media.durationUnknown = false;
+          }
+          if (tab.tracking?.record && tab.tracking.record.mediaVersion === mediaVersion) {
+            tab.tracking.record.duration = duration;
+          }
+        }
+        room.media.provider?.noteDuration?.(room.media.id, duration);
+        try {
+          this.roomState?.queue?.updateCurrentDuration?.(room.roomId, room.media.id, duration);
+        } catch {
+          /* Best-effort queue duration update. */
+        }
+        room.revision++;
+        this.changed(room);
+      },
+      undefined,
+    );
+  }
   /**
    * Admits one tab to the room, or renews the tab that is already in it. This is
    * the only way into a room: reading a room never adds anyone to it.

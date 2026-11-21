@@ -554,7 +554,7 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     touching = true;
     stage.classList.add('touch-controls');
     showChrome();
-    if (event.target === $('video') || event.target === stage)
+    if (event.target === $('video') || event.target === $('youtube-shield') || event.target === stage)
       press = { x: event.clientX, y: event.clientY, id: event.pointerId };
   });
   stage.addEventListener('pointercancel', () => {

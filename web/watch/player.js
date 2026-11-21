@@ -118,6 +118,7 @@ export function mount(host, deps) {
   function checkChoppyPlayback() {
     if (
       !store.room.state?.mediaUrl ||
+      store.room.state?.format === 'youtube-embed' ||
       store.player.autoplayBlocked ||
       store.player.playbackError ||
       store.room.state?.mediaId === 'demo'
@@ -193,10 +194,16 @@ export function mount(host, deps) {
     }
   }
   function decodedFrames() {
+    if (deps.youtube?.isActive()) return deps.youtube.frames();
     const quality = deps.video.getVideoPlaybackQuality?.();
     return store.player.videoFrames || (quality ? quality.totalVideoFrames - quality.droppedVideoFrames : undefined);
   }
   function checkVideoFrames() {
+    if (store.room.state?.format === 'youtube-embed') {
+      choppyDetector.interrupt();
+      store.player.frameStartedAt = undefined;
+      return;
+    }
     const interrupted =
       !store.room.state?.mediaUrl ||
       deps.video.paused ||
@@ -305,6 +312,7 @@ export function mount(host, deps) {
     store.player.videoFrames = 0;
     deps.time.presentation.reset();
     deps.dropVolume();
+    deps.youtube?.destroy();
     deps.video.pause();
     deps.stopHls(reason);
     deps.video.removeAttribute('src');
@@ -375,6 +383,7 @@ export function mount(host, deps) {
     deps.fail(message);
   }
   async function unlockLocal() {
+    if (deps.youtube?.isActive()) return deps.youtube.unlock();
     if (
       !store.room.state?.mediaUrl ||
       deps.video.readyState < 2 ||

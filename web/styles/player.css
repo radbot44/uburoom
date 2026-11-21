@@ -44,6 +44,37 @@
   .stage.paused:fullscreen video {
     filter: brightness(1.001);
   }
+  .youtube-stage {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--black);
+  }
+  .youtube-stage[hidden] {
+    display: none;
+  }
+  .youtube-mount,
+  .youtube-stage iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+  }
+  .youtube-shield {
+    position: absolute;
+    inset: 0;
+    z-index: var(--z-local-1);
+    background: transparent;
+    cursor: pointer;
+  }
+  .youtube-stage.ad-playing .youtube-shield {
+    pointer-events: none;
+  }
+  .stage.youtube-embed-active .video {
+    visibility: hidden;
+  }
   .subtitle-text-layer {
     position: absolute;
     pointer-events: none;

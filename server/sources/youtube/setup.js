@@ -76,10 +76,11 @@ const steps = {
     };
   },
 
-  /** Validates YouTube delivery mode, installed tools, and optional/required Data API key. */
+  /** Validates YouTube delivery mode, installed tools, and optional Data API key. */
   async configure(flow, data, { youtubeFetch = fetch, youtubeRunner, ffmpeg, ffprobe, base, platform } = {}) {
-    const delivery = data.delivery === 'embed' ? 'embed' : data.delivery === 'ytdlp' || !data.delivery ? 'ytdlp' : null;
-    if (!delivery) throw fail('Delivery mode must be ytdlp or embed');
+    const rawDelivery = data.delivery ?? 'auto';
+    const delivery = ['auto', 'ytdlp', 'embed'].includes(rawDelivery) ? rawDelivery : null;
+    if (!delivery) throw fail('Delivery mode must be auto, ytdlp, or embed');
 
     const apiKey = cleanText(data.apiKey ?? data.api_key, 256, 'YouTube Data API key');
     const ytDlpRaw = cleanText(data.ytDlp ?? data.yt_dlp, 500, 'yt-dlp path');
@@ -92,12 +93,8 @@ const steps = {
     const cookiesFile = cookiesRaw && base ? path.resolve(base, cookiesRaw) : cookiesRaw;
     const poTokenUrl = normalizeUrl(data.poTokenUrl ?? data.po_token_url, 'PO token URL');
 
-    if (delivery === 'embed' && !apiKey) {
-      throw fail('YouTube Data API v3 key is required for IFrame embed delivery');
-    }
-
     let toolsInfo = null;
-    if (delivery === 'ytdlp') {
+    if (delivery === 'ytdlp' || delivery === 'auto') {
       const checkDir = cacheDirectory || path.join(base || os.tmpdir(), 'data', 'youtube-cache');
       const probe = new YouTubeCache({
         cacheDirectory: checkDir,
@@ -108,7 +105,7 @@ const steps = {
         runCommand: youtubeRunner,
       });
       toolsInfo = await probe.checkTools();
-      if (!toolsInfo.ok) {
+      if (!toolsInfo.ok && (delivery === 'ytdlp' || ytDlpRaw)) {
         throw fail(toolsInfo.error || 'yt-dlp was not found on this server');
       }
     }
@@ -163,10 +160,10 @@ async function update(settings, { youtubeFetch = fetch, youtubeRunner, ffmpeg, f
   const delivery =
     settings.delivery === undefined
       ? undefined
-      : settings.delivery === 'embed' || settings.delivery === 'ytdlp'
+      : ['auto', 'ytdlp', 'embed'].includes(settings.delivery)
         ? settings.delivery
         : (() => {
-            throw fail('Delivery mode must be ytdlp or embed');
+            throw fail('Delivery mode must be auto, ytdlp, or embed');
           })();
 
   const ytDlpSupplied = settings.ytDlp !== undefined || settings.yt_dlp !== undefined;
@@ -203,7 +200,7 @@ async function update(settings, { youtubeFetch = fetch, youtubeRunner, ffmpeg, f
   const newApiKey = cleanText(settings.apiKey ?? settings.api_key, 256, 'YouTube Data API key');
   const clearApiKey = !!settings.clearApiKey;
 
-  if (delivery === 'ytdlp' || ytDlpSupplied) {
+  if (delivery === 'ytdlp' || !!ytDlp) {
     const checkDir = cacheDirectory || path.join(base || os.tmpdir(), 'data', 'youtube-cache');
     const probe = new YouTubeCache({
       cacheDirectory: checkDir,
@@ -226,7 +223,7 @@ async function update(settings, { youtubeFetch = fetch, youtubeRunner, ffmpeg, f
   }
 
   return raw => {
-    const nextDelivery = delivery ?? (raw.delivery || 'ytdlp');
+    const nextDelivery = delivery ?? (raw.delivery || 'auto');
     const nextApiKey = clearApiKey ? '' : newApiKey || raw.api_key || '';
     const nextYtDlp = ytDlp !== undefined ? ytDlp : raw.yt_dlp || '';
     const nextCacheDir = cacheDirectory !== undefined ? cacheDirectory : raw.cache_directory || '';
@@ -234,10 +231,6 @@ async function update(settings, { youtubeFetch = fetch, youtubeRunner, ffmpeg, f
     const nextMaxConcurrent = maxConcurrent !== undefined ? maxConcurrent : (raw.max_concurrent ?? 2);
     const nextCookies = cookiesFile !== undefined ? cookiesFile : raw.cookies_file || '';
     const nextPoToken = poTokenUrl !== undefined ? poTokenUrl : raw.po_token_url || '';
-
-    if (nextDelivery === 'embed' && !nextApiKey) {
-      throw fail('YouTube Data API v3 key is required for IFrame embed delivery');
-    }
 
     const updated = { ...raw, delivery: nextDelivery };
     for (const [key, val] of [
@@ -260,10 +253,18 @@ async function update(settings, { youtubeFetch = fetch, youtubeRunner, ffmpeg, f
 
 /** Never exposes `apiKey` back to browser Server Settings UI. */
 function summary(saved) {
+  const delivery = saved.delivery || 'auto';
   return {
-    address: saved.delivery === 'embed' ? 'IFrame embed (API key)' : 'Built-in yt-dlp cache',
+    address:
+      delivery === 'embed'
+        ? saved.apiKey
+          ? 'IFrame embed (API key)'
+          : 'IFrame embed (oEmbed)'
+        : delivery === 'ytdlp'
+          ? 'Built-in yt-dlp cache'
+          : 'Auto (yt-dlp cache + IFrame fallback)',
     offered: null,
-    delivery: saved.delivery || 'ytdlp',
+    delivery,
     ytDlp: saved.ytDlp || '',
     cacheDirectory: saved.cacheDirectory || '',
     maxCacheGb: saved.maxCacheGb ?? 20,

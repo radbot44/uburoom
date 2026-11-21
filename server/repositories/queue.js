@@ -105,6 +105,9 @@ class QueueRepo {
     this.statements.updateQueueEntriesSetPositionUpdatedAtByRoomIdState = db.prepare(
       "UPDATE watch_queue_entries SET position = ?, updatedAt = ? WHERE roomId = ? AND state = 'current'",
     );
+    this.statements.updateCurrentDuration = db.prepare(
+      "UPDATE watch_queue_entries SET duration = ?, updatedAt = ? WHERE roomId = ? AND state = 'current' AND mediaId = ?",
+    );
     this.statements.pagePending = db.prepare(
       "SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'pending' ORDER BY rank ASC LIMIT ? OFFSET ?",
     );
@@ -225,6 +228,9 @@ class QueueRepo {
   }
   updateQueueEntriesSetPositionUpdatedAtByRoomIdState(...values) {
     return this.statements.updateQueueEntriesSetPositionUpdatedAtByRoomIdState.run(...values);
+  }
+  updateCurrentDuration(...values) {
+    return this.statements.updateCurrentDuration.run(...values);
   }
   pagePending(...values) {
     return this.statements.pagePending.all(...values);

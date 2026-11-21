@@ -1,4 +1,3 @@
-import * as uburoomPlayback from '../playback-policy.js';
 import * as uburoomSyncQuality from '../../shared/sync/quality.mjs';
 import * as uburoomTiming from '../../shared/sync/timing.mjs';
 import { store } from './store.js';
@@ -7,14 +6,16 @@ import { store } from './store.js';
 export function mount(host, deps) {
   // What hosts see on this viewer's health card; the shared sync core validates it.
   function viewerHealth() {
-    const errorCode = deps.video.error?.code,
+    const active = deps.activePlayer,
+      ytError = deps.youtube?.errorCode() || 0,
+      errorCode = ytError || deps.video.error?.code,
       round = value => Math.round(value * 10) / 10;
     const error =
       store.stream.hlsNetworkFailure || errorCode === 2
         ? 'network'
         : errorCode === 3
           ? 'decode'
-          : errorCode === 4
+          : errorCode === 4 || ytError
             ? 'media'
             : store.player.playbackError
               ? 'other'
@@ -25,9 +26,7 @@ export function mount(host, deps) {
       reconnects: Math.min(10000, Math.max(0, (store.connection.transport?.connectionAttempt || 1) - 1)),
       ...(store.room.state?.mediaUrl
         ? {
-            bufferAhead: round(
-              Math.min(3600, uburoomPlayback.bufferedAhead(deps.video.buffered, deps.video.currentTime)),
-            ),
+            bufferAhead: round(Math.min(3600, active.bufferedAhead(active.currentTime()))),
           }
         : {}),
       ...(/^[a-z0-9.]{1,24}$/i.test(store.room.state?.quality || '')
@@ -37,7 +36,7 @@ export function mount(host, deps) {
               : store.room.state.quality,
           }
         : {}),
-      ...(['hls', 'file', 'av1', 'vp9', 'vp8'].includes(store.room.state?.format)
+      ...(['hls', 'file', 'av1', 'vp9', 'vp8', 'youtube-embed'].includes(store.room.state?.format)
         ? { format: store.room.state.format }
         : {}),
       ...(Number.isFinite(store.player.lastSyncErrorMs)
@@ -99,7 +98,9 @@ export function mount(host, deps) {
     );
   }
   function syncQualityEligible(timing, { allowWaiting = false, forBuffer = false } = {}) {
-    const shared = store.room.state?.state;
+    const shared = store.room.state?.state,
+      active = deps.activePlayer,
+      hasError = Boolean(store.player.playbackError || deps.youtube?.errorCode() || deps.video.error);
     return !!(
       store.room.selected &&
       store.room.state?.id === store.room.selected &&
@@ -110,32 +111,34 @@ export function mount(host, deps) {
       shared &&
       !shared.paused &&
       !store.room.state.waitingForReady &&
-      !deps.video.paused &&
-      !deps.video.seeking &&
+      !active.paused() &&
+      !active.seeking() &&
+      !deps.youtube?.isAdPlaying() &&
       (!store.player.playerWaiting || allowWaiting) &&
       !store.stream.probing &&
-      !store.player.playbackError &&
-      !deps.video.error &&
+      !hasError &&
       !store.player.autoplayBlocked &&
       store.stream.readyVersion === store.room.state.mediaVersion &&
-      (forBuffer || deps.video.readyState >= 3) &&
+      (forBuffer || active.readyState() >= 3) &&
       document.visibilityState === 'visible' &&
       syncQualityClockUsable(timing) &&
       !(Number.isFinite(store.room.state.startAt) && timing.serverTime < store.room.state.startAt)
     );
   }
   function syncQualityBufferEligible(timing, at = deps.time.mono()) {
+    const active = deps.activePlayer,
+      hasError = Boolean(store.player.playbackError || deps.youtube?.errorCode() || deps.video.error);
     return !!(
       store.room.state?.mediaUrl &&
       store.room.state.state &&
       !store.room.state.state.paused &&
       !store.room.state.waitingForReady &&
-      !deps.video.paused &&
-      !deps.video.ended &&
-      !deps.video.seeking &&
+      !active.paused() &&
+      !active.ended() &&
+      !active.seeking() &&
+      !deps.youtube?.isAdPlaying() &&
       !store.stream.probing &&
-      !store.player.playbackError &&
-      !deps.video.error &&
+      !hasError &&
       !store.player.autoplayBlocked &&
       store.stream.readyVersion === store.room.state.mediaVersion &&
       document.visibilityState === 'visible' &&
@@ -189,13 +192,13 @@ export function mount(host, deps) {
       source = 'presentation';
     } else if (eligible) {
       const target = uburoomTiming.target(store.room.state, timing.serverTime);
-      if (Number.isFinite(target)) errorMs = (deps.video.currentTime - target) * 1000;
+      if (Number.isFinite(target)) errorMs = (deps.activePlayer.currentTime() - target) * 1000;
     }
     if (Number.isFinite(errorMs)) store.player.lastSyncErrorMs = errorMs;
     deps.syncQuality.sample({
       at,
       errorMs,
-      playbackRate: deps.video.playbackRate,
+      playbackRate: deps.activePlayer.playbackRate(),
       eligible,
       source,
       context,
@@ -204,10 +207,12 @@ export function mount(host, deps) {
   }
   function refreshSyncQuality() {
     const timing = deps.time.clock.read(),
-      at = deps.time.mono();
+      at = deps.time.mono(),
+      active = deps.activePlayer,
+      hasError = Boolean(store.player.playbackError || deps.youtube?.errorCode() || deps.video.error);
     const clockReliable = syncQualityClockUsable(timing);
     if (!clockReliable) deps.syncQuality.breakSample(at);
-    const isBuffering = store.player.playerWaiting || (!deps.video.paused && deps.video.readyState < 3);
+    const isBuffering = store.player.playerWaiting || (!active.paused() && active.readyState() < 3);
     const shouldCountBuffer = isBuffering && syncQualityBufferEligible(timing, at);
     if (shouldCountBuffer && !store.player.syncQualityBuffering)
       store.player.syncQualityBuffering = deps.syncQuality.startBuffer({ at, eligible: true });
@@ -215,21 +220,20 @@ export function mount(host, deps) {
       deps.syncQuality.endBuffer({ at });
       store.player.syncQualityBuffering = false;
     }
-    const playbackStatus =
-      store.player.playbackError || deps.video.error
-        ? 'error'
-        : !store.room.state?.mediaUrl ||
-            store.room.state.waitingForReady ||
-            store.stream.probing ||
-            store.stream.readyVersion !== store.room.state?.mediaVersion
-          ? 'starting'
-          : store.room.state.state.paused || deps.video.paused || deps.video.ended
-            ? 'paused'
-            : deps.video.seeking
-              ? 'seeking'
-              : isBuffering
-                ? 'buffering'
-                : 'playing';
+    const playbackStatus = hasError
+      ? 'error'
+      : !store.room.state?.mediaUrl ||
+          store.room.state.waitingForReady ||
+          store.stream.probing ||
+          store.stream.readyVersion !== store.room.state?.mediaVersion
+        ? 'starting'
+        : store.room.state.state.paused || active.paused() || active.ended()
+          ? 'paused'
+          : active.seeking()
+            ? 'seeking'
+            : isBuffering
+              ? 'buffering'
+              : 'playing';
     sampleSyncQuality(timing, at);
     const result = deps.syncQuality.refresh({
       at,

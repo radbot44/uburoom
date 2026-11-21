@@ -1,3 +1,4 @@
+import { createVideoElementAdapter } from '../shared/sync/player-adapter.mjs';
 import * as uburoomPlayback from './playback-policy.js';
 import * as uburoomTiming from '../shared/sync/timing.mjs';
 import * as uburoomSyncQuality from '../shared/sync/quality.mjs';
@@ -22,6 +23,7 @@ import * as layout from './watch/layout.js';
 import * as session from './watch/session.js';
 import * as delivery from './watch/delivery.js';
 import * as player from './watch/player.js';
+import * as youtubePlayer from './watch/youtube-player.js';
 import * as room from './watch/room.js';
 import * as commands from './watch/commands.js';
 import * as roomResync from './watch/room-resync.js';
@@ -122,6 +124,30 @@ deps.suppressedBuffering = suppressedBuffering;
 
 const video = $('video');
 deps.video = video;
+const videoAdapter = createVideoElementAdapter(video, { bufferedAhead: uburoomPlayback.bufferedAhead });
+deps.youtube = youtubePlayer.mount($('stage'), deps);
+const currentAdapter = () => (deps.youtube.isActive() ? deps.youtube.adapter : videoAdapter);
+deps.activePlayer = {
+  get supportsRateSync() {
+    return currentAdapter().supportsRateSync !== false;
+  },
+  isAdPlaying: () => Boolean(currentAdapter().isAdPlaying?.()),
+  readyState: () => currentAdapter().readyState(),
+  currentTime: () => currentAdapter().currentTime(),
+  seek: seconds => currentAdapter().seek(seconds),
+  duration: () => currentAdapter().duration(),
+  paused: () => currentAdapter().paused(),
+  ended: () => currentAdapter().ended(),
+  seeking: () => currentAdapter().seeking(),
+  playbackRate: () => currentAdapter().playbackRate(),
+  setPlaybackRate: rate => currentAdapter().setPlaybackRate(rate),
+  setAudio: (volumeUnit, muted) => currentAdapter().setAudio(volumeUnit, muted),
+  play: () => currentAdapter().play(),
+  pause: () => currentAdapter().pause(),
+  measureStart: () => currentAdapter().measureStart?.(),
+  bufferedAhead: position => currentAdapter().bufferedAhead(position),
+  isBufferedAt: (position, tolerance) => currentAdapter().isBufferedAt(position, tolerance),
+};
 store.player.subtitleLayout = () => {};
 // Button artwork first: modules append their own parts (badges, spinners) to some of these buttons.
 function glyph(id, symbol) {

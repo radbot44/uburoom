@@ -316,6 +316,7 @@ class MediaProviders {
   }
   /** The qualities offered for a video, which the pipeline decides from its source. */
   qualities(media) {
+    if (Array.isArray(media?.qualities) && media.qualities.length) return media.qualities;
     return this.pipeline?.qualities(media) || QUALITIES;
   }
   /** What reports playback back to the providers that take reports. */
@@ -341,6 +342,20 @@ class MediaProviders {
     for (const { direct } of this.list)
       if (direct?.enabled) origins.push(...((await direct.deliveryOrigins(remoteAddress)) || []));
     return origins;
+  }
+  /** Extra CSP script/frame origins and referrer policy needed by configured embedded players. */
+  embedPolicy() {
+    const scriptSrc = new Set();
+    const frameSrc = new Set();
+    let referrerPolicy;
+    for (const provider of this.list) {
+      const policy = provider.embedPolicy;
+      if (!provider.root?.configured || !policy) continue;
+      for (const origin of policy.scriptSrc || []) scriptSrc.add(origin);
+      for (const origin of policy.frameSrc || []) frameSrc.add(origin);
+      if (policy.referrerPolicy) referrerPolicy = policy.referrerPolicy;
+    }
+    return { scriptSrc: [...scriptSrc], frameSrc: [...frameSrc], referrerPolicy };
   }
   /** End provider transcodes uburoom started and no longer holds; each provider reports under its kind. */
   async reconcileSessions(inUse) {

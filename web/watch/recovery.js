@@ -346,7 +346,7 @@ export function mount(host, deps) {
     deps.time.clearTimeout(store.connection.disconnectGraceTimer);
     store.connection.disconnectGraceTimer = deps.time.setTimeout(() => {
       if (!store.connection.reconnecting) return;
-      const buffered = uburoomPlayback.bufferedAhead(deps.video.buffered, deps.video.currentTime);
+      const buffered = deps.activePlayer.bufferedAhead(deps.activePlayer.currentTime());
       if (buffered > 2) {
         store.connection.disconnectExtended = true;
         deps.diagnostics.record('disconnect-extended', { bufferAhead: buffered });

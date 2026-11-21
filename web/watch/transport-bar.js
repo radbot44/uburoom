@@ -17,11 +17,12 @@ export function mount(host, deps) {
       playback = available && store.room.state.canPlayback;
     for (const id of ['player-play', 'previous', 'seek-back', 'seek-forward'])
       $(id).disabled = !playback || store.room.pending;
-    $('timeline').disabled = !playback;
+    $('timeline').disabled = !playback || !!store.room.state?.durationUnknown;
     if (store.room.state?.durable) {
       for (const id of ['seek-back', 'seek-forward'])
-        $(id).disabled = !available || !store.room.state.capabilities.seek || store.room.pending;
-      $('timeline').disabled = !available || !store.room.state.capabilities.seek;
+        $(id).disabled =
+          !available || !store.room.state.capabilities.seek || !!store.room.state.durationUnknown || store.room.pending;
+      $('timeline').disabled = !available || !store.room.state.capabilities.seek || !!store.room.state.durationUnknown;
       $('previous').disabled = !available || !store.room.state.capabilities.chooseMedia || store.room.pending;
     }
     $('player-mute').disabled = !available || store.room.pending;
@@ -30,12 +31,22 @@ export function mount(host, deps) {
     if (store.room.state?.durable)
       $('next').disabled =
         !available || !store.room.state.hasNext || !store.room.state.capabilities.chooseMedia || store.room.pending;
+    const isEmbed = store.room.state?.format === 'youtube-embed';
     $('quality').disabled =
-      !available || store.room.state?.mediaId === 'demo' || store.room.pending || store.stream.qualityPending;
-    $('pip').disabled = !available;
+      !available ||
+      store.room.state?.mediaId === 'demo' ||
+      isEmbed ||
+      (store.room.state?.qualities?.length ?? 2) <= 1 ||
+      store.room.pending ||
+      store.stream.qualityPending;
+    $('pip').disabled = !available || isEmbed;
     const inPiP = !!store.player.pipWindow || document.pictureInPictureElement === deps.video;
     $('pip').setAttribute('aria-pressed', inPiP ? 'true' : 'false');
-    $('pip').title = inPiP ? 'Exit Picture-in-Picture' : 'Picture-in-Picture';
+    $('pip').title = isEmbed
+      ? 'Picture-in-Picture is unavailable for YouTube embeds'
+      : inPiP
+        ? 'Exit Picture-in-Picture'
+        : 'Picture-in-Picture';
     $('pip').setAttribute('aria-label', $('pip').title);
     const paused =
       !!store.room.state?.pauseAt || (store.room.state?.state.paused !== false && !store.room.state?.waitingForReady);
@@ -65,18 +76,20 @@ export function mount(host, deps) {
     const readiness = store.room.state?.readiness;
     const blockers = readiness?.blockers || [];
     const reasonText = index => readinessReasons[readiness?.reasons?.[index]];
-    let readyStatus = store.room.state?.waitingForReady
-      ? store.player.autoplayBlocked
-        ? 'Press Play to join playback'
-        : store.room.state?.readiness?.buffering
-          ? 'Waiting for playback to buffer…'
-          : 'Waiting for viewers…'
-      : store.player.autoplayBlocked
-        ? 'Press Play to join playback'
-        : store.room.state?.startAt > store.room.state?.serverNow &&
-            !(deps.time.serverNow() >= store.room.state.startAt)
-          ? 'Starting together…'
-          : '';
+    let readyStatus = deps.youtube?.isAdPlaying()
+      ? 'YouTube ad playing — rejoining room when it ends…'
+      : store.room.state?.waitingForReady
+        ? store.player.autoplayBlocked
+          ? 'Press Play to join playback'
+          : store.room.state?.readiness?.buffering
+            ? 'Waiting for playback to buffer…'
+            : 'Waiting for viewers…'
+        : store.player.autoplayBlocked
+          ? 'Press Play to join playback'
+          : store.room.state?.startAt > store.room.state?.serverNow &&
+              !(deps.time.serverNow() >= store.room.state.startAt)
+            ? 'Starting together…'
+            : '';
     if (blockers.length)
       readyStatus =
         blockers.length === 1 && reasonText(0)
@@ -405,9 +418,10 @@ export function mount(host, deps) {
       timeline.value = value;
       $('time').textContent = clock(value);
     }
+    const buffered = deps.youtube?.isActive() ? deps.youtube.bufferedRanges() : deps.video.buffered;
     timeline.style.setProperty(
       '--timeline-fill',
-      uburoomPlayback.timeline(deps.video.buffered, duration, value, store.room.state?.chapters),
+      uburoomPlayback.timeline(buffered, duration, value, store.room.state?.chapters),
     );
     const chapters = store.room.state?.chapters || [];
     const currentChapter = chapters.find(ch => value >= ch.startTime && value < ch.endTime);
@@ -431,7 +445,8 @@ export function mount(host, deps) {
         skipBtn.hidden = true;
       }
     }
-    const loaded = Math.floor(uburoomPlayback.bufferedAhead(deps.video.buffered, deps.video.currentTime));
+    const active = deps.activePlayer;
+    const loaded = Math.floor(active.bufferedAhead(active.currentTime()));
     timeline.setAttribute(
       'aria-valuetext',
       clock(value) + ' of ' + clock(duration) + ', ' + loaded + ' seconds buffered ahead',
