@@ -1,6 +1,6 @@
 # TLS and remote access
 
-**Status: proposal for owner review.** Nothing here is built. Each decision (T1–T7) has a recommendation; the [remote access guide](#remote-access-guide-draft) at the end is a draft that becomes true only if T1 is accepted.
+**Status: approved by the owner on 2026-11-21 (T1–T7 as recommended). Not built yet.** The [remote access guide](#remote-access-guide-draft) at the end becomes true once T1 is implemented. Plain HTTP on the LAN stays forbidden (T5): browsers treat a non-HTTPS LAN address as an insecure context, which breaks uburoom's `Secure` sign-in cookies and features such as Document Picture-in-Picture and the clipboard, and it would send session cookies and passwords in clear.
 
 ## Problem
 
