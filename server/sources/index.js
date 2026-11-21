@@ -12,8 +12,10 @@
  * - `check(entry, services)`: a connection and credential test for the doctor, as doctor checks.
  * - optionally `signIn(entries, services)`: the sign-in method this type offers, built once from
  *   every entry of the type (Plex today).
- * Later phases add `connect` (guided setup) and `members` (does this verified identity have
- * access to this server?) beside them.
+ * - optionally `connect`: guided-setup services for the wizard and Server settings (Jellyfin today).
+ * A created provider may also offer `members(identity)`: is this verified identity a user of this server?
+ * It resolves true, or throws an error flagged `noServerAccess` or `revoked`; any other error means no
+ * answer (an outage), never a denial (Jellyfin today; Plex answers through its `signIn`).
  *
  * @typedef {{id: string, type: string, name: string, [key: string]: any}} SourceEntry
  * @typedef {{base: string, platform: string, dataDirectory: string}} ValidateContext
