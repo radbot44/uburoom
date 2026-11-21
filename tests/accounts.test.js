@@ -10,7 +10,8 @@ const { Accounts, credentialVault } = require('../server/accounts');
 const { createApp } = require('../server/app');
 const { accountFixture } = require('../scripts/account-fixture');
 const { Plex } = require('../server/sources/plex/plex');
-const { PlexAuth, PlexSignIn } = require('../server/sources/plex/auth');
+const { PlexAuth } = require('../server/sources/plex/auth');
+const { PlexTv } = require('../server/identity/plex');
 const { isServerOperator } = require('../server/operator-policy');
 const { normalizeConfig } = require('../server/config');
 const RoomPolicy = require('../server/room-policy');
@@ -22,7 +23,7 @@ test('server operator authority requires an explicit verified provider identity 
   const discordId = '123456789012345678',
     adminId = '234567890123456789';
   const config = normalizeConfig({
-    operator: { discord_id: discordId, plex_id: '101' },
+    operator: { identities: ['discord:' + discordId, 'plex:101'] },
     discord: { owner_id: adminId },
     rooms: { admin_discord_ids: [adminId], admin_plex_ids: ['102'] },
   });
@@ -46,7 +47,7 @@ test('server operator authority requires an explicit verified provider identity 
   assert.equal(accounts.hasCredential('101'), false, 'operator identity grants no Plex credentials');
   assert.equal(isServerOperator(accounts, normalizeConfig({}), pending), false, 'no implicit owner or token promotion');
   assert.equal(isServerOperator(accounts, {}, pending), false, 'older configuration grants none');
-  const plexOnly = normalizeConfig({ operator: { plex_id: '101' } });
+  const plexOnly = normalizeConfig({ operator: { identities: ['plex:101'] } });
   assert.equal(isServerOperator(accounts, plexOnly, pending), false, 'verified Discord cannot prove pending Plex');
   accounts.resolve('plex', '101', 'Verified Plex operator');
   assert.equal(isServerOperator(accounts, plexOnly, pending), true);
@@ -78,14 +79,16 @@ test('traditional PIN sign-in works when PMS rejects JWT resource tokens, with s
   };
   const plex = new Plex(config, fetcher),
     auth = new PlexAuth(config, accounts, plex, fetcher),
-    signIn = new PlexSignIn({}, accounts, [auth], fetcher);
+    signIn = new PlexTv(fetcher);
   t.after(() => {
     accounts.close();
     plex.close();
   });
   const attempt = await signIn.start('https://uburoom.example/auth/plex/callback');
   provider.choose(attempt.pinId, 'bob');
-  const verified = await signIn.finish(attempt);
+  // plex.tv says which account this is; the source then checks it against its own server.
+  const verified = await signIn.identify(attempt);
+  await auth.validate(verified.credential);
   assert.equal(verified.subject, '102');
   assert.equal(jwkRegistered, false);
   assert.equal(verified.credential.authType, 'traditional');
@@ -117,7 +120,7 @@ test('previous JWT credentials still renew through their registered signing key'
     config = { url: 'http://plex-fixture.invalid:32400', token: 'fixture-owner' },
     plex = new Plex(config, provider.fetch),
     auth = new PlexAuth(config, accounts, plex, provider.fetch),
-    signIn = new PlexSignIn({}, accounts, [auth], provider.fetch);
+    signIn = new PlexTv(provider.fetch);
   t.after(() => {
     accounts.close();
     plex.close();
@@ -131,7 +134,7 @@ test('previous JWT credentials still renew through their registered signing key'
     data: { strong: true, jwk: { ...publicKey.export({ format: 'jwk' }), kid, alg: 'EdDSA' } },
   });
   provider.choose(String(pin.id), 'alice');
-  const verified = await signIn.finish({
+  const verified = await signIn.identify({
     pinId: String(pin.id),
     credential: { clientId, kid, privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }) },
   });
@@ -1055,8 +1058,8 @@ test(
       false,
       'traditional PINs never request incompatible JWT resource tokens',
     );
-    assert.equal((await denied.plex('denied')).headers.location, '/auth/error');
-    assert.match((await denied.request('/api/account/auth-error')).body.error, /does not have access/);
+    // Signing in proves who someone is; a Plex account that reaches no Plex source is not let in.
+    assert.equal((await denied.plex('denied')).status, 302);
     assert.equal((await denied.request('/api/watch/me')).status, 401);
     const roomId = (await bob.post('/api/watch/rooms', {})).body.id,
       viewer = randomUUID();

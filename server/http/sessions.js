@@ -144,6 +144,8 @@ function createSessions({ config, logger, registry, accounts, access, oauthFetch
       name: registry.canonical(login.userId)?.name || login.name,
       activity: login.activity === true,
       ...(login.guestRoom ? { guestRoomId: login.guestRoom, device: login.device } : {}),
+      // A server-password guest is admitted by the password revision it entered with.
+      ...(login.serverPassword ? { serverPassword: login.serverPassword } : {}),
     };
   }
   async function body(req, limit = 4096) {

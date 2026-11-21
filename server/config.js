@@ -6,12 +6,11 @@ const os = require('node:os');
 const YAML = require('yaml');
 const Policy = require('./room-policy');
 const { findOnPath } = require('./media-tools');
-const { validateSources, ownerAccountSources } = require('./sources');
+const { validateSources, ownerAccountSources, memberIdentities } = require('./sources');
 const ROOT = path.resolve(__dirname, '..');
 
 const KEYS = [
-  'operator.discord_id',
-  'operator.plex_id',
+  'operator.identities',
   'directory.expose_discord_members',
   ...Object.keys(require('./room-limits').SETTINGS).map(key => 'rooms.' + key),
   'discord.bot_token',
@@ -53,9 +52,11 @@ const KEYS = [
   'guests.max_per_room',
   'guests.session_hours',
   'events.schedulers',
-  'secrets.entry_password',
-  'access.discord',
-  'access.plex',
+  'secrets.server_password',
+  'access.discord_server',
+  'access.source_members',
+  'access.password',
+  'access.accounts',
   'transcoding.policy',
   'transcoding.encoder',
   'transcoding.outputs',
@@ -215,22 +216,60 @@ function normalizeConfig(
         ? findOnPath('ffprobe', environment)
         : undefined,
   };
-  config.accessPolicy = {
-    discord: boolean('access.discord', true),
-    plex: boolean('access.plex', true),
-    password: get('secrets.entry_password'),
-    publicWeb: boolean('server.public_web_app', true),
-  };
-  config.serverOperator = { discordId: get('operator.discord_id'), plexId: get('operator.plex_id') };
-  if (config.serverOperator.discordId && !/^\d{17,20}$/.test(config.serverOperator.discordId))
-    throw new Error('operator.discord_id must be a quoted Discord account ID');
-  if (config.serverOperator.plexId && !/^\d{1,20}$/.test(config.serverOperator.plexId))
-    throw new Error('operator.plex_id must be a quoted Plex account ID');
   config.sources = validateSources(value.sources, {
     base,
     platform,
     dataDirectory: resolveFile('storage.data_directory', 'data'),
   });
+  // Entry rules: any one that matches lets a person in (server/admission/). Each sign-in method
+  // is offered only for a rule that needs it.
+  const sourceMembers = list('access.source_members') || [];
+  if (new Set(sourceMembers).size !== sourceMembers.length)
+    throw new Error('access.source_members must not repeat a source');
+  const memberSignIn = memberIdentities(config.sources, sourceMembers);
+  config.accessPolicy = {
+    discordServer: boolean('access.discord_server', true),
+    sourceMembers,
+    password: boolean('access.password', false),
+    accounts: boolean('access.accounts', false),
+    publicWeb: boolean('server.public_web_app', true),
+  };
+  // The sign-in methods the entry page offers; derived from the rules above.
+  config.accessPolicy.discord = config.accessPolicy.discordServer;
+  config.accessPolicy.plex = memberSignIn.includes('plex');
+  config.serverPassword = get('secrets.server_password');
+  if (config.serverPassword.length > 1024)
+    throw new Error('secrets.server_password must contain at most 1024 characters');
+  if (config.accessPolicy.password && !config.serverPassword)
+    throw new Error('access.password requires secrets.server_password');
+  if (!config.accessPolicy.password && config.serverPassword)
+    throw new Error('secrets.server_password is used only with access.password: true');
+  if (
+    !config.accessPolicy.discordServer &&
+    !sourceMembers.length &&
+    !config.accessPolicy.password &&
+    !config.accessPolicy.accounts
+  )
+    throw new Error('access needs at least one entry rule: discord_server, source_members, password or accounts');
+  // The server operator: exact verified identities, written provider:subject.
+  const operators = list('operator.identities') || [];
+  config.serverOperator = {
+    identities: operators.map(value => {
+      const match = /^(discord|plex|uburoom):(.+)$/.exec(value);
+      const valid =
+        match &&
+        (match[1] === 'discord'
+          ? /^\d{17,20}$/.test(match[2])
+          : match[1] === 'plex'
+            ? /^\d{1,20}$/.test(match[2])
+            : /^[A-Za-z0-9._@-]{1,100}$/.test(match[2]));
+      if (!valid)
+        throw new Error(
+          "operator.identities entries are quoted 'discord:<id>', 'plex:<id>' or 'uburoom:<subject>' account identities",
+        );
+      return { provider: match[1], subject: match[2] };
+    }),
+  };
   config.singleRoom = boolean('rooms.single_room', false);
   config.pauseOnBuffering = boolean('rooms.pause_on_buffering', false);
   config.directory = {
@@ -330,8 +369,6 @@ function normalizeConfig(
     (a, b) => (b.height || Infinity) - (a.height || Infinity) || (b.bitrate || Infinity) - (a.bitrate || Infinity),
   );
   if (!config.transcoding.qualities.length) throw new Error('Offer Original or at least one transcoding quality');
-  if (config.accessPolicy.password.length > 1024)
-    throw new Error('secrets.entry_password must contain at most 1024 characters');
   if (
     !config.accessPolicy.publicWeb &&
     (!config.accessPolicy.discord || !config.clientId || !config.clientSecret || !config.ownerId)

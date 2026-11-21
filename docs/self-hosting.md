@@ -32,7 +32,7 @@ Set these values in your private `config.yaml`:
 | `sources` | One entry per media source: Plex, Jellyfin or folders on this machine; see [media sources](#media-sources). |
 | `server.public_url` | Public HTTPS origin, with port if needed; no path. |
 | `server.tls_cert` / `server.tls_key` | Certificate and key paths for uburoom's HTTPS listener. |
-| `access.discord` | Set `false` for a Plex-only installation; otherwise configure Discord below. |
+| `access` | The [entry rules](#sign-in-and-access): who gets in. Discord server members by default; configure Discord below. |
 
 **Everyone uburoom admits can watch every library of every media source through that source's own account.** Choose who gets in with the [sign-in and access](#sign-in-and-access) settings, and give each source's account (a Plex token, a Jellyfin user) only the libraries people may watch here.
 
@@ -56,17 +56,20 @@ Do not start a second instance using your live credentials or database. Check si
 
 ## Sign-in and access
 
-Sign-in, permission to enter uburoom and server administration are separate checks. Being admitted is the only media gate: admitted people, guests included, browse and play every Plex, Jellyfin and local library with the source's own credential. A viewer's own Plex permissions play no part.
+Sign-in proves who someone is; **entry rules** decide whether they get in, and **any one** matching rule is enough. Being admitted is the only media gate: admitted people, guests included, browse and play every library of every source with the source's own credential. Server administration is a separate check. Turn on at least one rule:
 
 | Setting | Behavior |
 | --- | --- |
-| `access.plex` / `access.discord` | Enable Plex and/or Discord login; both default to `true`. Discord login checks membership in the configured guild; standalone Plex login checks access to any configured Plex source. Outside visitors without either membership need a `/join/<code>` room invite with `guests.enabled: true`. |
-| `secrets.entry_password` | Optional extra entry password alongside provider rules. Access lasts 12 hours and resets on restart; it does not grant admin access. |
+| `access.discord_server` | `true` (default): members of `discord.guild_id` who sign in with Discord. |
+| `access.source_members` | Source ids whose members may come in, e.g. `['living-room']`. For a Plex source, a Plex account that can reach that server. Members of one source never get in through a rule naming another, and the rule never hides any source's media from people admitted another way. |
+| `access.password` | `true`: anyone who enters `secrets.server_password` comes in as a guest under a name they type (or a random one they keep). The browser keeps that sign-in; another browser is another guest. Changing the password signs out everyone who got in with the old one. Wrong guesses are limited per address. |
+| `access.accounts` | `true`: uburoom's own accounts. |
+| `secrets.server_password` | The password for `access.password`; required with it and refused without it. |
 | `server.max_connections: 256` | Open room connections (one per browser tab or app window) accepted at once; 1–4096. Further connections are refused until one closes. |
 | `server.public_web_app: false` | Restrict playback to verified Discord Activity. Browser handoff remains available for account linking/management. |
-| `operator.discord_id` / `operator.plex_id` | Exact quoted provider account IDs authorized to open **Server settings** in the browser (the 18-key allowlist across Rooms, Directory and Transcoding). Saved edits write to `config.yaml` and require a manual restart to take effect. |
+| `operator.identities` | Exact verified identities, quoted `'discord:<id>'`, `'plex:<id>'` or `'uburoom:<subject>'`, authorized to open **Server settings** in the browser (the 18-key allowlist across Rooms, Directory and Transcoding). Saved edits write to `config.yaml` and require a manual restart to take effect. |
 
-With both sign-in methods off, uburoom allows separate 24-hour anonymous browser logins without owner/admin rights; these are guest accounts with a random, changeable name, separate from room invites. Admission changes invalidate existing browser logins. `/auth/owner` supports the configured Discord owner's OAuth recovery, subject to the remaining admission rules.
+The entry page shows only what the rules offer: Discord sign-in with `discord_server`, Plex sign-in when a member rule names a Plex source, and the password step with `password`. Plex can still be linked from Account for personal watch-state sync whenever a Plex source is configured. Outside visitors who match no rule can come in through a `/join/<code>` room invite with `guests.enabled: true`. Changing the rules signs everyone out. `/auth/owner` supports the configured Discord owner's OAuth recovery; the owner is always admitted.
 
 ### Room invites and guests
 

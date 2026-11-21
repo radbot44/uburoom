@@ -3,7 +3,8 @@
 const http = require('node:http');
 const https = require('node:https');
 const { Plex } = require('./plex');
-const { PlexAuth, PlexSignIn } = require('./auth');
+const { PlexAuth, PlexMembers } = require('./auth');
+const { PlexTv } = require('../../identity/plex');
 const { plexProvider } = require('./provider');
 
 const SETTINGS = [
@@ -106,20 +107,33 @@ function validateAll(entries) {
  * @param {any} entry
  * @param {{config: any, registry: any, pipeline: any, logger?: any, pin: any, plexFetch?: typeof fetch}} services
  */
-function create(entry, { registry, pipeline, logger, pin, plexFetch = fetch }) {
+function create(entry, { registry, pipeline, logger, pin, plexFetch = fetch, plexTv = new PlexTv(plexFetch) }) {
   const plex = new Plex(entry, plexFetch, { logger, pipeline });
-  const plexAuth = new PlexAuth(entry, registry, plex, plexFetch, { pin });
+  const plexAuth = new PlexAuth(entry, registry, plex, plexTv, { pin });
   const provider = plexProvider({ plex, source: entry, registry, plexAuth, pin });
-  return Object.assign(provider, { plexAuth });
+  return Object.assign(provider, { plexAuth, members: userId => members(plexAuth, userId, logger) });
 }
 
-/** Plex sign-in across every Plex source (see `PlexSignIn`). */
-function signIn(providers, { config, registry, plexFetch = fetch }) {
-  return new PlexSignIn(
-    config,
+/**
+ * Whether a person's own verified Plex sign-in can reach this source's pinned server: true, false,
+ * or undefined when Plex gives no answer (so an outage is not a denial).
+ */
+async function members(plexAuth, userId, logger) {
+  try {
+    return !!(await plexAuth.forUser(userId));
+  } catch (error) {
+    if (error.noServerAccess || error.revoked) return false;
+    logger?.warn('Access', 'Plex check got no answer: ' + error.message);
+    return undefined;
+  }
+}
+
+/** Every Plex source's server access together (see `PlexMembers`). */
+function signIn(providers, { registry, plexFetch = fetch, plexTv = new PlexTv(plexFetch) }) {
+  return new PlexMembers(
     registry,
     providers.map(provider => provider.plexAuth),
-    plexFetch,
+    plexTv,
   );
 }
 
@@ -172,4 +186,4 @@ async function check(entry) {
   });
 }
 
-module.exports = { validate, validateAll, create, check, signIn, ownerAccount: true };
+module.exports = { validate, validateAll, create, check, signIn, ownerAccount: true, memberIdentity: 'plex' };

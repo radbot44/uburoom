@@ -1,4 +1,5 @@
 'use strict';
+const { accessPolicy } = require('./helpers/access');
 // Admitted means everything: every admitted person browses every library of every
 // media source through the source's own credential, and a refused person gets none.
 const test = require('node:test');
@@ -35,7 +36,7 @@ async function sources(t) {
     t,
     undefined,
     {
-      accessPolicy: { discord: true, plex: true, password: '', publicWeb: true },
+      accessPolicy: accessPolicy({ sourceMembers: ['plex'] }),
       guests: {
         enabled: true,
         defaultAllow: true,

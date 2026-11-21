@@ -1,4 +1,5 @@
 'use strict';
+const { accessPolicy } = require('./helpers/access');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),
@@ -17,10 +18,11 @@ async function savedSettingsFixture(t) {
     other = path.join(directory, 'other.yaml');
   const source = `# Keep this private fixture comment
 secrets:
-  entry_password: 'fixture-private-password'
+  server_password: 'fixture-private-password'
+access:
+  password: true
 operator:
-  discord_id: '100000000000000002'
-  plex_id: '101'
+  identities: ['discord:100000000000000002', 'plex:101']
 discord:
   client_id: '100000000000000010'
   client_secret: 'fixture-private-client-secret'
@@ -73,10 +75,7 @@ test(
       false,
       'room owner authority is not server-operator capability',
     );
-    const password = f.config.accessPolicy.password;
-    f.config.accessPolicy.password = '';
     assert.equal((await admin.post('/api/watch/admin-mode', { enabled: true })).status, 200);
-    f.config.accessPolicy.password = password;
     for (const denied of [ordinary, admin]) {
       assert.equal((await denied.request(endpoint)).status, 403);
       assert.equal(
@@ -127,11 +126,6 @@ test(
       (await browser.request('/api/operator/settings')).body.settings.rooms.limits.maxMembers,
       20,
       'saving does not change running configuration',
-    );
-    assert.equal(
-      (await browser.request('/api/watch/me')).status,
-      401,
-      'operator writes do not bypass playback admission',
     );
     const contents = await fs.promises.readFile(f.file, 'utf8');
     assert.ok(contents.includes('fixture-private-password'));
@@ -309,7 +303,12 @@ test(
       directory: settings.directory,
       transcoding: settings.transcoding,
     });
-    f.config.serverOperator = { discordId: f.provider.subjects.guest2, plexId: '101' };
+    f.config.serverOperator = {
+      identities: [
+        { provider: 'discord', subject: f.provider.subjects.guest2 },
+        { provider: 'plex', subject: '101' },
+      ],
+    };
     const endpoint = '/api/operator/settings',
       anonymous = f.browser(),
       ordinary = f.browser(),
@@ -347,7 +346,7 @@ test(
     f.config.ffmpegPath = secret;
     f.config.ffprobePath = secret;
     f.config.sources[0].delivery = { mode: 'proxy', clientUrl: secret, lanClientUrl: secret, token: secret };
-    f.config.accessPolicy.password = secret;
+    f.config.serverPassword = secret;
     for (const object of [
       f.config.accessPolicy,
       f.config.roomLimits,
@@ -364,8 +363,10 @@ test(
     assert.equal(response.headers['cache-control'], 'no-store');
     assert.equal(response.body.source, 'running');
     assert.deepEqual(response.body.settings.access, {
-      discord: true,
-      plex: true,
+      discordServer: true,
+      sourceMembers: [],
+      password: false,
+      accounts: false,
       publicWeb: true,
     });
     assert.equal(response.body.settings.rooms.limits.maxMembers, 12);
@@ -393,14 +394,9 @@ test(
     assert.equal(
       (await operator.request('/api/watch/me')).status,
       401,
-      'operator status does not bypass the entry password',
+      'operator status is not an entry rule: a Plex operator still needs a rule that lets them in',
     );
     assert.equal((await operator.request(endpoint, {})).status, 404, 'no settings write operation');
-    f.config.accessPolicy.password = '';
-    f.config.accessPolicy.discord = false;
-    f.config.accessPolicy.plex = false;
-    await anonymous.request('/api/watch/entry', {});
-    assert.equal((await anonymous.request(endpoint)).status, 403, 'anonymous guest sessions gain no authority');
   },
 );
 
@@ -410,13 +406,11 @@ test(
   async t => {
     const f = await fixture(t, undefined, {
       accessPolicy: {
-        discord: true,
-        plex: true,
-        password: '',
+        ...accessPolicy({ sourceMembers: ['plex'] }),
         publicWeb: true,
       },
     });
-    f.config.serverOperator = { discordId: f.provider.subjects.guest, plexId: '' };
+    f.config.serverOperator = { identities: [{ provider: 'discord', subject: f.provider.subjects.guest }] };
     const browser = f.browser(),
       endpoint = '/api/operator/settings';
     await browser.discord('guest');

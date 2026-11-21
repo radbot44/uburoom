@@ -8,6 +8,7 @@ function accountHttp({
   config,
   registry,
   plexAuth,
+  plexIdentity,
   hub,
   watch,
   watchRoutes,
@@ -90,10 +91,17 @@ function accountHttp({
     session(res, result.user, result.user.name, oauth || login.oauth);
     return { linked: true };
   }
+  /**
+   * Plex sign-in is offered when a member rule names a Plex source, or when some Plex source is
+   * configured for linking a Plex account to (personal watch-state sync).
+   */
+  function plexOffered() {
+    return !config.accessPolicy || !!config.accessPolicy.plex || !!plexAuth?.configured;
+  }
   async function startPlex(req, res, login, returnTo) {
     if (attempts.size >= 200) throw new Error('Plex sign-in is busy');
     const state = secret(),
-      attempt = await plexAuth.start(config.publicUrl + '/auth/plex/callback?state=' + state);
+      attempt = await plexIdentity.start(config.publicUrl + '/auth/plex/callback?state=' + state);
     attempts.set(state, {
       ...attempt,
       expires: Date.now() + 300000,
@@ -101,7 +109,7 @@ function accountHttp({
       ...(returnTo ? { returnTo } : {}),
     });
     res.setHeader('Set-Cookie', cookie('uburoom_plex', state, 300));
-    return config.demo && plexAuth.demo ? config.publicUrl + '/demo-plex?state=' + state : attempt.url;
+    return config.demo && plexIdentity.demo ? config.publicUrl + '/demo-plex?state=' + state : attempt.url;
   }
   function pending(req, login) {
     const merge = merges.get(sourceHash(req));
@@ -127,7 +135,7 @@ function accountHttp({
         return true;
       }
       if (req.method === 'GET' && route === '/auth/plex') {
-        if (config.accessPolicy?.plex === false) throw new Error('Plex authorization is disabled');
+        if (!plexOffered()) throw new Error('Plex sign-in is not offered on this server');
         const returnParam = url.searchParams.get('return');
         const returnTo =
           returnParam &&
@@ -153,14 +161,14 @@ function accountHttp({
           attempt = attempts.get(state);
         if (
           !config.demo ||
-          !plexAuth.demo ||
+          !plexIdentity.demo ||
           !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) ||
           !attempt ||
           attempt.expires <= Date.now() ||
           cookies(req).uburoom_plex !== state
         )
           throw new Error('Isolated Plex demo is unavailable');
-        plexAuth.demo.choose(attempt.pinId, url.searchParams.get('persona'));
+        plexIdentity.demo.choose(attempt.pinId, url.searchParams.get('persona'));
         res.writeHead(302, { Location: '/auth/plex/callback?state=' + state });
         res.end();
         return true;
@@ -168,7 +176,7 @@ function accountHttp({
       if (req.method === 'POST' && route === '/api/account/demo-login') {
         if (
           !config.demo ||
-          !plexAuth.demo ||
+          !plexIdentity.demo ||
           req.headers.origin !== config.publicUrl ||
           !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)
         )
@@ -198,7 +206,9 @@ function accountHttp({
             login.accountRevision !== attempt.revision)
         )
           throw new Error('The account changed during Plex linking; start again');
-        const identity = await plexAuth.finish(attempt);
+        // Plex sign-in proves which Plex account this is; admission decides whether it gets in.
+        const identity = await plexIdentity.identify(attempt);
+        await plexAuth.prime(identity.credential);
         let pendingMerge = false;
         if (login) {
           if ((await user(req)) !== login) throw new Error('Account sign-in expired during linking');
@@ -254,7 +264,7 @@ function accountHttp({
         return true;
       }
       if (req.method === 'POST' && route === '/api/account/plex/connect') {
-        if (config.accessPolicy?.plex === false) throw new Error('Plex authorization is disabled');
+        if (!plexOffered()) throw new Error('Plex sign-in is not offered on this server');
         json(res, 200, { url: await startPlex(req, res, login) });
         return true;
       }
@@ -265,7 +275,8 @@ function accountHttp({
       function providerEnabled(identity) {
         if (!identity) return false;
         if (identity.provider === 'plex')
-          return config.accessPolicy?.plex !== false && plexAuth?.plex?.configured !== false;
+          // The only sign-in left must still be able to let this person in.
+          return !config.accessPolicy || !!config.accessPolicy.plex;
         if (identity.provider === 'discord') {
           const oauthReady = !!(config.clientId && config.clientSecret && config.ownerId);
           if (!oauthReady) return false;

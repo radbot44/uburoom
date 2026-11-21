@@ -8,15 +8,15 @@ function isServerOperator(registry, config, userId) {
   if (typeof userId !== 'string' || !userId) return false;
   const account = registry.canonical(userId);
   if (!account || account.id !== userId) return false;
-  const operator = config.serverOperator;
-  if (!operator) return false;
+  // Exact verified identities from operator.identities, of any sign-in method (discord, plex, uburoom).
+  const operators = config.serverOperator?.identities || [];
+  if (!operators.length) return false;
   return registry
     .identities(account.id)
     .some(
       identity =>
         identity.verified === 1 &&
-        ((identity.provider === 'discord' && !!operator.discordId && identity.subject === operator.discordId) ||
-          (identity.provider === 'plex' && !!operator.plexId && identity.subject === operator.plexId)),
+        operators.some(operator => operator.provider === identity.provider && operator.subject === identity.subject),
     );
 }
 

@@ -23,7 +23,7 @@ function runningSettings(config) {
   return {
     source: 'running',
     settings: {
-      access: select(config.accessPolicy, ['discord', 'plex', 'publicWeb']),
+      access: select(config.accessPolicy, ['discordServer', 'sourceMembers', 'password', 'accounts', 'publicWeb']),
       rooms: {
         singleRoom: !!config.singleRoom,
         limits: select(config.roomLimits, [

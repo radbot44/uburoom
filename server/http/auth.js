@@ -14,61 +14,10 @@ const RETURN_TARGETS = [
 const safeReturn = target => (target && RETURN_TARGETS.some(pattern => pattern.test(target)) ? target : undefined);
 
 /**
- * Discord sign-in: the authorization attempts in flight and the redirect that starts one.
- * @param {{config: any, plexAuth: any, sessions: any, authorizeUrl: string}} services
- */
-function createDiscordSignIn({ config, plexAuth, sessions, authorizeUrl }) {
-  const { cookie, cookies, json } = sessions;
-  const states = new Map();
-  async function start(req, res, linkLogin, ownerOnly = false, returnTo = undefined) {
-    if (config.accessPolicy && !config.accessPolicy.discord && !ownerOnly)
-      throw new Error('Discord authorization is disabled');
-    const state = randomBytes(32).toString('hex');
-    states.set(state, {
-      expires: Date.now() + 300000,
-      ownerOnly,
-      returnTo,
-      ...(linkLogin
-        ? {
-            linkUserId: linkLogin.userId,
-            sourceHash: hash(cookies(req).uburoom),
-            revision: linkLogin.accountRevision,
-          }
-        : {}),
-    });
-    const query = new URLSearchParams({
-      client_id: config.clientId,
-      redirect_uri: config.publicUrl + '/auth/callback',
-      response_type: 'code',
-      scope: 'identify',
-      state,
-    });
-    res.setHeader('Set-Cookie', cookie('uburoom_oauth', state, 300));
-    const destination =
-      config.demo && plexAuth.demo ? config.publicUrl + '/demo-discord?state=' + state : authorizeUrl + '?' + query;
-    if (linkLogin) json(res, 200, { url: destination });
-    else {
-      res.writeHead(302, { Location: destination });
-      res.end();
-    }
-  }
-  /** Takes the attempt a callback names; each attempt works once. */
-  const take = state => {
-    const attempt = states.get(state);
-    states.delete(state);
-    return attempt;
-  };
-  const sweep = () => {
-    for (const [id, attempt] of states) if (attempt.expires <= Date.now()) states.delete(id);
-  };
-  return { start, take, sweep };
-}
-
-/**
  * The sign-in routes: who the browser is, Admin mode, Discord sign-in and sign-out, and the native hand-off pages.
  * `accountRoutes` and `watchRoutes` are read when a request arrives, after everything is built.
  * @param {{config: any, registry: any, accounts: any, sessions: any, access: any, hub: any, rooms: () => any,
- *   signIn: ReturnType<typeof createDiscordSignIn>, accountRoutes: () => any, watchRoutes: () => any,
+ *   signIn: ReturnType<typeof import('../identity/discord').createDiscordSignIn>, accountRoutes: () => any, watchRoutes: () => any,
  *   setOwnerName: (name: string) => void, files: any}} services
  * @returns {import('./router').Route[]}
  */
@@ -192,28 +141,7 @@ function authRoutes({
             linking.accountRevision !== attempt.revision)
         )
           return json(res, 403, { error: 'Account changed during linking; start again' });
-        const token = await discordFetch('https://discord.com/api/oauth2/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            client_id: config.clientId,
-            client_secret: config.clientSecret,
-            grant_type: 'authorization_code',
-            code,
-            redirect_uri: config.publicUrl + '/auth/callback',
-          }),
-        });
-        const identity = await discordFetch('https://discord.com/api/users/@me', {
-          headers: { Authorization: 'Bearer ' + token.access_token },
-        });
-        const name = String(identity.username || identity.global_name || 'Discord user').slice(0, 100);
-        const oauth =
-          typeof token.refresh_token === 'string' && Number.isFinite(token.expires_in) && token.expires_in > 0
-            ? {
-                refreshToken: token.refresh_token,
-                expires: Date.now() + token.expires_in * 1000,
-              }
-            : undefined;
+        const { name, oauth, ...identity } = await signIn.exchange(code, discordFetch);
         if (attempt.ownerOnly && identity.id !== config.ownerId)
           return json(res, 403, { error: 'This sign-in is reserved for the configured installation owner' });
         if (linking) {
@@ -272,4 +200,4 @@ function authRoutes({
     },
   ];
 }
-module.exports = { createDiscordSignIn, authRoutes };
+module.exports = { authRoutes };

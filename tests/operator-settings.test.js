@@ -6,9 +6,13 @@ const { runningSettings } = require('../server/operator-settings');
 test('runningSettings extracts and maps complete configuration correctly', () => {
   const mockConfig = {
     accessPolicy: {
-      discord: true,
-      plex: false,
+      discordServer: true,
+      sourceMembers: ['living-room'],
+      password: false,
+      accounts: true,
       publicWeb: false,
+      discord: true,
+      plex: true,
       extraSecret: 'hidden',
     },
     singleRoom: true,
@@ -83,8 +87,10 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
 
   assert.equal(result.source, 'running');
   assert.deepEqual(result.settings.access, {
-    discord: true,
-    plex: false,
+    discordServer: true,
+    sourceMembers: ['living-room'],
+    password: false,
+    accounts: true,
     publicWeb: false,
   });
   assert.equal(result.settings.rooms.singleRoom, true);
@@ -166,7 +172,7 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
 
 test('runningSettings strictly enforces allowlist and excludes sensitive/unlisted fields', () => {
   const sensitiveConfig = {
-    accessPolicy: { discord: true, secretAccessKey: 'DO_NOT_LEAK' },
+    accessPolicy: { discordServer: true, secretAccessKey: 'DO_NOT_LEAK' },
     singleRoom: 'truthy_value',
     roomLimits: { maxSaved: 5, secretLimitKey: 'DO_NOT_LEAK' },
     roomPermissions: {

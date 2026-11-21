@@ -5,7 +5,8 @@ const { EventEmitter } = require('node:events');
 const { Events, Status } = require('discord.js');
 const { startBot, connectBot } = require('../server/discord');
 const { discordAccess } = require('../server/sharing');
-const { AccessPolicy } = require('../server/access-policy');
+const { Admission } = require('../server/admission');
+const { accessPolicy } = require('./helpers/access');
 
 test('optional host-directory intents follow application flags without breaking ordinary bot login', async t => {
   t.mock.method(console, 'log', () => {});
@@ -247,8 +248,8 @@ test('admission survives a provider that gives no answer, but not its denial', a
     canonical: id => (id === 'viewer' ? account : id === 'other' ? other : undefined),
     identities: id => [{ provider: 'discord', subject: id, verified: true }],
   };
-  const config = { ownerId: 'owner', accessPolicy: { discord: true, plex: false } };
-  const policy = new AccessPolicy(config, registry, {}, () => ({
+  const config = { ownerId: 'owner', accessPolicy: accessPolicy() };
+  const policy = new Admission(config, registry, undefined, () => ({
     isMember: () => false,
     refresh: async () => {
       asked++;
