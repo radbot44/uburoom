@@ -635,7 +635,6 @@ export function mount(host, deps) {
     }
     show('Join ' + preview.room.name + ' as a guest', 'Pick a name to show in the room.');
     $('guest-join').hidden = false;
-    $('guest-sign-in-label').hidden = !providers.discord && !providers.plex && !providers.jellyfin.length;
     const name = $('guest-name'),
       roll = $('guest-name-roll');
     if (!roll.firstChild)

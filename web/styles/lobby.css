@@ -170,7 +170,7 @@
   .invite-code-form[hidden] {
     display: none;
   }
-  .guest-name,
+  .guest-name-input,
   .invite-code {
     box-sizing: border-box;
     flex: 1;
@@ -185,9 +185,6 @@
   }
   .guest-join-submit {
     min-height: 44px;
-  }
-  #guest-sign-in-label {
-    margin-top: var(--space-20);
   }
   .invite-code-submit {
     min-height: 44px;

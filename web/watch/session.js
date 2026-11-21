@@ -554,7 +554,6 @@ export function mount(host, deps) {
     const password = $('entry-password').value;
     if (!password) return;
     $('entry-form').hidden = true;
-    $('guest-sign-in-label').hidden = true;
     $('entry-status').textContent = 'Pick a name to show in rooms. You enter as a guest.';
     const join = $('guest-join'),
       name = $('guest-name'),
