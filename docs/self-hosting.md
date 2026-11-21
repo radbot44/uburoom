@@ -101,8 +101,19 @@ See [accounts and access](accounts-and-access.md) for the authorization model.
 | `id` | Quoted permanent name for the source in config and logs (letters, digits, dots, hyphens, underscores). Never reuse it for a different server. |
 | `type` | `plex`, `jellyfin` or `folders`. |
 | `name` | Optional label on its libraries' cards; blank uses the name the server reports (folders: "Local folders"). |
+| `libraries` | Plex and Jellyfin only, optional: the server's own library ids to offer (Plex section keys, Jellyfin library ids), such as `libraries: ['1', '4']`. Absent offers every movie and show library, including ones added to the server later. Present offers only those listed, so a library added to the server later stays off until you switch it on. Media in a library that is off is unavailable everywhere (library lists, search, shelves, artwork, subtitles and playback); it never affects who gets in. |
 
 and its type's settings below. Queue entries, resume positions and bookmarks are recorded under the **server identity** a source reports (Plex machine id, Jellyfin server id, `folders:<id>` for a folders source), so renaming or reordering entries orphans nothing. Each Plex and Jellyfin source remembers its server's identity the first time it answers; a different server at the same address is refused. Two entries with the same address, or reporting the same server, are refused: their media stays unavailable until one is removed. A source that is offline or removed leaves its queue entries and resume positions in place, shown as unavailable; adding the same server back, under any `id`, restores them. Adding or removing a source takes effect after a restart. A source never lets anyone in by itself.
+
+### Managing sources in Server settings
+
+The server operator can manage sources in the browser: **Server settings → Sources**. It lists each saved source with its status and how many of its server's libraries it offers, and marks changes that wait for a restart. **Edit** renames a source and switches its libraries on or off (saved as `libraries:`). **Remove** takes the source out of `sources:` and out of `access.source_members`; its queue history and resume positions are kept and come back if the same server is added again. Three add flows write a new entry:
+
+- **Add Plex:** sign in with Plex in a pop-up window (the account doesn't have to own the server). uburoom lists the account's servers and tests each one's connections from the uburoom machine, local addresses first and never Plex relays; a server it can't reach is shown but can't be chosen. An address can be typed instead. Then choose the libraries.
+- **Add Jellyfin:** pick a server found on the network or type its address, sign in once as a Jellyfin administrator (password or Quick Connect), and choose the user whose libraries are offered, then the libraries. uburoom creates its own API key named "uburoom" (visible and revocable in Jellyfin's dashboard) and signs the administrator out; it keeps no password.
+- **Add a folder:** browse the folders on the uburoom machine (in Docker, the container's mounted paths), then give a name and choose Movies or Shows.
+
+New sources get an `id` made from their name. Changes are written to `config.yaml` with the same validation, revision check and private backup as other saved settings, and apply after restarting uburoom. Tokens and keys stay on the server: the browser never receives them.
 
 ### Plex source
 
@@ -129,7 +140,7 @@ A `type: 'jellyfin'` entry adds a Jellyfin server. Each movie or show library th
 
 Jellyfin accounts are not linked to uburoom accounts: everyone uburoom admits, including guests in their room, watches through the configured user, and Jellyfin never becomes another way in.
 
-Original files play as they are, and files a browser cannot play need FFmpeg and a local output in `transcoding.outputs`: uburoom converts them itself and Jellyfin's transcoder is not used. When only the sound is the problem, or a viewer picks another audio track, the picture is copied untouched (HDR included) and only the chosen track is converted. Embedded subtitles are read from the file; external text subtitles (SRT, WebVTT, ASS) are offered as tracks and other external formats are left out. The source's key never reports anything back to Jellyfin: no play state, progress or watched marks. Collections, multiple versions of one item and intro and credit markers are not supported, and personal Jellyfin sign-in is not offered yet. `npm run doctor` checks the address, key and user.
+Original files play as they are, and files a browser cannot play need FFmpeg and a local output in `transcoding.outputs`: uburoom converts them itself and Jellyfin's transcoder is not used. When only the sound is the problem, or a viewer picks another audio track, the picture is copied untouched (HDR included) and only the chosen track is converted. Embedded subtitles are read from the file; external text subtitles (SRT, WebVTT, ASS) are offered as tracks and other external formats are left out. The source's key never reports anything back to Jellyfin: no play state, progress or watched marks. Collections, multiple versions of one item and intro and credit markers are not supported, and personal Jellyfin sign-in is not offered yet. With a `libraries:` list, items outside a listed library (including collections outside them) are unavailable. `npm run doctor` checks the address, key and user.
 
 ### Folders source
 

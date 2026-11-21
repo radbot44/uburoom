@@ -2,6 +2,19 @@
 
 This reference holds owner-approved, feature-specific UI decisions moved from the [design guide](design-guide.md). Consult only the relevant section for the surface being changed. These decisions are not permission to redesign unrelated surfaces; common controls, tokens, focus, layout and feedback principles remain in the design guide.
 
+## Media sources
+
+**Built to the phase 6 brief; not yet owner-approved.** Server settings → Sources, after the setup mockup's Media sources step and the Accounts section's styles.
+
+- **Server settings → Sources:** a tab between Transcoding and Accounts. Like Accounts it saves at once and works without the saved settings; unlike them its changes go to `config.yaml`, so its hint says they apply after restarting uburoom. On narrow screens the five tabs wrap onto a second row.
+- **List:** one row per saved source in config order: Plex or Jellyfin logo or a folder icon, the name (or id), "Plex · 3 of 4 libraries" (a folder shows its path), a warning line when its check fails, and "Saved · applies after restart" when it differs from what is running. Edit and a Remove icon button on the right. Sources removed but still running are named in one line below. Then Add Plex, Add Jellyfin and Add a folder.
+- **Edit:** inline in the panel: Name (placeholder the id), the address, and "Libraries to offer" checkboxes with item counts and "Libraries added to this server later start off." Cancel and Save source. A folder source has no library list.
+- **Remove:** an inline bordered confirmation: "Remove Name?", that its libraries are no longer offered after a restart and that queue history and resume positions are kept and come back if the server (or folder, with the same name) is added again. Cancel and a danger Remove.
+- **Add Plex:** Sign in with Plex opens plex.tv in a pop-up window and the panel waits ("Open it again" if the window was blocked or closed). Then "Signed in as name. Choose a server." with a radio per server and its address; unreachable servers are disabled with "uburoom can’t reach this server from this computer". "Enter an address instead" with Test. Choosing a server shows Name (placeholder the server's name), the address and the libraries, all on, then Add server.
+- **Add Jellyfin:** servers found on the network as radios, "Enter an address instead", Next; then "Sign in to Server" with Username and Password and, when the server has it, Use Quick Connect instead (shows the code large, and waits for approval); then "Offer the libraries of" a user dropdown, Name and the libraries, then Add server.
+- **Add a folder:** the current path, a bordered list of folders (Up one level first; drives at the top on Windows), Name (placeholder the folder's name), Contains Movies or Shows, Add folder.
+- **While waiting** for a sign-in, every control but Cancel is disabled; Cancel ends the wait. Each step's error shows on the panel's error line.
+
 ## uburoom accounts
 
 - **Server settings → Accounts:** a fourth tab after Transcoding. Unlike the other tabs it saves nothing for a restart: each action applies at once, and it works even when saved settings can't load. A hint says so. Username and Display name (optional, "Same as username") with Add account, then one row per account: name, username and status (Active, Waiting for password with the link's expiry, Disabled), with New link and Disable, or Enable when disabled.
