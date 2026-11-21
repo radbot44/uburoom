@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2za
+# Config schema v2zb
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -30,6 +30,11 @@ sources: []
 #    url: 'http://127.0.0.1:32400' # Reachable from this machine; no path.
 #    token: '' # The Plex token uburoom reads this server with.
 #    machine_identifier: '' # Blank: detect once and remember this server.
+#    # Optional: the Plex section keys to offer, e.g. ['1', '4']. Leave it out to
+#    # offer every library, including ones added later; with a list, a library
+#    # added later stays off until you add its key. Server settings -> Sources
+#    # writes this list when you switch libraries on or off.
+#    libraries: ['1', '4']
 #    # proxy: media goes through uburoom. auto: supported browsers fetch original
 #    # files and Plex HLS straight from Plex (Activity stays proxied), with the
 #    # proxy as recovery. Browsers then get tokens derived from direct_token, so
@@ -60,6 +65,9 @@ sources: []
 #    # Let viewers who signed in to this Jellyfin opt in to resume/watched sync on
 #    # their own Jellyfin user. Nobody else's playback is ever reported.
 #    reporting_watch_state: true
+#    # Optional: the Jellyfin library ids to offer, as for Plex; leave it out to
+#    # offer every library the user can see. Server settings -> Sources writes it.
+#    libraries: ['0123456789abcdef0123456789abcdef']
 #
 #  # Folders of videos on this machine (needs FFprobe, and FFmpeg for files a
 #  # browser cannot play as they are). Each library: a short id, the name shown,
