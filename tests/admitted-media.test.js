@@ -3,6 +3,7 @@ const { accessPolicy } = require('./helpers/access');
 // Admitted means everything: every admitted person browses every library of every
 // media source through the source's own credential, and a refused person gets none.
 const test = require('node:test');
+const { randomUUID } = require('node:crypto');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -84,7 +85,11 @@ test(
     // A Plex member with no Discord link, whose own Plex account is denied some items.
     await plexMember.plex('bob');
     // A room guest who is neither.
-    const id = (await member.post('/api/watch/rooms', { name: 'Guest room' })).body.id;
+    const created = await plexMember.post('/api/watch/rooms', { name: 'Guest room' });
+    assert.equal(created.status, 201);
+    const id = created.body.id;
+    const other = await plexMember.post('/api/watch/rooms', { name: 'Other room' });
+    assert.equal(other.status, 201);
     const store = f.app.watch.roomState.store;
     let record = store.get(id);
     record = await store.edit(id, record.creatorId, record.revision, { action: 'guests.allow', enabled: true });
@@ -96,6 +101,13 @@ test(
     });
     assert.equal(joined.status, 200);
     assert.equal(joined.body.guest, true);
+    assert.equal((await guest.request('/api/watch/me')).body.guestRoomId, id);
+    const rooms = await guest.request('/api/watch/rooms');
+    assert.equal(rooms.status, 200);
+    assert.equal(
+      rooms.body.rooms.some(room => room.id === other.body.id),
+      false,
+    );
     const expected = { plex: 'Fixture Movies', jellyfin: 'Jellyfin Films', local: 'Folder Films' };
     for (const [who, browser] of [
       ['Discord member', member],
@@ -115,6 +127,28 @@ test(
       assert.equal(scope.principal, 'discord-shared', `${who} watches Plex through the source credential`);
       assert.ok(await scope.allows('999'), "a viewer's own Plex restrictions play no part");
     }
+    const hostViewer = randomUUID();
+    const hostPath = '/api/watch/rooms/' + id + '?viewer=' + hostViewer;
+    const guestPath = '/api/watch/rooms/' + id + '?viewer=' + randomUUID();
+    const initial = await plexMember.request(hostPath);
+    assert.equal(initial.status, 200);
+    const load = await plexMember.post('/api/watch/rooms/' + id + '/command', {
+      epoch: initial.body.epoch,
+      expiresAt: Date.now() + 2900,
+      viewerId: hostViewer,
+      command: { action: 'media.load', args: { mediaId: '123', quality: 'direct' } },
+    });
+    assert.equal(load.body.status, 'applied');
+    for (const [browser, roomPath] of [
+      [plexMember, hostPath],
+      [guest, guestPath],
+    ]) {
+      const state = await browser.request(roomPath);
+      assert.equal(state.status, 200);
+      assert.ok(state.body.mediaUrl);
+      assert.equal((await browser.request(state.body.mediaUrl)).body, 'fixture-media-bytes');
+    }
+    assert.equal((await guest.request('/api/watch/rooms/' + other.body.id + '?viewer=' + randomUUID())).status, 403);
     // Someone the server refuses gets nothing from any source. With guests on, a Plex
     // nonmember may still sign in to use an invite, but that alone admits nobody.
     await refused.plex('denied');
