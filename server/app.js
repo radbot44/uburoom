@@ -27,6 +27,7 @@ const { createHttpServer } = require('./http/server');
 const { createUburoomAccounts } = require('./identity/accounts');
 const { uburoomAccountRoutes } = require('./http/uburoom-accounts');
 const { sourceSettings } = require('./source-settings');
+const { setupHandoff } = require('./http/setup-handoff');
 
 const DEMO_MEDIA = path.join(__dirname, '../assets/demo/sync-test.mp4');
 
@@ -163,11 +164,17 @@ function createApp(config, options = {}) {
     const sourceSettingsHttp = sourceSettings({
       ...{ config, registry, editor, sessions, plexFetch, jellyfinFetch, jellyfinDiscover, plexTv: plexIdentity },
     });
+    // The operator arriving from first-run setup, already signed in (server/setup/).
+    const setupHttp = setupHandoff({
+      ...{ handoff: options.setupHandoff, config, registry, uburoomAccounts, sessions, files, logger },
+      accountRoutes: () => accountRoutes,
+    });
     const route = createRoutes({
       ...{ config, registry, accounts, sessions, access, hub, rooms, files, signIn, setOwnerName },
       ...{ watchRoutes, accountRoutes, operatorRoutes: operatorHttp({ config, registry, editor, ...sessions }) },
       uburoomAccountRoutes: uburoomAccountsHttp.routes,
       sourceSettingsRoutes: sourceSettingsHttp.routes,
+      setupRoutes: setupHttp.routes,
     });
     const server = createHttpServer({ config, logger, tls, json: sessions.json, route });
     const sockets = watchSockets({
@@ -219,7 +226,11 @@ function createApp(config, options = {}) {
       });
       return closing;
     }
-    return { server, hub, watch, access, close, registry, plexAuth, setOwnerName, uburoomAccounts };
+    return {
+      ...{ server, hub, watch, access, close, registry, plexAuth, setOwnerName, uburoomAccounts },
+      // Before listening: creates the account first-run setup chose for the operator.
+      completeSetup: setupHttp.prepare,
+    };
   } catch (error) {
     // Construction may fail before the registry exists.
     Promise.resolve(registry?.persistence.abort()).catch(() => {});

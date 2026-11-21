@@ -18,14 +18,24 @@ From the project directory:
 
 ```sh
 npm ci
-cp config.example.yaml config.yaml
-# Edit config.yaml, then verify your installation environment:
-npm run doctor
-# Start the server:
 npm start
 ```
 
-Set these values in your private `config.yaml`:
+### First-run setup
+
+With no config file at the selected path (`config.yaml` beside the code, or `--config`), uburoom starts setup mode instead of the server ([design](first-run-setup.md)). Setup mode opens no database or media source; it serves only the setup page, its API and `/health`.
+
+- **Reaching it.** The console and log show a setup code and `http://localhost:5756/setup#code=…`. Setup listens on loopback over plain HTTP by default. `--setup-host <IP address>` makes it reachable from other devices, over HTTPS with a certificate made in memory (the Docker image passes `--setup-host 0.0.0.0`); `--setup-port <port>` changes its port. Requests must name `localhost` or an IP address as their host, and every change must come from the setup page itself.
+- **The code.** 128 random bits, shown as letter groups. Only its hash is kept. Ten wrong tries make a new code, shown in the console and log. A correct code opens one setup session for 30 minutes; entering the code again ends the previous session, and the choices made so far are kept.
+- **What it writes.** On Finish, after every check passes, setup writes the config file once: `config.example.yaml` with your answers filled in and every comment kept, validated as the server loads it, readable only by the account running uburoom. It never replaces or reads an existing file. The operator is the account from step 2 (`operator.identities`). The certificate is written to `data/certs/` beside the config and is self-signed for `localhost` (and the home network address, when chosen). The credential key stays at its default place outside the code and is created when uburoom first starts; back it up with the config folder.
+- **The hand-off.** uburoom then starts normally in the same process on the chosen port, and **Open uburoom** signs you in with a single-use link that expires after two minutes. A uburoom account chosen in setup is created when uburoom starts, whether or not the link is used.
+- **Setting up again.** Stop uburoom and move the config file away. Setup's uburoom account needs an empty data folder; with existing data, sign in with Plex in step 2 or move the data folder aside.
+
+Server settings changes most of these choices later; the rest stay in YAML.
+
+### Configuring by hand
+
+`config.yaml` can also be written by hand: copy `config.example.yaml`, edit it and run `npm run doctor` before starting. Set these values in your private `config.yaml`:
 
 | Setting | Value |
 | --- | --- |

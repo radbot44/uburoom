@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Set up uburoom</title>
+    <script src="/theme.js"></script>
+    <link rel="stylesheet" href="/styles/all.css" />
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
+  </head>
+  <body>
+    <svg id="icon-sprite" class="icon-sprite" hidden aria-hidden="true" width="0" height="0"></svg>
+    <main class="setup-page">
+      <header>
+        <img class="brand" src="/assets/branding/uburoom-wordmark-brand.svg" alt="uburoom" width="164" height="51" />
+      </header>
+
+      <!-- 1. Setup code -->
+      <section class="card setup-card" data-screen="code" aria-labelledby="h-code">
+        <p class="hint setup-step">Step 1 of 6</p>
+        <h1 id="h-code" tabindex="-1">Set up uburoom</h1>
+        <p>Enter the setup code shown in the uburoom window.</p>
+        <form id="code-form" class="setup-body">
+          <label class="visually-hidden" for="setup-code">Setup code</label>
+          <input
+            id="setup-code"
+            class="setup-code-input"
+            autocomplete="off"
+            spellcheck="false"
+            autocapitalize="characters"
+            maxlength="64"
+            placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XX"
+          />
+          <p class="setup-error" role="alert" hidden><span data-icon="alert-triangle"></span><span></span></p>
+          <p class="hint" id="code-where">Docker: run <code>docker logs uburoom</code> to see it.</p>
+          <p class="hint" id="code-filled" hidden>Filled in from the link in the uburoom window.</p>
+          <footer class="setup-footer">
+            <button id="code-next" class="primary setup-next" type="submit">Continue</button>
+          </footer>
+        </form>
+      </section>
+
+      <!-- 2. Your account -->
+      <section class="card setup-card" data-screen="account" aria-labelledby="h-account" hidden>
+        <p class="hint setup-step">Step 2 of 6</p>
+        <h1 id="h-account" tabindex="-1">Your account</h1>
+        <p>You'll use it to sign in and manage this server.</p>
+        <div class="setup-body">
+          <div class="setup-choices" data-part="choose">
+            <button id="account-plex" class="provider-button quiet" type="button">
+              <img src="/assets/plex-icon.png" alt="" width="24" height="24" />Sign in with Plex
+            </button>
+            <p class="setup-or">or</p>
+            <button id="account-create-open" class="quiet" type="button">Create a uburoom account</button>
+          </div>
+          <div class="setup-panel" data-part="plex-waiting" hidden>
+            <div class="setup-waiting" role="status">
+              <span data-icon="loader-2" data-class="setup-spinner"></span>
+              <div>
+                <strong>Waiting for Plex sign-in…</strong>
+                <span class="hint">Finish signing in on the Plex page that opened.</span>
+              </div>
+            </div>
+            <div class="setup-inline-actions">
+              <button id="account-plex-again" class="quiet" type="button">Open Plex again</button>
+              <button id="account-plex-cancel" class="quiet" type="button">Cancel</button>
+            </div>
+          </div>
+          <form id="account-create" class="setup-panel" data-part="create" hidden>
+            <div class="setup-field">
+              <label for="acct-user">Username</label>
+              <input id="acct-user" class="setup-text-input" autocomplete="username" maxlength="32" required />
+            </div>
+            <div class="setup-field">
+              <label for="acct-pass">Password</label>
+              <input
+                id="acct-pass"
+                class="setup-text-input"
+                type="password"
+                autocomplete="new-password"
+                minlength="10"
+                maxlength="1024"
+                required
+              />
+              <span class="hint">At least 10 characters.</span>
+            </div>
+            <div class="setup-inline-actions">
+              <button id="account-create-back" class="quiet" type="button">Back</button>
+              <button id="account-create-submit" class="primary" type="submit">Create account</button>
+            </div>
+          </form>
+          <div class="setup-panel setup-account" data-part="done" hidden>
+            <span id="account-picture"></span>
+            <div>
+              <strong id="account-name"></strong>
+              <span class="hint" id="account-kind"></span>
+            </div>
+            <button id="account-change" class="quiet" type="button">Change</button>
+          </div>
+          <p class="setup-error" role="alert" hidden><span data-icon="alert-triangle"></span><span></span></p>
+        </div>
+        <footer class="setup-footer">
+          <button class="quiet" type="button" data-go="code">Back</button>
+          <button id="account-next" class="primary setup-next" type="button" data-go="sources" disabled>Next</button>
+        </footer>
+      </section>
+
+      <!-- 3. Media sources -->
+      <section class="card setup-card" data-screen="sources" aria-labelledby="h-sources" hidden>
+        <p class="hint setup-step">Step 3 of 6</p>
+        <h1 id="h-sources" tabindex="-1">Media sources</h1>
+        <p>Add every server or folder you want to watch from. Everyone you let in can watch all of it.</p>
+        <div class="setup-body">
+          <div class="setup-panel" data-part="list" hidden>
+            <ul id="source-list" class="setup-sources"></ul>
+          </div>
+          <p class="hint setup-flush" data-part="empty">Add at least one to continue.</p>
+          <div class="setup-add" data-part="empty list" role="group" aria-label="Add a media source">
+            <button class="quiet setup-type" type="button" data-add="plex">
+              <img src="/assets/plex-icon.png" alt="" width="28" height="28" />Add Plex
+            </button>
+            <button class="quiet setup-type" type="button" data-add="jellyfin">
+              <img src="/assets/jellyfin-icon.svg" alt="" width="28" height="28" />Add Jellyfin
+            </button>
+            <button class="quiet setup-type" type="button" data-add="folders">
+              <span data-icon="folder"></span>Add a folder
+            </button>
+          </div>
+
+          <!-- Add Plex -->
+          <div class="setup-panel" data-part="add-plex" hidden>
+            <h2>Add Plex</h2>
+            <div class="setup-waiting" role="status" id="plex-waiting" hidden>
+              <span data-icon="loader-2" data-class="setup-spinner"></span>
+              <div>
+                <strong id="plex-waiting-title">Waiting for Plex sign-in…</strong>
+                <span class="hint" id="plex-waiting-hint">Finish signing in on the Plex page that opened.</span>
+              </div>
+            </div>
+            <div id="plex-chooser" hidden>
+              <p class="hint setup-lead" id="plex-account"></p>
+              <fieldset class="setup-servers">
+                <legend class="visually-hidden">Plex server</legend>
+                <div id="plex-servers"></div>
+              </fieldset>
+              <details class="setup-manual">
+                <summary>Enter an address instead</summary>
+                <div class="setup-manual-row">
+                  <label class="visually-hidden" for="setup-plex-url">Plex server address</label>
+                  <input id="setup-plex-url" class="setup-text-input" placeholder="http://192.168.1.20:32400" />
+                  <button id="plex-test" class="quiet" type="button">Test</button>
+                </div>
+              </details>
+              <fieldset class="setup-libraries" id="plex-libraries" hidden></fieldset>
+            </div>
+            <div class="setup-inline-actions">
+              <button id="plex-again" class="quiet" type="button" hidden>Open Plex again</button>
+              <button class="quiet" type="button" data-cancel>Cancel</button>
+              <button id="plex-add" class="primary" type="button" disabled>Add server</button>
+            </div>
+          </div>
+
+          <!-- Add Jellyfin -->
+          <div class="setup-panel" data-part="add-jellyfin" hidden>
+            <h2>Add Jellyfin</h2>
+            <fieldset class="setup-servers">
+              <legend class="visually-hidden">Jellyfin server</legend>
+              <div id="jf-servers"></div>
+            </fieldset>
+            <p class="hint setup-flush" id="jf-none" hidden>No Jellyfin server answered on this network.</p>
+            <details class="setup-manual" id="jf-manual">
+              <summary>Enter an address instead</summary>
+              <div class="setup-manual-row">
+                <label class="visually-hidden" for="setup-jf-url">Jellyfin server address</label>
+                <input id="setup-jf-url" class="setup-text-input" placeholder="http://192.168.1.30:8096" />
+                <button id="jf-test" class="quiet" type="button">Test</button>
+              </div>
+            </details>
+            <div class="setup-inline-actions">
+              <button class="quiet" type="button" data-cancel>Cancel</button>
+              <button id="jf-next" class="primary" type="button" disabled>Next</button>
+            </div>
+          </div>
+          <form class="setup-panel" data-part="add-jellyfin-sign-in" id="jf-sign-in" hidden>
+            <h2 id="jf-sign-in-title">Sign in</h2>
+            <p class="hint setup-lead">Use a Jellyfin administrator. uburoom doesn't keep the password.</p>
+            <div class="setup-field">
+              <label for="jf-user">Username</label>
+              <input id="jf-user" class="setup-text-input" autocomplete="off" required />
+            </div>
+            <div class="setup-field">
+              <label for="jf-pass">Password</label>
+              <input id="jf-pass" class="setup-text-input" type="password" autocomplete="off" />
+            </div>
+            <div id="jf-qc" hidden>
+              <p class="hint">Or open Jellyfin → Quick Connect and enter this code:</p>
+              <p class="setup-qc" aria-label="Quick Connect code" id="jf-qc-code"></p>
+            </div>
+            <div class="setup-inline-actions">
+              <button id="jf-sign-in-back" class="quiet" type="button">Back</button>
+              <button class="primary" type="submit">Sign in</button>
+            </div>
+          </form>
+          <div class="setup-panel" data-part="add-jellyfin-user" hidden>
+            <h2 id="jf-user-title"></h2>
+            <div class="setup-field">
+              <label for="jf-lib-user">Offer the libraries of</label>
+              <select id="jf-lib-user"></select>
+              <span class="hint">uburoom reads libraries as this Jellyfin user.</span>
+            </div>
+            <fieldset class="setup-libraries" id="jf-libraries" hidden></fieldset>
+            <div class="setup-inline-actions">
+              <button class="quiet" type="button" data-cancel>Cancel</button>
+              <button id="jf-add" class="primary" type="button" disabled>Add server</button>
+            </div>
+          </div>
+
+          <!-- Edit a source -->
+          <form class="setup-panel" data-part="edit" id="edit-form" hidden>
+            <h2 id="edit-title"></h2>
+            <div class="setup-field">
+              <label for="edit-name">Name</label>
+              <input id="edit-name" class="setup-text-input" maxlength="60" />
+              <span class="hint" id="edit-where"></span>
+            </div>
+            <div class="setup-field" id="edit-kind-field" hidden>
+              <span id="edit-kind">Contains</span>
+              <div class="button-group watch-segmented" role="group" aria-labelledby="edit-kind" id="edit-kind-group">
+                <button class="group-button" type="button" data-kind="movies" aria-pressed="true">Movies</button>
+                <button class="group-button" type="button" data-kind="shows" aria-pressed="false">Shows</button>
+              </div>
+            </div>
+            <p class="hint" id="edit-loading" role="status" hidden>Reading libraries…</p>
+            <fieldset class="setup-libraries" id="edit-libraries" hidden></fieldset>
+            <div class="setup-inline-actions">
+              <button class="quiet" type="button" data-cancel>Cancel</button>
+              <button class="primary" type="submit">Save</button>
+            </div>
+          </form>
+
+          <!-- Add folder -->
+          <form class="setup-panel" data-part="add-folder" id="folder-form" hidden>
+            <h2>Add a folder</h2>
+            <p class="setup-folder-path setup-flush" id="folder-path"></p>
+            <ul class="setup-folders" id="folder-list"></ul>
+            <div class="setup-field">
+              <label for="folder-name">Name</label>
+              <input id="folder-name" class="setup-text-input" maxlength="60" />
+            </div>
+            <div class="setup-field">
+              <span id="folder-kind">Contains</span>
+              <div
+                class="button-group watch-segmented"
+                role="group"
+                aria-labelledby="folder-kind"
+                id="folder-kind-group"
+              >
+                <button class="group-button" type="button" data-kind="movies" aria-pressed="true">Movies</button>
+                <button class="group-button" type="button" data-kind="shows" aria-pressed="false">Shows</button>
+              </div>
+            </div>
+            <div class="setup-inline-actions">
+              <button class="quiet" type="button" data-cancel>Cancel</button>
+              <button id="folder-add" class="primary" type="submit" disabled>Add folder</button>
+            </div>
+          </form>
+          <p class="setup-error" role="alert" hidden><span data-icon="alert-triangle"></span><span></span></p>
+        </div>
+        <footer class="setup-footer" data-part="empty list">
+          <button class="quiet" type="button" data-go="account">Back</button>
+          <button id="sources-next" class="primary setup-next" type="button" data-go="access" disabled>Next</button>
+        </footer>
+      </section>
+
+      <!-- 4. Who can get in -->
+      <section class="card setup-card" data-screen="access" aria-labelledby="h-access" hidden>
+        <p class="hint setup-step">Step 4 of 6</p>
+        <h1 id="h-access" tabindex="-1">Who can get in?</h1>
+        <p>Anyone let in can watch everything. Pick any ways in.</p>
+        <div class="setup-body">
+          <div class="setup-panel setup-rules" id="access-rules">
+            <div id="access-sources"></div>
+            <div class="setup-rule">
+              <label class="form-checkbox">
+                <input type="checkbox" id="rule-password" />
+                <span>Anyone who knows the server password</span>
+              </label>
+              <p class="hint" id="rule-password-hint">They pick a name; no account needed.</p>
+              <div class="setup-field" id="rule-password-field" hidden>
+                <label class="visually-hidden" for="server-pass">Server password</label>
+                <input
+                  id="server-pass"
+                  class="setup-text-input"
+                  type="password"
+                  autocomplete="new-password"
+                  maxlength="1024"
+                  placeholder="Server password"
+                />
+                <span class="hint">They pick a name; no account needed.</span>
+              </div>
+            </div>
+            <div class="setup-rule" id="rule-accounts-row">
+              <label class="form-checkbox">
+                <input type="checkbox" id="rule-accounts" />
+                <span>uburoom accounts you create</span>
+              </label>
+              <p class="hint" id="rule-accounts-hint">Create them in Server settings.</p>
+            </div>
+            <div class="setup-rule">
+              <label class="form-checkbox">
+                <input type="checkbox" id="rule-guests" />
+                <span>Guests with a room invite</span>
+              </label>
+              <p class="hint">Only into the room they were invited to.</p>
+            </div>
+            <div class="setup-rule">
+              <label class="form-checkbox">
+                <input type="checkbox" id="rule-discord" />
+                <span>Members of your Discord servers</span>
+              </label>
+              <p class="hint" id="rule-discord-hint">They sign in with Discord. Also enables the Discord Activity.</p>
+              <div id="rule-discord-setup" hidden>
+                <ol class="setup-steps">
+                  <li>
+                    Create an application in the
+                    <a
+                      class="setup-link"
+                      href="https://discord.com/developers/applications"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >Discord Developer Portal</a
+                    >.
+                  </li>
+                  <li>Under OAuth2, add the redirect <code id="discord-redirect"></code>.</li>
+                  <li>Under Bot, reset and copy the token.</li>
+                </ol>
+                <div class="setup-field">
+                  <label for="dc-app">Application ID</label>
+                  <input id="dc-app" class="setup-text-input" inputmode="numeric" autocomplete="off" maxlength="20" />
+                </div>
+                <div class="setup-field">
+                  <label for="dc-secret">Client secret</label>
+                  <input id="dc-secret" class="setup-text-input" type="password" autocomplete="off" maxlength="200" />
+                </div>
+                <div class="setup-field">
+                  <label for="dc-bot">Bot token</label>
+                  <input id="dc-bot" class="setup-text-input" type="password" autocomplete="off" maxlength="200" />
+                </div>
+                <p class="hint" id="discord-checking" role="status" hidden>Checking with Discord…</p>
+                <div class="setup-field" id="discord-servers-field" hidden>
+                  <a class="quiet setup-invite" id="discord-invite" href="#" target="_blank" rel="noopener noreferrer"
+                    >Add the bot to a Discord server</a
+                  >
+                  <span class="setup-label">Discord servers</span>
+                  <ul class="setup-panel setup-guilds" id="discord-servers"></ul>
+                  <span class="hint"
+                    >Members of any server the bot has joined can get in. Add the bot to another server to let its
+                    members in too.</span
+                  >
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="setup-error" role="alert" hidden><span data-icon="alert-triangle"></span><span></span></p>
+        </div>
+        <footer class="setup-footer">
+          <button class="quiet" type="button" data-go="sources">Back</button>
+          <button id="access-next" class="primary setup-next" type="button">Next</button>
+        </footer>
+      </section>
+
+      <!-- 5. Where people watch -->
+      <section class="card setup-card" data-screen="network" aria-labelledby="h-network" hidden>
+        <p class="hint setup-step">Step 5 of 6</p>
+        <h1 id="h-network" tabindex="-1">Where will people watch?</h1>
+        <div class="setup-body">
+          <div class="button-group watch-segmented" role="group" aria-label="Where people watch" id="network-where">
+            <button class="group-button" type="button" data-where="computer" aria-pressed="true">This computer</button>
+            <button class="group-button" type="button" data-where="home" aria-pressed="false">My home network</button>
+          </div>
+          <div class="setup-field setup-gap">
+            <label for="setup-port">Port</label>
+            <input id="setup-port" class="setup-text-input setup-port" inputmode="numeric" maxlength="5" value="5756" />
+            <span class="hint">5756 unless something else uses it.</span>
+          </div>
+          <div class="setup-panel setup-where">
+            <p id="network-computer">Open uburoom at <strong></strong></p>
+            <p id="network-home" hidden>Viewers open <strong></strong></p>
+            <p class="hint" id="network-home-hint" hidden>
+              Browsers show a certificate warning the first time. Viewers accept it once.
+            </p>
+          </div>
+          <p class="hint setup-gap">
+            Inviting people over the internet? Finish here first, then follow the remote access guide,
+            <code>docs/remote-access.md</code> in the uburoom folder.
+          </p>
+          <p class="setup-error" role="alert" hidden><span data-icon="alert-triangle"></span><span></span></p>
+        </div>
+        <footer class="setup-footer">
+          <button class="quiet" type="button" data-go="access">Back</button>
+          <button id="network-next" class="primary setup-next" type="button">Next</button>
+        </footer>
+      </section>
+
+      <!-- 6. Check and finish -->
+      <section class="card setup-card" data-screen="check" aria-labelledby="h-check" hidden>
+        <p class="hint setup-step">Step 6 of 6</p>
+        <h1 id="h-check" tabindex="-1">Check and finish</h1>
+        <div class="setup-body">
+          <p class="hint" id="check-running" role="status">Checking…</p>
+          <ul class="setup-panel setup-checks" id="check-list" hidden></ul>
+          <p class="setup-error" role="alert" hidden><span data-icon="alert-triangle"></span><span></span></p>
+        </div>
+        <footer class="setup-footer">
+          <button class="quiet" type="button" data-go="network">Back</button>
+          <button id="check-again" class="quiet" type="button" hidden>Check again</button>
+          <button id="check-finish" class="primary setup-next" type="button" disabled>Finish setup</button>
+        </footer>
+      </section>
+
+      <!-- 7. Ready -->
+      <section class="card setup-card setup-ready" data-screen="ready" aria-labelledby="h-ready" hidden>
+        <h1 id="h-ready" tabindex="-1">uburoom is ready</h1>
+        <p>You're signed in. Create your first room and invite people.</p>
+        <a class="primary" id="ready-open" href="/">Open uburoom</a>
+      </section>
+    </main>
+    <script type="module" src="/setup/setup.js"></script>
+  </body>
+</html>

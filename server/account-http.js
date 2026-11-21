@@ -61,6 +61,24 @@ function accountHttp({
     loginStore.save();
     res.setHeader('Set-Cookie', cookie('uburoom', token, 31536000));
   }
+  /**
+   * Finishes a sign-in whose identity is already verified, with no account signed in to link it to:
+   * the person becomes that identity's account in this browser, replacing a guest session here.
+   * Plex sign-in and the hand-off from first-run setup both end here.
+   * @param {{provider: string, subject: string, name: string, credential?: any} | {userId: string}} who
+   */
+  function completeSignIn(req, res, who) {
+    const previous = sourceHash(req);
+    if (previous && logins.has(previous) && registry.isGuest(logins.get(previous).userId)) logins.delete(previous);
+    let account;
+    if ('userId' in who) account = registry.canonical(who.userId);
+    else {
+      account = registry.resolve(who.provider, who.subject, who.name);
+      if (who.credential) registry.credential(who.provider, who.subject, who.credential);
+      plexAuth.clear();
+    }
+    session(res, account, account.name);
+  }
   const jellyfinRoute = jellyfin.jellyfinSignInRoute({
     config,
     registry,
@@ -244,15 +262,13 @@ function accountHttp({
             identity.credential,
           );
           if (linkResult?.pendingMerge) pendingMerge = true;
-        } else {
-          const previous = sourceHash(req);
-          if (previous && logins.has(previous) && registry.isGuest(logins.get(previous).userId))
-            logins.delete(previous);
-          const account = registry.resolve('plex', identity.subject, identity.name);
-          registry.credential('plex', identity.subject, identity.credential);
-          plexAuth.clear();
-          session(res, account, account.name);
-        }
+        } else
+          completeSignIn(req, res, {
+            provider: 'plex',
+            subject: identity.subject,
+            name: identity.name,
+            credential: identity.credential,
+          });
         const existing = res.getHeader('Set-Cookie');
         res.setHeader('Set-Cookie', [
           ...(existing ? (Array.isArray(existing) ? existing : [existing]) : []),
@@ -458,6 +474,7 @@ function accountHttp({
     route,
     sweep,
     verifiedLink,
+    completeSignIn,
     close() {
       attempts.clear();
       previews.clear();

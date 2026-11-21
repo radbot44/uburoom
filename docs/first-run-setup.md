@@ -1,6 +1,6 @@
 # First-run setup
 
-**Status: design approved by the owner on 2026-11-20 (D1–D8 as recommended). Implemented so far: the fallback default (D5) and the Docker config folder (part of D4). Setup mode itself is not implemented.**
+**Status: design approved by the owner on 2026-11-20 (D1–D8 as recommended). Setup mode and the wizard are built to the approved mockup (phase 7 of the [media sources plan](media-sources-plan.md)); see [Implementation notes](#implementation-notes-2026-11-21) for where the build differs. Not built: the per-user default config location (first bullet of D4).**
 
 **Revised 2026-11-20** for [media sources and admission](media-sources.md): the Plex-only steps and the Sharing step were replaced by Your account, Media sources and Who can get in, and the owner arrives already signed in. D5's setup question and D7 (Plex account must own the server) no longer apply. The setup code, transport, config location and hand-off decisions are unchanged.
 
@@ -162,4 +162,19 @@ The end-to-end wizard can run against the fake Plex in `uburoom-demo`. Whether t
 ## Mockup approval (2026-11-21)
 
 The owner approved the revised mockup (`personal/mockups/first-run-setup.html`), with two changes made before approval: the step 6 check marks line up with their titles, and step 4's Discord rule admits members of any server the bot has joined rather than one picked server. The any-server change touches Discord membership, commands, events and sharing beyond setup, so it is its own piece of work ahead of or alongside phase 7; the wizard's step 4 is built against it.
+
+## Implementation notes (2026-11-21)
+
+Where the build differs from the text above, or decides something it left open. Code: `server/setup/`, `server/start.js`, `server/http/setup-handoff.js`, `web/setup/`, `web/styles/setup.css`; tests: `tests/setup.test.js`.
+
+- **Default config location (D4) unchanged.** The default stays `config.yaml` beside the code. `run-uburoom.bat` and Vigrid's scheduled task pass no `--config`, so moving the default would start setup mode on Vigrid after an update. Needs an owner decision (and a launcher change) before it moves.
+- **Setup's own certificate** (when bound beyond loopback) is made in memory each time setup starts and never written. The installation's certificate goes in `data/certs/` and its paths are written as `data/certs/server-cert.pem` and `data/certs/server-key.pem`.
+- **Hand-off link instead of a form POST.** Open uburoom goes to `<public_url>/auth/setup#ticket=…`; that page posts the ticket from the app's own origin. A form POST does not survive the browser's certificate warning for the new self-signed certificate, and the fragment never reaches a log. The ticket is single-use and lasts two minutes. A uburoom account is created when the app starts, so it exists even if the link is never used.
+- **The operator's own way in stays on (step 4).** Admission does not let the operator in by being the operator, so the rule that admits the operator's account cannot be turned off: "uburoom accounts you create" for a uburoom account, or the Plex source when there is one (checkbox shown on and disabled, "Your account gets in this way."). With several Plex sources, at least one must stay on. A Plex operator with no Plex source is asked to add one or use a uburoom account.
+- **Server password:** at least 8 characters.
+- **Discord (step 4):** the pasted Application ID, client secret and bot token are checked with Discord; `discord.owner_id` is the application's owner (or its team's owner). The joined servers come from one lookup (`server/setup/discord.js`, `joinedServers`) and are shown read-only, re-read when the page regains focus. Until the any-server backend lands, `discord.guild_id` is written as the first joined server (`TODO(discord-any-server)`). The redirect shown is `/auth/callback`, the route uburoom uses.
+- **Step 6 media sources** uses each source module's connection check (an unreachable server is a fix, not a warning) and then its full check (a failure is a fix).
+- **Existing data:** a uburoom account from setup needs a data folder without a database; with existing data, step 6 asks to move it aside or sign in with Plex.
+- **Remote access guide:** named as `docs/remote-access.md` in the uburoom folder; there is no published address to link to.
+- **The setup code** is 26 characters (seven groups); the field's text shrinks to fit narrow screens.
 

@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { spawnSync, spawn } = require('node:child_process');
+const { spawn } = require('node:child_process');
 const { ROOT, configPath, parseConfig, normalizeConfig, loadConfig } = require('../server/config');
 const Policy = require('../server/room-policy');
 
@@ -315,18 +315,39 @@ test('access: entry rules are checked, and each sign-in method is offered only f
   assert.throws(() => normalizeConfig({ secrets: { entry_password: 'x' } }), /Unknown|unknown/);
 });
 
-test('missing YAML fails before TLS or providers and never falls back to .env/environment', t => {
+test('missing YAML starts first-run setup, never .env/environment settings', async t => {
+  // Stopped (and gone) before its folder is removed: hooks run in the order they are added.
+  let child;
+  t.after(async () => {
+    if (!child || child.exitCode !== null) return;
+    const exited = new Promise(resolve => child.once('exit', resolve));
+    child.kill();
+    await exited;
+  });
   const dir = temporary(t),
     file = path.join(dir, 'config.yaml');
   fs.writeFileSync(path.join(dir, '.env'), 'PORT=9999');
-  const child = spawnSync(process.execPath, [path.join(ROOT, 'server/index.js'), '--config', file], {
+  child = spawn(process.execPath, [path.join(ROOT, 'server/index.js'), '--config', file, '--setup-port', '0'], {
     cwd: dir,
-    encoding: 'utf8',
     env: { ...process.env, PORT: '9999', PLEX_TOKEN: 'inherited-secret' },
   });
-  assert.equal(child.status, 1);
-  assert.match(child.stderr, /Missing config.yaml/);
-  assert.doesNotMatch(child.stderr, /inherited-secret|Missing TLS/);
+  let output = '';
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Setup did not start: ' + output)), 20000);
+    for (const stream of [child.stdout, child.stderr])
+      stream.on('data', chunk => {
+        output += chunk;
+        if (/Setup code: /.test(output)) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    child.once('exit', code => reject(new Error('Exited ' + code + ': ' + output)));
+  });
+  assert.match(output, /No config file at .*config\.yaml: setup mode/);
+  assert.match(output, /Open http:\/\/localhost:\d+\/setup#code=/);
+  assert.doesNotMatch(output, /localhost:9999|inherited-secret|Missing TLS/);
+  assert.equal(fs.existsSync(file), false, 'setup writes nothing until it finishes');
 });
 
 test(

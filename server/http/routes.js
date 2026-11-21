@@ -13,7 +13,7 @@ const version = require('../../package.json').version;
  * @param {{config: any, registry: any, accounts: any, sessions: any, access: any, hub: any, rooms: () => any,
  *   files: any, signIn: any, setOwnerName: (name: string) => void, watchRoutes: any, accountRoutes: any,
  *   operatorRoutes: any, uburoomAccountRoutes: import('./router').Route[],
- *   sourceSettingsRoutes?: import('./router').Route[]}} services
+ *   sourceSettingsRoutes?: import('./router').Route[], setupRoutes?: import('./router').Route[]}} services
  */
 function createRoutes({
   config,
@@ -31,6 +31,7 @@ function createRoutes({
   operatorRoutes,
   uburoomAccountRoutes,
   sourceSettingsRoutes = [],
+  setupRoutes = [],
 }) {
   const { json, throttle } = sessions;
   const pages = pageRoutes({ config, rooms, watchRoutes: () => watchRoutes, sessions, files });
@@ -58,6 +59,7 @@ function createRoutes({
     ],
     uburoomAccountRoutes,
     sourceSettingsRoutes,
+    setupRoutes,
     pages.documents,
     files.routes(),
     mediaRoutes({ config, hub, watchRoutes: () => watchRoutes }),

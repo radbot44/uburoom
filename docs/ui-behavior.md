@@ -2,6 +2,18 @@
 
 This reference holds owner-approved, feature-specific UI decisions moved from the [design guide](design-guide.md). Consult only the relevant section for the surface being changed. These decisions are not permission to redesign unrelated surfaces; common controls, tokens, focus, layout and feedback principles remain in the design guide.
 
+## First-run setup
+
+**Built to the approved mockup (2026-11-21)** (`personal/mockups/first-run-setup.html`; decisions in [first-run setup](first-run-setup.md#implementation-notes-2026-11-21)). One card per step on the plain page with the wordmark, "Step N of 6", Back and Next in the footer.
+
+- **1 Setup code:** one large field, filled in and submitted automatically from the link's `#code=`; otherwise typed. A wrong code says so; the tenth says a new code is shown.
+- **2 Your account:** Sign in with Plex (pop-up; the card waits with Open Plex again and Cancel) or Create a uburoom account (Username, Password, "At least 10 characters."). Done shows the name, "Signed in with Plex" or "uburoom account", and Change.
+- **3 Media sources:** the list (logo or folder icon, name, "Plex · 3 of 4 libraries" or the folder's path, Edit and a Remove icon), "Add at least one to continue." when empty, and Add Plex / Add Jellyfin / Add a folder. Each add flow and Edit replaces the list in the card, as in Server settings → Sources: Plex uses the step 2 Plex sign-in when there is one; Jellyfin shows found servers, then the administrator sign-in (with the Quick Connect code when the server has it), then "Offer the libraries of" and the libraries; a folder shows the folder browser, Name and Contains Movies/Shows. Edit: Name, where it is, and the library checkboxes (a folder: Contains). Remove needs no confirmation (nothing is saved yet).
+- **4 Who can get in:** one checkbox and hint per rule: each Plex and Jellyfin source, the server password (field when on), uburoom accounts, guests with a room invite, and Discord (when on: the three set-up steps with the redirect, Application ID, Client secret, Bot token, then Add the bot to a Discord server and the joined servers, read-only). The rule the operator's own account uses is on and disabled with "Your account gets in this way."
+- **5 Where will people watch?:** This computer / My home network, Port, the address people open (home network: the certificate warning line), and the remote access guide line.
+- **6 Check and finish:** one row per check with a check mark or cross and its detail; Check again when any fails; Finish setup (Finishing… while it writes and starts uburoom).
+- **Ready:** "uburoom is ready", "You're signed in…", Open uburoom.
+
 ## Media sources
 
 **Built to the phase 6 brief; not yet owner-approved.** Server settings → Sources, after the setup mockup's Media sources step and the Accounts section's styles.
