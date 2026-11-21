@@ -142,9 +142,17 @@ async function check(entry, { youtubeFetch = fetch, youtubeRunner, ffmpeg, ffpro
     checks.push({
       category: 'Sources',
       name: `${label} yt-dlp`,
-      status: tools.ok ? 'pass' : 'fail',
-      message: tools.ok ? `yt-dlp ${tools.ytdlp} ready` : tools.error,
-      ...(!tools.ok ? { remediation: 'Install yt-dlp on PATH or set youtube.yt_dlp.' } : {}),
+      status: !tools.ok ? 'fail' : tools.outdated ? 'warn' : 'pass',
+      message: !tools.ok
+        ? tools.error
+        : tools.outdated
+          ? `yt-dlp ${tools.ytdlp} is outdated for current YouTube extraction`
+          : `yt-dlp ${tools.ytdlp} ready`,
+      ...(!tools.ok
+        ? { remediation: 'Install yt-dlp on PATH or set youtube.yt_dlp.' }
+        : tools.outdated
+          ? { remediation: 'Update yt-dlp (e.g. pip install -U "yt-dlp[default]" or yt-dlp -U).' }
+          : {}),
     });
     checks.push({
       category: 'Sources',

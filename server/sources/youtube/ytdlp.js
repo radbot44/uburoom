@@ -22,6 +22,26 @@ const DEFAULT_MAX_CACHE_BYTES = 20 * 1024 * 1024 * 1024;
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
 const DEFAULT_TOOL_TIMEOUT_MS = 180000;
+const MIN_EJS_VERSION = '2025.10.22';
+
+function versionAtLeast(version, minimum) {
+  const parts = String(version || '')
+    .trim()
+    .match(/^\d+(?:\.\d+){1,2}/)?.[0]
+    ?.split('.')
+    .map(Number);
+  const minParts = String(minimum || '')
+    .trim()
+    .split('.')
+    .map(Number);
+  if (!parts || parts.some(n => !Number.isInteger(n))) return false;
+  for (let i = 0; i < Math.max(parts.length, minParts.length); i++) {
+    const a = parts[i] || 0;
+    const b = minParts[i] || 0;
+    if (a !== b) return a > b;
+  }
+  return true;
+}
 
 function safeBaseName(name) {
   if (typeof name !== 'string' || !name) return '';
@@ -251,6 +271,9 @@ class YouTubeCache {
     this.active = new Map();
     this.queue = [];
     this.initPromise = null;
+    this.runtimePromise = null;
+    this.ytdlpVersion = '';
+    this.supportsJsRuntimes = false;
     this.closed = false;
     this.tick = Date.now();
   }
@@ -280,11 +303,39 @@ class YouTubeCache {
     return resolveBinary(sibling, 'ffprobe', this.platform, this.environment);
   }
 
-  baseYtDlpArgs() {
+  baseYtDlpArgs({ includeJsRuntime = false } = {}) {
     const args = ['--no-config', '--no-call-home', '--no-update'];
+    if (includeJsRuntime && this.supportsJsRuntimes && process.execPath) {
+      args.push('--js-runtimes', `node:${process.execPath}`);
+    }
     if (this.cookiesFile) args.push('--cookies', this.cookiesFile);
     if (this.poTokenUrl) args.push('--extractor-args', `youtubepot-bgutilhttp:base_url=${this.poTokenUrl}`);
     return args;
+  }
+
+  async detectRuntime(ytDlp, signal) {
+    if (this.ytdlpVersion) return this.ytdlpVersion;
+    if (!this.runtimePromise) {
+      this.runtimePromise = (async () => {
+        try {
+          const res = await this.runCommand(ytDlp, ['--version'], { timeoutMs: 5000, signal });
+          if (res.code === 0) {
+            const ver = (res.stdout || '').trim().split(/\r?\n/)[0]?.slice(0, 40) || '';
+            if (ver) {
+              this.ytdlpVersion = ver;
+              this.supportsJsRuntimes = versionAtLeast(ver, MIN_EJS_VERSION);
+              return ver;
+            }
+          }
+        } catch {
+          /* Probe failures are surfaced by command execution or checkTools(). */
+        } finally {
+          this.runtimePromise = null;
+        }
+        return '';
+      })();
+    }
+    return this.runtimePromise;
   }
 
   metaPath(videoId) {
@@ -427,9 +478,12 @@ class YouTubeCache {
         };
       }
       const ytdlp = (res.stdout || '').trim().split(/\r?\n/)[0]?.slice(0, 40) || 'unknown';
+      this.ytdlpVersion = ytdlp;
+      this.supportsJsRuntimes = versionAtLeast(ytdlp, MIN_EJS_VERSION);
       return {
         ok: true,
         ytdlp,
+        outdated: !this.supportsJsRuntimes,
         ytDlpPath,
         ffmpeg: !!ffmpegPath,
         ffprobe: !!ffprobePath,
@@ -464,11 +518,12 @@ class YouTubeCache {
     const parsed = parseYouTubeUrl(rawUrl);
     const ytDlp = this.resolveYtDlp();
     if (!ytDlp) throw Object.assign(new Error('yt-dlp was not found on this server'), { status: 500 });
+    await this.detectRuntime(ytDlp, signal);
     const capped = Math.max(1, Math.min(Number(limit) || 50, 200));
 
     if (parsed.kind === 'video') {
       const args = [
-        ...this.baseYtDlpArgs(),
+        ...this.baseYtDlpArgs({ includeJsRuntime: true }),
         '--dump-single-json',
         '--skip-download',
         '--no-playlist',
@@ -477,16 +532,19 @@ class YouTubeCache {
       ];
       const res = await this.runCommand(ytDlp, args, { timeoutMs: 30000, signal });
       if (res.code !== 0) {
-        throw Object.assign(new Error(cleanYtDlpError(res.stderr) || 'Could not read YouTube video info'), {
-          status: 502,
-        });
+        const msg = cleanYtDlpError(res.stderr) || 'Could not read YouTube video info';
+        this.logger?.warn?.(
+          'YouTube',
+          `Metadata failed for ${parsed.canonicalUrl} (exit ${res.code}, yt-dlp ${this.ytdlpVersion || 'unknown'}): ${msg}`,
+        );
+        throw Object.assign(new Error(msg), { status: 502 });
       }
       const raw = JSON.parse(res.stdout);
       return { kind: 'video', video: entryToVideoMeta(raw, parsed.videoId) };
     }
 
     const args = [
-      ...this.baseYtDlpArgs(),
+      ...this.baseYtDlpArgs({ includeJsRuntime: true }),
       '--dump-single-json',
       '--flat-playlist',
       '--playlist-end',
@@ -496,7 +554,12 @@ class YouTubeCache {
     ];
     const res = await this.runCommand(ytDlp, args, { timeoutMs: 45000, signal });
     if (res.code !== 0) {
-      throw Object.assign(new Error(cleanYtDlpError(res.stderr) || 'Could not read YouTube playlist'), { status: 502 });
+      const msg = cleanYtDlpError(res.stderr) || 'Could not read YouTube playlist';
+      this.logger?.warn?.(
+        'YouTube',
+        `Playlist metadata failed for ${parsed.canonicalUrl} (exit ${res.code}, yt-dlp ${this.ytdlpVersion || 'unknown'}): ${msg}`,
+      );
+      throw Object.assign(new Error(msg), { status: 502 });
     }
     const raw = JSON.parse(res.stdout);
     const items = [];
@@ -658,6 +721,8 @@ class YouTubeCache {
         status: 500,
       });
     }
+    await this.detectRuntime(ytDlp);
+    this.logger?.info?.('YouTube', `Downloading ${videoId} (yt-dlp ${this.ytdlpVersion || 'unknown'})`);
     const ffmpeg = this.resolveFfmpeg();
     const stage = path.join(this.tmpDirectory, `${videoId}-${randomUUID().slice(0, 8)}`);
     await fsp.mkdir(stage, { recursive: true });
@@ -674,7 +739,7 @@ class YouTubeCache {
           ]
         : ['--format', 'b[ext=mp4]/b'];
       const args = [
-        ...this.baseYtDlpArgs(),
+        ...this.baseYtDlpArgs({ includeJsRuntime: true }),
         '--no-playlist',
         '--write-info-json',
         '--write-subs',
@@ -692,9 +757,12 @@ class YouTubeCache {
       const res = await this.runCommand(ytDlp, args, { cwd: stage, timeoutMs: 110000 });
       if (this.closed) throw Object.assign(new Error('YouTube cache closed during download'), { status: 503 });
       if (res.code !== 0) {
-        throw Object.assign(new Error(cleanYtDlpError(res.stderr) || 'yt-dlp failed to download this video'), {
-          status: 502,
-        });
+        const msg = cleanYtDlpError(res.stderr) || 'yt-dlp failed to download this video';
+        this.logger?.warn?.(
+          'YouTube',
+          `Download failed for ${videoId} (exit ${res.code}, yt-dlp ${this.ytdlpVersion || 'unknown'}): ${msg}`,
+        );
+        throw Object.assign(new Error(msg), { status: 502 });
       }
 
       const stageFiles = await fsp.readdir(stage, { withFileTypes: true });
@@ -744,6 +812,10 @@ class YouTubeCache {
       };
       await this.writeMeta(record);
       this.ready.set(videoId, record);
+      this.logger?.info?.(
+        'YouTube',
+        `Cached ${videoId} (${destFilename}, ${Math.round(stat.size / 1024)} KB, ${Math.round(record.duration || 0)}s)`,
+      );
       await this.evictIfNeeded(new Set([videoId]));
       return record;
     } finally {
@@ -799,10 +871,12 @@ class YouTubeCache {
 module.exports = {
   YouTubeCache,
   resolveBinary,
+  versionAtLeast,
   safeBaseName,
   safeCacheFile,
   SAFE_ID,
   SAFE_TRACK,
   CONTAINER_MIME,
   DEFAULT_MAX_CACHE_BYTES,
+  MIN_EJS_VERSION,
 };

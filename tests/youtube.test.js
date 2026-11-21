@@ -11,7 +11,7 @@ const YAML = require('yaml');
 
 const { parseYouTubeUrl, isAllowedThumbnailUrl } = require('../server/sources/youtube/urls');
 const { parseIsoDuration, fetchVideos, fetchPlaylist, checkApiKey } = require('../server/sources/youtube/api');
-const { YouTubeCache, safeCacheFile } = require('../server/sources/youtube/ytdlp');
+const { YouTubeCache, safeCacheFile, versionAtLeast } = require('../server/sources/youtube/ytdlp');
 const { YouTubeMedia, YOUTUBE_SERVER } = require('../server/sources/youtube/provider');
 const { validateSources } = require('../server/sources');
 const { loadConfig } = require('../server/config');
@@ -30,7 +30,13 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
-function makeYoutubeRunner({ failIds = new Set(), durationOffset = 0, delayMs = 15, missingYtDlp = false } = {}) {
+function makeYoutubeRunner({
+  failIds = new Set(),
+  durationOffset = 0,
+  delayMs = 15,
+  missingYtDlp = false,
+  version = '2026.02.01',
+} = {}) {
   const calls = [];
   const downloads = [];
 
@@ -57,7 +63,7 @@ function makeYoutubeRunner({ failIds = new Set(), durationOffset = 0, delayMs = 
     }
 
     if (args.includes('--version')) {
-      return { code: 0, stdout: '2026.02.01\n', stderr: '' };
+      return { code: 0, stdout: `${version}\n`, stderr: '' };
     }
 
     if (args.includes('--dump-single-json')) {
@@ -360,22 +366,31 @@ test('YouTubeMedia prepares disk downloads, serves Range & VTT subtitles, and re
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-yt-media-'));
   t.after(() => fsp.rm(dir, { recursive: true, force: true }));
 
-  const yt = makeYoutubeRunner({ durationOffset: 0.75 });
+  const logs = [];
+  const testLogger = {
+    info: (tag, msg) => logs.push({ level: 'info', tag, msg }),
+    warn: (tag, msg) => logs.push({ level: 'warn', tag, msg }),
+  };
+  const yt = makeYoutubeRunner({ durationOffset: 0.75, failIds: new Set(['FAIL0000001']) });
   const provider = new YouTubeMedia({
     delivery: 'ytdlp',
     cacheDirectory: dir,
     pipeline: { release: async () => {} },
     fetch: makeYoutubeFetch(),
     runCommand: yt.runner,
+    logger: testLogger,
   });
   t.after(() => provider.close());
 
-  // Built-in ytdlp resolve works without Data API key.
+  // Built-in ytdlp resolve works without Data API key and passes --js-runtimes for modern yt-dlp.
   const resolved = await provider.resolveUrl('https://youtu.be/dQw4w9WgXcQ');
   assert.equal(resolved.kind, 'video');
   assert.equal(resolved.item.id, 'dQw4w9WgXcQ');
   assert.equal(resolved.item.type, 'movie');
   assert.equal(resolved.item.duration, 42);
+  const metaCall = yt.calls.find(c => c.args.includes('--dump-single-json'));
+  assert.ok(metaCall.args.includes('--js-runtimes'));
+  assert.ok(metaCall.args.includes(`node:${process.execPath}`));
 
   // Playlist fallback via yt-dlp drops live entries.
   const pl = await provider.resolveUrl('https://www.youtube.com/playlist?list=PLtest123');
@@ -385,8 +400,33 @@ test('YouTubeMedia prepares disk downloads, serves Range & VTT subtitles, and re
     ['dQw4w9WgXcQ', 'jNQXAC9IVRw'],
   );
 
-  // Prepare populates disk cache, filePath(), byte ranges, and WebVTT subtitles.
+  // Prepare populates disk cache, passes --js-runtimes, logs completion, and serves byte ranges & subtitles.
   const { media } = await provider.source('dQw4w9WgXcQ', undefined, { subtitleId: 'x0', browserSubtitles: true });
+  const dlCall = yt.calls.find(c => c.args.includes('-o'));
+  assert.ok(dlCall.args.includes('--js-runtimes'));
+  assert.ok(dlCall.args.includes(`node:${process.execPath}`));
+  assert.ok(logs.some(l => l.level === 'info' && l.tag === 'YouTube' && l.msg.includes('Cached dQw4w9WgXcQ')));
+
+  // Failed download logs warning with details.
+  await assert.rejects(() => provider.source('FAIL0000001'), { status: 502 });
+  assert.ok(logs.some(l => l.level === 'warn' && l.tag === 'YouTube' && l.msg.includes('FAIL0000001')));
+
+  // Older yt-dlp (< 2025.10.22) omits --js-runtimes and reports outdated warning in doctor check().
+  assert.equal(versionAtLeast('2025.10.22', '2025.10.22'), true);
+  assert.equal(versionAtLeast('2025.07.21', '2025.10.22'), false);
+  const oldYt = makeYoutubeRunner({ version: '2025.07.21' });
+  const oldCache = new YouTubeCache({ cacheDirectory: path.join(dir, 'old'), runCommand: oldYt.runner });
+  t.after(() => oldCache.close());
+  const oldTools = await oldCache.checkTools();
+  assert.equal(oldTools.outdated, true);
+  await oldCache.metadata('https://youtu.be/dQw4w9WgXcQ');
+  assert.equal(oldYt.calls.find(c => c.args.includes('--dump-single-json')).args.includes('--js-runtimes'), false);
+  const oldChecks = await require('../server/sources/youtube').check(
+    validateSources([{ id: 'youtube', type: 'youtube', cache_directory: path.join(dir, 'old') }])[0],
+    { youtubeRunner: oldYt.runner },
+  );
+  assert.equal(oldChecks[0].status, 'warn');
+  assert.match(oldChecks[0].message, /outdated/i);
   assert.equal(media.durationTolerance, 2);
   assert.equal(media.tracks.subtitles.length, 1);
   assert.equal(media.tracks.subtitles[0].delivery, 'text');
