@@ -10,12 +10,15 @@
  *   already checked here) and returns the normalized entry its other functions take.
  * - `create(entry, services)`: the source as a `MediaProvider` (server/media-providers.js).
  * - `check(entry, services)`: a connection and credential test for the doctor, as doctor checks.
- * - optionally `signIn(entries, services)`: the sign-in method this type offers, built once from
- *   every entry of the type (Plex today).
+ * - optionally `memberIdentity`: the sign-in method whose identities can be this type's members
+ *   (`'plex'`, `'jellyfin'`). A source named in `access.source_members` must have one.
+ * - optionally `signIn(providers, services)`: what combines this type's sources for the people side
+ *   (Plex today).
  * - optionally `connect`: guided-setup services for the wizard and Server settings (Jellyfin today).
- * A created provider may also offer `members(identity)`: is this verified identity a user of this server?
- * It resolves true, or throws an error flagged `noServerAccess` or `revoked`; any other error means no
- * answer (an outage), never a denial (Jellyfin today; Plex answers through its `signIn`).
+ * A provider of a type with members offers `members(identity)`: is this verified identity a member
+ * of this server? It resolves true, or throws an error flagged `noServerAccess` (not a member, or an
+ * identity of another kind) or `revoked`; any other error means no answer (an outage), never a
+ * denial. Only admission asks it, and only for sources named in `access.source_members`.
  *
  * @typedef {{id: string, type: string, name: string, [key: string]: any}} SourceEntry
  * @typedef {{base: string, platform: string, dataDirectory: string}} ValidateContext
@@ -98,7 +101,13 @@ function sourcePin(registry, entry) {
 function createSources(entries, services) {
   const providers = entries.map(entry => {
     const provider = sourceType(entry.type).create(entry, { ...services, pin: sourcePin(services.registry, entry) });
-    return Object.assign(provider, { id: entry.id, type: entry.type, label: entry.name });
+    const module = sourceType(entry.type);
+    return Object.assign(provider, {
+      id: entry.id,
+      type: entry.type,
+      label: entry.name,
+      ...(module.memberIdentity ? { memberIdentity: module.memberIdentity } : {}),
+    });
   });
   const signIn = {};
   for (const [type, module] of Object.entries(TYPES))
@@ -123,9 +132,38 @@ async function checkSources(entries, services = {}) {
   return checks;
 }
 
+/**
+ * The identity providers a `source_members` rule needs, checking every named source exists and has members.
+ * @param {SourceEntry[]} entries
+ * @param {string[]} ids
+ */
+function memberIdentities(entries, ids) {
+  return [
+    ...new Set(
+      ids.map(id => {
+        const entry = entries.find(source => source.id === id);
+        if (!entry) throw new Error('access.source_members names ' + id + ', which is not in sources');
+        const module = sourceType(entry.type);
+        if (!module.memberIdentity)
+          throw new Error('access.source_members: ' + entry.type + ' sources have no members');
+        return module.memberIdentity;
+      }),
+    ),
+  ];
+}
+
 /** Whether any source can name the account its own credential belongs to (for single-room leadership). */
 function ownerAccountSources(entries) {
   return entries.filter(entry => sourceType(entry.type).ownerAccount);
 }
 
-module.exports = { validateSources, createSources, checkSources, sourcePin, sourceType, ownerAccountSources, TYPES };
+module.exports = {
+  validateSources,
+  createSources,
+  checkSources,
+  sourcePin,
+  sourceType,
+  ownerAccountSources,
+  memberIdentities,
+  TYPES,
+};

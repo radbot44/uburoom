@@ -25,8 +25,10 @@ function pageBootstrap({
     demo: !!config.demo,
     // Every media source by name and type, and whether it is available; never an address or credential.
     sources: watch.providers.summary(),
-    // A Plex sign-in lets people in only when some Plex source can vouch for them.
-    plexSignIn: !!entryPolicy?.plexAuth?.admits,
+    // Plex sign-in is offered for entry only when a member rule names a Plex source.
+    plexSignIn: !!config.accessPolicy?.plex,
+    // Linking a Plex account (for personal watch-state sync) needs some Plex source to sync with.
+    plexLink: (watch.providers.list || []).some(provider => provider.memberIdentity === 'plex'),
     testVideo: !!watch.demoMedia,
     access: entryPolicy?.public(),
     guests: !!hub.guestsEnabled(),
@@ -44,7 +46,6 @@ function pageBootstrap({
     const identity = await rawLogin(req);
     return {
       identity: !!identity,
-      passwordNeeded: !entryPolicy.password(req, identity),
       activityOnly: !config.accessPolicy.publicWeb && !identity?.activity,
       admitted: !!identity && !!(await login(req)),
       csrf: identity?.csrf,
@@ -77,9 +78,7 @@ function pageBootstrap({
         if (config.accessPolicy)
           initial.admission = {
             identity: true,
-            passwordNeeded: false,
             activityOnly: false,
-            plexRequired: false,
             admitted: true,
             csrf: initial.me.value.csrf,
           };

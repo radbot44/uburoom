@@ -3,12 +3,34 @@
  * The server answers every failure the same way and rate-limits them; on success it sets the
  * ordinary browser session cookie, and `onSignedIn` (default: reload) takes over. */
 
+async function authenticateAccount(username, password) {
+  const response = await fetch('/api/uburoom-accounts/sign-in', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const value = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(value.error || 'Sign-in failed; try again');
+}
+
 /**
  * @param {HTMLElement} container where the form goes (its contents are replaced)
- * @param {{onSignedIn?: () => void, idPrefix?: string}} [options]
+ * @param {{onSignedIn?: () => void, idPrefix?: string, label?: string,
+ *   authenticate?: (username: string, password: string) => Promise<unknown>,
+ *   usernameMaxLength?: number}} [options]
  * @returns {{form: HTMLFormElement, focus: () => void}}
  */
-export function mount(container, { onSignedIn = () => location.reload(), idPrefix = 'account-sign-in' } = {}) {
+export function mount(
+  container,
+  {
+    onSignedIn = () => location.reload(),
+    idPrefix = 'account-sign-in',
+    label = 'Sign in with a uburoom account',
+    authenticate = authenticateAccount,
+    usernameMaxLength = 32,
+  } = {},
+) {
   const doc = container.ownerDocument;
   const node = (tag, parent, props = {}) => {
     const element = Object.assign(doc.createElement(tag), props);
@@ -17,7 +39,7 @@ export function mount(container, { onSignedIn = () => location.reload(), idPrefi
   };
   container.replaceChildren();
   const form = node('form', container, { className: 'entry-form account-sign-in', noValidate: false });
-  form.setAttribute('aria-label', 'Sign in with a uburoom account');
+  form.setAttribute('aria-label', label);
   node('label', form, { htmlFor: idPrefix + '-username', textContent: 'Username' });
   const username = node('input', form, {
     id: idPrefix + '-username',
@@ -26,7 +48,7 @@ export function mount(container, { onSignedIn = () => location.reload(), idPrefi
     autocomplete: 'username',
     autocapitalize: 'none',
     spellcheck: false,
-    maxLength: 32,
+    maxLength: usernameMaxLength,
     required: true,
   });
   node('label', form, { htmlFor: idPrefix + '-password', textContent: 'Password' });
@@ -46,14 +68,7 @@ export function mount(container, { onSignedIn = () => location.reload(), idPrefi
     error.textContent = '';
     submit.disabled = true;
     try {
-      const response = await fetch('/api/uburoom-accounts/sign-in', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.value, password: password.value }),
-        signal: AbortSignal.timeout(15000),
-      });
-      const value = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(value.error || 'Sign-in failed; try again');
+      await authenticate(username.value, password.value);
       password.value = '';
       onSignedIn();
     } catch (failure) {

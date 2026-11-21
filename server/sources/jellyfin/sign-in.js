@@ -1,7 +1,6 @@
 'use strict';
 // @ts-check
-// Signing in to one Jellyfin source's server, as the identity layer will ask (phase 3 adds the
-// routes and screen). Quick Connect when the server has it on; otherwise a username and password,
+// Signing in to one Jellyfin source's server. Quick Connect when the server has it on; otherwise a username and password,
 // sent once to that server and never stored or logged. The result is a verified identity
 // `{provider: 'jellyfin:<serverId>', subject: <user id>, name, token}`; the person's token is kept
 // encrypted in the credentials store under that provider, for membership and watch-state sync.

@@ -746,7 +746,13 @@ function jellyfinProvider({ source, pipeline, pin, logger, fetcher, registry }) 
       return jellyfin.serverName || '';
     },
     scopeFor: async () => jellyfin,
-    members: jellyfinMembers({ client, apiKey: source.apiKey, serverId, registry }),
+    members: jellyfinMembers({
+      client,
+      apiKey: source.apiKey,
+      serverId,
+      knownServerId: () => provider.serverId,
+      registry,
+    }),
     signIn: jellyfinSignIn({ client, serverId, registry }),
     reporting: services =>
       new JellyfinReporting({

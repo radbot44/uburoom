@@ -5,14 +5,16 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2y
+# Config schema v2z
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
 ##################################
 # API connections and secrets first. Blank Discord credentials disable the bot.
 secrets:
-  entry_password: '' # Optional extra password, in addition to provider requirements.
+  # The server password (access.password). Knowing it is enough to get in, as a
+  # guest with a name of their own choosing; changing it signs those guests out.
+  server_password: ''
 
 # MEDIA SOURCES: any number of Plex servers, Jellyfin servers and folders on this
 # machine, all equal. Everyone admitted watches every library of every source
@@ -107,19 +109,23 @@ storage:
 
 # Access and authorization
 operator:
-  # Exact provider account IDs, never names, emails or tokens. Blank grants none.
-  # Either configured identity must be verified on the signed-in account.
-  # Separate from Discord owner, room Admin mode/ownership and Plex media access.
-  discord_id: ''
-  plex_id: ''
+  # Who may open Server settings: exact verified identities written provider:id,
+  # never names, emails or tokens. Any one listed is enough; none grants nobody.
+  # Separate from the Discord owner, room Admin mode and room ownership.
+  # e.g. ['discord:123456789012345678', 'plex:12345678', 'uburoom:alice'];
+  # a Jellyfin user is 'jellyfin:<server id>:<user id>'.
+  identities: []
 
 access:
-  # Choose sign-in methods. Both false allows anonymous guests (not guest passes).
-  # Discord sign-in requires guild membership; standalone Plex sign-in requires
-  # access to any configured Plex source. Outside visitors need a room guest invite.
-  # Everyone admitted can watch every library of every media source.
-  discord: true
-  plex: true
+  # Entry rules: who gets in. Any one that matches is enough, and everyone let in
+  # can watch every library of every media source. Each sign-in button is shown
+  # only for a rule that needs it. Turn on at least one. Outside visitors can also
+  # come in through a room invite (see guests below).
+  discord_server: true # Members of discord.guild_id, signing in with Discord.
+  source_members: [] # Plex or Jellyfin source IDs whose server members may come in, e.g. ['living-room']:
+  # for a Plex source, people whose Plex account can reach that server.
+  password: false # Anyone who knows secrets.server_password, as a named guest.
+  accounts: false # uburoom's own accounts.
 
 # Application settings
 server:

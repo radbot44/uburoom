@@ -27,7 +27,12 @@ test('example YAML is usable, private inputs are absent and defaults preserve ex
   assert.deepEqual(config.roomPermissions, Policy.policy());
   assert.equal(config.pauseOnBuffering, false);
   assert.deepEqual(config.roomAdministrators, { discord: [], plex: [], discordRoles: [] });
-  assert.deepEqual(config.serverOperator, { discordId: '', plexId: '' });
+  assert.deepEqual(config.serverOperator, { identities: [] });
+  assert.deepEqual(
+    [config.accessPolicy.discordServer, config.accessPolicy.sourceMembers, config.accessPolicy.password],
+    [true, [], false],
+    'Discord server members are let in by default; nothing else is',
+  );
   assert.equal(config.accountFile, path.join(ROOT, 'data/accounts.sqlite'));
   const environment = { HOME: path.join(os.tmpdir(), 'old-home') };
   assert.equal(
@@ -54,8 +59,7 @@ sources:
     url: 'http://127.0.0.1:32400'
     token: 'token:#with punctuation'
 operator:
-  discord_id: '456789012345678901'
-  plex_id: '102'
+  identities: ['discord:456789012345678901', 'plex:102', 'uburoom:alice']
 discord:
   client_id: '123456789012345678'
   command_channel_ids: ['234567890123456789']
@@ -79,7 +83,11 @@ rooms:
   assert.equal(config.accountFile, path.join(dir, 'persist/accounts.sqlite'));
   assert.equal(config.credentialKeyFile, path.join(dir, 'private/original.key'));
   assert.equal(config.sources[0].token, 'token:#with punctuation');
-  assert.deepEqual(config.serverOperator, { discordId: '456789012345678901', plexId: '102' });
+  assert.deepEqual(config.serverOperator.identities, [
+    { provider: 'discord', subject: '456789012345678901' },
+    { provider: 'plex', subject: '102' },
+    { provider: 'uburoom', subject: 'alice' },
+  ]);
   assert.deepEqual(config.channels, ['234567890123456789']);
   assert.deepEqual(config.roomAdministrators.plex, ['101']);
   assert.equal(config.roomPermissions.viewer.seek, true);
@@ -224,12 +232,13 @@ test('malformed YAML and unsupported structures never echo secret source text', 
     { discord: { share_channel_id: 123456789012345678 } },
     { discord: { share_channel_id: 'not-a-channel' } },
     { discord: { share_channel_id: '123456789012345678' } },
-    { operator: { discord_id: 123456789012345678 } },
-    { operator: { plex_id: 102 } },
-    { operator: { discord_id: 'alice' } },
-    { operator: { discord_id: '123' } },
-    { operator: { plex_id: 'alice@example.invalid' } },
-    { operator: { plex_id: ' 102' } },
+    { operator: { identities: [123456789012345678] } },
+    { operator: { identities: ['discord:alice'] } },
+    { operator: { identities: ['discord:123'] } },
+    { operator: { identities: ['plex:alice@example.invalid'] } },
+    { operator: { identities: ['plex: 102'] } },
+    { operator: { identities: ['jellyfin:1'] } },
+    { operator: { discord_id: '123456789012345678' } },
     { rooms: { viewer_permissions: ['manageHosts'] } },
     { rooms: { admin_plex_ids: ['name'] } },
     { transcoding: { fallback: { enabled: 'true' } } },
@@ -243,7 +252,11 @@ test('malformed YAML and unsupported structures never echo secret source text', 
     { plex: { url: 'file:///secret' } },
     { storage: { credential_key_file: path.join(ROOT, 'key') } },
     { guests: { default_allow: 'false' } },
-    { access: { discord: false }, rooms: { single_room: true } },
+    {
+      access: { discord_server: false, password: true },
+      secrets: { server_password: 'x' },
+      rooms: { single_room: true },
+    },
     { rooms: { single_room_leader_plex_id: 'alice' } },
   ]) {
     assert.throws(() => normalizeConfig(value));
@@ -256,16 +269,50 @@ test('malformed YAML and unsupported structures never echo secret source text', 
   );
   assert.equal(
     normalizeConfig({
-      access: { discord: false },
+      access: { discord_server: false, source_members: ['p'] },
       sources: [{ id: 'p', type: 'plex', url: 'http://plex.example', token: 'fixture-token' }],
       rooms: { single_room: true },
     }).singleRoom,
     true,
   );
-  assert.throws(
-    () => normalizeConfig({ access: { discord: false }, rooms: { single_room: true } }),
-    /requires a Plex source/,
-  );
+});
+
+test('access: entry rules are checked, and each sign-in method is offered only for a rule that needs it', () => {
+  const plex = { id: 'living-room', type: 'plex', url: 'http://plex.example', token: 't' },
+    folders = { id: 'films', type: 'folders', libraries: [{ id: 'films', name: 'Films', paths: ['films'] }] };
+  const policy = (access, extra = {}) => normalizeConfig({ sources: [plex, folders], access, ...extra }).accessPolicy;
+  assert.deepEqual(policy({ discord_server: true }), {
+    discordServer: true,
+    sourceMembers: [],
+    password: false,
+    accounts: false,
+    publicWeb: true,
+    discord: true,
+    plex: false,
+    jellyfin: false,
+  });
+  const members = policy({ discord_server: false, source_members: ['living-room'] });
+  assert.deepEqual([members.discord, members.plex], [false, true], 'a Plex member rule offers Plex sign-in');
+  const password = normalizeConfig({
+    access: { discord_server: false, password: true },
+    secrets: { server_password: 'swordfish' },
+  });
+  assert.equal(password.accessPolicy.password, true);
+  assert.equal(password.serverPassword, 'swordfish');
+  assert.equal(JSON.stringify(password.accessPolicy).includes('swordfish'), false, 'the rule never holds the secret');
+  assert.equal(policy({ discord_server: false, accounts: true }).accounts, true);
+  for (const [access, message, extra] of [
+    [{ discord_server: false }, /at least one entry rule/],
+    [{ source_members: ['cabin'] }, /not in sources/],
+    [{ source_members: ['films'] }, /folders sources have no members/],
+    [{ source_members: ['living-room', 'living-room'] }, /repeat/],
+    [{ password: true }, /requires secrets.server_password/],
+    [{ discord_server: true }, /used only with access.password/, { secrets: { server_password: 'x' } }],
+    [{ discord: true }, /Unknown|unknown/],
+    [{ plex: true }, /Unknown|unknown/],
+  ])
+    assert.throws(() => policy(access, extra), message);
+  assert.throws(() => normalizeConfig({ secrets: { entry_password: 'x' } }), /Unknown|unknown/);
 });
 
 test('missing YAML fails before TLS or providers and never falls back to .env/environment', t => {

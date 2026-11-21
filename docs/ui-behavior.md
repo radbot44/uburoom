@@ -55,6 +55,11 @@ A watch night is a room with a time on it: every event belongs to one saved room
 - **Auto-queue options:** four modes (Off, Continue, In order, Shuffle) and its switches use the secondary accent. In Media views the source action reads "Set as auto-queue" with the `sparkle` icon in the secondary accent.
 - **Media suggestions (queue):** pending suggestions sit between Now Playing and Upcoming as one collapsed row (`bulb` icon, "N suggestions", chevron), absent when there are none and never a header badge or popup. The row is the header of a plain grey box with no outline or accent tint; expanded, the suggestions sit inside that box, each a queue-style row ranked by agreement then age, captioned "Suggested by Name +N": the top actions are the agree toggle (`bulb` with the count, filled while you agree) and Dismiss; the bottom actions are Add to queue and Play now. Buttons a person lacks permission for stay visible but disabled, as on queue rows.
 
+## Entry
+
+- **The entry page shows only enabled rules** (`access:`): Log in with Discord for `discord_server`, Log in with Plex when a member rule names a Plex source, the server password form for `password`, and a reserved slot above the password form for uburoom account sign-in (`accounts`). The title is "Enter uburoom" when the password is the only way in, else "Sign in to join"; the status line names the ways in that exist.
+- **Server password, then a name:** the password form (Continue) gives way to the invite guest's name form, reused: the name field with its `arrows-shuffle` reroll, pre-filled with this browser's earlier guest name or a random ubunym, the italic-guest hint, and Join. The server checks the password when the name is sent; a wrong password returns to the password form with the error, and a refused name stays to be fixed.
+
 ## Viewers
 
 - **Telemetry cards:** sync badges in the roster are buttons opening an anchored viewer card (interactive in fullscreen; closing it leaves the drawer open). The card shows name, role, playback status, sync score and level, confidence, a plain-language explanation, freshness and per-device breakdown, and dismisses on Escape, outside click or close.

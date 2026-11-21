@@ -85,7 +85,7 @@ test('server tiers rank operator, admins, trusted and members from verified iden
   t.after(() => registry.close());
   const config = {
     ownerId: '',
-    serverOperator: { discordId: '', plexId: '1' },
+    serverOperator: { identities: [{ provider: 'plex', subject: '1' }] },
     ...Policy.configuration({ admin_plex_ids: ['2'], trusted_plex_ids: ['3'] }),
   };
   const tier = subject => Policy.serverTier(registry, config, registry.resolve('plex', subject, 'P' + subject).id);
@@ -142,12 +142,14 @@ test('removeUnusedGuests deletes watch_room_invites rows before removing the gue
   assert.deepEqual(f.store.get(room.id).invited, []);
 });
 
-test('guest login never records server-password standing for anonymous or signed-in room passes', async t => {
-  const { AccessPolicy } = require('../server/access-policy');
+test('a room pass never stands in for the server password outside its room', async t => {
+  const { Admission } = require('../server/admission');
+  const { accessPolicy } = require('./helpers/access');
   const { watchIdentity } = require('../server/http/watch/identity');
   const f = fixture(t);
   const room = await f.store.create(f.creator, { name: 'Guest room' });
-  const policy = new AccessPolicy({ accessPolicy: { password: 'secret' } }, f.registry, {}, () => undefined, {
+  const config = { accessPolicy: accessPolicy({ discordServer: false, password: true }), serverPassword: 'secret' };
+  const policy = new Admission(config, f.registry, undefined, () => undefined, {
     guests: { admits: id => id === room.id },
   });
   for (const userId of [f.viewer, f.registry.createGuest('Anonymous guest')]) {
@@ -161,7 +163,6 @@ test('guest login never records server-password standing for anonymous or signed
       validIdentity: () => true,
     });
     assert.equal(await service.login({ headers: {} }), identity);
-    assert.equal(policy.entryUsers.has(userId), false);
     assert.equal(await policy.admit(userId), false, 'room pass never satisfies standalone password admission');
   }
 });

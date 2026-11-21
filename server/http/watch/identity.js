@@ -35,8 +35,6 @@ function watchIdentity({ config, hub, user, webActor, entryPolicy, validIdentity
     if (!identity) return;
     if (config.accessPolicy) {
       if (!config.accessPolicy.publicWeb && !identity.activity) return;
-      if (!entryPolicy.password(req, identity)) return;
-      if (!entryPolicy.guestRoom(identity)) entryPolicy.entered(identity.userId);
       if (!(await entryPolicy.admit(identity.userId, identity))) return;
     } else if (!hub.canWatch(identity.userId) && !(await hub.admit(identity.userId))) return;
     const current = await rawLogin(req);

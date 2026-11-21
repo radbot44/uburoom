@@ -3,7 +3,8 @@
 const http = require('node:http');
 const https = require('node:https');
 const { Plex } = require('./plex');
-const { PlexAuth, PlexSignIn } = require('./auth');
+const { PlexAuth, PlexMembers } = require('./auth');
+const { PlexTv } = require('../../identity/plex');
 const { plexProvider } = require('./provider');
 
 const SETTINGS = [
@@ -106,20 +107,33 @@ function validateAll(entries) {
  * @param {any} entry
  * @param {{config: any, registry: any, pipeline: any, logger?: any, pin: any, plexFetch?: typeof fetch}} services
  */
-function create(entry, { registry, pipeline, logger, pin, plexFetch = fetch }) {
+function create(entry, { registry, pipeline, logger, pin, plexFetch = fetch, plexTv = new PlexTv(plexFetch) }) {
   const plex = new Plex(entry, plexFetch, { logger, pipeline });
-  const plexAuth = new PlexAuth(entry, registry, plex, plexFetch, { pin });
+  const plexAuth = new PlexAuth(entry, registry, plex, plexTv, { pin });
   const provider = plexProvider({ plex, source: entry, registry, plexAuth, pin });
-  return Object.assign(provider, { plexAuth });
+  return Object.assign(provider, { plexAuth, members: identity => members(plexAuth, identity) });
 }
 
-/** Plex sign-in across every Plex source (see `PlexSignIn`). */
-function signIn(providers, { config, registry, plexFetch = fetch }) {
-  return new PlexSignIn(
-    config,
+/**
+ * Whether a verified Plex identity can reach this source's pinned server through its own stored
+ * sign-in: resolves true, or throws flagged `noServerAccess` (another kind of identity, no stored
+ * sign-in, or no access) or `revoked`; any other error is Plex giving no answer.
+ * @param {any} plexAuth
+ * @param {{provider: string, subject: string, userId: string}} identity
+ */
+async function members(plexAuth, identity) {
+  const notMember = message => Object.assign(new Error(message), { noServerAccess: true });
+  if (identity?.provider !== 'plex') throw notMember('Not a Plex identity');
+  if (!(await plexAuth.forUser(identity.userId))) throw notMember('No stored Plex sign-in');
+  return true;
+}
+
+/** Every Plex source's server access together (see `PlexMembers`). */
+function signIn(providers, { registry, plexFetch = fetch, plexTv = new PlexTv(plexFetch) }) {
+  return new PlexMembers(
     registry,
     providers.map(provider => provider.plexAuth),
-    plexFetch,
+    plexTv,
   );
 }
 
@@ -172,4 +186,4 @@ async function check(entry) {
   });
 }
 
-module.exports = { validate, validateAll, create, check, signIn, ownerAccount: true };
+module.exports = { validate, validateAll, create, check, signIn, ownerAccount: true, memberIdentity: 'plex' };

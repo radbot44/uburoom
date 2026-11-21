@@ -33,6 +33,7 @@ function watchHttp({
   cookie,
   accounts,
   logins,
+  loginSeconds,
   plexAuth,
 }) {
   const identity = watchIdentity({ config, hub, user, webActor, entryPolicy, validIdentity });
@@ -114,37 +115,58 @@ function watchHttp({
         json(res, 429, { error: 'Entry is unavailable; wait a minute and try again' });
         return true;
       }
-      const identity = await rawLogin(req),
-        data = await body(req);
-      if (!config.accessPolicy.publicWeb && !identity?.activity) {
+      const data = await body(req);
+      if (!config.accessPolicy.publicWeb) {
         json(res, 403, { error: 'Open uburoom through Discord Activity' });
         return true;
       }
-      if (entryPolicy.passwordRequired) {
-        const grant = entryPolicy.enter(data.password, identity);
-        if (!grant) {
-          json(res, 403, { error: 'Incorrect server password' });
-          return true;
-        }
-        res.setHeader('Set-Cookie', cookie('uburoom_entry', grant, 43200));
+      // The server password is its own way in (access.password): whoever knows it enters as a
+      // server-wide guest with the name they choose, never an account. Wrong guesses share the
+      // per-address limit above.
+      if (!config.accessPolicy.password || !entryPolicy.password.matches(data.password)) {
+        json(res, 403, { error: 'Incorrect server password' });
+        return true;
       }
-      if (entryPolicy.anonymous && !identity) {
-        // Anonymous visitors are guests too: an unverified, random ubunym they can change.
-        const id = randomBytes(32).toString('hex'),
-          accountId = registry.createGuest(Ubumfa.ubunym().fullName),
-          account = registry.canonical(accountId);
-        logins.set(hash(id), {
-          userId: account.id,
-          accountRevision: account.revision,
-          name: account.name,
-          csrf: randomBytes(32).toString('hex'),
-          expires: Date.now() + 86400000,
-        });
+      const typed = typeof data.name === 'string' && data.name.trim() ? data.name.trim() : '';
+      // The same browser keeps its guest, and its name, across visits and password changes.
+      const token = cookies(req).uburoom,
+        previous = token && logins.get(hash(token));
+      if (previous && registry.isGuest(previous.userId) && !previous.guestRoom) {
+        if (typed && typed !== previous.name)
+          try {
+            registry.rename(previous.userId, typed);
+            previous.name = registry.canonical(previous.userId).name;
+          } catch (error) {
+            json(res, 400, { error: error.message });
+            return true;
+          }
+        previous.serverPassword = entryPolicy.password.revision;
+        previous.accountRevision = registry.canonical(previous.userId).revision;
         accounts.save();
-        const existing = res.getHeader('Set-Cookie');
-        res.setHeader('Set-Cookie', [...(existing ? [existing] : []), cookie('uburoom', id, 86400)]);
+        json(res, 200, { ok: true, name: previous.name });
+        return true;
       }
-      json(res, 200, { ok: true });
+      // Entering replaces any other sign-in in this browser: a password guest is not an account.
+      if (previous) logins.delete(hash(token));
+      let account;
+      try {
+        account = registry.canonical(registry.createGuest(typed || Ubumfa.ubunym().fullName));
+      } catch (error) {
+        json(res, 400, { error: error.message });
+        return true;
+      }
+      const id = randomBytes(32).toString('hex');
+      logins.set(hash(id), {
+        userId: account.id,
+        accountRevision: account.revision,
+        name: account.name,
+        csrf: randomBytes(32).toString('hex'),
+        expires: null,
+        serverPassword: entryPolicy.password.revision,
+      });
+      accounts.save();
+      res.setHeader('Set-Cookie', cookie('uburoom', id, loginSeconds));
+      json(res, 200, { ok: true, name: account.name });
       return true;
     }
     if (url.pathname === '/api/watch/invite' && req.method === 'POST') {
@@ -253,7 +275,6 @@ function watchHttp({
             accountRevision: identity.accountRevision,
             activity: false,
             native: true,
-            entryAuthorized: true,
           },
           7 * 86400000,
         );
@@ -434,9 +455,6 @@ function watchHttp({
           name: EngineName(identity.global_name || identity.username),
           activity: true,
         });
-        const previous = await rawLogin(req);
-        if (previous?.activity && previous.userId === login.userId && previous.entryAuthorized)
-          login.entryAuthorized = true;
         json(res, 200, {
           ...issue(login),
           accessToken: tokens.access_token,
@@ -505,8 +523,7 @@ function watchHttp({
       let auth = await authorized(req, req.method !== 'GET');
       if (!auth && config.accessPolicy && allowedOrigin(req) && req.headers.authorization) {
         const identity = await rawLogin(req);
-        if (identity?.activity && entryPolicy.password(req, identity))
-          auth = { identity, actor: webActor(identity), pending: true };
+        if (identity?.activity) auth = { identity, actor: webActor(identity), pending: true };
       }
       if (!auth) {
         json(res, 401, { error: 'Log in with Discord' });
@@ -533,7 +550,7 @@ function watchHttp({
           auth.pending || config.accessPolicy?.publicWeb === false || data.account,
         );
         handoff.get(issued.id).connectPlex = Boolean(
-          data.connectPlex && watch.providers.configured && config.accessPolicy?.plex !== false,
+          data.connectPlex && watch.providers.configured && (!!config.accessPolicy?.plex || !!plexAuth?.configured),
         );
         json(res, 200, {
           id: issued.id,

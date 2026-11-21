@@ -89,4 +89,4 @@ async function check(entry, { ffmpeg } = {}) {
   return checks;
 }
 
-module.exports = { validate, validateAll, create, check, connect: require('./connect') };
+module.exports = { validate, validateAll, create, check, connect: require('./connect'), memberIdentity: 'jellyfin' };

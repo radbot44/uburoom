@@ -1,4 +1,8 @@
+import * as uburoomControls from '../watch-controls.js';
 import * as uburoomDialogs from '../watch-dialogs.js';
+import * as uburoomUbumfa from '../ubumfa.js';
+import * as accountSignIn from '../account-sign-in.js';
+import { jellyfinEntry } from './jellyfin-entry.js';
 import { WatchTransport as uburoomWatchTransport } from '../watch-transport.js';
 import * as discordPresence from './discord-presence.js';
 import { $ } from './page.js';
@@ -186,6 +190,9 @@ export function mount(host, deps) {
     if (event.persisted && store.connection.transport)
       void store.connection.transport.connect().catch(error => deps.fail(error.message));
   });
+  // The name a password guest last used in this browser, offered again after the password.
+  let passwordName = '';
+  const showJellyfin = jellyfinEntry((...args) => deps.api(...args));
   async function start() {
     store.identity.config = store.identity.pageBootstrap?.config || (await deps.api('/api/watch/config'));
     if (store.identity.config.keepDiagnostics)
@@ -201,7 +208,7 @@ export function mount(host, deps) {
     discordButton.hidden = store.identity.config.access?.discord === false;
     const joinPath = !deps.activity && /^\/join\/([^/]+)$/.exec(location.pathname);
     if (joinPath) {
-      await deps.inviteEntry(discordButton, deps.inviteCode(decodeURIComponent(joinPath[1])));
+      await deps.inviteEntry(discordButton, deps.inviteCode(decodeURIComponent(joinPath[1])), showJellyfin);
       return;
     }
     const roomPathMatch = !deps.activity && /^\/room\/([a-z0-9-]+)$/i.exec(location.pathname);
@@ -239,45 +246,55 @@ export function mount(host, deps) {
         await deps.renewIdentity();
         admission = await deps.api('/api/watch/admission');
       }
-      if (
-        store.identity.config.access.anonymous &&
-        !admission.identity &&
-        !admission.passwordNeeded &&
-        !admission.activityOnly
-      ) {
-        await deps.api('/api/watch/entry', {});
-        admission = await deps.api('/api/watch/admission');
-        store.identity.pageBootstrap = undefined;
-      }
       if (!admission.admitted) {
         $('auth-loading').hidden = true;
         $('welcome').hidden = false;
         document.body.classList.remove('auth-pending');
+        // Only the ways in this server's entry rules offer are shown (docs/ui-behavior.md).
+        const access = store.identity.config.access || {},
+          jellyfin = !deps.activity && !admission.activityOnly ? access.jellyfin || [] : [],
+          signIns =
+            access.discord !== false || !!store.identity.config.plexSignIn || !!access.accounts || jellyfin.length;
+        showJellyfin(jellyfin);
+        // uburoom accounts sign in with a username and password, above the server password.
+        const accountSlot = $('account-sign-in');
+        accountSlot.hidden = !access.accounts || admission.activityOnly;
+        if (!accountSlot.hidden && !accountSlot.firstChild)
+          accountSignIn.mount(accountSlot, {
+            onSignedIn: () => {
+              store.identity.pageBootstrap = undefined;
+              void start().catch(error => deps.fail(error.message));
+            },
+          });
         $('empty-title').textContent = admission.activityOnly
           ? 'Discord Activity only'
-          : admission.passwordNeeded
+          : access.password && !signIns
             ? 'Enter uburoom'
             : 'Sign in to join';
-        $('entry-form').hidden = !admission.passwordNeeded || admission.activityOnly;
+        $('entry-form').hidden = !access.password || admission.activityOnly;
+        $('guest-join').hidden = true;
         $('entry-status').textContent = admission.activityOnly
           ? 'Open uburoom through Discord Activity. Browser playback is disabled.'
-          : admission.passwordNeeded
-            ? 'Enter this server’s password to continue.'
-            : admission.identity
-              ? 'Your account does not meet this server’s entry requirements. Check your Discord membership or Plex server access.'
-              : 'Sign in to join this server.';
-        discordButton.hidden =
-          store.identity.config.access.discord === false || admission.passwordNeeded || admission.activityOnly;
-        $('plex-login').hidden =
-          store.identity.config.access.plex === false ||
-          admission.passwordNeeded ||
-          (admission.activityOnly && !admission.identity);
+          : admission.identity
+            ? 'Your account does not meet this server’s entry requirements.' +
+              (access.discord !== false || store.identity.config.plexSignIn
+                ? ' Check your Discord membership or Plex server access.'
+                : '') +
+              (access.password ? ' You can also enter with the server password.' : '')
+            : access.password && !signIns
+              ? 'Enter this server’s password to continue.'
+              : access.password
+                ? 'Sign in, or enter with the server password.'
+                : 'Sign in to join this server.';
+        discordButton.hidden = access.discord === false || admission.activityOnly;
+        $('plex-login').hidden = !store.identity.config.plexSignIn || (admission.activityOnly && !admission.identity);
+        passwordName =
+          admission.identity && admission.pendingIdentity?.account?.guest ? admission.pendingIdentity.name : '';
         if (admission.identity) {
           store.identity.me = { ...admission.pendingIdentity, adminEligible: false };
           renderAccount();
         }
-        $('entry-plex-activity').hidden =
-          !deps.activity || !admission.identity || admission.passwordNeeded || !store.identity.config.access.plex;
+        $('entry-plex-activity').hidden = !deps.activity || !admission.identity || !store.identity.config.plexSignIn;
         $('entry-recheck').hidden = !admission.identity;
         if (!deps.activity && !admission.activityOnly) deps.showInviteCodeBox();
         if (
@@ -530,20 +547,50 @@ export function mount(host, deps) {
       void ensureHls().catch(() => {});
     });
   }
-  $('entry-form').addEventListener('submit', async event => {
+  // The server password, then a name: the one typed, the browser's own guest name from an earlier
+  // visit, or an offered random one. The server checks the password when the name is sent.
+  $('entry-form').addEventListener('submit', event => {
     event.preventDefault();
-    const button = $('entry-submit');
-    button.disabled = true;
-    try {
-      await deps.api('/api/watch/entry', { password: $('entry-password').value });
-      $('entry-password').value = '';
-      store.identity.pageBootstrap = undefined;
-      await start();
-    } catch (error) {
-      $('entry-status').textContent = error.message;
-    } finally {
-      button.disabled = false;
-    }
+    const password = $('entry-password').value;
+    if (!password) return;
+    $('entry-form').hidden = true;
+    $('guest-sign-in-label').hidden = true;
+    $('entry-status').textContent = 'Pick a name to show in rooms. You enter as a guest.';
+    const join = $('guest-join'),
+      name = $('guest-name'),
+      roll = $('guest-name-roll');
+    if (!roll.firstChild)
+      uburoomControls.content(roll, { label: 'New random name', icon: 'arrows-shuffle', iconOnly: true });
+    const rollName = () => {
+      name.value = uburoomUbumfa.ubunym().fullName;
+    };
+    name.value = passwordName;
+    if (!name.value) rollName();
+    roll.onclick = rollName;
+    join.hidden = false;
+    name.focus();
+    join.onsubmit = async submit => {
+      submit.preventDefault();
+      const button = $('guest-join-submit');
+      button.disabled = true;
+      try {
+        await deps.api('/api/watch/entry', { password, name: name.value });
+        $('entry-password').value = '';
+        join.hidden = true;
+        store.identity.pageBootstrap = undefined;
+        await start();
+      } catch (error) {
+        // A wrong password goes back to the password; a name the server refuses stays to be fixed.
+        $('entry-status').textContent = error.message;
+        if (/password/i.test(error.message)) {
+          join.hidden = true;
+          $('entry-form').hidden = false;
+          $('entry-password').select();
+        }
+      } finally {
+        button.disabled = false;
+      }
+    };
   });
   $('entry-recheck').addEventListener('click', () => {
     store.identity.pageBootstrap = undefined;

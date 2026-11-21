@@ -14,7 +14,8 @@ const { accountHttp } = require('./account-http');
 const { operatorHttp } = require('./operator-http');
 const { createConfigEditor } = require('./config-editor');
 const { resilientFetch } = require('./resilience');
-const { AccessPolicy } = require('./access-policy');
+const { Admission } = require('./admission');
+const { PlexTv, createDiscordSignIn } = require('./identity');
 const { DiagnosticLog } = require('./diagnostic-log');
 const { silentLogger } = require('./logger');
 const { createAccess } = require('./access');
@@ -46,9 +47,8 @@ function openAccounts(config) {
   const registry = new Accounts(config.accountFile, vault);
   // Persist policy identity without leaving an offline verifier of the shared password in SQLite.
   // Password grants are process-local and reset on restart.
-  const policy = config.accessPolicy
-    ? [hash(JSON.stringify({ ...config.accessPolicy, password: !!config.accessPolicy.password }))]
-    : [];
+  // The entry rules hold no secret; the server password's own revision ends its sessions (server/admission/).
+  const policy = config.accessPolicy ? [hash(JSON.stringify(config.accessPolicy))] : [];
   const identity = [config.publicUrl, config.ownerId, config.guildId, config.clientId, ...policy];
   try {
     return { registry, accounts: loginStore(JSON.stringify(identity), vault, registry) };
@@ -59,7 +59,6 @@ function openAccounts(config) {
   }
 }
 
-const { createDiscordSignIn } = require('./http/auth');
 const { createRoutes } = require('./http/routes');
 
 /** The synchronization test video, when the installation includes it. */
@@ -97,14 +96,17 @@ function createApp(config, options = {}) {
     const { accounts } = opened;
     registry = opened.registry;
     const pipeline = new MediaPipeline(config, { logger });
+    // Plex sign-in proves who someone is through plex.tv; Plex sources reach plex.tv through it too.
+    const plexIdentity = new PlexTv(plexFetch);
+    if (config.demo) plexIdentity.demo = plexDemo;
     // Every configured source, through its type's module; no source is named here.
     const sources = createSources(config.sources || [], {
-      ...{ config, registry, pipeline, logger, plexFetch, jellyfinFetch },
+      ...{ config, registry, pipeline, logger, plexFetch, jellyfinFetch, plexTv: plexIdentity },
     });
     const plexAuth = sources.signIn.plex;
+    const providers = new MediaProviders(sources.providers, pipeline);
     // uburoom accounts: operator-made username/password identities (provider 'uburoom').
     const uburoomAccounts = createUburoomAccounts({ registry });
-    if (config.demo) plexAuth.demo = plexDemo;
     // Who may enter. The rooms and routes are built last, so earlier services find them when called.
     let hub, watch, watchRoutes, accountRoutes;
     const rooms = () => watch;
@@ -117,10 +119,13 @@ function createApp(config, options = {}) {
       rooms,
       endedFor: ids => watchRoutes.invalidate(ids),
     });
-    const entryPolicy = new AccessPolicy(config, registry, plexAuth, () => access.raw(), { logger, guests });
+    const entryPolicy = new Admission(config, registry, providers, () => access.raw(), {
+      logger,
+      guests,
+      accounts: uburoomAccounts,
+    });
     const access = createAccess({ registry, config, plexAuth, entryPolicy });
     const sessions = createSessions({ config, logger, registry, accounts, access, oauthFetch });
-    const providers = new MediaProviders(sources.providers, pipeline);
     // Rooms, and the hub that authorizes work in them.
     const { ports, setOwnerName } = createHubPorts({
       ...{ config, logger, registry, accounts, access, plexAuth, providers, guests, sessions },
@@ -141,10 +146,10 @@ function createApp(config, options = {}) {
       : undefined;
     const untapLogger = diagnosticLog && logger.tap((level, tag, message) => diagnosticLog.server(level, tag, message));
     // HTTP and sockets.
-    const web = { config, registry, plexAuth, hub, watch, ...sessions };
+    const web = { config, registry, plexAuth, plexIdentity, uburoomAccounts, hub, watch, ...sessions };
     watchRoutes = watchHttp({ ...web, oauthFetch, entryPolicy, diagnosticLog, accounts });
-    const signIn = createDiscordSignIn({ config, plexAuth, sessions, authorizeUrl });
-    accountRoutes = accountHttp({ ...web, watchRoutes, loginStore: accounts, discordStart: signIn.start });
+    const signIn = createDiscordSignIn({ config, demo: () => plexIdentity.demo, sessions, authorizeUrl });
+    accountRoutes = accountHttp({ ...web, entryPolicy, watchRoutes, loginStore: accounts, discordStart: signIn.start });
     const editor = config.configFile ? createConfigEditor(config.configFile) : undefined;
     const files = createStaticFiles({ config });
     const uburoomAccountsHttp = uburoomAccountRoutes({

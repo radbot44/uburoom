@@ -344,49 +344,6 @@ test(
   },
 );
 
-test('native client handoff bearer token succeeds when a server entry password is configured', tlsOptions, async t => {
-  const f = await fixture(t, {
-    accessPolicy: { discord: true, plex: false, password: 'entry-secret', publicWeb: true },
-  });
-  const host = await f.source('host');
-  // Before passing the entry password, bearer auth fails against authenticated endpoints.
-  assert.equal((await f.request('/api/watch/me', undefined, host)).status, 401);
-
-  const entryRes = await f.request('/api/watch/entry', { password: 'entry-secret' }, host);
-  assert.equal(entryRes.status, 200);
-  const entryCookie = entryRes.headers['set-cookie'].find(c => c.startsWith('uburoom_entry=')).split(';')[0];
-
-  const issuedHost = await f.issue(host);
-  const claimedHost = await f.claim(issuedHost);
-  await f.approve(host, claimedHost);
-  const redeemed = await f.redeem(claimedHost);
-  const loginCookie = redeemed.headers['set-cookie'][0].split(';')[0];
-  const browserCookies = `${loginCookie}; ${entryCookie}`;
-
-  const started = (await f.request('/api/watch/handoff/native/start', {})).body;
-  const authedClaim = await f.request(
-    '/api/watch/handoff/native/claim',
-    { code: started.code },
-    { Cookie: browserCookies },
-  );
-  assert.equal(authedClaim.status, 200);
-
-  const approved = await f.request(
-    '/api/watch/handoff/native/approve',
-    { id: started.id, csrf: authedClaim.body.csrf },
-    { Cookie: browserCookies },
-  );
-  assert.equal(approved.status, 200);
-
-  const pollDone = await f.request('/api/watch/handoff/native/poll', { id: started.id, proof: started.proof });
-  assert.equal(pollDone.status, 200);
-
-  // Native client sends only the bearer token (no uburoom_entry cookie).
-  const me = await f.request('/api/watch/me', undefined, { Authorization: 'Bearer ' + pollDone.body.token });
-  assert.equal(me.status, 200);
-  assert.equal(me.body.name, 'Demo host');
-});
-
 test('browser handoff accepts current local destinations and rejects external or retired routes', async () => {
   const vm = require('node:vm');
   const source = fs.readFileSync(path.join(__dirname, '../web/handoff.js'), 'utf8');

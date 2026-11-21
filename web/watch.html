@@ -194,6 +194,8 @@
                   <section id="welcome" class="welcome card auth-card" hidden>
                     <h2 id="welcome-title">Welcome to uburoom</h2>
                     <p id="entry-status" role="status">Sign in to browse your library and join a room.</p>
+                    <!-- uburoom account sign-in (access.accounts) goes here. -->
+                    <div id="account-sign-in" class="account-sign-in" hidden></div>
                     <form id="entry-form" class="entry-form" hidden>
                       <label for="entry-password">Server password</label
                       ><input
@@ -244,6 +246,8 @@
                         Connect Plex in your browser</button
                       ><button id="entry-recheck" class="quiet" type="button" hidden>Check access again</button>
                     </div>
+                    <p id="jellyfin-sign-in-status" role="status" hidden></p>
+                    <div id="jellyfin-sign-in-form" hidden></div>
                   </section>
                 </div>
                 <button id="empty-browse" class="empty-browse primary" type="button" hidden>

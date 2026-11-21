@@ -1,13 +1,7 @@
 'use strict';
-const { randomUUID, sign } = require('node:crypto');
-const { resilientFetch, isProviderOutage } = require('../../resilience');
+const { isProviderOutage } = require('../../resilience');
+const { PlexTv, PlexAccessError } = require('../../identity/plex');
 const { runOperation } = require('../../operation');
-class PlexAccessError extends Error {
-  constructor(message, revoked = false) {
-    super(message);
-    this.revoked = revoked;
-  }
-}
 // A person's own Plex sign-in that Plex no longer accepts (a password change signs out
 // every device) or that uburoom no longer holds. Only signing in to Plex again fixes it.
 const RECONNECT_PLEX =
@@ -29,97 +23,31 @@ function memoryPin() {
 }
 
 /**
- * plex.tv sign-in, and one Plex source's server seen through a person's own Plex account:
+ * One Plex source's server seen through a person's own Plex account:
  * whether that account can reach this source's pinned server, and the scope it gets there.
- * Built per Plex source; `PlexSignIn` combines them for the people side.
+ * Built per Plex source; `PlexMembers` combines them for the people side.
  */
 class PlexAuth {
   /**
-   * @param {any} source - The Plex source entry (`token`, `machineIdentifier`, `delivery`); absent for plex.tv only.
+   * @param {any} source - The Plex source entry (`token`, `machineIdentifier`, `delivery`).
    * @param {any} accounts
    * @param {any} plex - That source's Plex.
-   * @param {typeof fetch} [fetcher]
+   * @param {PlexTv | typeof fetch} [plexTv] - plex.tv (server/identity/plex.js), or the fetch to reach it with.
    * @param {{pin?: {get(): string|undefined, set(id: string): Promise<void>}}} [services]
    */
-  constructor(source, accounts, plex, fetcher = fetch, { pin } = {}) {
+  constructor(source, accounts, plex, plexTv = fetch, { pin } = {}) {
     this.source = source || {};
     this.accounts = accounts;
     this.plex = plex;
     this.pin = pin || memoryPin();
-    this.fetch = resilientFetch(fetcher, { timeoutMs: 10000 });
+    this.plexTv = plexTv instanceof PlexTv ? plexTv : new PlexTv(plexTv);
     this.cache = new Map();
     this.inflight = new Map();
     this.generation = 0;
   }
-  async request(resource, { token, clientId, method = 'GET', data } = {}) {
-    const response = await this.fetch('https://clients.plex.tv/api/v2' + resource, {
-      method,
-      redirect: 'error',
-      signal: AbortSignal.timeout(10000),
-      headers: {
-        Accept: 'application/json',
-        'X-Plex-Product': 'uburoom',
-        'X-Plex-Client-Identifier': clientId || 'uburoom-auth',
-        ...(token ? { 'X-Plex-Token': token } : {}),
-        ...(data ? { 'Content-Type': 'application/json' } : {}),
-      },
-      ...(data ? { body: JSON.stringify(data) } : {}),
-    });
-    if (!response.ok)
-      throw new PlexAccessError(
-        [401, 403, 498].includes(response.status)
-          ? 'Plex authorization expired or was revoked'
-          : 'Plex is temporarily unavailable; try again',
-        [401, 403, 498].includes(response.status),
-      );
-    return response.json();
-  }
-  jwt(credential, claims = {}) {
-    const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url'),
-      now = Math.floor(Date.now() / 1000);
-    const payload = encode({
-      aud: 'plex.tv',
-      iss: credential.clientId,
-      iat: now,
-      exp: now + 300,
-      scope: 'username,friendly_name,restricted',
-      ...claims,
-    });
-    const input = encode({ kid: credential.kid, alg: 'EdDSA', typ: 'JWT' }) + '.' + payload;
-    return input + '.' + sign(null, Buffer.from(input), credential.privateKey).toString('base64url');
-  }
-  async start(forwardUrl) {
-    // PMS installations can reject JWT resource tokens despite accepting the
-    // same account at plex.tv. Use Plex's documented traditional PIN flow.
-    const clientId = randomUUID(),
-      credential = { clientId, authType: 'traditional' };
-    const pin = await this.request('/pins?strong=true', { clientId, method: 'POST' });
-    if (!pin.id || typeof pin.code !== 'string') throw new Error('Plex sign-in could not start');
-    const params = new URLSearchParams({
-      clientID: clientId,
-      code: pin.code,
-      forwardUrl,
-      'context[device][product]': 'uburoom',
-    });
-    return { credential, pinId: String(pin.id), url: 'https://app.plex.tv/auth#?' + params };
-  }
-  /** The plex.tv account a finished PIN belongs to; says nothing about any server. */
-  async identify(attempt) {
-    const { credential } = attempt,
-      pin = await this.request(
-        '/pins/' +
-          encodeURIComponent(attempt.pinId) +
-          (credential.privateKey ? '?deviceJWT=' + encodeURIComponent(this.jwt(credential)) : ''),
-        { clientId: credential.clientId },
-      );
-    if (typeof pin.authToken !== 'string' || !pin.authToken)
-      throw new Error('Plex sign-in was not completed; start again');
-    credential.token = pin.authToken;
-    if (credential.privateKey) credential.expires = Date.now() + 6 * 86400000;
-    const profile = await this.request('/user', { token: credential.token, clientId: credential.clientId });
-    if (!/^\d{1,20}$/.test(String(profile.id))) throw new Error('Plex account identity unavailable');
-    const name = String(profile.username || profile.friendlyName || 'Plex user').slice(0, 100);
-    return { subject: String(profile.id), name, credential };
+  /** plex.tv, through the sign-in client every Plex source shares. */
+  request(resource, options) {
+    return this.plexTv.request(resource, options);
   }
   async machine() {
     const pinned = this.source.machineIdentifier || this.pin.get();
@@ -151,7 +79,7 @@ class PlexAuth {
       const renewed = await this.request('/auth/token', {
         clientId: credential.clientId,
         method: 'POST',
-        data: { jwt: this.jwt(credential, { nonce }) },
+        data: { jwt: this.plexTv.jwt(credential, { nonce }) },
       });
       if (typeof renewed.auth_token !== 'string') throw new Error('Plex renewal unavailable');
       credential.token = renewed.auth_token;
@@ -281,44 +209,38 @@ class PlexAuth {
   }
 }
 /**
- * Plex sign-in across every Plex source: plex.tv proves who someone is, and until admission
- * has its own entry rules (phase 3) a Plex account is let in when it can reach **any**
- * configured Plex source. With no Plex source, signing in still proves who someone is, but
- * admits nobody.
+ * Every Plex source's server access together, for what is about a person rather than one source:
+ * linking a Plex account (`prime`), whether their own sign-in still reaches some Plex server, and
+ * which Plex account the first source's own token belongs to. Who gets in is admission's decision
+ * (server/admission/), which asks each named source's `members` on its own.
  */
-class PlexSignIn {
+class PlexMembers {
   /**
-   * @param {any} config - Reads `accessPolicy` and `guests` for who may finish signing in.
    * @param {any} accounts
    * @param {PlexAuth[]} sources - One per Plex source, in config order.
-   * @param {typeof fetch} [fetcher]
+   * @param {PlexTv} plexTv
    */
-  constructor(config, accounts, sources, fetcher = fetch) {
-    this.config = config;
+  constructor(accounts, sources, plexTv) {
     this.accounts = accounts;
     this.sources = sources;
-    this.account = new PlexAuth(undefined, accounts, undefined, fetcher);
+    this.plexTv = plexTv;
   }
-  /** Whether any Plex source is configured, so a Plex sign-in can let anyone in. */
-  get admits() {
+  /** Whether any Plex source is configured. */
+  get configured() {
     return this.sources.some(source => source.plex?.configured);
   }
-  request(resource, options) {
-    return this.account.request(resource, options);
-  }
-  start(forwardUrl) {
-    return this.account.start(forwardUrl);
-  }
-  async finish(attempt) {
-    const identity = await this.account.identify(attempt);
-    if (!this.sources.length) return identity;
-    try {
-      await this.any(source => source.validate(identity.credential));
-    } catch (error) {
-      // Someone outside every server may still sign in to use a room invite as a guest.
-      if (!(this.config.accessPolicy && this.config.guests?.enabled && error.noServerAccess)) throw error;
-    }
-    return identity;
+  /**
+   * Checks a just-signed-in Plex account against the Plex sources it can reach, so its stored
+   * sign-in carries a server token; reaching none is not an error here.
+   */
+  async prime(credential) {
+    for (const source of this.sources)
+      try {
+        await source.validate(credential);
+        return;
+      } catch {
+        // Another source, or none: admission decides who gets in.
+      }
   }
   /**
    * The first source that answers yes. With none: a source that gave no answer is the answer
@@ -357,8 +279,8 @@ class PlexSignIn {
   async ownerProfile() {
     const token = this.sources.find(source => source.source.token)?.source.token;
     if (!token) throw new Error('No Plex source token');
-    return this.request('/user', { token });
+    return this.plexTv.request('/user', { token });
   }
 }
 
-module.exports = { PlexAuth, PlexSignIn, PlexAccessError, plexReconnectError, RECONNECT_PLEX, DIRECT_CLIENT };
+module.exports = { PlexAuth, PlexMembers, PlexAccessError, plexReconnectError, RECONNECT_PLEX, DIRECT_CLIENT };

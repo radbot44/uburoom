@@ -829,6 +829,35 @@ function checkGuestPasses(config) {
   return checks;
 }
 
+/** The entry rules that let people in, and a sign-in a rule needs but cannot offer. */
+function checkAccess(config) {
+  const access = config.accessPolicy;
+  if (!access) return [];
+  const rules = [
+    access.discordServer && 'Discord server members',
+    access.sourceMembers?.length && 'members of ' + access.sourceMembers.join(', '),
+    access.password && 'the server password',
+    access.accounts && 'uburoom accounts',
+  ].filter(Boolean);
+  const checks = [
+    {
+      category: 'Access',
+      name: 'Entry rules',
+      status: 'pass',
+      message: 'Let in: ' + rules.join('; ') + (config.guests?.enabled ? '; room invites' : ''),
+    },
+  ];
+  if (access.discordServer && !(config.clientId && config.clientSecret && config.guildId))
+    checks.push({
+      category: 'Access',
+      name: 'Discord sign-in',
+      status: 'warn',
+      message: 'access.discord_server is on, but Discord sign-in is not configured, so nobody can use it.',
+      remediation: 'Set discord.client_id, discord.client_secret and discord.guild_id, or turn the rule off.',
+    });
+  return checks;
+}
+
 function checkEvents(config) {
   const minimum = config.events?.schedulers || 'trusted';
   const trusted = config.trustedMembers || { discord: [], plex: [], discordRoles: [] };
@@ -900,6 +929,7 @@ async function runDoctor(options = {}) {
     allChecks.push(...checkTlsCertificates(config));
     allChecks.push(...checkMediaTools(config));
     allChecks.push(...(await checkSources(config)));
+    allChecks.push(...checkAccess(config));
     allChecks.push(...checkGuestPasses(config));
     allChecks.push(...checkEvents(config));
     allChecks.push(...(await checkProviderConnectivity(config)));
@@ -976,4 +1006,5 @@ module.exports = {
   checkMediaTools,
   checkProviderConnectivity,
   checkSources,
+  checkAccess,
 };

@@ -1,4 +1,5 @@
 'use strict';
+const { accessPolicy } = require('./helpers/access');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),
@@ -12,7 +13,8 @@ const { fixture } = require('./helpers/account-app');
 
 // Everyone admitted (no entry rules), so a signed-in uburoom account is a usable session here;
 // which entry rule admits uburoom accounts is the admission layer's business.
-const OPEN = { accessPolicy: { discord: false, plex: false, password: '', publicWeb: true } };
+// uburoom accounts are an entry rule of their own (server/admission/).
+const OPEN = { accessPolicy: accessPolicy({ discordServer: false, accounts: true }) };
 
 async function operatorApp(t, overrides = {}) {
   const lines = [];
@@ -25,7 +27,7 @@ async function operatorApp(t, overrides = {}) {
     ),
   };
   const f = await fixture(t, undefined, { logging: { requests: true }, ...OPEN, ...overrides }, { logger });
-  f.config.serverOperator = { discordId: f.provider.subjects.host };
+  f.config.serverOperator = { identities: [{ provider: 'discord', subject: f.provider.subjects.host }] };
   const operator = f.browser();
   assert.equal((await operator.request('/api/account/demo-login', { persona: 'host' })).status, 200);
   return { ...f, operator, lines };
@@ -240,6 +242,7 @@ test('disabling an account ends its sessions and sign-in; enabling restores sign
     200,
   );
   assert.equal((await erin.request('/api/me')).body.loggedIn, true);
+  assert.equal((await erin.request('/api/watch/me')).status, 200, 'the accounts rule lets an enabled account in');
 
   const disabled = await operator.post('/api/operator/accounts/disable', { subject: created.account.subject });
   assert.equal(disabled.status, 200);
@@ -271,7 +274,7 @@ test('operator authority is checked again after awaited work, before any change'
   const { operator, app, config } = await operatorApp(t);
   const flush = app.registry.flush.bind(app.registry);
   app.registry.flush = async () => {
-    config.serverOperator = { discordId: '999999999999999999' };
+    config.serverOperator = { identities: [{ provider: 'discord', subject: '999999999999999999' }] };
     return flush();
   };
   const refused = await operator.post('/api/operator/accounts', { username: 'frank' });
@@ -293,4 +296,13 @@ test('setup can create the first account directly, signed in by its password', a
   assert.equal(await uburoom.verify('owner', 'owner password'), first.userId);
   assert.equal(await uburoom.verify('owner', 'wrong password'), undefined);
   assert.equal(uburoom.admits(first.userId), true);
+});
+
+test('an account gets in only while the accounts entry rule is on', async t => {
+  const { operator, browser } = await operatorApp(t, { accessPolicy: accessPolicy() });
+  const created = (await operator.post('/api/operator/accounts', { username: 'gail' })).body;
+  const gail = browser();
+  await gail.request('/api/uburoom-accounts/password', { token: tokenOf(created.link.url), password: 'gail password' });
+  assert.equal((await gail.request('/api/me')).body.loggedIn, true, 'the account still proves who Gail is');
+  assert.equal((await gail.request('/api/watch/me')).status, 401, 'but no rule lets accounts in');
 });

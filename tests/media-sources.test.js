@@ -1,4 +1,5 @@
 'use strict';
+const { accessPolicy } = require('./helpers/access');
 // Any number of sources (phase 2 of docs/media-sources-plan.md): every source is equal, media is
 // routed by the server identity it is recorded under, and a source that is gone leaves its media
 // unavailable rather than deleted.
@@ -47,7 +48,7 @@ function twoPlexFetch(input, options, provider, { sameMachine = false } = {}) {
   return provider.fetch(input, options);
 }
 
-async function sources(t, list, { sameMachine = false, disk = {} } = {}) {
+async function sources(t, list, { sameMachine = false, disk = {}, members } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-sources-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   for (const name of ['films', 'tv']) {
@@ -76,7 +77,10 @@ async function sources(t, list, { sameMachine = false, disk = {} } = {}) {
     t,
     (input, options, provider) => twoPlexFetch(input, options, provider, { sameMachine }),
     {
-      accessPolicy: { discord: true, plex: true, password: '', publicWeb: true },
+      // Unless a test names them, every Plex source's members may come in.
+      accessPolicy: accessPolicy({
+        sourceMembers: members || list.filter(key => all[key].type === 'plex').map(key => all[key].id),
+      }),
       ...disk,
       sources: validateSources(
         list.map(key => all[key]),
@@ -215,24 +219,33 @@ test('two sources that report the same server are refused rather than guessed be
   await assert.rejects(f.app.watch.providers.select('fixture-machine'), error => error.status === 503);
 });
 
-test('until entry rules exist, a Plex sign-in admits whoever can reach any configured Plex source', tls, async t => {
-  // Bob (102) can reach only Plex server B; Alice (101) only A.
+test('a member rule admits the members of the sources it names, and only those', tls, async t => {
+  // Bob (102) can reach only Plex server B (cabin); Alice (101) only A (living-room).
   const both = await sources(t, ['a', 'b']);
   for (const persona of ['alice', 'bob']) {
     const browser = both.browser();
     assert.equal((await browser.plex(persona)).status, 302);
-    assert.equal((await browser.request('/api/watch/me')).status, 200, persona + ' reaches one of the two servers');
+    assert.equal((await browser.request('/api/watch/me')).status, 200, persona + ' is a member of a named source');
   }
-  const onlyA = await sources(t, ['a']);
+  const onlyA = await sources(t, ['a', 'b'], { members: ['living-room'] });
   const bob = onlyA.browser();
-  assert.equal((await bob.plex('bob')).headers.location, '/auth/error', 'membership of B does not admit through A');
-  assert.equal((await bob.request('/api/watch/me')).status, 401);
-  // With no Plex source at all, a Plex sign-in still proves who someone is, but admits nobody.
-  const none = await sources(t, ['jf']);
-  const alice = none.browser();
-  assert.equal((await alice.plex('alice')).status, 302);
-  assert.equal((await alice.request('/api/watch/admission')).body.identity, true);
-  assert.equal((await alice.request('/api/watch/me')).status, 401);
-  assert.equal((await alice.request('/api/watch/config')).body.plexSignIn, false);
+  assert.equal((await bob.plex('bob')).status, 302, 'signing in proves who Bob is');
+  assert.equal(
+    (await bob.request('/api/watch/me')).status,
+    401,
+    'membership of B does not admit through a rule naming A',
+  );
+  const alice = onlyA.browser();
+  await alice.plex('alice');
+  assert.equal((await alice.request('/api/watch/me')).status, 200);
+  // Who gets in changes no media: Alice still sees Cabin's library, whose members the rule leaves out.
+  assert.match(JSON.stringify((await alice.request('/api/watch/library')).body), /Cabin Movies/);
+  // With no member rule naming a Plex source, Plex sign-in is not offered and admits nobody.
+  const none = await sources(t, ['a', 'jf'], { members: [] });
+  const visitor = none.browser();
+  assert.equal((await visitor.plex('alice')).status, 302, 'linking a Plex account still works as identity');
+  assert.equal((await visitor.request('/api/watch/admission')).body.identity, true);
+  assert.equal((await visitor.request('/api/watch/me')).status, 401);
+  assert.equal((await visitor.request('/api/watch/config')).body.plexSignIn, false);
   assert.equal((await both.browser().request('/api/watch/config')).body.plexSignIn, true);
 });
