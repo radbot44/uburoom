@@ -39,6 +39,8 @@ const messages = {
   CONFIG_AUTHORIZATION: 'Authorization changed; no settings were saved',
   CONFIG_IO: 'Configuration file operation failed; no settings were saved',
   CONFIG_UNSAFE_PATH: 'Configuration must be an existing regular file without symbolic or hard links',
+  SOURCE_MISSING: 'That source is no longer in the configuration; read it again',
+  SOURCE_INVALID: 'The configuration would not be valid with this change; nothing was saved',
 };
 class ConfigEditError extends Error {
   constructor(code) {
@@ -214,6 +216,69 @@ function proposed(original, requested, file) {
   return bytes;
 }
 
+/**
+ * One change to the `sources:` list, as YAML, keeping the file's comments and layout:
+ * - `{action: 'add', entry}`: appends a whole raw entry (built by the server, never the browser);
+ * - `{action: 'update', id, name?, libraries?}`: renames (blank removes the name) or sets the
+ *   libraries offered (null removes the list: every library);
+ * - `{action: 'remove', id}`: removes the entry, and its id from `access.source_members`.
+ * Returns the proposed bytes and, when the whole file is invalid, the reason from validation.
+ */
+function proposedSources(original, change, file) {
+  const source = original.toString('utf8');
+  const doc = YAML.parseDocument(source, { prettyErrors: false, uniqueKeys: true, version: '1.2', stringKeys: true });
+  let list = doc.get('sources', true);
+  if (list !== undefined && !YAML.isSeq(list)) throw failure('CONFIG_INVALID');
+  const index = () => {
+    const found = (list?.items || []).findIndex(item => YAML.isMap(item) && item.get('id') === change.id);
+    if (found < 0) throw failure('SOURCE_MISSING');
+    return found;
+  };
+  if (change.action === 'add') {
+    if (!list) {
+      doc.set('sources', doc.createNode([]));
+      list = doc.get('sources', true);
+    }
+    // An empty `sources: []` becomes a block list, like the commented examples.
+    list.flow = false;
+    const node = doc.createNode(change.entry);
+    const offered = node.get('libraries', true);
+    if (offered) offered.flow = true;
+    list.items.push(node);
+  } else if (change.action === 'update') {
+    const entry = list.items[index()];
+    if (change.name !== undefined) {
+      if (change.name) entry.set('name', change.name);
+      else entry.delete('name');
+    }
+    if (change.libraries !== undefined) {
+      if (change.libraries === null) entry.delete('libraries');
+      else {
+        const node = doc.createNode(change.libraries);
+        node.flow = true;
+        entry.set('libraries', node);
+      }
+    }
+  } else if (change.action === 'remove') {
+    list.items.splice(index(), 1);
+    const members = doc.getIn(['access', 'source_members'], true);
+    if (YAML.isSeq(members)) {
+      const at = members.items.findIndex(item => YAML.isScalar(item) && item.value === change.id);
+      if (at >= 0) members.items.splice(at, 1);
+    }
+  } else throw failure('CONFIG_INVALID');
+  let next = doc.toString({ lineWidth: 0 });
+  if (source.startsWith('﻿')) next = '﻿' + next;
+  if (source.includes('\r\n')) next = next.replace(/\n/g, '\r\n');
+  const bytes = Buffer.from(next, 'utf8');
+  try {
+    normalizeConfig(parseConfig(next.replace(/^﻿/, '')), { base: path.dirname(file), discoverTools: false });
+  } catch (error) {
+    throw Object.assign(failure('SOURCE_INVALID'), { reason: String(error?.message || '').slice(0, 300) });
+  }
+  return bytes;
+}
+
 async function writePrivate(file, bytes, original) {
   const handle = await fs.open(file, 'wx', 0o600);
   try {
@@ -298,61 +363,90 @@ function createConfigEditor(selectedPath = configPath()) {
       } catch (error) {
         return Promise.reject(error instanceof ConfigEditError ? error : failure('CONFIG_INVALID'));
       }
-      return serialize(() =>
-        sanitized(async () => {
-          authorize();
-          const original = await snapshot(file);
-          if (original.revision !== expected) throw failure('CONFIG_CONFLICT');
-          let bytes;
-          try {
-            bytes = proposed(original.bytes, patch, file);
-          } catch {
-            throw failure('CONFIG_INVALID');
-          }
-          const nextRevision = revision(bytes);
-          const directory = await fs.mkdtemp(path.join(path.dirname(file), '.uburoom-config-'));
-          const backupPath = path.join(directory, 'original.yaml'),
-            replacement = path.join(directory, 'replacement.yaml');
-          let backupReady = false;
-          try {
-            // The directory is empty until protected; never put secrets in an
-            // inherited/public Windows directory even briefly.
-            await protectDirectory(directory);
-            await writePrivate(backupPath, original.bytes);
-            if (revision(await fs.readFile(backupPath)) !== original.revision) throw failure('CONFIG_IO');
-            backupReady = true;
-            await writePrivate(replacement, bytes, original);
-            if (revision(await fs.readFile(replacement)) !== nextRevision) throw failure('CONFIG_IO');
-            if (process.platform !== 'win32') {
-              for (const entry of [directory, path.dirname(file)]) {
-                const parent = await fs.open(entry, 'r');
-                try {
-                  await parent.sync();
-                } finally {
-                  await parent.close();
-                }
-              }
-            }
-            const current = await snapshot(file);
-            if (
-              current.revision !== original.revision ||
-              metadata(current.stat) !== metadata(original.stat) ||
-              current.acl !== original.acl
-            )
-              throw failure('CONFIG_CONFLICT');
-            // No unlink/copy fallback. A filesystem that refuses replacement
-            // fails closed. External editors can still race this check/rename.
-            authorize();
-            await fs.rename(replacement, file);
-            return { source: 'file', revision: nextRevision, restartRequired: true, backupPath };
-          } finally {
-            await fs.unlink(replacement).catch(() => {});
-            if (!backupReady) await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
-          }
-        }),
-      );
+      return commit(expected, authorize, bytes => {
+        try {
+          return proposed(bytes, patch, file);
+        } catch {
+          throw failure('CONFIG_INVALID');
+        }
+      });
+    },
+    /** The saved `sources:` entries, normalized, with the file revision. Secrets included: server use only. */
+    readSources() {
+      return sanitized(async () => {
+        const original = await snapshot(file);
+        return { revision: original.revision, sources: validate(original.bytes, file).sources || [] };
+      });
+    },
+    /**
+     * Saves one change to `sources:` (see `proposedSources`), with the same revision check, backup,
+     * private write and authorization recheck as `save`. Applies after a restart.
+     */
+    saveSources(request, { beforeReplace } = {}) {
+      const authorize = () => {
+        if (beforeReplace && beforeReplace() !== true) throw failure('CONFIG_AUTHORIZATION');
+      };
+      const { revision: expected, change } = request || {};
+      if (typeof expected !== 'string' || !/^[a-f0-9]{64}$/.test(expected) || !change || typeof change !== 'object')
+        return Promise.reject(failure('CONFIG_INVALID'));
+      const copy = structuredClone(change);
+      return commit(expected, authorize, bytes => proposedSources(bytes, copy, file));
     },
   };
+  /**
+   * Replaces the file with what `build` makes of its current bytes, if it is still at `expected`:
+   * a protected backup first, a private replacement beside it, then one rename.
+   */
+  function commit(expected, authorize, build) {
+    return serialize(() =>
+      sanitized(async () => {
+        authorize();
+        const original = await snapshot(file);
+        if (original.revision !== expected) throw failure('CONFIG_CONFLICT');
+        const bytes = build(original.bytes);
+        const nextRevision = revision(bytes);
+        const directory = await fs.mkdtemp(path.join(path.dirname(file), '.uburoom-config-'));
+        const backupPath = path.join(directory, 'original.yaml'),
+          replacement = path.join(directory, 'replacement.yaml');
+        let backupReady = false;
+        try {
+          // The directory is empty until protected; never put secrets in an
+          // inherited/public Windows directory even briefly.
+          await protectDirectory(directory);
+          await writePrivate(backupPath, original.bytes);
+          if (revision(await fs.readFile(backupPath)) !== original.revision) throw failure('CONFIG_IO');
+          backupReady = true;
+          await writePrivate(replacement, bytes, original);
+          if (revision(await fs.readFile(replacement)) !== nextRevision) throw failure('CONFIG_IO');
+          if (process.platform !== 'win32') {
+            for (const entry of [directory, path.dirname(file)]) {
+              const parent = await fs.open(entry, 'r');
+              try {
+                await parent.sync();
+              } finally {
+                await parent.close();
+              }
+            }
+          }
+          const current = await snapshot(file);
+          if (
+            current.revision !== original.revision ||
+            metadata(current.stat) !== metadata(original.stat) ||
+            current.acl !== original.acl
+          )
+            throw failure('CONFIG_CONFLICT');
+          // No unlink/copy fallback. A filesystem that refuses replacement
+          // fails closed. External editors can still race this check/rename.
+          authorize();
+          await fs.rename(replacement, file);
+          return { source: 'file', revision: nextRevision, restartRequired: true, backupPath };
+        } finally {
+          await fs.unlink(replacement).catch(() => {});
+          if (!backupReady) await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+        }
+      }),
+    );
+  }
 }
 
 module.exports = { createConfigEditor };

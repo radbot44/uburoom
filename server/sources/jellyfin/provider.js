@@ -12,6 +12,7 @@ const { jellyfinClient } = require('./client');
 const { jellyfinMembers } = require('./members');
 const { jellyfinSignIn } = require('./sign-in');
 const { JellyfinReporting } = require('./reporting');
+const { libraryOff } = require('../libraries');
 
 const GUID = /^[a-f0-9]{32}$/i;
 const TICKS = 10000000;
@@ -77,8 +78,12 @@ class Jellyfin {
     this.art = new Map();
     /** @type {Map<string,{at: number, ok: boolean}>} */
     this.seen = new Map();
-    /** @type {Map<string,string>} Library id to the kind of item it holds. */
+    /** @type {Map<string,string>} Library id to the kind of item it holds, for the libraries offered. */
     this.views = new Map();
+    /** @type {Set<string>|null} The library ids this source offers; null offers every library. */
+    this.offered = Array.isArray(settings.libraries) ? new Set(settings.libraries) : null;
+    /** @type {Map<string,{at: number, library: string}>} Item id to the user library it sits in ('' if none). */
+    this.placed = new Map();
   }
   /** For the host's video check: who listed a file's tracks and how to refresh that list. */
   get checks() {
@@ -196,9 +201,38 @@ class Jellyfin {
   async one(id, fields = SOURCE_FIELDS) {
     const { items } = await this.query('Items', { ids: guid(id), fields });
     const item = items.find(x => String(x?.Id).toLowerCase() === id.toLowerCase());
-    this.remember(id, !!item);
+    const offered = !!item && (await this.inOffered(item.Id));
+    this.remember(id, offered);
     if (!item) throw failure('Select a video from the library', 404);
+    if (!offered) throw libraryOff();
     return item;
+  }
+  /**
+   * Whether an item (or a library itself) sits in a library this source offers: always without a
+   * `libraries:` list; otherwise found among the item's ancestors and remembered for a while.
+   * @param {string} id
+   */
+  async inOffered(id) {
+    if (!this.offered) return true;
+    const key = String(id).toLowerCase();
+    if (this.offered.has(key)) return true;
+    const known = this.placed.get(key);
+    if (known && Date.now() - known.at < 600000) return this.offered.has(known.library);
+    const ancestors = await this.json(`Items/${guid(key)}/Ancestors`, { userId: await this.userId() });
+    const all = await this.viewIds();
+    const library =
+      (Array.isArray(ancestors) ? ancestors : []).map(folder => lower(folder?.Id)).find(folder => all.has(folder)) ||
+      '';
+    this.placed.delete(key);
+    this.placed.set(key, { at: Date.now(), library });
+    while (this.placed.size > 4000) this.placed.delete(this.placed.keys().next().value);
+    return this.offered.has(library);
+  }
+  /** Every user library's id, offered or not, so an item's library can be told from other folders. */
+  async viewIds() {
+    if (!this.allViews || Date.now() - this.allViews.at > 600000)
+      this.allViews = { at: Date.now(), ids: new Set((await this.userViews()).map(view => view.id)) };
+    return this.allViews.ids;
   }
   remember(id, ok) {
     const key = String(id).toLowerCase();
@@ -282,7 +316,8 @@ class Jellyfin {
         };
       });
   }
-  async libraries() {
+  /** The user's movie and show libraries, offered or not. */
+  async userViews() {
     const userId = await this.userId();
     let data;
     try {
@@ -301,8 +336,40 @@ class Jellyfin {
         mediaType: view.CollectionType === 'tvshows' ? 'show' : 'movie',
         collections: false,
       }));
+    return items;
+  }
+  /** The libraries this source offers, as the library home lists them. */
+  async libraries() {
+    const items = (await this.userViews()).filter(item => !this.offered || this.offered.has(item.id));
     this.views = new Map(items.map(item => [item.id, item.mediaType]));
     return items;
+  }
+  /** Every library on the server for the operator choosing which to offer, with item counts where known. */
+  async serverLibraries() {
+    return Promise.all(
+      (await this.userViews()).slice(0, 200).map(async view => {
+        let count;
+        try {
+          const { total } = await this.query('Items', {
+            parentId: view.id,
+            recursive: true,
+            includeItemTypes: view.mediaType === 'show' ? 'Series' : 'Movie',
+            limit: 0,
+            enableTotalRecordCount: true,
+            enableImages: false,
+          });
+          if (Number.isSafeInteger(total) && total >= 0) count = total;
+        } catch {
+          /* Listed without a count. */
+        }
+        return {
+          id: view.id,
+          name: view.title,
+          type: view.mediaType === 'show' ? 'shows' : 'movies',
+          ...(count === undefined ? {} : { count }),
+        };
+      }),
+    );
   }
   // The user library a details page's item sits in, found among its ancestors; unknown is left out.
   async librarySection(id) {
@@ -320,7 +387,10 @@ class Jellyfin {
   async section(id) {
     const key = guid(id);
     if (!this.views.has(key)) await this.libraries();
-    if (!this.views.has(key)) throw failure('Select a library', 404);
+    if (!this.views.has(key)) {
+      if (this.offered && (await this.viewIds()).has(key)) throw libraryOff();
+      throw failure('Select a library', 404);
+    }
     return { parentId: key, recursive: true, includeItemTypes: this.views.get(key) === 'show' ? 'Series' : 'Movie' };
   }
   async browse(options = {}) {
@@ -349,6 +419,7 @@ class Jellyfin {
     }
     if (tab === 'collections' && !parent && !collection) return { items: [], total: 0, offset: 0, nextOffset: null };
     const inside = parent || collection;
+    if (inside && !(await this.inOffered(guid(inside)))) throw libraryOff();
     // Inside a show or season the server's own order is the playing order.
     const where = inside
       ? { parentId: guid(inside), sortBy: 'ParentIndexNumber,IndexNumber,SortName' }
@@ -491,6 +562,11 @@ class Jellyfin {
         enableImages: false,
       });
       const found = new Map(items.map(x => [String(x.Id).toLowerCase(), x]));
+      if (this.offered)
+        for (const [key, offered] of await Promise.all(
+          [...found.keys()].map(async key => [key, await this.inOffered(key)]),
+        ))
+          if (!offered) found.delete(key);
       for (const id of chunk) {
         const x = found.get(jellyfinIdentity(id).itemId);
         status.set(id, !!x && this.playable(x));
@@ -503,6 +579,7 @@ class Jellyfin {
       .items;
   }
   async queueItems({ type, id, includeSpecials = false } = {}) {
+    if (type !== 'library' && !(await this.inOffered(guid(id)))) throw libraryOff();
     let list;
     if (type === 'show') list = await this.episodes(id);
     else if (type === 'season' || type === 'collection')
@@ -538,10 +615,23 @@ class Jellyfin {
   }
   /** The newest additions the configured user can see; a new episode shows as its show. */
   async recentlyAdded() {
-    const latest = await this.json('Items/Latest', { userId: await this.userId(), limit: 20, fields: LIST_FIELDS });
-    return this.items(
-      (Array.isArray(latest) ? latest : []).filter(x => ['Movie', 'Series', 'Season', 'Episode'].includes(x?.Type)),
-    );
+    const latest = async parentId => {
+      const rows = await this.json('Items/Latest', {
+        userId: await this.userId(),
+        limit: 20,
+        fields: LIST_FIELDS,
+        ...(parentId ? { parentId } : {}),
+      });
+      return Array.isArray(rows) ? rows : [];
+    };
+    // With a list of libraries, each offered library's newest, newest first.
+    const rows = this.offered
+      ? (await Promise.all((await this.libraries()).map(view => latest(view.id))))
+          .flat()
+          .sort((a, b) => (Date.parse(b?.DateCreated) || 0) - (Date.parse(a?.DateCreated) || 0))
+          .slice(0, 20)
+      : await latest();
+    return this.items(rows.filter(x => ['Movie', 'Series', 'Season', 'Episode'].includes(x?.Type)));
   }
   async neighbors(x) {
     const { previous, next } = await this.episodeNeighbors(x);
@@ -600,7 +690,7 @@ class Jellyfin {
       await this.one(key, 'Path');
       return true;
     } catch (error) {
-      if (error.status === 404) return false;
+      if (error.status === 404 || error.libraryOff) return false;
       throw error;
     }
   }
@@ -721,6 +811,7 @@ class Jellyfin {
   close() {
     this.art.clear();
     this.seen.clear();
+    this.placed.clear();
   }
 }
 

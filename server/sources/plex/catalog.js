@@ -3,6 +3,7 @@ const { createHash } = require('node:crypto');
 const Sources = require('../../plex-source');
 const { plexIdentity } = require('./identity');
 const { SharedTask } = require('../../operation');
+const { libraryOff } = require('../libraries');
 
 /** How many items a Media Home row holds. */
 const SHELF = 20;
@@ -202,6 +203,7 @@ class PlexCatalog {
       throw new Error('Invalid queue scope');
     const load = async (activeBudget = { remaining: 20000, requests: 200 }) => {
       if (type === 'library') {
+        if (this.plex.shared.libraries && !this.plex.shared.libraries.has(id)) throw libraryOff();
         const sections = (await this.plex.catalog('/library/sections')).Directory || [];
         if (!sections.some(section => String(section.key) === id && section.type === 'movie'))
           throw new Error('Choose a movie library');

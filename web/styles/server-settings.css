@@ -32,14 +32,15 @@
   .server-settings-dialog > header {
     margin-bottom: var(--space-8);
   }
+  /* Tabs wrap onto a second row on narrow screens so every tab stays readable, as in Room settings. */
   .server-settings-tabs {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-6);
     margin: var(--space-18) 0;
   }
   .server-settings-tabs button {
-    flex: 1;
-    min-width: 0;
+    flex: 1 0 auto;
   }
   .server-settings-tabs [aria-selected='true'] {
     background: var(--primary);
@@ -163,6 +164,179 @@
     justify-content: flex-end;
     gap: var(--space-8);
     flex: none;
+  }
+  /* Sources (web/server-settings-sources.js): rows like Accounts, saved to config.yaml at once. */
+  .server-sources-list,
+  .server-source-folders {
+    margin: var(--space-16) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .server-source-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    padding: var(--space-12) 0;
+    border-top: 1px solid var(--border);
+  }
+  .server-source-row > .server-account-who {
+    flex: 1;
+  }
+  .server-source-icon {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+  }
+  .server-source-icon svg {
+    width: 24px;
+    height: 24px;
+  }
+  .server-source-problem {
+    color: var(--warning);
+  }
+  .server-source-problem[hidden] {
+    display: none;
+  }
+  .server-sources-add,
+  .server-source-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+    margin-top: var(--space-16);
+  }
+  .server-source-actions {
+    justify-content: flex-end;
+  }
+  .server-source-type {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-8);
+  }
+  .server-source-type .server-source-icon {
+    width: 24px;
+    height: 24px;
+  }
+  .server-source-type img {
+    width: 24px;
+    height: 24px;
+  }
+  .server-sources > h3 {
+    margin-top: 0;
+  }
+  .server-sources > .server-settings-field {
+    margin: var(--space-12) 0;
+  }
+  .server-settings-dialog .server-source-form {
+    justify-content: normal;
+    align-items: stretch;
+    display: grid;
+    gap: var(--space-12);
+    margin: var(--space-12) 0;
+  }
+  .server-settings-dialog .server-source-form > p {
+    margin: 0;
+  }
+  .server-source-libraries,
+  .server-source-servers {
+    display: grid;
+    gap: var(--space-8);
+    margin: var(--space-16) 0 0;
+    padding: var(--space-12);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+  }
+  .server-source-libraries legend {
+    padding: 0 var(--space-4);
+    font-weight: 500;
+  }
+  .server-source-libraries .form-checkbox .hint {
+    margin-left: auto;
+  }
+  .server-source-libraries > p {
+    margin: 0;
+  }
+  .server-source-server {
+    display: flex;
+    align-items: center;
+    gap: var(--space-10);
+    padding: var(--space-6) 0;
+  }
+  .server-source-server[aria-disabled='true'] {
+    opacity: 0.6;
+  }
+  .server-source-manual {
+    margin-top: var(--space-12);
+  }
+  .server-source-manual > summary {
+    cursor: pointer;
+    margin-bottom: var(--space-8);
+  }
+  .server-source-path {
+    margin: 0;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+  .server-source-folders {
+    max-height: 280px;
+    overflow: auto;
+    margin-top: var(--space-8);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+  }
+  .server-source-folders > li + li {
+    border-top: 1px solid var(--border);
+  }
+  .server-source-folders > li.hint {
+    padding: var(--space-10) var(--space-12);
+  }
+  .server-source-folder {
+    display: flex;
+    align-items: center;
+    gap: var(--space-10);
+    width: 100%;
+    min-height: 40px;
+    padding: var(--space-8) var(--space-12);
+    border: 0;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .server-source-folder:hover {
+    background: var(--hover);
+  }
+  .server-source-folder svg {
+    flex: none;
+    width: 20px;
+    height: 20px;
+  }
+  .server-source-code {
+    margin: 0;
+    font-size: var(--font-size-24);
+    font-weight: 600;
+  }
+  .server-source-confirm {
+    padding: var(--space-16);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+  }
+  .server-source-confirm > h3 {
+    margin-top: 0;
+  }
+  .server-settings-dialog input[type='password'] {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 40px;
+    padding: var(--space-9) var(--space-10);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+    background: var(--elevated);
+    color: var(--text);
+    font: inherit;
   }
   .server-conflict {
     padding: var(--space-12) 0;

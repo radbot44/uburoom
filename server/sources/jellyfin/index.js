@@ -2,8 +2,11 @@
 // A Jellyfin server, seen through one of its users, as a media source. See server/sources/index.js.
 const { Jellyfin, jellyfinProvider } = require('./provider');
 
+const { jellyfinId } = require('./client');
+const { validateLibraries } = require('../libraries');
+
 const TEXT = ['url', 'api_key', 'user'];
-const SETTINGS = [...TEXT, 'reporting_watch_state'];
+const SETTINGS = [...TEXT, 'reporting_watch_state', 'libraries'];
 
 /** One `type: 'jellyfin'` entry. Returns `{url, apiKey, user, reporting: {watchState}}`. */
 function validate(raw, { id }) {
@@ -35,6 +38,8 @@ function validate(raw, { id }) {
     user,
     // Viewers who signed in to this server may opt in to resume/watched sync on their own user.
     reporting: { watchState: raw.reporting_watch_state !== false },
+    // The user's library (view) ids this source offers; null offers every library, including later ones.
+    libraries: validateLibraries(raw.libraries, where, jellyfinId),
   };
 }
 
@@ -48,9 +53,9 @@ function create(entry, { pipeline, logger, pin, registry, jellyfinFetch = fetch 
 }
 
 /** The server answers, and the API key and user can list libraries. */
-async function check(entry, { ffmpeg } = {}) {
+async function check(entry, { ffmpeg, connectionOnly = false, jellyfinFetch } = {}) {
   const checks = [];
-  const jellyfin = new Jellyfin(entry, { pipeline: {} });
+  const jellyfin = new Jellyfin(entry, { pipeline: {}, ...(jellyfinFetch ? { fetcher: jellyfinFetch } : {}) });
   const step = async (name, action, remediation) => {
     try {
       checks.push({ category: 'Sources', name, status: 'pass', message: await action() });
@@ -78,7 +83,7 @@ async function check(entry, { ffmpeg } = {}) {
       },
       "Create an API key in the Jellyfin dashboard and set the source's user to an existing username.",
     );
-  if (!ffmpeg)
+  if (!ffmpeg && !connectionOnly)
     checks.push({
       category: 'Sources',
       name: 'Jellyfin media tools',
@@ -89,4 +94,23 @@ async function check(entry, { ffmpeg } = {}) {
   return checks;
 }
 
-module.exports = { validate, validateAll, create, check, connect: require('./connect'), memberIdentity: 'jellyfin' };
+/**
+ * Every movie and show library the source's user can see, whether this source offers it or not, for
+ * the operator choosing which to offer: `{id, name, type, count?}`.
+ * @param {any} entry
+ * @param {{jellyfinFetch?: typeof fetch}} [services]
+ */
+function libraries(entry, { jellyfinFetch = fetch } = {}) {
+  return new Jellyfin({ ...entry, libraries: null }, { pipeline: {}, fetcher: jellyfinFetch }).serverLibraries();
+}
+
+module.exports = {
+  validate,
+  validateAll,
+  create,
+  check,
+  libraries,
+  connect: require('./connect'),
+  setup: require('./setup'),
+  memberIdentity: 'jellyfin',
+};

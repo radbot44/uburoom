@@ -81,7 +81,7 @@ function create(entry, { pipeline, logger }) {
 }
 
 /** Each folder is readable, FFprobe/FFmpeg are present, and pictures can be made. */
-async function check(entry, { ffmpeg, ffprobe } = {}) {
+async function check(entry, { ffmpeg, ffprobe, connectionOnly = false } = {}) {
   const checks = [];
   for (const library of entry.libraries)
     for (const folder of library.paths) {
@@ -98,6 +98,7 @@ async function check(entry, { ffmpeg, ffprobe } = {}) {
       }
       checks.push({ category: 'Sources', name: 'Library folder', status, message, remediation });
     }
+  if (connectionOnly) return checks;
   checks.push({
     category: 'Sources',
     name: 'Folder media tools',
@@ -163,4 +164,9 @@ async function check(entry, { ffmpeg, ffprobe } = {}) {
   return checks;
 }
 
-module.exports = { validate, validateAll, create, check };
+/** The source's libraries, for Server settings: a folders source defines them itself, so all are offered. */
+async function libraries(entry) {
+  return entry.libraries.map(library => ({ id: library.id, name: library.name, type: library.type }));
+}
+
+module.exports = { validate, validateAll, create, check, libraries, setup: require('./setup') };

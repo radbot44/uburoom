@@ -48,6 +48,8 @@ class Plex {
         root: this,
         pipeline: pipeline || new MediaPipeline(config, { logger }),
         ownsPipeline: !pipeline,
+        /** The sections this source offers, for every scope; null offers all (see ./client.js). */
+        libraries: Array.isArray(source?.libraries) ? new Set(source.libraries.map(String)) : null,
         partQueues: new Map(),
         /** @type {Map<string,{context:any,at:number,stoppedAt?:number}>} Plex transcode sessions uburoom started */
         sessions: new Map(),

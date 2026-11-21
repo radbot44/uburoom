@@ -85,6 +85,8 @@ sources:
   - `validate(entry)`: checks and normalizes the config entry; used by `server/config.js`.
   - `create(entry, services)`: returns a `MediaProvider` (the existing contract in `server/media-providers.js`), with `scopeFor` returning the full source for any admitted actor.
   - `check(entry)`: connection and credential test; used by the doctor, the setup wizard and Server settings.
+  - `libraries(entry)`: every movie and show library on the server, offered or not, with item counts where known, for choosing which to offer. A Plex or Jellyfin entry's optional `libraries:` list names the server's own library ids it offers (absent: all, including later ones); the module enforces it wherever its media is reachable, and media in a library that is off is unavailable, never denied (owner request, 2026-11-21).
+  - `setup`: the add flow Server settings drives (`steps`, each given a flow held on the server; `entry`, the settings to save; `summary`, what the panel may show). Secrets stay in the flow and the file.
   - `connect`: optional guided setup (Plex PIN and server discovery, Jellyfin discovery and Quick Connect, a folder browser), used by the wizard.
   - `members`: optional, for sources that have accounts (Plex, Jellyfin, Emby). Answers one question: does this verified identity have access to this server? Only admission calls it, and only for sources the owner picked as an entry rule.
 - **A registry** maps `type` to module. `server/app.js` builds providers from `config.sources` through it, with no source named explicitly.

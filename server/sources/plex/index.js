@@ -6,6 +6,8 @@ const { Plex } = require('./plex');
 const { PlexAuth, PlexMembers } = require('./auth');
 const { PlexTv } = require('../../identity/plex');
 const { plexProvider } = require('./provider');
+const { validateLibraries } = require('../libraries');
+const { libraries, SECTION } = require('./libraries');
 
 const SETTINGS = [
   'url',
@@ -17,6 +19,7 @@ const SETTINGS = [
   'direct_token',
   'reporting_enabled',
   'reporting_watch_state',
+  'libraries',
 ];
 
 /** An HTTPS origin (no path, query or credentials), or undefined when blank. */
@@ -91,6 +94,8 @@ function validate(raw, { id }) {
     machineIdentifier: text('machine_identifier'),
     delivery,
     reporting: { enabled: flag('reporting_enabled', true), watchState: flag('reporting_watch_state', true) },
+    // Plex section keys this source offers; null offers every section, including later ones.
+    libraries: validateLibraries(raw.libraries, where, value => (SECTION.test(value) ? value : undefined)),
   };
 }
 
@@ -137,9 +142,41 @@ function signIn(providers, { registry, plexFetch = fetch, plexTv = new PlexTv(pl
   );
 }
 
-/** Whether the server answers at its address (non-destructive: `/identity` needs no token). */
-async function check(entry) {
+/**
+ * Whether the server answers at its address (non-destructive: `/identity` needs no token). With
+ * `plexFetch` (Server settings, tests) the request goes through it; the doctor uses plain HTTP.
+ */
+async function check(entry, { plexFetch } = {}) {
   const name = 'Plex Media Server reachability';
+  if (plexFetch) {
+    try {
+      const response = await plexFetch(new URL('/identity', entry.url), {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(3500),
+      });
+      void response.body?.cancel().catch(() => {});
+      return [
+        response.status >= 200 && response.status < 500
+          ? { category: 'Sources', name, status: 'pass', message: `Plex server reachable at ${entry.url}` }
+          : {
+              category: 'Sources',
+              name,
+              status: 'warn',
+              message: `Plex server returned HTTP ${response.status} at ${entry.url}`,
+            },
+      ];
+    } catch {
+      return [
+        {
+          category: 'Sources',
+          name,
+          status: 'warn',
+          message: `Could not connect to Plex server at ${entry.url}`,
+          remediation: 'Check the source url and that Plex Media Server is running and reachable.',
+        },
+      ];
+    }
+  }
   return new Promise(resolve => {
     const client = entry.url.startsWith('https:') ? https : http;
     const req = client.get(new URL('/identity', entry.url), { timeout: 3500 }, res => {
@@ -186,4 +223,14 @@ async function check(entry) {
   });
 }
 
-module.exports = { validate, validateAll, create, check, signIn, ownerAccount: true, memberIdentity: 'plex' };
+module.exports = {
+  validate,
+  validateAll,
+  create,
+  check,
+  libraries,
+  setup: require('./setup'),
+  signIn,
+  ownerAccount: true,
+  memberIdentity: 'plex',
+};
