@@ -1,8 +1,8 @@
 # Media sources and admission: implementation plan
 
-**Status: approved by the owner on 2026-11-20, with the recommended answers to O1–O3. In progress.**
+**Status: phases 1–7 and Discord entry across eligible joined servers are implemented. Live Discord Activity verification remains open.**
 
-**Progress (2026-11-21):** phases 1–7 are merged into `main`, along with the entry page rework (one list of ways in) and the approved TLS change (`server.listen: 'http-proxy'`, `docs/remote-access.md`); latest merge `62dbd56`, full suite 660 pass, 0 fail, 0 skip, and the Docker health check passes in both listen modes. Phase 1 `45fa188`, phase 2 `c8715b2`, phase 4 `6138f77`, phase 5 part one `619a159`, phase 3 and phase 5 part two `c647775`. Vigrid runs `19a9c08` (through phase 3, without Jellyfin browser sign-in) with config schema v2z. Phase 6 `4246325` (Sources panel and per-source `libraries:`, config schema v2zb, no database change; panel built to brief, screenshots with the owner, no live Plex/Jellyfin check yet); folders-source editing `e82cdbd`. Phase 7 `62dbd56` (first-run setup wizard, built to the approved mockup; real-Docker first run checked; no owner acceptance of the screens yet; D4 default config location not moved, pending an owner decision). Next: Discord entry for any server the bot has joined (`discord.guild_id` removed), then optional packaging. The owner approved the Accounts section and the guest join form; the entry page and Jellyfin sign-in screenshots are with the owner.
+**Progress (2026-11-21).** Phases 1–7 landed by `62dbd56`, including folder editing at `e82cdbd`. The owner accepted the wizard and the Sources panel and chose to keep the default config beside the code. Docker keeps `/config`. Discord entry across eligible servers shipped in `4f4a886` with config schema `v2zc` and database schema 13. The follow-up `df1d266` fixes certificate serial encoding and the artwork test race. See [testing](testing.md) for verification and open gates.
 
 ## Approach
 

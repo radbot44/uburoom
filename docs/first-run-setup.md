@@ -161,7 +161,7 @@ The end-to-end wizard can run against the fake Plex in `uburoom-demo`. Whether t
 
 ## Mockup approval (2026-11-21)
 
-The owner approved the revised mockup (`personal/mockups/first-run-setup.html`), with two changes made before approval: the step 6 check marks line up with their titles, and step 4's Discord rule admits members of any server the bot has joined rather than one picked server. The any-server change touches Discord membership, commands, events and sharing beyond setup, so it is its own piece of work ahead of or alongside phase 7; the wizard's step 4 is built against it.
+The owner approved the revised mockup on 2026-11-21, including aligned step 6 check marks and Discord entry across the bot's joined servers. The owner later accepted the implemented wizard and approved per-server exclusions and a warning above 500 members. The Discord update shipped with config schema `v2zc`.
 
 ## Implementation notes (2026-11-21)
 
@@ -173,7 +173,7 @@ Where the build differs from the text above, or decides something it left open. 
 - **The operator's own way in stays on (step 4).** Admission does not let the operator in by being the operator, so the rule that admits the operator's account cannot be turned off: "uburoom accounts you create" for a uburoom account, or the Plex source when there is one (checkbox shown on and disabled, "Your account gets in this way."). With several Plex sources, at least one must stay on. A Plex operator with no Plex source is asked to add one or use a uburoom account.
 - **Server password:** at least 8 characters.
 - **Discord (step 4):** setup verifies the pasted Application ID, client secret and bot token with Discord and records the application's owner or team's owner in `discord.owner_id`. The joined server list refreshes when the page regains focus. Servers that the operator unchecks go into `discord.excluded_guild_ids`. The redirect uses `/auth/callback`.
-- **Discord (step 6):** use the final URL shown under Check and finish to update OAuth2 Redirects in the Developer Portal, especially if the address or port changed. Setup's local checks do not validate the registered redirect. The implemented wizard awaits owner acceptance.
+- **Discord (step 6):** use the final URL shown under Check and finish to update OAuth2 Redirects in the Developer Portal, especially if the address or port changed. Verify the registration in the portal before testing Discord sign-in.
 - **Step 6 media sources** uses each source module's connection check (an unreachable server is a fix, not a warning) and then its full check (a failure is a fix).
 - **Existing data:** a uburoom account from setup needs a data folder without a database; with existing data, step 6 asks to move it aside or sign in with Plex.
 - **Remote access guide:** named as `docs/remote-access.md` in the uburoom folder; there is no published address to link to.

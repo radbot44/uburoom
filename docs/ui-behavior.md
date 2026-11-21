@@ -4,23 +4,24 @@ This reference holds owner-approved, feature-specific UI decisions moved from th
 
 ## First-run setup
 
-**Mockup approved 2026-11-21. The implemented wizard awaits owner acceptance.** See [first-run setup](first-run-setup.md#implementation-notes-2026-11-21). One card per step on the plain page with the wordmark, "Step N of 6", Back and Next in the footer.
+The owner accepted the implemented wizard on 2026-11-21. See [first-run setup](first-run-setup.md#implementation-notes-2026-11-21). Each card shows the wordmark, the current step and Back and Next controls where applicable.
 
 - **1 Setup code:** one large field, filled in and submitted automatically from the link's `#code=`; otherwise typed. A wrong code says so; the tenth says a new code is shown.
 - **2 Your account:** Sign in with Plex (pop-up; the card waits with Open Plex again and Cancel) or Create a uburoom account (Username, Password, "At least 10 characters."). Done shows the name, "Signed in with Plex" or "uburoom account", and Change.
 - **3 Media sources:** the list (logo or folder icon, name, "Plex · 3 of 4 libraries" or the folder's path, Edit and a Remove icon), "Add at least one to continue." when empty, and Add Plex / Add Jellyfin / Add a folder. Each add flow and Edit replaces the list in the card, as in Server settings → Sources: Plex uses the step 2 Plex sign-in when there is one; Jellyfin shows found servers, then the administrator sign-in (with the Quick Connect code when the server has it), then "Offer the libraries of" and the libraries; a folder shows the folder browser, Name and Contains Movies/Shows. Edit: Name, where it is, and the library checkboxes (a folder: Contains). Remove needs no confirmation (nothing is saved yet).
 - **4 Who can get in:** one checkbox and hint per rule. Discord shows the redirect, application credentials, bot invitation, and joined servers. Each server starts checked and can be excluded by unchecking it. For counts above 500, show how many members may gain access. Preserve draft exclusions across list refreshes. The rule the operator's own account uses is on and disabled with "Your account gets in this way."
 
-Server settings → Access repeats the Discord server controls and the member-count warning for operators. Save writes the exclusions to YAML. They apply after restart.
 - **5 Where will people watch?:** This computer / My home network, Port, the address people open (home network: the certificate warning line), and the remote access guide line.
 - **6 Check and finish:** one row per check with a check mark or cross and its detail; Check again when any fails; Finish setup (Finishing… while it writes and starts uburoom). With Discord enabled, show the final OAuth2 redirect and the instruction to replace an earlier address in the Developer Portal.
 - **Ready:** "uburoom is ready", "You're signed in…", Open uburoom.
 
+Server settings → Access repeats the Discord server controls and the member-count warning for operators. Save writes the exclusions to YAML. They apply after restart.
+
 ## Media sources
 
-**Built to the phase 6 brief; not yet owner-approved.** Server settings → Sources, after the setup mockup's Media sources step and the Accounts section's styles.
+The owner accepted the Sources panel on 2026-11-21. Its media-source flows follow the setup wizard and use the Accounts section's styles.
 
-- **Server settings → Sources:** a tab between Transcoding and Accounts. Like Accounts it saves at once and works without the saved settings; unlike them its changes go to `config.yaml`, so its hint says they apply after restarting uburoom. On narrow screens the five tabs wrap onto a second row.
+- **Server settings → Sources:** a tab between Transcoding and Accounts. Changes save immediately to `config.yaml` and apply after restarting uburoom. The panel can load independently of the saved settings form. On narrow screens the tabs wrap.
 - **List:** one row per saved source in config order: Plex or Jellyfin logo or a folder icon, the name (or id), "Plex · 3 of 4 libraries" (a folder shows its path), a warning line when its check fails, and "Saved · applies after restart" when it differs from what is running. Edit and a Remove icon button on the right. Sources removed but still running are named in one line below. Then Add Plex, Add Jellyfin and Add a folder.
 - **Edit:** inline in the panel: Name (placeholder the id), the address, and "Libraries to offer" checkboxes with item counts and "Libraries added to this server later start off." Cancel and Save source.
 - **Edit a folders source:** Name, then one bordered box per library: its Name, a Movies/Shows segmented selector and a Remove library icon button (disabled, with the reason as tooltip, when it is the only library), its folders one per row with a remove icon button (disabled when it is the library's only folder), and Add a folder. Below the boxes, Add a library and a hint that videos keep their history when a library is renamed or changes type. Add a folder and Add a library open the folder browser in the panel ("Add a folder to Films", or "Add a library: choose its first folder") with Back and Use this folder; a new library is named after its folder and starts as Movies. Nothing is saved until Save source.

@@ -1,6 +1,6 @@
 # Verification dashboard — M1
 
-**Release status: open.** Last full-suite baseline: **478 passed, 0 failed, 0 skipped** (2026-11-15, at `31cb808`) on Node v22.13+. Results apply to their recorded revisions/scenarios; they do not combine into an assumed current-HEAD pass. [Release gates](../ROADMAP.md#m1--verified-self-hosted-release) · [Verification log](archive/testing-log.md) · [Historical digest through 2026-10-22](archive/testing-2026-10-22.md) · [Historical digest 2026-10-23 to 2026-11-08](archive/testing-2026-11-08.md) · [Commands](development.md#tests).
+**Release status: open.** The Windows full suite passed **663 tests with zero failures or skips** on 2026-11-21 for the code committed as `df1d266`. This includes the certificate serial regression and the artwork test fix. All four `npm run smoke` runners passed in Chrome and Firefox on that commit. Results apply to the recorded revisions and scenarios. [Release gates](../ROADMAP.md#m1--verified-self-hosted-release) · [Verification log](archive/testing-log.md) · [Historical digest through 2026-10-22](archive/testing-2026-10-22.md) · [Historical digest 2026-10-23 to 2026-11-08](archive/testing-2026-11-08.md) · [Commands](development.md#tests).
 
 ---
 
@@ -55,7 +55,11 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 | P13 rooms/queues | B/C/D | Real multi-viewer continuation, recovery, writer/load, and UX |
 | P14 access/admin | A/B complete; C/D release checks | Three-outcome local scope closed; real admission/revocation/handoff and independent operator recovery remain release gates |
 
-Discord admission across eligible servers adds fixture coverage for excluded servers, role union, partial outages, late membership results after a server leaves, and operator-only saved exclusions. On 2026-11-21 the local implementation passed 662 Node tests with zero failures or skips and all four `npm run smoke` runners in Chrome and Firefox. Both browsers also exercised the large-server warning and saved exclusions in setup and Server settings → Access. Setup kept checkbox identity, focus and the draft exclusion when the server list refreshed and when the reported member count changed. Activity launch still needs a real Discord check of the verified instance, participant and voice channel. Exercise both an eligible server and an excluded server before rollout.
+Discord admission across eligible servers adds fixture coverage for excluded servers, role union, partial outages, late membership results after a server leaves, and operator-only saved exclusions. On 2026-11-21 Chrome and Firefox exercised the large-server warning and saved exclusions in setup and Server settings → Access. Setup kept checkbox identity, focus and the draft exclusion when the server list refreshed and when the reported member count changed. Live Activity verification still needs a launch from the second eligible server and a rejection in an excluded server using a separate fixture.
+
+The Windows cutover rehearsal on 2026-11-21 booted `512adf4` with disposable v2zb state, verified that `df1d266` required the v2zc migration, applied it and confirmed that a repeat dry run reported no changes. The upgraded code booted with the existing state. Restoring the matched code, config, database, TLS files and original key booted `512adf4` again. Account UUID, encrypted credential decryption, HTTPS health and SQLite schema 13 integrity passed across the cycle.
+
+On 2026-11-21, a Docker build of `df1d266` passed Jellyfin 12.4.0 operator recovery on an isolated internal network. A disposable account signed in with Quick Connect and received the source-removal warning. After removal and restart, the entry endpoint refused the missing source. Restoring the exact recovery config and restarting recovered sign-in and operator rights for the same account UUID.
 
 P5/P6 human check: watch together ~3 minutes, pause/resume/seek, background one tab ~10 seconds and return. Technical timing remains separate. Design authorization is not visual acceptance; neither permits deployment.
 
