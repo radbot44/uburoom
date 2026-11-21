@@ -13,16 +13,19 @@ const fail = (message, flags) => Object.assign(new Error(message), flags);
 
 /**
  * @param {{client: ReturnType<typeof import('./client').jellyfinClient>, apiKey: string,
- *   serverId: () => Promise<string>, registry?: any}} services - `serverId` is the source's pinned server id.
+ *   serverId: () => Promise<string>, knownServerId?: () => string|undefined, registry?: any}} services
  */
-function jellyfinMembers({ client, apiKey, serverId, registry }) {
+function jellyfinMembers({ client, apiKey, serverId, knownServerId = () => undefined, registry }) {
   const pending = new Map();
   /** @param {{provider: string, subject: string}} identity */
   async function check(identity) {
-    const server = await serverId();
+    const known = knownServerId();
     const user = jellyfinId(identity?.subject);
-    if (identity?.provider !== jellyfinIdentityProvider(server) || !user)
-      throw fail('This sign-in belongs to another Jellyfin server', { noServerAccess: true });
+    const anotherServer = () => fail('This sign-in belongs to another Jellyfin server', { noServerAccess: true });
+    // An outage on an unrelated pinned source cannot hide a denial from the qualifying source.
+    if (!user || (known && identity?.provider !== jellyfinIdentityProvider(known))) throw anotherServer();
+    const server = await serverId();
+    if (identity?.provider !== jellyfinIdentityProvider(server)) throw anotherServer();
     let profile;
     try {
       profile = await client.request('Users/' + user, { token: apiKey });

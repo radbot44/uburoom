@@ -122,7 +122,7 @@ access:
   # only for a rule that needs it. Turn on at least one. Outside visitors can also
   # come in through a room invite (see guests below).
   discord_server: true # Members of discord.guild_id, signing in with Discord.
-  source_members: [] # Source ids whose members may come in, e.g. ['living-room']:
+  source_members: [] # Plex or Jellyfin source IDs whose server members may come in, e.g. ['living-room']:
   # for a Plex source, people whose Plex account can reach that server.
   password: false # Anyone who knows secrets.server_password, as a named guest.
   accounts: false # uburoom's own accounts.

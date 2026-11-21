@@ -149,7 +149,7 @@ function createApp(config, options = {}) {
     const web = { config, registry, plexAuth, plexIdentity, uburoomAccounts, hub, watch, ...sessions };
     watchRoutes = watchHttp({ ...web, oauthFetch, entryPolicy, diagnosticLog, accounts });
     const signIn = createDiscordSignIn({ config, demo: () => plexIdentity.demo, sessions, authorizeUrl });
-    accountRoutes = accountHttp({ ...web, watchRoutes, loginStore: accounts, discordStart: signIn.start });
+    accountRoutes = accountHttp({ ...web, entryPolicy, watchRoutes, loginStore: accounts, discordStart: signIn.start });
     const editor = config.configFile ? createConfigEditor(config.configFile) : undefined;
     const files = createStaticFiles({ config });
     const uburoomAccountsHttp = uburoomAccountRoutes({

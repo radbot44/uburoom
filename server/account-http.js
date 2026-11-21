@@ -3,12 +3,14 @@ const { randomBytes } = require('node:crypto');
 const { hash } = require('./core');
 const { isServerOperator } = require('./operator-policy');
 const { clientAddress } = require('./client-address');
+const jellyfin = require('./http/jellyfin-sign-in');
 
 function accountHttp({
   config,
   registry,
   plexAuth,
   plexIdentity,
+  entryPolicy,
   uburoomAccounts,
   hub,
   watch,
@@ -59,6 +61,21 @@ function accountHttp({
     loginStore.save();
     res.setHeader('Set-Cookie', cookie('uburoom', token, 31536000));
   }
+  const jellyfinRoute = jellyfin.jellyfinSignInRoute({
+    config,
+    registry,
+    entryPolicy,
+    body,
+    cookie,
+    cookies,
+    json,
+    throttle,
+    finishSession(req, res, account) {
+      const previous = sourceHash(req);
+      if (previous && logins.has(previous) && registry.isGuest(logins.get(previous).userId)) logins.delete(previous);
+      session(res, account, account.name);
+    },
+  });
   function mergePreview(req, login, incoming) {
     const source = registry.canonical(login.userId),
       other = registry.canonical(incoming.conflict.id),
@@ -123,6 +140,10 @@ function accountHttp({
     if (!route.startsWith('/api/account') && !route.startsWith('/auth/plex')) return false;
     if (!throttle('account:' + (clientAddress(req) || 'local'), 120)) {
       json(res, 429, { error: 'Too many account requests' });
+      return true;
+    }
+    if (route === jellyfin.path) {
+      await jellyfinRoute(req, res);
       return true;
     }
     try {

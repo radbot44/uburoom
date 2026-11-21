@@ -2,6 +2,7 @@ import * as uburoomControls from '../watch-controls.js';
 import * as uburoomDialogs from '../watch-dialogs.js';
 import * as uburoomUbumfa from '../ubumfa.js';
 import * as accountSignIn from '../account-sign-in.js';
+import { jellyfinEntry } from './jellyfin-entry.js';
 import { WatchTransport as uburoomWatchTransport } from '../watch-transport.js';
 import * as discordPresence from './discord-presence.js';
 import { $ } from './page.js';
@@ -191,6 +192,7 @@ export function mount(host, deps) {
   });
   // The name a password guest last used in this browser, offered again after the password.
   let passwordName = '';
+  const showJellyfin = jellyfinEntry((...args) => deps.api(...args));
   async function start() {
     store.identity.config = store.identity.pageBootstrap?.config || (await deps.api('/api/watch/config'));
     if (store.identity.config.keepDiagnostics)
@@ -206,7 +208,7 @@ export function mount(host, deps) {
     discordButton.hidden = store.identity.config.access?.discord === false;
     const joinPath = !deps.activity && /^\/join\/([^/]+)$/.exec(location.pathname);
     if (joinPath) {
-      await deps.inviteEntry(discordButton, deps.inviteCode(decodeURIComponent(joinPath[1])));
+      await deps.inviteEntry(discordButton, deps.inviteCode(decodeURIComponent(joinPath[1])), showJellyfin);
       return;
     }
     const roomPathMatch = !deps.activity && /^\/room\/([a-z0-9-]+)$/i.exec(location.pathname);
@@ -250,7 +252,10 @@ export function mount(host, deps) {
         document.body.classList.remove('auth-pending');
         // Only the ways in this server's entry rules offer are shown (docs/ui-behavior.md).
         const access = store.identity.config.access || {},
-          signIns = access.discord !== false || !!store.identity.config.plexSignIn || !!access.accounts;
+          jellyfin = !deps.activity && !admission.activityOnly ? access.jellyfin || [] : [],
+          signIns =
+            access.discord !== false || !!store.identity.config.plexSignIn || !!access.accounts || jellyfin.length;
+        showJellyfin(jellyfin);
         // uburoom accounts sign in with a username and password, above the server password.
         const accountSlot = $('account-sign-in');
         accountSlot.hidden = !access.accounts || admission.activityOnly;

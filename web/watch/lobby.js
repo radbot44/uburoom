@@ -565,7 +565,7 @@ export function mount(host, deps) {
       location.assign('/join/' + code);
     };
   }
-  async function inviteEntry(discordButton, code) {
+  async function inviteEntry(discordButton, code, showJellyfin) {
     const show = (title, message) => {
       $('auth-loading').hidden = true;
       $('welcome').hidden = false;
@@ -582,6 +582,7 @@ export function mount(host, deps) {
         button.href = button.href.split('?')[0] + '?return=' + encodeURIComponent('/join/' + code);
       discordButton.hidden = !visible.discord;
       $('plex-login').hidden = !visible.plex;
+      showJellyfin(visible.jellyfin || []);
     };
     const enter = room => location.replace('/room/' + room.slug);
     if (!code) {
@@ -602,6 +603,7 @@ export function mount(host, deps) {
     const providers = {
       discord: preview.providers.discord && store.identity.config.access?.discord !== false,
       plex: preview.providers.plex && store.identity.config.unifiedAccounts && store.identity.config.plexSignIn,
+      jellyfin: store.identity.config.access?.jellyfin || [],
     };
     if (preview.member || (preview.signedIn && preview.guestsAllowed)) {
       show(
@@ -625,12 +627,15 @@ export function mount(host, deps) {
       return;
     }
     if (preview.signInRequired) {
-      show('Join ' + preview.room.name, 'Sign in with Discord or Plex to join as a guest.');
+      show(
+        'Join ' + preview.room.name,
+        providers.jellyfin.length ? 'Sign in to join this room.' : 'Sign in with Discord or Plex to join as a guest.',
+      );
       return;
     }
     show('Join ' + preview.room.name + ' as a guest', 'Pick a name to show in the room.');
     $('guest-join').hidden = false;
-    $('guest-sign-in-label').hidden = !providers.discord && !providers.plex;
+    $('guest-sign-in-label').hidden = !providers.discord && !providers.plex && !providers.jellyfin.length;
     const name = $('guest-name'),
       roll = $('guest-name-roll');
     if (!roll.firstChild)

@@ -66,6 +66,9 @@ class Admission {
     const named = this.settings?.sourceMembers || [];
     return (this.sources?.list || []).filter(provider => named.includes(provider.id) && provider.members);
   }
+  memberSignIns(kind) {
+    return this.memberSources().filter(source => source.memberIdentity === kind && source.signIn);
+  }
   admissionKey(id, context) {
     const room = this.guestRoom(context);
     return room ? 'guest:' + room + ':' + id : context?.activity === true ? 'activity:' + id : id;
@@ -165,12 +168,16 @@ class Admission {
   }
   /** The rules and sign-in methods the entry page may show; never a password or a source's details. */
   public() {
+    const jellyfinSources = this.settings?.publicWeb ? this.memberSignIns('jellyfin') : [];
     return this.settings
       ? {
           discord: !!this.settings.discord,
           plex: !!this.settings.plex,
           password: !!this.settings.password,
           accounts: !!this.settings.accounts,
+          ...(jellyfinSources.length && {
+            jellyfin: jellyfinSources.map(source => ({ id: source.id, name: source.label || source.id })),
+          }),
           publicWeb: this.settings.publicWeb,
         }
       : undefined;
