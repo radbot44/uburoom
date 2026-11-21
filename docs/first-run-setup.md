@@ -1,6 +1,6 @@
 # First-run setup
 
-**Status: design approved by the owner on 2026-11-20 (D1–D8 as recommended). Setup mode and the wizard are built to the approved mockup (phase 7 of the [media sources plan](media-sources-plan.md)); see [Implementation notes](#implementation-notes-2026-11-21) for where the build differs. Not built: the per-user default config location (first bullet of D4).**
+**Status: design approved by the owner on 2026-11-20 (D1–D8 as recommended). Setup mode and the wizard are built to the approved mockup (phase 7 of the [media sources plan](media-sources-plan.md)); see [Implementation notes](#implementation-notes-2026-11-21) for where the build differs. The per-user default config location (first bullet of D4) was dropped by the owner on 2026-11-21: the default stays beside the code.**
 
 **Revised 2026-11-20** for [media sources and admission](media-sources.md): the Plex-only steps and the Sharing step were replaced by Your account, Media sources and Who can get in, and the owner arrives already signed in. D5's setup question and D7 (Plex account must own the server) no longer apply. The setup code, transport, config location and hand-off decisions are unchanged.
 
@@ -153,7 +153,7 @@ The end-to-end wizard can run against the fake Plex in `uburoom-demo`. Whether t
 - **D1:** Setup starts only when the config file is missing, not when it's incomplete.
 - **D2:** Plain HTTP on loopback, self-signed HTTPS when bound wider.
 - **D3:** Ownership = setup code from the console/log + Plex sign-in writes `operator.plex_id`.
-- **D4:** Default config moves to a per-user data folder outside the code; Docker mounts a config directory.
+- **D4:** Default config moves to a per-user data folder outside the code; Docker mounts a config directory. (2026-11-21: the per-user default is withdrawn by the owner; the default stays beside the code. Docker's `/config` stands.)
 - **D5:** `plex.fallback_enabled` defaults to `false`; setup asks.
 - **D6:** In-process handoff from setup to the normal app, not exit-and-restart.
 - **D7:** v1 requires the Plex account to own the chosen server (simplest, and `directory.expose_plex_members` needs the owner token). Non-owner accounts can come later.
@@ -167,7 +167,7 @@ The owner approved the revised mockup (`personal/mockups/first-run-setup.html`),
 
 Where the build differs from the text above, or decides something it left open. Code: `server/setup/`, `server/start.js`, `server/http/setup-handoff.js`, `web/setup/`, `web/styles/setup.css`; tests: `tests/setup.test.js`.
 
-- **Default config location (D4) unchanged.** The default stays `config.yaml` beside the code. `run-uburoom.bat` and Vigrid's scheduled task pass no `--config`, so moving the default would start setup mode on Vigrid after an update. Needs an owner decision (and a launcher change) before it moves.
+- **Default config location (D4) unchanged.** The default stays `config.yaml` beside the code. `run-uburoom.bat` and Vigrid's scheduled task pass no `--config`, so moving the default would start setup mode on Vigrid after an update. The owner decided on 2026-11-21 to keep it there; D4's first bullet is withdrawn. Docker still uses `/config`.
 - **Setup's own certificate** (when bound beyond loopback) is made in memory each time setup starts and never written. The installation's certificate goes in `data/certs/` and its paths are written as `data/certs/server-cert.pem` and `data/certs/server-key.pem`.
 - **Hand-off link instead of a form POST.** Open uburoom goes to `<public_url>/auth/setup#ticket=…`; that page posts the ticket from the app's own origin. A form POST does not survive the browser's certificate warning for the new self-signed certificate, and the fragment never reaches a log. The ticket is single-use and lasts two minutes. A uburoom account is created when the app starts, so it exists even if the link is never used.
 - **The operator's own way in stays on (step 4).** Admission does not let the operator in by being the operator, so the rule that admits the operator's account cannot be turned off: "uburoom accounts you create" for a uburoom account, or the Plex source when there is one (checkbox shown on and disabled, "Your account gets in this way."). With several Plex sources, at least one must stay on. A Plex operator with no Plex source is asked to add one or use a uburoom account.
