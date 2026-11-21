@@ -216,6 +216,60 @@ function proposed(original, requested, file) {
   return bytes;
 }
 
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+/**
+ * Makes `node` hold `value` while keeping every part that does not change as it was written, with its
+ * comments and quoting: map keys left alone when equal, list items kept by `id` (mappings) or by value
+ * (scalars), and new strings single-quoted like the rest of config.yaml. Returns the node to use.
+ */
+function merge(doc, node, value) {
+  if (YAML.isMap(node) && value && typeof value === 'object' && !Array.isArray(value)) {
+    for (const pair of [...node.items]) {
+      const key = YAML.isScalar(pair.key) ? pair.key.value : pair.key;
+      if (!Object.hasOwn(value, key)) node.delete(key);
+    }
+    for (const [key, next] of Object.entries(value)) {
+      const old = node.get(key, true);
+      if (old !== undefined && same(YAML.isNode(old) ? old.toJSON() : old, next)) continue;
+      node.set(key, old !== undefined && YAML.isNode(old) ? merge(doc, old, next) : fresh(doc, next));
+    }
+    return node;
+  }
+  if (YAML.isSeq(node) && Array.isArray(value)) {
+    const byId = new Map(),
+      byValue = new Map();
+    for (const item of node.items) {
+      if (YAML.isMap(item) && item.get('id') !== undefined) byId.set(item.get('id'), item);
+      else if (YAML.isScalar(item) && !byValue.has(item.value)) byValue.set(item.value, item);
+    }
+    node.items = value.map(next => {
+      if (next && typeof next === 'object' && !Array.isArray(next) && byId.has(next.id))
+        return merge(doc, byId.get(next.id), next);
+      if ((next === null || typeof next !== 'object') && byValue.has(next)) {
+        const kept = byValue.get(next);
+        byValue.delete(next);
+        return kept;
+      }
+      return fresh(doc, next);
+    });
+    return node;
+  }
+  return fresh(doc, value, YAML.isScalar(node) ? node : undefined);
+}
+function fresh(doc, value, like) {
+  const node = doc.createNode(value);
+  YAML.visit(node, {
+    Scalar(key, scalar) {
+      if (key !== 'key' && typeof scalar.value === 'string') scalar.type = like?.type || 'QUOTE_SINGLE';
+    },
+  });
+  if (like) {
+    node.comment = like.comment;
+    node.commentBefore = like.commentBefore;
+  }
+  return node;
+}
+
 /**
  * One change to the `sources:` list, as YAML, keeping the file's comments and layout:
  * - `{action: 'add', entry}`: appends a whole raw entry (built by the server, never the browser);
@@ -259,6 +313,18 @@ function proposedSources(original, change, file) {
         entry.set('libraries', node);
       }
     }
+    // A source type's own edit (folders: its libraries and folders), applied to the entry as written.
+    if (change.transform) {
+      let next;
+      try {
+        next = change.transform(entry.toJSON());
+      } catch (error) {
+        throw Object.assign(failure('SOURCE_INVALID'), {
+          reason: error?.expose ? String(error.message).slice(0, 300) : undefined,
+        });
+      }
+      merge(doc, entry, next);
+    }
   } else if (change.action === 'remove') {
     list.items.splice(index(), 1);
     const members = doc.getIn(['access', 'source_members'], true);
@@ -267,7 +333,7 @@ function proposedSources(original, change, file) {
       if (at >= 0) members.items.splice(at, 1);
     }
   } else throw failure('CONFIG_INVALID');
-  let next = doc.toString({ lineWidth: 0 });
+  let next = doc.toString({ lineWidth: 0, flowCollectionPadding: false });
   if (source.startsWith('﻿')) next = '﻿' + next;
   if (source.includes('\r\n')) next = next.replace(/\n/g, '\r\n');
   const bytes = Buffer.from(next, 'utf8');
@@ -382,14 +448,14 @@ function createConfigEditor(selectedPath = configPath()) {
      * Saves one change to `sources:` (see `proposedSources`), with the same revision check, backup,
      * private write and authorization recheck as `save`. Applies after a restart.
      */
-    saveSources(request, { beforeReplace } = {}) {
+    saveSources(request, { beforeReplace, transform } = {}) {
       const authorize = () => {
         if (beforeReplace && beforeReplace() !== true) throw failure('CONFIG_AUTHORIZATION');
       };
       const { revision: expected, change } = request || {};
       if (typeof expected !== 'string' || !/^[a-f0-9]{64}$/.test(expected) || !change || typeof change !== 'object')
         return Promise.reject(failure('CONFIG_INVALID'));
-      const copy = structuredClone(change);
+      const copy = { ...structuredClone(change), ...(transform ? { transform } : {}) };
       return commit(expected, authorize, bytes => proposedSources(bytes, copy, file));
     },
   };

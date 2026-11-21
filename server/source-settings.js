@@ -10,6 +10,7 @@
  * file: no answer carries them. Every request is the operator's, checked again after awaited work.
  */
 const { randomBytes } = require('node:crypto');
+const path = require('node:path');
 const { hash } = require('./core');
 const { isServerOperator } = require('./operator-policy');
 const { sourceType, TYPES } = require('./sources');
@@ -220,7 +221,7 @@ function sourceSettings({
   }
   async function change(data, auth) {
     const { revision, action } = data;
-    let request;
+    let request, transform;
     if (action === 'update' || action === 'remove') {
       const { sources } = await editor.readSources();
       const entry = sources.find(source => source.id === data.id);
@@ -237,6 +238,16 @@ function sourceSettings({
                   throw fail('This source’s libraries are its folders');
                 })();
         request = { action, id: entry.id, name: sourceName(data.name), libraries };
+        // A type's own settings (folders: its libraries and their folders), checked by its module and
+        // applied to the entry as written, so whatever it leaves alone stays as it was.
+        if (data.settings !== undefined) {
+          if (!module.setup.update) throw fail('This source has no other settings to change');
+          transform = await module.setup.update(data.settings, {
+            base: path.dirname(config.configFile || path.resolve('config.yaml')),
+            platform: stepServices.platform,
+            existing: sources.filter(source => source.type === entry.type && source.id !== entry.id),
+          });
+        }
       }
     } else if (action === 'add') {
       const flow = typeof data.flow === 'string' ? flows.get(data.flow) : undefined;
@@ -258,7 +269,13 @@ function sourceSettings({
       });
       request = { action, entry: { id, type: flow.type, ...(name ? { name } : {}), ...settings } };
     } else throw fail('Choose add, update or remove');
-    const result = await editor.saveSources({ revision, change: request }, { beforeReplace: auth.canSave });
+    const result = await editor.saveSources(
+      { revision, change: request },
+      {
+        beforeReplace: auth.canSave,
+        transform,
+      },
+    );
     if (action === 'add') closeFlow(data.flow);
     try {
       registry.audit(auth.login.userId, 'operator-sources-' + action, { source: request.id || request.entry.id });
