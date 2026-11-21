@@ -766,17 +766,29 @@ function renderWhere() {
   const port = /^\d{1,5}$/.test($('setup-port').value.trim()) ? $('setup-port').value.trim() : String(networkView.port);
   const address = host => 'https://' + (host.includes(':') ? `[${host}]` : host) + ':' + port;
   $('network-computer').hidden = where !== 'computer';
-  $('network-home').hidden = where !== 'home';
-  $('network-home-hint').hidden = where !== 'home';
-  $('network-computer').querySelector('strong').textContent = address('localhost');
+  $('network-home').hidden = where !== 'home' || !networkView.homeAddress;
+  $('network-home-hint').hidden = $('network-home').hidden;
+  $('network-home-missing').hidden = where !== 'home' || !!networkView.homeAddress;
+  $('network-home-missing').textContent = networkView.published
+    ? 'Open setup using the Docker host’s LAN address and published port to set up home network access.'
+    : 'uburoom couldn’t find a LAN address. Choose This computer.';
+  $('network-computer').querySelector('strong').textContent = networkView.published
+    ? networkView.computer
+    : address(networkView.computerAddress);
   $('network-home').querySelector('strong').textContent = networkView.homeAddress
-    ? address(networkView.homeAddress)
-    : 'this computer’s network address';
+    ? networkView.published
+      ? networkView.home
+      : address(networkView.homeAddress)
+    : '';
 }
 async function loadNetwork() {
   networkView = await api('/setup/api/network');
   where = networkView.where;
   $('setup-port').value = String(networkView.port);
+  $('setup-port').readOnly = networkView.published;
+  $('network-port-hint').textContent = networkView.published
+    ? 'Docker’s container port. The address below uses the published port.'
+    : 'Use the setup port unless something else needs it.';
   renderWhere();
 }
 $('network-where').addEventListener('click', event => {
@@ -822,9 +834,15 @@ async function runChecks() {
   $('check-list').hidden = true;
   $('check-finish').disabled = true;
   $('check-again').hidden = true;
+  $('check-discord').hidden = true;
   await run('check', $('check-again'), async () => {
     try {
-      renderChecks((await api('/setup/api/check', {})).checks);
+      const { checks, discordRedirect } = await api('/setup/api/check', {});
+      renderChecks(checks);
+      if (discordRedirect) {
+        $('check-discord').querySelector('strong').textContent = discordRedirect;
+        $('check-discord').hidden = false;
+      }
     } catch (error) {
       $('check-running').hidden = true;
       $('check-again').hidden = false;

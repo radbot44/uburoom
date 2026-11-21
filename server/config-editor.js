@@ -515,7 +515,13 @@ function createConfigEditor(selectedPath = configPath()) {
     readSources() {
       return sanitized(async () => {
         const original = await snapshot(file);
-        return { revision: original.revision, sources: validate(original.bytes, file).sources || [] };
+        const config = validate(original.bytes, file);
+        return {
+          revision: original.revision,
+          sources: config.sources || [],
+          memberSources: config.accessPolicy.sourceMembers,
+          operators: config.serverOperator.identities,
+        };
       });
     },
     /**

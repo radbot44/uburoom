@@ -51,6 +51,29 @@ function sourceSettings({
   const flows = flowsCore.createSourceFlows({ stepServices });
   const pinned = id => registry?.meta?.('source:' + id + ':identity') || undefined;
 
+  // Jellyfin sign-in is offered per source, and an identity belongs to one server. Another
+  // entry rule cannot prove that an operator has a working second sign-in.
+  function removalAffectsOperator(entry, { sources, memberSources, operators }) {
+    if (sourceType(entry.type).memberIdentity !== 'jellyfin' || !memberSources.includes(entry.id)) return false;
+    const server = pinned(entry.id);
+    const remaining = new Set(
+      sources
+        .filter(
+          other =>
+            other.id !== entry.id &&
+            memberSources.includes(other.id) &&
+            sourceType(other.type).memberIdentity === 'jellyfin',
+        )
+        .map(other => pinned(other.id))
+        .filter(Boolean)
+        .map(id => 'jellyfin:' + id),
+    );
+    return operators.some(
+      ({ provider }) =>
+        provider.startsWith('jellyfin:') && (!server || provider === 'jellyfin:' + server) && !remaining.has(provider),
+    );
+  }
+
   /** The operator's request, checked now and again by `still()` after any awaited work. */
   async function operator(req, res) {
     const login = req.method === 'GET' ? await user(req) : await protectedPost(req);
@@ -102,12 +125,13 @@ function sourceSettings({
 
   /** Saved entries, and which differ from what this process runs (they wait for a restart). */
   async function saved() {
-    const { revision, sources } = await editor.readSources();
+    const saved = await editor.readSources();
     const running = new Map((config.sources || []).map(entry => [entry.id, JSON.stringify(entry)]));
-    return { revision, sources, running };
+    return { ...saved, running };
   }
   async function list() {
-    const { revision, sources, running } = await saved();
+    const state = await saved();
+    const { revision, sources, running } = state;
     const ids = new Set(sources.map(entry => entry.id));
     return {
       revision,
@@ -115,6 +139,7 @@ function sourceSettings({
         ...flowsCore.describe(entry),
         // Saved but not yet what the server runs: it applies after a restart.
         pending: running.get(entry.id) !== JSON.stringify(entry),
+        ...(removalAffectsOperator(entry, state) ? { operatorSignInRisk: true } : {}),
       })),
       // Running sources that are no longer saved: they go at the next restart.
       removed: (config.sources || [])
@@ -132,13 +157,16 @@ function sourceSettings({
   }
   async function change(data, auth) {
     const { revision, action } = data;
-    let request, transform;
+    let request, transform, operatorSignInRisk;
     if (action === 'update' || action === 'remove') {
-      const { sources } = await editor.readSources();
+      const saved = await editor.readSources();
+      const { sources } = saved;
       const entry = sources.find(source => source.id === data.id);
       if (!entry) throw fail('That source is no longer saved; read the list again', 404);
-      if (action === 'remove') request = { action, id: entry.id };
-      else {
+      if (action === 'remove') {
+        request = { action, id: entry.id };
+        operatorSignInRisk = removalAffectsOperator(entry, saved);
+      } else {
         request = { action, id: entry.id, ...flowsCore.updateRequest(entry, data) };
         // A type's own settings (folders: its libraries and their folders), checked by its module and
         // applied to the entry as written, so whatever it leaves alone stays as it was.
@@ -170,7 +198,13 @@ function sourceSettings({
     } catch {
       /* The file is saved; the audit line is best effort, as for other settings. */
     }
-    return { ok: true, restartRequired: true, revision: result.revision, ...(await list()) };
+    return {
+      ok: true,
+      restartRequired: true,
+      revision: result.revision,
+      ...(await list()),
+      ...(operatorSignInRisk ? { recoveryBackup: result.backupPath } : {}),
+    };
   }
 
   /** @type {import('./http/router').Route[]} */

@@ -26,11 +26,11 @@ The first time, open the setup link it prints and follow [first-time setup](#fir
 
 **Docker**
 
-Follow the [Docker guide](docs/docker.md). It mounts one `config/` folder for your settings, certificates and data, and a `secrets/` folder for the encryption key. Start it with an empty `config/` folder, run `docker logs uburoom` for the setup code, and open `https://<this computer's address>:5756/setup`.
+Follow the [Docker guide](docs/docker.md). It mounts one `config/` folder for your settings, certificates and data, and a `secrets/` folder for the encryption key. Start it with an empty `config/` folder, run `docker logs uburoom` for the setup code, and open `https://<Docker host address>:<published port>/setup`.
 
 ## First-time setup
 
-When uburoom starts and finds no config file, it starts **first-run setup** instead of the server. Its window (or `docker logs uburoom`) shows a setup code and a link with the code in it, such as `http://localhost:5756/setup#code=ABCD-…`. Open the link on the same computer; elsewhere, open the setup page and type the code. The code proves you can see the uburoom window, and a new one appears after ten wrong tries.
+When uburoom starts and finds no config file, it starts **first-run setup** instead of the server. Its window shows a setup code and a local link such as `http://localhost:5756/setup#code=ABCD-…`. In Docker, open setup at the published port and enter the code from `docker logs uburoom`. A new code appears after ten wrong tries.
 
 The wizard has six steps:
 

@@ -42,9 +42,14 @@ const CSP =
  * @param {string[]} args
  */
 function setupOptions(args = process.argv.slice(2)) {
+  /** @type {{host: string, port: number, published?: boolean}} */
   const options = { host: '127.0.0.1', port: DEFAULT_PORT };
   for (let i = 0; i < args.length; i++) {
     const [flag, inline] = args[i].split(/=(.*)/s);
+    if (args[i] === '--setup-published') {
+      options.published = true;
+      continue;
+    }
     if (flag !== '--setup-host' && flag !== '--setup-port') continue;
     const value = inline ?? args[++i];
     if (!value || value.startsWith('--')) throw new Error(flag + ' requires a value');
@@ -65,7 +70,10 @@ function allowedHost(header) {
   if (typeof header !== 'string' || header.length > 300) return undefined;
   let hostname;
   try {
-    hostname = new URL('http://' + header).hostname;
+    const url = new URL('http://' + header);
+    if (url.username || url.password || url.pathname !== '/' || url.search || url.hash || /[/?#\\@\s]/.test(header))
+      return undefined;
+    hostname = url.hostname;
   } catch {
     return undefined;
   }
@@ -84,7 +92,7 @@ const cookieValue = req =>
  * Starts setup mode and resolves once it listens.
  * @param {{configFile: string, host?: string, port?: number, logger: any, handOff: (handoff: any) => Promise<any>,
  *   plexFetch?: typeof fetch, jellyfinFetch?: typeof fetch, jellyfinDiscover?: () => Promise<any[]>,
- *   discordFetch?: typeof fetch, platform?: string}} options - `handOff` starts the normal app from the
+ *   discordFetch?: typeof fetch, platform?: string, published?: boolean}} options - `handOff` starts the normal app from the
  *   config just written, with the operator's sign-in ticket; setup's listener is closed first.
  */
 async function startSetup({
@@ -98,6 +106,7 @@ async function startSetup({
   jellyfinDiscover,
   discordFetch,
   platform,
+  published = false,
 }) {
   const log = logger.child ? logger.child('Setup') : logger;
   const secure = !LOOPBACK.has(host);
@@ -106,7 +115,8 @@ async function startSetup({
   const wizard = createWizard({
     configFile,
     setupHost: host,
-    setupPort: port,
+    setupPort: () => address().port,
+    published,
     plexTv: new PlexTv(plexFetch),
     plexFetch,
     jellyfinFetch,
@@ -172,7 +182,7 @@ async function startSetup({
     return { text, config, answers, checks };
   }
   /** Writes the config and hands over to the normal app; the answer waits until it listens. */
-  async function finish(req, res) {
+  async function finish(req, res, setupOrigin) {
     if (finishing) throw fail('Setup is already finishing', 409);
     finishing = true;
     try {
@@ -185,7 +195,7 @@ async function startSetup({
       const handoff = {
         ticket: createHash('sha256').update(ticket).digest('hex'),
         expires: Date.now() + TICKET_MS,
-        setupOrigin: origin,
+        setupOrigin,
         account:
           account.provider === 'plex'
             ? {
@@ -226,7 +236,7 @@ async function startSetup({
 
   /** @type {Record<string, (data: any, req: any) => any>} */
   const api = {
-    'GET /setup/api/state': (data, req) => wizard.view(allowedHost(req.headers.host)),
+    'GET /setup/api/state': () => wizard.view(),
     'POST /setup/api/account/plex': data => (data.poll ? wizard.account.plexPoll() : wizard.account.plexStart()),
     'POST /setup/api/account/create': data => wizard.account.create(data),
     'POST /setup/api/account/clear': () => wizard.account.clear(),
@@ -244,9 +254,12 @@ async function startSetup({
     'GET /setup/api/access': () => wizard.access.view(),
     'POST /setup/api/access': data => wizard.access.set(data),
     'POST /setup/api/access/discord': data => wizard.access.discord(data),
-    'GET /setup/api/network': (data, req) => wizard.network.view(allowedHost(req.headers.host)),
-    'POST /setup/api/network': (data, req) => wizard.network.set(data, allowedHost(req.headers.host)),
-    'POST /setup/api/check': async () => ({ checks: (await check()).checks }),
+    'GET /setup/api/network': () => wizard.network.view(),
+    'POST /setup/api/network': data => wizard.network.set(data),
+    'POST /setup/api/check': async () => {
+      const { checks, config, answers } = await check();
+      return { checks, discordRedirect: answers.rules.discord ? config.publicUrl + '/auth/callback' : undefined };
+    },
   };
 
   async function handle(req, res) {
@@ -257,7 +270,7 @@ async function startSetup({
     const route = url.pathname;
     if (req.method === 'GET' && route === '/health') return json(res, 200, { ok: true, setup: true });
     if (finished) return json(res, 503, { error: 'Setup has finished' });
-    origin = (secure ? 'https://' : 'http://') + req.headers.host;
+    const requestOrigin = new URL((secure ? 'https://' : 'http://') + req.headers.host).origin;
     if (['GET', 'HEAD'].includes(req.method || '')) {
       if (route === '/' || route === '/setup/') {
         res.writeHead(302, { Location: '/setup' });
@@ -279,7 +292,7 @@ async function startSetup({
       if (asset) return files.send(req, res, await files.readAsset(asset.file), asset.type, route);
     }
     if (!route.startsWith('/setup/api/')) return json(res, 404, { error: 'Not found' });
-    if (req.method === 'POST' && req.headers.origin !== origin) return json(res, 403, { error: 'Not allowed' });
+    if (req.method === 'POST' && req.headers.origin !== requestOrigin) return json(res, 403, { error: 'Not allowed' });
     try {
       if (req.method === 'POST' && route === '/setup/api/code') {
         const data = await body(req, 1024);
@@ -297,10 +310,11 @@ async function startSetup({
       }
       if (!guard.valid(cookieValue(req)))
         return json(res, 401, { code: 'session', error: 'Enter the setup code again' });
-      if (req.method === 'POST' && route === '/setup/api/finish') return await finish(req, res);
+      if (req.method === 'POST' && route === '/setup/api/finish') return await finish(req, res, requestOrigin);
       const action = api[req.method + ' ' + route];
       if (!action) return json(res, 404, { error: 'Not found' });
       const data = req.method === 'POST' ? await body(req) : {};
+      origin = requestOrigin;
       json(res, 200, (await action(data, req)) || {});
     } catch (error) {
       if (res.headersSent) return res.end();
@@ -341,8 +355,11 @@ async function startSetup({
   guard = createSetupGuard({
     announce(code) {
       log.info(`No config file at ${configFile}: setup mode.`);
-      log.info(`Open ${shown}/setup#code=${code}`);
-      if (secure) log.info(`From another device, open https://<this computer's address>:${address().port}/setup`);
+      if (published) log.info('In a browser, open https://<Docker host address>:<published port>/setup.');
+      else {
+        log.info(`Open ${shown}/setup#code=${code}`);
+        if (secure) log.info(`From another device, open https://<this computer's address>:${address().port}/setup`);
+      }
       log.info(`Setup code: ${code}`);
     },
   });

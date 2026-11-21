@@ -84,7 +84,7 @@ One checkbox per entry rule, with a one-line hint each:
 | Anyone who knows the server password (shows a password field when ticked) | Off |
 | uburoom accounts you create | On |
 | Guests with a room invite | On |
-| Members of your Discord servers (when ticked, shows setup: create an application in the Discord Developer Portal, add the redirect URL, paste Application ID, client secret and bot token, add the bot to a server; then lists the servers the bot has joined. Members of any of them can get in, with no server to pick) | Off |
+| Members of your Discord server (when ticked, shows application setup, the OAuth2 redirect, bot credentials and the joined servers. The first listed guild is the one whose members can get in.) | Off |
 
 ### 5. Where will people watch?
 
@@ -93,7 +93,7 @@ One checkbox per entry rule, with a one-line hint each:
 | This computer | `server.host: '127.0.0.1'`, `public_url: https://localhost:5756` | Self-signed for `localhost` |
 | My home network | `server.host: '0.0.0.0'`, `public_url` set to the detected LAN address | Self-signed covering `localhost` and that address; the page says viewers will see a one-time warning |
 
-A **Port** field (default 5756) sets `server.port`, and the addresses shown use it. Internet access isn't a choice here; a line links to the remote access guide. Certificates go in the data folder, and their paths are written to `server.tls_cert` and `server.tls_key`.
+A **Port** field defaults to the setup listener's port (normally 5756) and sets `server.port`. With Docker, the field shows the fixed container port and setup uses the address and published port from the browser. Open setup by the Docker host's LAN IP to choose **My home network**. Certificates go in the data folder, and their paths are written to `server.tls_cert` and `server.tls_key`.
 
 ### 6. Check and finish
 
@@ -173,6 +173,7 @@ Where the build differs from the text above, or decides something it left open. 
 - **The operator's own way in stays on (step 4).** Admission does not let the operator in by being the operator, so the rule that admits the operator's account cannot be turned off: "uburoom accounts you create" for a uburoom account, or the Plex source when there is one (checkbox shown on and disabled, "Your account gets in this way."). With several Plex sources, at least one must stay on. A Plex operator with no Plex source is asked to add one or use a uburoom account.
 - **Server password:** at least 8 characters.
 - **Discord (step 4):** the pasted Application ID, client secret and bot token are checked with Discord; `discord.owner_id` is the application's owner (or its team's owner). The joined servers come from one lookup (`server/setup/discord.js`, `joinedServers`) and are shown read-only, re-read when the page regains focus. Until the any-server backend lands, `discord.guild_id` is written as the first joined server (`TODO(discord-any-server)`). The redirect shown is `/auth/callback`, the route uburoom uses.
+- **Discord (step 6):** use the final URL shown under Check and finish to update OAuth2 Redirects in the Developer Portal, especially if the address or port changed. Setup's local checks do not validate the registered redirect. The implemented wizard awaits owner acceptance.
 - **Step 6 media sources** uses each source module's connection check (an unreachable server is a fix, not a warning) and then its full check (a failure is a fix).
 - **Existing data:** a uburoom account from setup needs a data folder without a database; with existing data, step 6 asks to move it aside or sign in with Plex.
 - **Remote access guide:** named as `docs/remote-access.md` in the uburoom folder; there is no published address to link to.

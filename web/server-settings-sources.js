@@ -417,6 +417,12 @@ export function mount(panel, { request }) {
   function renderRemove({ source }) {
     const box = node('div', body, null, 'server-source-confirm');
     node('h3', box, 'Remove ' + sourceLabel(source) + '?');
+    if (source.operatorSignInRisk)
+      node(
+        'p',
+        box,
+        'This may remove a server operator’s last sign-in after restart. Before removing it, sign in another way in a private window and confirm Server settings opens. If you lose access, restore the saved configuration backup on the host and restart.',
+      );
     node(
       'p',
       box,
@@ -431,7 +437,11 @@ export function mount(panel, { request }) {
           const result = await request('/api/operator/sources', { revision, action: 'remove', id: source.id });
           if (!current()) return;
           accept(result);
-          status.textContent = 'Removed. Restart uburoom to apply it.';
+          status.textContent = result.recoveryBackup
+            ? 'Removed. Before restarting, verify another operator sign-in. To recover, restore the configuration from ' +
+              result.recoveryBackup +
+              '.'
+            : 'Removed. Restart uburoom to apply it.';
           show({ name: 'list' });
           checkAll();
         }),

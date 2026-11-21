@@ -101,6 +101,8 @@ Saves are serialized within the process, retain a verified backup in a protected
 
 ## Account linking and unlinking safety
 
+Before removing a Jellyfin source that provides operator sign-in, verify another sign-in in a private browser window and open Server settings there. If removal was saved and access is lost after restart, stop uburoom, restore the pre-removal `original.yaml` identified in the Sources panel to the active config path, keeping its private permissions, then restart. Back up the current config first and review any edits made since removal. Restoring the pre-removal config restores the source and its `access.source_members` entry. Keep the existing database and credential key.
+
 Provider removal requires another verified, enabled, currently eligible sign-in method; Plex also requires a stored credential. A configured operator identity does not enable a disabled provider. The configured Discord owner can retain Discord through the existing owner-only sign-in when ordinary Discord is disabled; removal still checks current Discord eligibility.
 
 Link/reconnect, unlink, merge and assignment advance account revisions and invalidate previous browser sessions, Activity bearer tokens and media/caption grants for affected accounts. Active viewers are removed and their sockets closed. Successful self-service mutations issue a replacement browser session; Activity must authenticate again. Logout affects only the selected browser session and its viewers, preserving provider links and independently authenticated sessions. Merge and assignment require the affected accounts to leave active rooms and recheck current login, authority, revisions and participation after awaited work.

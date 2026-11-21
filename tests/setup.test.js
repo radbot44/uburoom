@@ -270,6 +270,10 @@ test('each step is checked by the server', async t => {
   assert.equal((await post('/setup/api/network', { where: 'moon', port: 5756 })).status, 400);
   const network = await post('/setup/api/network', { where: 'computer', port: '5757' });
   assert.equal(network.body.computer, 'https://localhost:5757');
+  assert.equal((await f.browser.request('/setup/api/access')).body.redirectUrl, 'https://localhost:5757/auth/callback');
+  const checks = await post('/setup/api/check', {});
+  assert.equal(checks.status, 200);
+  assert.equal(checks.body.discordRedirect, 'https://localhost:5757/auth/callback');
   // Nothing written yet, and nothing secret in any answer.
   assert.equal(fs.existsSync(f.configFile), false);
   for (const text of f.browser.seen) assert.doesNotMatch(text, SECRETS);
@@ -410,14 +414,39 @@ test('a uburoom account is created when the app starts, ticket or not', async t 
 });
 
 test('in a container: an empty config folder, HTTPS setup and a server reachable through its published port', async t => {
-  const f = await setupFixture(t, { host: '0.0.0.0' });
+  const f = await setupFixture(t, { host: '0.0.0.0', args: ['--setup-published'] });
+  const forward = net.createServer(socket => {
+    const target = net.connect(f.port, '127.0.0.1');
+    socket.on('error', () => target.destroy());
+    target.on('error', () => socket.destroy());
+    socket.pipe(target).pipe(socket);
+  });
+  await new Promise(resolve => forward.listen(0, '127.0.0.1', resolve));
+  t.after(() => forward.close());
+  const publishedPort = forward.address().port;
+  const published = `https://127.0.0.1:${publishedPort}`;
+  f.browser = client(published);
   assert.equal(fs.existsSync(path.dirname(f.configFile)), false, 'the config folder starts empty (or missing)');
   // The image's health check reaches setup over HTTPS.
   assert.deepEqual((await f.browser.request('/health')).body, { ok: true, setup: true });
   const signed = await signIn(f);
   assert.match(signed.headers['set-cookie'][0], /; Secure/);
-  const network = await f.browser.post('/setup/api/network', { where: 'computer', port: '5756' });
-  assert.equal(network.status, 200);
+  const options = (await f.browser.request('/setup/api/network')).body;
+  assert.equal(options.port, f.port);
+  assert.equal(options.computer, published);
+  assert.equal(options.home, undefined);
+  assert.equal((await f.browser.post('/setup/api/network', { where: 'computer', port: publishedPort })).status, 400);
+  assert.match((await f.browser.post('/setup/api/network', { where: 'home', port: f.port })).body.error, /LAN address/);
+  const lanHost = `192.168.1.8:${publishedPort}`;
+  const lan = await f.browser.post(
+    '/setup/api/network',
+    { where: 'home', port: f.port },
+    {
+      host: lanHost,
+      origin: `https://${lanHost}`,
+    },
+  );
+  assert.equal(lan.body.home, `https://${lanHost}`);
   await f.browser.post('/setup/api/account/create', { username: 'alex', password: 'setup password 1' });
   const { flow } = (await f.browser.post('/setup/api/sources/setup', { type: 'folders' })).body;
   await step(f, flow, 'choose', { path: path.join(f.directory, 'Films'), type: 'shows' });
@@ -436,10 +465,15 @@ test('in a container: an empty config folder, HTTPS setup and a server reachable
   const config = loadConfig(f.configFile, []);
   // "This computer" in a container still listens on every interface, or the published port can't reach it.
   assert.equal(config.host, '0.0.0.0');
+  assert.equal(config.port, f.port);
+  assert.equal(config.publicUrl, published);
+  assert.equal(new URL(finished.body.url).origin, published);
   assert.ok(fs.existsSync(config.tlsCert) && fs.existsSync(config.tlsKey));
   assert.ok(config.tlsCert.startsWith(path.dirname(f.configFile)));
-  const browser = client('https://localhost:' + f.port);
+  const browser = client(published);
   assert.equal((await browser.request('/health')).status, 200);
+  const ticket = new URLSearchParams(new URL(finished.body.url).hash.slice(1)).get('ticket');
+  assert.equal((await browser.post('/api/setup-handoff', { ticket })).status, 200);
 });
 
 test('setup options on the command line', () => {

@@ -52,7 +52,7 @@ docker compose up -d
 docker logs uburoom    # shows the setup code
 ```
 
-Open `https://<this computer's address>:5756/setup` and enter the code. Setup is served over HTTPS with a certificate made when it starts, so the browser warns once. The wizard writes `config/config.yaml` and a self-signed certificate in `config/data/certs/`, then uburoom starts in the same container on the port you chose (keep it `5756`, or publish the new one). In the container, **This computer** still listens on every interface so the published port reaches it. The container's health check reaches setup's `/health` during setup. See [first-run setup](self-hosting.md#first-run-setup).
+Open `https://<Docker host address>:<published port>/setup` and enter the code. For a mapping of `6756:5756`, open `https://localhost:6756/setup` on the Docker host, or use the host's LAN IP and port `6756` for **My home network**. Setup is served over HTTPS with a certificate made when it starts, so the browser warns once. The wizard keeps the container listening on port `5756` and uses the browser-facing address and published port for `server.public_url`, the sign-in handoff and Discord's callback. Docker's port binding controls which host interfaces are reachable. Publish on `127.0.0.1` for access confined to the Docker host. The wizard writes `config/config.yaml` and a self-signed certificate in `config/data/certs/`. The container's health check reaches setup's `/health` during setup. See [first-run setup](self-hosting.md#first-run-setup).
 
 ---
 

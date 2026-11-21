@@ -153,6 +153,37 @@ storage:
   return { ...f, file, directory, operator, call, step, read, seen, jellyfinCalls };
 }
 
+test('removing a Jellyfin operator sign-in warns and identifies the exact recovery backup', tls, async t => {
+  const f = await sourcesFixture(t);
+  const file = f.read();
+  const source = {
+    id: 'den',
+    type: 'jellyfin',
+    url: 'http://jf-fixture.invalid:8096',
+    api_key: 'jf-new-key-1',
+    user: 'Viewer',
+  };
+  file.sources.push(source);
+  file.operator.identities.push(`jellyfin:${JF_SERVER}:${JF_ADMIN}`);
+  fs.writeFileSync(f.file, YAML.stringify(file));
+  const load = async () => {
+    const result = await f.operator.request('/api/operator/sources');
+    assert.equal(result.status, 200);
+    assert.doesNotMatch(JSON.stringify(result.body), new RegExp(JF_ADMIN));
+    return result.body;
+  };
+  assert.equal((await load()).sources.find(entry => entry.id === 'den').operatorSignInRisk, undefined);
+  file.access.source_members.push('den');
+  const original = YAML.stringify(file);
+  fs.writeFileSync(f.file, original);
+  const { revision, sources } = await load();
+  assert.equal(sources.find(entry => entry.id === 'den').operatorSignInRisk, true);
+  const removed = await f.call('/api/operator/sources', { revision, action: 'remove', id: 'den' });
+  assert.equal(removed.status, 200);
+  assert.equal(fs.readFileSync(removed.body.recoveryBackup, 'utf8'), original);
+  assert.deepEqual(f.read().access.source_members, ['plex']);
+});
+
 test('only the operator reads or changes sources, and every answer leaves secrets out', tls, async t => {
   const f = await sourcesFixture(t);
   const other = f.browser();

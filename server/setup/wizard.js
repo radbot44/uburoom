@@ -43,7 +43,7 @@ function homeAddress(requestHost, interfaces = os.networkInterfaces()) {
 }
 
 /**
- * @param {{configFile: string, setupHost: string, setupPort: number, plexTv: any, plexFetch?: typeof fetch,
+ * @param {{configFile: string, setupHost: string, setupPort: () => number, published: boolean, plexTv: any, plexFetch?: typeof fetch,
  *   jellyfinFetch?: typeof fetch, jellyfinDiscover?: () => Promise<any[]>, discordFetch?: typeof fetch,
  *   platform?: string, origin: () => string}} services - `origin` is where the setup page is open now
  */
@@ -51,6 +51,7 @@ function createWizard({
   configFile,
   setupHost,
   setupPort,
+  published,
   plexTv,
   plexFetch = fetch,
   jellyfinFetch = fetch,
@@ -235,7 +236,7 @@ function createWizard({
     return { ...chosen, sourceMembers: chosen.sourceMembers.filter(id => ids.has(id)) };
   };
   /** Where uburoom will be opened, as chosen in step 5 (or the default until then). */
-  const publicUrl = () => draft.network?.publicUrl || 'https://localhost:' + DEFAULT_PORT;
+  const publicUrl = () => draft.network?.publicUrl || networkOptions(setupPort()).computer;
   const accessView = () => {
     const { password: _password, ...chosen } = rules();
     return {
@@ -291,45 +292,62 @@ function createWizard({
 
   // ----- Step 5: where people watch -----
 
-  function networkOptions(requestHost, port) {
-    const home = homeAddress(requestHost);
+  function networkOptions(port) {
+    const browser = new URL(origin());
+    const browserHost = browser.hostname.replace(/^\[|\]$/g, '');
+    const loopback = LOOPBACK.has(browserHost);
+    const home = published ? (loopback ? undefined : browserHost) : homeAddress(browserHost);
+    const computer = wide || loopback ? browserHost : 'localhost';
+    const visiblePort = published ? browser.port : String(port);
     const where = (/** @type {string} */ address) =>
-      'https://' + (net.isIPv6(address) ? '[' + address + ']' : address) + ':' + port;
-    return { computer: where('localhost'), home: home ? where(home) : undefined, homeAddress: home };
+      new URL(
+        'https://' + (net.isIPv6(address) ? '[' + address + ']' : address) + (visiblePort ? ':' + visiblePort : ''),
+      ).origin;
+    return {
+      computer: where(computer),
+      home: home ? where(home) : undefined,
+      computerAddress: computer,
+      homeAddress: home,
+    };
   }
   const network = {
-    view(requestHost) {
-      const port = draft.network?.port ?? DEFAULT_PORT;
-      return { where: draft.network?.where || 'computer', port, ...networkOptions(requestHost, port) };
+    view() {
+      const port = draft.network?.port ?? setupPort();
+      return { where: draft.network?.where || 'computer', port, published, ...networkOptions(port) };
     },
-    set(data, requestHost) {
+    set(data) {
       if (!['computer', 'home'].includes(data.where)) throw fail('Choose where people watch');
       const port = typeof data.port === 'string' && /^\d{1,5}$/.test(data.port.trim()) ? Number(data.port) : data.port;
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw fail('Use a port from 1 to 65535');
-      const options = networkOptions(requestHost, port);
+      if (published && port !== setupPort()) throw fail('Keep the container port used by the Docker port mapping');
+      const options = networkOptions(port);
       if (data.where === 'home' && !options.home)
-        throw fail('uburoom couldn’t find this computer’s address on the network; choose This computer');
+        throw fail(
+          published
+            ? 'Open setup using the Docker host’s LAN address and published port, then choose My home network'
+            : 'uburoom couldn’t find this computer’s address on the network; choose This computer',
+        );
       draft.network = {
         where: data.where,
         port,
         // A container or NAS is reached through its published port either way.
-        host: data.where === 'home' || wide ? (wide ? setupHost : '0.0.0.0') : '127.0.0.1',
+        host: wide ? setupHost : data.where === 'home' ? '0.0.0.0' : setupHost,
         publicUrl: data.where === 'home' ? options.home : options.computer,
-        names: data.where === 'home' ? ['localhost', options.homeAddress] : ['localhost'],
+        names: [...new Set(['localhost', data.where === 'home' ? options.homeAddress : options.computerAddress])],
       };
-      return network.view(requestHost);
+      return network.view();
     },
   };
 
   // ----- The whole draft -----
 
   /** Which step still needs an answer, for a page opened part way through. */
-  function view(requestHost) {
+  function view() {
     return {
       account: accountView(),
       sources: sourcesView(),
       access: draft.access ? accessView() : undefined,
-      network: draft.network ? network.view(requestHost) : undefined,
+      network: draft.network ? network.view() : undefined,
     };
   }
 
