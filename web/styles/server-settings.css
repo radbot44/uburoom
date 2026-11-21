@@ -257,6 +257,51 @@
   .server-source-libraries > p {
     margin: 0;
   }
+  /* Editing a folders source: one box per library, its name, Movies or Shows and its folders. */
+  .server-source-library-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: var(--space-10);
+  }
+  .server-source-library-head > .server-settings-field {
+    flex: 1 1 220px;
+  }
+  .server-source-library-head .group-button {
+    white-space: nowrap;
+  }
+  .server-source-library-head > .button-group {
+    flex: none;
+  }
+  .server-source-paths {
+    display: grid;
+    gap: var(--space-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .server-source-paths > li {
+    display: flex;
+    align-items: center;
+    gap: var(--space-10);
+    min-height: 40px;
+  }
+  .server-source-paths svg {
+    flex: none;
+    width: 20px;
+    height: 20px;
+  }
+  .server-source-path-text {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .server-source-add-path {
+    justify-self: start;
+  }
+  .server-source-add-library {
+    margin-top: var(--space-16);
+  }
   .server-source-server {
     display: flex;
     align-items: center;
