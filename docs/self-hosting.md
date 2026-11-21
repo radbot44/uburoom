@@ -63,7 +63,7 @@ Sign-in proves who someone is; **entry rules** decide whether they get in, and *
 | `access.discord_server` | `true` (default): members of `discord.guild_id` who sign in with Discord. |
 | `access.source_members` | Source ids whose members may come in, e.g. `['living-room']`. For a Plex source, a Plex account that can reach that server. Members of one source never get in through a rule naming another, and the rule never hides any source's media from people admitted another way. |
 | `access.password` | `true`: anyone who enters `secrets.server_password` comes in as a guest under a name they type (or a random one they keep). The browser keeps that sign-in; another browser is another guest. Changing the password signs out everyone who got in with the old one. Wrong guesses are limited per address. |
-| `access.accounts` | `true`: uburoom's own accounts. |
+| `access.accounts` | `true`: uburoom's own accounts, while enabled and with a password; their sign-in form is shown on the entry page. |
 | `secrets.server_password` | The password for `access.password`; required with it and refused without it. |
 | `server.max_connections: 256` | Open room connections (one per browser tab or app window) accepted at once; 1–4096. Further connections are refused until one closes. |
 | `server.public_web_app: false` | Restrict playback to verified Discord Activity. Browser handoff remains available for account linking/management. |

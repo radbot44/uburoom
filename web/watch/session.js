@@ -1,6 +1,7 @@
 import * as uburoomControls from '../watch-controls.js';
 import * as uburoomDialogs from '../watch-dialogs.js';
 import * as uburoomUbumfa from '../ubumfa.js';
+import * as accountSignIn from '../account-sign-in.js';
 import { WatchTransport as uburoomWatchTransport } from '../watch-transport.js';
 import * as discordPresence from './discord-presence.js';
 import { $ } from './page.js';
@@ -249,7 +250,17 @@ export function mount(host, deps) {
         document.body.classList.remove('auth-pending');
         // Only the ways in this server's entry rules offer are shown (docs/ui-behavior.md).
         const access = store.identity.config.access || {},
-          signIns = access.discord !== false || !!store.identity.config.plexSignIn;
+          signIns = access.discord !== false || !!store.identity.config.plexSignIn || !!access.accounts;
+        // uburoom accounts sign in with a username and password, above the server password.
+        const accountSlot = $('account-sign-in');
+        accountSlot.hidden = !access.accounts || admission.activityOnly;
+        if (!accountSlot.hidden && !accountSlot.firstChild)
+          accountSignIn.mount(accountSlot, {
+            onSignedIn: () => {
+              store.identity.pageBootstrap = undefined;
+              void start().catch(error => deps.fail(error.message));
+            },
+          });
         $('empty-title').textContent = admission.activityOnly
           ? 'Discord Activity only'
           : access.password && !signIns
@@ -261,7 +272,9 @@ export function mount(host, deps) {
           ? 'Open uburoom through Discord Activity. Browser playback is disabled.'
           : admission.identity
             ? 'Your account does not meet this server’s entry requirements.' +
-              (signIns ? ' Check your Discord membership or Plex server access.' : '') +
+              (access.discord !== false || store.identity.config.plexSignIn
+                ? ' Check your Discord membership or Plex server access.'
+                : '') +
               (access.password ? ' You can also enter with the server password.' : '')
             : access.password && !signIns
               ? 'Enter this server’s password to continue.'

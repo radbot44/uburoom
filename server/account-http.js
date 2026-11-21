@@ -9,6 +9,7 @@ function accountHttp({
   registry,
   plexAuth,
   plexIdentity,
+  uburoomAccounts,
   hub,
   watch,
   watchRoutes,
@@ -84,7 +85,7 @@ function accountHttp({
     const result = registry.link(login.userId, provider, subject, name);
     if (result.conflict)
       return mergePreview(req, login, { ...result, provider, subject, name, credential, oauth: oauth || login.oauth });
-    if (credential) registry.credential(subject, credential);
+    if (credential) registry.credential(provider, subject, credential);
     plexAuth.clear();
     registry.audit(login.userId, 'self-link', { provider, subject });
     await invalidate([login.userId]);
@@ -227,7 +228,7 @@ function accountHttp({
           if (previous && logins.has(previous) && registry.isGuest(logins.get(previous).userId))
             logins.delete(previous);
           const account = registry.resolve('plex', identity.subject, identity.name);
-          registry.credential(identity.subject, identity.credential);
+          registry.credential('plex', identity.subject, identity.credential);
           plexAuth.clear();
           session(res, account, account.name);
         }
@@ -283,6 +284,8 @@ function accountHttp({
           if (config.accessPolicy?.discord === false) return identity.subject === config.ownerId;
           return true;
         }
+        // A uburoom account is a way back in only while the accounts rule lets accounts in.
+        if (identity.provider === 'uburoom') return !!config.accessPolicy?.accounts;
         return false;
       }
       const remove = /^\/api\/account\/(discord|plex)\/remove$/.exec(route);
@@ -290,17 +293,25 @@ function accountHttp({
         const provider = remove[1],
           data = await body(req),
           identities = registry.identities(login.userId);
-        const remaining = identities.find(
-          i => i.provider !== provider && i.verified && (i.provider !== 'plex' || registry.hasCredential(i.subject)),
+        const usable = identities.filter(
+          i =>
+            i.provider !== provider &&
+            i.verified &&
+            (i.provider !== 'plex' || registry.hasCredential('plex', i.subject)),
         );
+        // Prefer a way back in that the entry rules still offer.
+        const remaining = usable.find(providerEnabled) || usable[0];
         if (!remaining) throw new Error('Connect another sign-in method before removing this account');
         if (!providerEnabled(remaining))
           throw new Error(
-            (remaining.provider === 'plex' ? 'Plex' : 'Discord') +
+            ({ plex: 'Plex', discord: 'Discord', uburoom: 'uburoom account' }[remaining.provider] || 'That') +
               ' sign-in is disabled on this server; keep your connected account',
           );
         const ownerChanged = hub.isOwner(webActor(login));
-        if (remaining.provider === 'plex') {
+        if (remaining.provider === 'uburoom') {
+          if (!uburoomAccounts?.admits(login.userId))
+            throw new Error('Set a password for your uburoom account before removing this sign-in');
+        } else if (remaining.provider === 'plex') {
           if (!(await plexAuth.forUser(login.userId))) throw new Error('Sign in to Plex before removing Discord');
         } else if (!hub.access.isMember(login.userId) && !(await hub.access.refresh(login.userId)))
           throw new Error('Discord access is unavailable; keep Plex connected');
@@ -335,7 +346,7 @@ function accountHttp({
           subject: merge.subject,
           name: merge.name,
         });
-        if (merge.credential) registry.credential(merge.subject, merge.credential);
+        if (merge.credential) registry.credential(merge.provider, merge.subject, merge.credential);
         await invalidate([a.id, b.id]);
         merges.delete(sourceHash(req));
         session(res, registry.canonical(a.id), a.name, merge.oauth || login.oauth);

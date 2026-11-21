@@ -737,7 +737,7 @@ test('Activity viewers keep the Discord recheck, and watch through the source cr
 
   // A linked Plex account that cannot reach the server, or is revoked, changes no media access.
   f.app.registry.link(me.body.account.id, 'plex', '103', 'Denied');
-  f.app.registry.credential('103', { token: 'fixture-server-103', authType: 'traditional' });
+  f.app.registry.credential('plex', '103', { token: 'fixture-server-103', authType: 'traditional' });
   assert.equal((await f.app.hub.mediaFor({ userId: me.body.account.id, activity: true })).principal, 'discord-shared');
   f.provider.revoked.add('103');
   f.app.plexAuth.clear();
@@ -825,7 +825,7 @@ test('provider removal rejects leaving only a disabled login provider; owner exc
   await b1.discord('guest');
   const u1 = (await b1.request('/api/account')).body.account;
   fPlexOff.app.registry.link(u1.id, 'plex', '101', 'Alice');
-  fPlexOff.app.registry.credential('101', { token: 'fixture-server-101', authType: 'traditional' });
+  fPlexOff.app.registry.credential('plex', '101', { token: 'fixture-server-101', authType: 'traditional' });
   await b1.discord('guest');
   assert.equal(fPlexOff.app.registry.identities(u1.id).length, 2);
   const resPlexOff = await b1.post('/api/account/discord/remove', { subject: fPlexOff.provider.subjects.guest });

@@ -170,12 +170,12 @@ class PlexAuth {
     if (this.inflight.has(identity.subject)) return this.inflight.get(identity.subject);
     const generation = this.generation;
     const job = runOperation(undefined, async () => {
-      const credential = this.accounts.credential(identity.subject);
+      const credential = this.accounts.credential('plex', identity.subject);
       if (!credential) return;
       try {
         const scoped = await this.validate(credential, identity.subject);
         if (generation !== this.generation) throw new PlexAccessError('Plex scope changed during validation');
-        this.accounts.credential(identity.subject, credential);
+        this.accounts.credential('plex', identity.subject, credential);
         this.cache.set(identity.subject, { plex: scoped, until: Date.now() + 30000 });
         return scoped;
       } catch (error) {

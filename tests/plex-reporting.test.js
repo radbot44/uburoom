@@ -27,7 +27,7 @@ test('reporting coalesces queued states, applies current consent and drains reti
   };
   const registry = new Accounts(undefined, credentialVault());
   const account = registry.resolve('plex', 'viewer-sub', 'Viewer');
-  registry.credential('viewer-sub', { token: 'viewer-token', clientId: 'fixture' });
+  registry.credential('plex', 'viewer-sub', { token: 'viewer-token', clientId: 'fixture' });
   const reporting = new PlexReporting({ registry, plexAuth: { forUser: async () => scope } });
   const viewer = { userId: account.id, streamVersion: 'stream', observationEpoch: 'epoch', plexWatchState: true };
   const room = { media: { kind: 'plex', id: '123:456', duration: 120 }, mediaVersion: 'media' };
@@ -78,7 +78,7 @@ function fixture({ reportingEnabled = true, watchStateEnabled = true } = {}) {
 
   const registry = new Accounts(undefined, credentialVault());
   const userWithPlex = registry.resolve('plex', 'plex-sub-1', 'Alice');
-  registry.credential('plex-sub-1', { token: 'server-token-alice', clientId: 'alice-client-id' });
+  registry.credential('plex', 'plex-sub-1', { token: 'server-token-alice', clientId: 'alice-client-id' });
 
   const sponsoredUser = registry.resolve('discord', 'discord-guest-1', 'Bob');
 

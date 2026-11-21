@@ -30,7 +30,7 @@ test('server operator authority requires an explicit verified provider identity 
   const ordinary = accounts.resolve('discord', '345678901234567890', 'Operator');
   const admin = accounts.resolve('discord', adminId, 'Room owner');
   const plexOwner = accounts.resolve('plex', '102', 'Plex token owner');
-  accounts.credential('102', { token: 'fixture-owner' });
+  accounts.credential('plex', '102', { token: 'fixture-owner' });
   assert.equal(RoomPolicy.administrator(accounts, config, admin.id), true);
   assert.equal(RoomPolicy.administrator(accounts, config, plexOwner.id), true);
   for (const id of [undefined, '', randomUUID(), discordId, ordinary.id, admin.id, plexOwner.id]) {
@@ -44,7 +44,7 @@ test('server operator authority requires an explicit verified provider identity 
   accounts.resolve('discord', discordId, 'Verified operator');
   assert.equal(isServerOperator(accounts, config, pending), true);
   assert.equal(RoomPolicy.administrator(accounts, config, pending), false);
-  assert.equal(accounts.hasCredential('101'), false, 'operator identity grants no Plex credentials');
+  assert.equal(accounts.hasCredential('plex', '101'), false, 'operator identity grants no Plex credentials');
   assert.equal(isServerOperator(accounts, normalizeConfig({}), pending), false, 'no implicit owner or token promotion');
   assert.equal(isServerOperator(accounts, {}, pending), false, 'older configuration grants none');
   const plexOnly = normalizeConfig({ operator: { identities: ['plex:101'] } });
@@ -55,7 +55,7 @@ test('server operator authority requires an explicit verified provider identity 
   assert.equal(isServerOperator(accounts, plexOnly, pending), false, 'unlink takes effect immediately');
   assert.equal(isServerOperator(accounts, config, pending), true, 'the other configured identity still authorizes');
   accounts.link(pending, 'plex', '103', 'Ordinary Plex account');
-  accounts.credential('103', { token: 'fixture-personal' });
+  accounts.credential('plex', '103', { token: 'fixture-personal' });
   accounts.unlink(pending, 'discord', discordId);
   assert.equal(isServerOperator(accounts, config, pending), false);
 });
@@ -232,7 +232,7 @@ test('account IDs persist, owner reservations resolve exact subjects, conflictin
       plex = accounts.resolve('plex', '101', 'Same name');
     assert.notEqual(discord.id, plex.id);
     assert.equal(accounts.link(discord.id, 'plex', '101', 'Alice Plex').conflict.id, plex.id);
-    accounts.credential('101', { token: 'private-test-token', privateKey: 'private-test-key' });
+    accounts.credential('plex', '101', { token: 'private-test-token', privateKey: 'private-test-key' });
     const raw = accounts.db.prepare('SELECT value FROM credentials').get().value;
     assert.equal(raw.includes('private-test-token'), false);
     assert.equal(raw.includes('private-test-key'), false);
@@ -242,7 +242,7 @@ test('account IDs persist, owner reservations resolve exact subjects, conflictin
     const survivor = accounts.merge(discord.id, plex.id, discord.id);
     assert.equal(survivor, discord.id);
     assert.equal(accounts.canonical(plex.id).id, survivor);
-    assert.equal(accounts.credential('101').token, 'private-test-token');
+    assert.equal(accounts.credential('plex', '101').token, 'private-test-token');
     assert.equal(accounts.canonical(survivor).revision, 1);
     const reserved = accounts.assign(accounts.preview('456', '102'), discord.id);
     assert.equal(accounts.resolve('plex', '102', 'Bob').id, reserved);
@@ -809,7 +809,7 @@ test(
       'the old cookie cannot be replayed',
     );
     assert.equal(f.app.registry.summary(account.id).identities.length, 2);
-    assert.ok(f.app.registry.credential('101'));
+    assert.ok(f.app.registry.credential('plex', '101'));
     await host.plex('alice');
     assert.equal((await host.request('/api/account')).body.account.id, account.id);
     const bobCsrf = (await bob.request('/api/watch/me')).body.csrf;
@@ -853,7 +853,7 @@ test(
       assert.equal(app.registry.db.prepare('SELECT COUNT(*) AS n FROM browser_logins').get().n, 0);
       const account = app.registry.resolve('discord', config.ownerId, 'Owner');
       app.registry.link(account.id, 'plex', '101', 'Fixture Plex');
-      app.registry.credential('101', { token: 'private-restore-plex' });
+      app.registry.credential('plex', '101', { token: 'private-restore-plex' });
       const store = require('../server/storage').loginStore(
         JSON.stringify([config.publicUrl, config.ownerId, config.guildId, config.clientId]),
         app.registry.vault,
@@ -916,7 +916,7 @@ test(
           'matched restore rolls back later state changes',
         );
         assert.equal(restored.registry.identity('plex', '101').verified, 1);
-        assert.equal(restored.registry.credential('101').token, 'private-restore-plex');
+        assert.equal(restored.registry.credential('plex', '101').token, 'private-restore-plex');
         assert.equal(new RoomStore(restored.registry).get(savedRoom.id).creatorId, account.id);
         assert.equal(
           restored.registry.db.prepare('SELECT mediaId FROM watch_queue_entries WHERE roomId=?').get(savedRoom.id)
@@ -1047,7 +1047,7 @@ test(
     const b = (await bob.request('/api/account')).body.account;
     assert.equal(b.identities.length, 1);
     assert.equal(b.identities[0].provider, 'plex');
-    const stored = f.app.registry.credential('102');
+    const stored = f.app.registry.credential('plex', '102');
     assert.equal(stored.authType, 'traditional');
     assert.equal(stored.privateKey, undefined);
     assert.equal(stored.expires, undefined);
@@ -1219,8 +1219,8 @@ test(
       account.identities.map(i => i.provider),
       ['discord'],
     );
-    assert.equal(f.app.registry.hasCredential('101'), false);
-    assert.equal(f.app.registry.credentialCache.has('101'), false);
+    assert.equal(f.app.registry.hasCredential('plex', '101'), false);
+    assert.equal(f.app.registry.credentialCache.has(JSON.stringify(['plex', '101'])), false);
     assert.equal((await other.request('/api/watch/me')).status, 401, 'other browsers are revoked');
     assert.equal(
       (await browser.request('/api/watch/me', undefined, { Authorization: 'Bearer ' + activity.token })).status,
@@ -1274,15 +1274,15 @@ test(
     );
     assert.equal(f.app.registry.identities(account.id).length, 2);
     f.provider.revoked.delete('101');
-    const credential = f.app.registry.credential('101');
+    const credential = f.app.registry.credential('plex', '101');
     f.app.registry.db.prepare('DELETE FROM credentials WHERE subject=?').run('101');
-    f.app.registry.credentialCache.delete('101');
+    f.app.registry.credentialCache.delete(JSON.stringify(['plex', '101']));
     assert.equal(
       (await browser.post('/api/account/discord/remove', { subject: f.provider.subjects.guest })).status,
       400,
       'a verified Plex link without a stored credential is not a usable login',
     );
-    f.app.registry.credential('101', credential);
+    f.app.registry.credential('plex', '101', credential);
     const verify = f.app.plexAuth.forUser.bind(f.app.plexAuth);
     f.app.plexAuth.forUser = async id => {
       const result = await verify(id);
@@ -1384,7 +1384,7 @@ test(
     assert.equal(preview.status, 200);
     const assigned = await owner.post('/api/account/admin/assign', { id: preview.body.id });
     assert.equal(assigned.status, 200);
-    assert.equal(f.app.registry.credential('102'), undefined);
+    assert.equal(f.app.registry.credential('plex', '102'), undefined);
     const notMember = f.browser();
     assert.equal(
       (await notMember.discord('guest2')).status,
@@ -1570,7 +1570,7 @@ test('PlexAuth and administrator identity lookups ignore unverified assigned ide
   assert.equal(accounts.identity('discord', '123456789012345678').verified, 0);
 
   const plexUser = accounts.resolve('plex', '101', 'Assigned Plex', false);
-  accounts.credential('101', { token: 'fixture-token' });
+  accounts.credential('plex', '101', { token: 'fixture-token' });
   assert.equal(accounts.identity('plex', '101').verified, 0);
 
   const plexAuth = new PlexAuth({}, accounts, { scoped: (token, clientId) => ({ token, clientId }) });

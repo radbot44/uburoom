@@ -212,7 +212,7 @@ test('matched offline SQLite and original-key backup restores UUIDs, credentials
   const vault = credentialVault(key);
   const accounts = new Accounts(file, vault),
     user = accounts.resolve('plex', '101', 'Alice');
-  accounts.credential('101', { token: 'private-restore-fixture' });
+  accounts.credential('plex', '101', { token: 'private-restore-fixture' });
   const logins = loginStore('baseline', vault, accounts);
   logins.logins.set('b'.repeat(64), {
     userId: user.id,
@@ -234,7 +234,7 @@ test('matched offline SQLite and original-key backup restores UUIDs, credentials
   try {
     assert.equal(restored.db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
     assert.equal(restored.identity('plex', '101').userId, user.id);
-    assert.equal(restored.credential('101').token, 'private-restore-fixture');
+    assert.equal(restored.credential('plex', '101').token, 'private-restore-fixture');
     assert.equal(
       loginStore('baseline', restored.vault, restored).logins.get('b'.repeat(64)).oauth.refreshToken,
       'private-login-fixture',
@@ -434,7 +434,7 @@ for (const proof of ['credentials', 'expired-oauth', 'canary-only']) {
       ...(proof === 'expired-oauth' ? { oauth: { refreshToken: 'fixture-private-token' } } : {}),
     });
     await store.save();
-    if (proof === 'credentials') accounts.credential('101', { token: 'fixture-private-token' });
+    if (proof === 'credentials') accounts.credential('plex', '101', { token: 'fixture-private-token' });
     if (proof !== 'canary-only') accounts.db.exec("DELETE FROM meta WHERE key='credentialKeyCanary'");
     accounts.db
       .prepare('INSERT INTO audit(at,actor,action,detail) VALUES(?,?,?,?)')
@@ -468,7 +468,7 @@ for (const proof of ['credentials', 'expired-oauth', 'canary-only']) {
 test('the canary never hides a damaged credential or expired OAuth envelope under the correct key', async t => {
   const { file, vault } = fixture(t);
   const accounts = new Accounts(file, vault);
-  accounts.credential('101', { token: 'fixture' });
+  accounts.credential('plex', '101', { token: 'fixture' });
   accounts.db
     .prepare('INSERT INTO browser_logins VALUES(?,?)')
     .run('expired', JSON.stringify({ expires: 1, oauth: vault.seal({ refreshToken: 'fixture' }) }));

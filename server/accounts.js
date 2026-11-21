@@ -54,6 +54,8 @@ function credentialVault(file) {
   };
 }
 
+const credentialKey = (provider, subject) => JSON.stringify([provider, subject]);
+
 function displayName(value) {
   if (typeof value !== 'string') throw new Error('Invalid display name');
   const name = value.trim().normalize('NFC');
@@ -234,16 +236,16 @@ class Accounts {
     if (!identities.some(i => i.provider === provider && i.subject === subject))
       throw new Error('Account connection changed; open Account again');
     const remaining = identities.find(
-      i => i.provider !== provider && i.verified && (i.provider !== 'plex' || this.hasCredential(i.subject)),
+      i => i.provider !== provider && i.verified && (i.provider !== 'plex' || this.hasCredential('plex', i.subject)),
     );
     if (!remaining) throw new Error('Connect another sign-in method before removing this account');
     this.transaction(() => {
       repositories(this.db).accounts.deleteIdentitiesByUserIdProviderSubject(user.id, provider, subject);
-      if (provider === 'plex') repositories(this.db).accounts.deleteCredentialsBySubject(subject);
+      repositories(this.db).accounts.deleteCredential(provider, subject);
       repositories(this.db).accounts.updateUsersSetRevisionById(user.id);
       this.audit(user.id, 'self-unlink', { provider, subject });
     });
-    if (provider === 'plex') this.credentialCache.delete(subject);
+    this.credentialCache.delete(credentialKey(provider, subject));
     return this.canonical(user.id);
   }
   merge(survivor, retired, actor, action = 'self-merge', verifiedIdentity) {
@@ -323,7 +325,7 @@ class Accounts {
         identities: this.identities(user.id).map(i => ({
           ...i,
           authenticated: !!i.verified,
-          credentialStored: i.provider === 'plex' && !!this.credential(i.subject),
+          credentialStored: i.provider === 'plex' && !!this.credential('plex', i.subject),
         })),
       }
     );
@@ -333,21 +335,36 @@ class Accounts {
       .accounts.listUsersByRetiredInto()
       .map(u => this.summary(u.id));
   }
-  hasCredential(subject) {
-    return !!repositories(this.db).accounts.hasCredential(subject);
+  /**
+   * Whether a provider credential is stored for this verified subject.
+   * @param {string} provider
+   * @param {string} subject
+   */
+  hasCredential(provider, subject) {
+    return !!repositories(this.db).accounts.hasCredential(provider, String(subject));
   }
-  credential(subject, value) {
-    if (value !== undefined && JSON.stringify(this.credentialCache.get(subject)) !== JSON.stringify(value)) {
-      repositories(this.db).accounts.insertCredentials(subject, JSON.stringify(this.vault.seal(value)));
-      this.credentialCache.set(subject, structuredClone(value));
+  /**
+   * Reads, or with `value` stores, the encrypted credential of one provider subject.
+   * Credentials are keyed by provider and subject: the same subject string under two
+   * providers is two different people.
+   * @param {string} provider
+   * @param {string} subject
+   * @param {any} [value]
+   */
+  credential(provider, subject, value) {
+    subject = String(subject);
+    const key = credentialKey(provider, subject);
+    if (value !== undefined && JSON.stringify(this.credentialCache.get(key)) !== JSON.stringify(value)) {
+      repositories(this.db).accounts.insertCredentials(provider, subject, JSON.stringify(this.vault.seal(value)));
+      this.credentialCache.set(key, structuredClone(value));
     }
-    if (this.credentialCache.has(subject)) return structuredClone(this.credentialCache.get(subject));
-    const row = repositories(this.db).accounts.findCredential(subject);
+    if (this.credentialCache.has(key)) return structuredClone(this.credentialCache.get(key));
+    const row = repositories(this.db).accounts.findCredential(provider, subject);
     if (!row) return;
     const envelope = JSON.parse(row.value);
     if (envelope.encrypted !== 1) throw new Error('Invalid encrypted credential record');
     const decoded = this.vault.open(envelope);
-    this.credentialCache.set(subject, decoded);
+    this.credentialCache.set(key, decoded);
     return structuredClone(decoded);
   }
   meta(key, value) {

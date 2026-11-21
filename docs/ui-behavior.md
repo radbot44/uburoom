@@ -2,6 +2,13 @@
 
 This reference holds owner-approved, feature-specific UI decisions moved from the [design guide](design-guide.md). Consult only the relevant section for the surface being changed. These decisions are not permission to redesign unrelated surfaces; common controls, tokens, focus, layout and feedback principles remain in the design guide.
 
+## uburoom accounts
+
+- **Server settings → Accounts:** a fourth tab after Transcoding. Unlike the other tabs it saves nothing for a restart: each action applies at once, and it works even when saved settings can't load. A hint says so. Username and Display name (optional, "Same as username") with Add account, then one row per account: name, username and status (Active, Waiting for password with the link's expiry, Disabled), with New link and Disable, or Enable when disabled.
+- **The link:** shown once, in a bordered box under the form, after Add account or New link: "Send this link to Name. It works once, until <time>. It won't be shown again.", a selected read-only field and Copy link. Closing the dialog forgets it.
+- **Set-password page** (`/account/password`): the hand-off page card: "Set your password" (or "Choose a new password" for a recovery link), "For Name (username).", New password, Confirm password, "At least 10 characters.", Set password, then it opens uburoom signed in. A used or expired link shows only its message and Back to uburoom.
+- **Sign-in form** (`web/account-sign-in.js`): Username, Password and Sign in in the entry form style, with one error line ("Wrong username or password", or the rate-limit message). It is a component for the entry page, which decides when to show it.
+
 ## Watch nights
 
 A watch night is a room with a time on it: every event belongs to one saved room, and choosing media stays in the room's queue, never in the scheduler.

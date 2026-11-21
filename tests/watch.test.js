@@ -21,7 +21,7 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
     options: () => ({ available: true }),
   };
   const { watch, registry, actor, open } = liveWatch(hub, { stop: async () => {} });
-  registry.credential('guest-plex', { token: 'guest-token', clientId: 'fixture' });
+  registry.credential('plex', 'guest-plex', { token: 'guest-token', clientId: 'fixture' });
   const host = actor('host'),
     guest = { userId: registry.resolve('plex', 'guest-plex', 'guest').id, name: 'guest' },
     room = await open(host),

@@ -533,7 +533,9 @@ test('doctor validates database schema, envelope authentication, and cert-key pa
   const db2 = new DatabaseSync(dbFile);
   initializeSchema(db2);
   const sealed = vault.seal({ secret: 'supersecret' });
-  db2.prepare('INSERT INTO credentials(subject, value) VALUES (?, ?)').run('test-user', JSON.stringify(sealed));
+  db2
+    .prepare('INSERT INTO credentials(provider, subject, value) VALUES (?, ?, ?)')
+    .run('plex', 'test-user', JSON.stringify(sealed));
   db2.close();
 
   // Test matching key

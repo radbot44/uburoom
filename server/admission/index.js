@@ -29,14 +29,16 @@ class Admission {
    * @param {{list?: any[]}} [sources] - The media providers; those named in `sourceMembers` that have
    *   `members` vouch for their members.
    * @param {() => any} [discordAccess] - The live Discord membership view.
-   * @param {{logger?: any, guests?: {admits(roomId: string, userId: string): boolean}}} [services]
+   * @param {{logger?: any, guests?: {admits(roomId: string, userId: string): boolean},
+   *   accounts?: {admits(userId: string): boolean}}} [services] - `accounts` is uburoom's own accounts
+   *   (server/identity/accounts.js); without it, a verified uburoom identity is the answer.
    */
   constructor(
     config,
     registry,
     sources,
     discordAccess = () => undefined,
-    { logger = silentLogger, guests = noGuests } = {},
+    { logger = silentLogger, guests = noGuests, accounts } = {},
   ) {
     this.logger = logger;
     this.guests = guests;
@@ -45,6 +47,7 @@ class Admission {
     this.registry = registry;
     this.sources = sources;
     this.discordAccess = discordAccess;
+    this.accounts = accounts;
     this.password = new ServerPassword(this.settings?.password ? config.serverPassword : '', registry);
     this.allowed = new Map();
     this.confirmed = new Map();
@@ -121,8 +124,12 @@ class Admission {
       this.registry.isGuest(account.id)
     )
       return true;
-    // uburoom's own accounts.
-    if (this.settings.accounts && identities.some(identity => identity.provider === 'uburoom')) return true;
+    // uburoom's own accounts: enabled, with a password, signed in as that account.
+    if (
+      this.settings.accounts &&
+      (this.accounts ? this.accounts.admits(account.id) : identities.some(identity => identity.provider === 'uburoom'))
+    )
+      return true;
     let unanswered = false;
     // Discord server membership; a Discord Activity is always checked against its guild.
     if ((this.settings.discordServer || context?.activity === true) && discord) {
