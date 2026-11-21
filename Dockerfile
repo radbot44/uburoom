@@ -49,7 +49,10 @@ USER node
 
 EXPOSE 5756
 
+# During first-run setup there is no config yet: the defaults (5756, HTTPS) reach setup's own /health.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD node -e "let port = 5756, listen = 'https'; try { ({ port, listen } = require('./server/config').loadConfig('/config/config.yaml', [])); } catch {} const client = require(listen === 'http-proxy' ? 'node:http' : 'node:https'); const req = client.request({ host: '127.0.0.1', port, path: '/health', method: 'GET', rejectUnauthorized: false }, res => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.end();"
 
-CMD ["node", "server/index.js", "--config", "/config/config.yaml"]
+# With no /config/config.yaml, uburoom starts first-run setup: open https://<host>:5756/setup with the
+# code from `docker logs uburoom`. --setup-host lets setup answer through the published port (over HTTPS).
+CMD ["node", "server/index.js", "--config", "/config/config.yaml", "--setup-host", "0.0.0.0"]

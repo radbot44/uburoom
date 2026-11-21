@@ -7,28 +7,24 @@ This guide explains how to containerize and run uburoom using Docker and Docker 
 ## Prerequisites
 
 - [Docker Engine](https://docs.docker.com/engine/install/) and [Docker Compose](https://docs.docker.com/compose/) (v2+), or Docker Desktop on Windows/macOS.
-- An authorized Plex token and reachable Plex Media Server.
-- A local TLS certificate and private key (uburoom requires HTTPS even behind a reverse proxy).
+- A media source the container can reach: a Plex or Jellyfin server, or folders mounted into the container.
 
 ---
 
 ## Directory Setup
 
-Create a working directory for your uburoom instance or use the root of your repository clone. Ensure the following files and directories exist before launching the container:
+Create a working directory for your uburoom instance or use the root of your repository clone. `config/` can start empty: first-run setup writes `config.yaml` and the certificate into it.
 
 ```
 uburoom/
 ├── docker-compose.yml
 ├── config/              → /config in the container (writable)
-│   ├── config.yaml
-│   ├── certs/
-│   │   ├── server-cert.pem
-│   │   └── server-key.pem
-│   └── data/            (created on first start)
+│   ├── config.yaml      (written by first-run setup)
+│   └── data/            (created by setup; holds certs/ and the database)
 └── secrets/             → /var/lib/uburoom
 ```
 
-The container starts with `--config /config/config.yaml`, and relative paths in `config.yaml` resolve beside it, so the default `certs/...` and `data` settings point into `config/`. Mount the **folder**, not a single file: Server settings saves write a new `config.yaml` beside the old one and swap it in, which fails on a read-only or single-file mount.
+The container starts with `--config /config/config.yaml --setup-host 0.0.0.0`, and relative paths in `config.yaml` resolve beside it, so `data` and setup's `data/certs/...` point into `config/`. Mount the **folder**, not a single file: Server settings saves write a new `config.yaml` beside the old one and swap it in, which fails on a read-only or single-file mount.
 
 ### 1. Persistent Data and Secrets
 
@@ -36,7 +32,7 @@ Docker will create directories for missing volume sources if they do not already
 
 ```sh
 # Create the configuration folder (config, certificates, data) and the secrets folder:
-mkdir -p config/certs secrets
+mkdir -p config secrets
 
 # Grant ownership to the container's non-root user (UID/GID 1000) and keep both private:
 chown -R 1000:1000 config secrets
@@ -47,36 +43,37 @@ chmod 700 config secrets
 > **Preserve `secrets/` and `config/`:**
 > `credentials.key` is a 32-byte encryption key generated automatically on first startup inside `secrets/` (persisted from `/var/lib/uburoom/uburoom/credentials.key`) and used to protect stored provider tokens in `config/data/accounts.sqlite`. If you lose this key, encrypted credentials cannot be decrypted and will need to be re-authenticated. Back up `secrets/` and `config/` together.
 
-### 2. TLS Certificates
+### 2. First run
 
-uburoom requires TLS certificates to establish an HTTPS listener. Place your PEM-formatted certificate and private key in the `config/certs/` folder:
-
-- `config/certs/server-cert.pem`
-- `config/certs/server-key.pem`
-
-If testing locally without a public domain, you can generate self-signed certificates using `mkcert` or OpenSSL:
+Start the container (see [Managing the Container](#managing-the-container)) with the empty `config/` folder. With no `config.yaml`, uburoom starts first-run setup:
 
 ```sh
-openssl req -x509 -newkey rsa:2048 -nodes \
-  -keyout config/certs/server-key.pem \
-  -out config/certs/server-cert.pem \
-  -days 365 \
-  -subj "/CN=localhost"
+docker compose up -d
+docker logs uburoom    # shows the setup code
 ```
 
-On Linux hosts, ensure both PEM files are readable by UID `1000` (for example, `chown 1000:1000 config/certs/*.pem && chmod 600 config/certs/server-key.pem`).
+Open `https://<this computer's address>:5756/setup` and enter the code. Setup is served over HTTPS with a certificate made when it starts, so the browser warns once. The wizard writes `config/config.yaml` and a self-signed certificate in `config/data/certs/`, then uburoom starts in the same container on the port you chose (keep it `5756`, or publish the new one). In the container, **This computer** still listens on every interface so the published port reaches it. The container's health check reaches setup's `/health` during setup. See [first-run setup](self-hosting.md#first-run-setup).
 
 ---
 
-## Configuration (`config.yaml`)
+## Configuration by hand (`config.yaml`)
 
-Copy `config.example.yaml` to `config/config.yaml`:
+Instead of first-run setup, you can write the config yourself. Copy `config.example.yaml` to `config/config.yaml`:
 
 ```sh
 cp config.example.yaml config/config.yaml
 ```
 
 On Linux hosts, ensure `config.yaml` is readable and writable by UID `1000` while keeping it restricted from other host users (for example, `chown 1000:1000 config/config.yaml && chmod 600 config/config.yaml`).
+
+A hand-written config also needs a certificate and key for `server.tls_cert` and `server.tls_key` (unless `server.listen` is `http-proxy`), for example a self-signed pair for a local test:
+
+```sh
+mkdir -p config/certs
+openssl req -x509 -newkey rsa:2048 -nodes   -keyout config/certs/server-key.pem   -out config/certs/server-cert.pem   -days 365   -subj "/CN=localhost"
+```
+
+On Linux hosts, ensure both PEM files are readable by UID `1000` (for example, `chown 1000:1000 config/certs/*.pem && chmod 600 config/certs/server-key.pem`).
 
 Key configuration adjustments for Docker deployments:
 
