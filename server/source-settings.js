@@ -41,12 +41,32 @@ function summarize(checks) {
 
 /**
  * @param {{config: any, registry: any, editor?: ReturnType<typeof import('./config-editor').createConfigEditor>,
- *   sessions: any, plexFetch?: typeof fetch, jellyfinFetch?: typeof fetch, plexTv?: any, platform?: string}} services
+ *   sessions: any, plexFetch?: typeof fetch, jellyfinFetch?: typeof fetch, jellyfinDiscover?: () => Promise<any[]>,
+ *   plexTv?: any, platform?: string}} services
  */
-function sourceSettings({ config, registry, editor, sessions, plexFetch, jellyfinFetch, plexTv, platform }) {
+function sourceSettings({
+  config,
+  registry,
+  editor,
+  sessions,
+  plexFetch,
+  jellyfinFetch,
+  jellyfinDiscover,
+  plexTv,
+  platform,
+}) {
   const { json, body, cookies, logins, user, protectedPost, validIdentity } = sessions;
   const tools = { plexFetch: plexFetch || fetch, jellyfinFetch: jellyfinFetch || fetch };
-  const stepServices = { ...tools, plexTv, publicUrl: config.publicUrl, platform: platform || process.platform };
+  // `config.publicUrl` is read when a step runs: a test server learns its port after startup.
+  const stepServices = {
+    ...tools,
+    plexTv,
+    platform: platform || process.platform,
+    ...(jellyfinDiscover ? { discover: jellyfinDiscover } : {}),
+    get publicUrl() {
+      return config.publicUrl;
+    },
+  };
   /** @type {Map<string, {userId: string, type: string, expires: number, state: any}>} */
   const flows = new Map();
 

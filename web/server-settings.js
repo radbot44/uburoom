@@ -3,6 +3,7 @@ import * as uburoomControls from './watch-controls.js';
 import * as uburoomDialogs from './watch-dialogs.js';
 import * as uburoomIcons from './icons.js';
 import * as uburoomServerAccounts from './server-settings-accounts.js';
+import * as uburoomServerSources from './server-settings-sources.js';
 
 function mount({ request, trigger }) {
   const popups = uburoomDialogs,
@@ -96,14 +97,16 @@ function mount({ request, trigger }) {
     conflicts.clear();
     busy = saving = false;
     accountsPanel.reset();
+    sourcesPanel.reset();
   });
   function state() {
     save.disabled = busy || !revision || !dirty() || conflicts.size > 0;
     cancel.disabled = close.disabled = saving;
     save.setAttribute('aria-busy', String(saving));
-    // Accounts act at once and keep their own busy state; only the saved-settings fields wait for a draft.
+    // Accounts and Sources act at once and keep their own busy state; only the saved-settings fields wait for a draft.
     for (const control of content.querySelectorAll('input,select,button'))
-      if (!panels.accounts.contains(control)) control.disabled = busy || !draft || control.dataset.fixed === 'true';
+      if (!panels.accounts.contains(control) && !panels.sources.contains(control))
+        control.disabled = busy || !draft || control.dataset.fixed === 'true';
     for (const item of permissionControls) {
       const own = draft?.[item.key]?.includes(item.cap),
         inherited = item.role === 'host' && draft?.['rooms.viewer_permissions']?.includes(item.cap);
@@ -124,9 +127,10 @@ function mount({ request, trigger }) {
   function selectSection(key) {
     if (section !== key) content.scrollTop = 0;
     if (key === 'accounts' && section !== key && dialog.open) void accountsPanel.load();
+    if (key === 'sources' && section !== key && dialog.open) void sourcesPanel.load();
     section = key;
-    // Accounts do not depend on the saved settings, so they show even before (or without) them.
-    if (key === 'accounts') content.hidden = false;
+    // Accounts and Sources do not depend on the saved settings, so they show even before (or without) them.
+    if (key === 'accounts' || key === 'sources') content.hidden = false;
     else if (!draft) content.hidden = true;
     for (const name of Object.keys(panels)) {
       panels[name].hidden = name !== key;
@@ -138,6 +142,7 @@ function mount({ request, trigger }) {
     ['rooms', 'Rooms'],
     ['directory', 'Directory'],
     ['transcoding', 'Transcoding'],
+    ['sources', 'Sources'],
     ['accounts', 'Accounts'],
   ]) {
     const button = node('button', nav, label, 'quiet');
@@ -209,6 +214,7 @@ function mount({ request, trigger }) {
     return input;
   }
   const accountsPanel = uburoomServerAccounts.mount(panels.accounts, { request });
+  const sourcesPanel = uburoomServerSources.mount(panels.sources, { request });
   const capacity = node('div', panels.rooms, null, 'server-settings-grid');
   for (const [name, label] of [
     ['max_saved', 'Saved rooms limit'],

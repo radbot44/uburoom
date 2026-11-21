@@ -85,6 +85,8 @@ function createApp(config, options = {}) {
     authorizeUrl = 'https://discord.com/oauth2/authorize',
     plexFetch = fetch,
     jellyfinFetch = fetch,
+    // Tests and fixtures answer "who runs Jellyfin?" themselves rather than broadcasting on the network.
+    jellyfinDiscover,
     plexDemo,
   } = options;
   const logger = options.logger || silentLogger;
@@ -159,7 +161,7 @@ function createApp(config, options = {}) {
     });
     // Server settings → Sources: saved to config.yaml, applied after a restart.
     const sourceSettingsHttp = sourceSettings({
-      ...{ config, registry, editor, sessions, plexFetch, jellyfinFetch, plexTv: plexIdentity },
+      ...{ config, registry, editor, sessions, plexFetch, jellyfinFetch, jellyfinDiscover, plexTv: plexIdentity },
     });
     const route = createRoutes({
       ...{ config, registry, accounts, sessions, access, hub, rooms, files, signIn, setOwnerName },
