@@ -67,10 +67,11 @@ Filled in automatically from the URL fragment, otherwise typed. One line explain
 
 ### 3. Media sources
 
-A list of added sources, each with a remove button, and three add buttons: **Add Plex**, **Add Jellyfin**, **Add a folder**. Next is enabled once at least one source is added. Each add flow is the source module's `connect` ([media sources](media-sources.md)):
+A list of added sources, each with **Edit** (rename, switch libraries on or off) and remove buttons, and three add buttons: **Add Plex**, **Add Jellyfin**, **Add a folder**. Next is enabled once at least one source is added. Each add flow is the source module's `connect` ([media sources](media-sources.md)):
 
 - **Plex:** uses the Plex sign-in from step 2, or asks for one. Lists the account's servers; tests each server's connections from the uburoom machine (local first, never relay) against its `/identity`; unreachable servers are shown disabled with the reason. A manual address field is the fallback. The account does not have to own the server.
 - **Jellyfin:** lists servers found on the network, with a manual address field. Then a Jellyfin administrator signs in once, with username and password or the Quick Connect code shown; uburoom creates its own API key and keeps no password. Last, pick the Jellyfin user whose libraries are offered.
+- **Libraries (owner request, 2026-11-21):** adding or editing a Plex or Jellyfin source shows its libraries with on/off checkboxes and item counts, saved as the source's `libraries:` list. Libraries added to that server later start off.
 - **Folders:** a folder browser listing directories on the uburoom machine (setup-session only; in Docker, the container's mounted paths). Then a name and Movies or Shows.
 
 ### 4. Who can get in
@@ -83,7 +84,7 @@ One checkbox per entry rule, with a one-line hint each:
 | Anyone who knows the server password (shows a password field when ticked) | Off |
 | uburoom accounts you create | On |
 | Guests with a room invite | On |
-| Members of your Discord server | Shown disabled: "Set up Discord in Server settings after setup" |
+| Members of your Discord server (when ticked, shows setup: create an application in the Discord Developer Portal, add the redirect URL, paste Application ID, client secret and bot token, add the bot to a server, then pick the server) | Off |
 
 ### 5. Where will people watch?
 
@@ -92,7 +93,7 @@ One checkbox per entry rule, with a one-line hint each:
 | This computer | `server.host: '127.0.0.1'`, `public_url: https://localhost:5756` | Self-signed for `localhost` |
 | My home network | `server.host: '0.0.0.0'`, `public_url` set to the detected LAN address | Self-signed covering `localhost` and that address; the page says viewers will see a one-time warning |
 
-Internet access isn't a choice here; a line links to the remote access guide. Certificates go in the data folder, and their paths are written to `server.tls_cert` and `server.tls_key`.
+A **Port** field (default 5756) sets `server.port`, and the addresses shown use it. Internet access isn't a choice here; a line links to the remote access guide. Certificates go in the data folder, and their paths are written to `server.tls_cert` and `server.tls_key`.
 
 ### 6. Check and finish
 
