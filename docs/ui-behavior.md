@@ -36,6 +36,10 @@ A watch night is a room with a time on it: every event belongs to one saved room
 - **Full Player settings:** More settings opens Playback. Subtitle sync opens Subtitles at the delay control, and the Video check toast opens Media information at the check. Section navigation stays visible while its content scrolls. The phone lobby shows only Notifications.
 - **Subtitle sync:** Player settings provides `−0.5 s`, a numeric input (`±30 s`, `0.1 s` step), `+0.5 s` and `Reset`, saved client-side per media item and track, with a "Subtitle sync" link from the desktop player settings menu. Keyboard adjustments (`G`, `H`, `\`) show a single coalesced toast; **Burn-in** disables the offset controls while preserving the saved non-burn offset.
 
+## Activity sharing
+
+- Player settings → Activity sharing shows two switches to viewers with their own sign-in on the video's media server (Plex or Jellyfin), worded for any server (owner-approved 2026-11-21): **Show what I'm watching on my media server** (on by default) and **Sync my watch progress to my account** (opt-in; resume points and watched marks). Jellyfin has no activity-only mode: it reports only while both are on.
+
 ## Picture-in-Picture
 
 - The button sits beside Theater and Fullscreen (in Player settings on phones) and answers the `P` key.
