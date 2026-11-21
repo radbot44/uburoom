@@ -166,8 +166,11 @@ test(
     const { local, art } = setup(t, { 'Clip.mp4': clip });
     const [item] = (await local.browse({ section: 'film' })).items;
     await local.artwork(item.id, 'landscape');
-    // The frame is the larger of the two files; a busy test pattern is far larger as a JPEG than black or plain red.
-    const sizes = fs.readdirSync(art).map(name => fs.statSync(path.join(art, name)).size);
+    // The busy frame is larger than a flat one. Concurrent writes only publish their JPEG after renaming the temp file.
+    const sizes = fs
+      .readdirSync(art)
+      .filter(name => name.endsWith('.jpg'))
+      .map(name => fs.statSync(path.join(art, name)).size);
     assert.ok(Math.max(...sizes) > 20000, 'saved sizes ' + sizes.join(', '));
   },
 );

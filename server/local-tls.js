@@ -66,9 +66,9 @@ function createCertificate({ dnsNames = ['localhost'], ipAddresses = [], commonN
   );
   // Version: v3 [0] EXPLICIT INTEGER 2
   const version = derWrap(0xa0, derWrap(0x02, Buffer.from([0x02])));
-  // Serial Number: random 16 bytes positive integer
+  // Keep the sign bit clear and the first byte nonzero for a canonical 16-byte DER integer.
   const serialBytes = crypto.randomBytes(16);
-  serialBytes[0] &= 0x7f;
+  serialBytes[0] = (serialBytes[0] & 0x3f) | 0x40;
   const serial = derWrap(0x02, serialBytes);
   // Subject/Issuer DN: CN=<commonName>
   const cnAttr = derWrap(
