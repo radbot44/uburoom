@@ -87,6 +87,7 @@ function createApp(config, options = {}) {
     plexFetch = fetch,
     jellyfinFetch = fetch,
     youtubeFetch = fetch,
+    youtubeRunner,
     // Tests and fixtures answer "who runs Jellyfin?" themselves rather than broadcasting on the network.
     jellyfinDiscover,
     plexDemo,
@@ -106,7 +107,17 @@ function createApp(config, options = {}) {
     if (config.demo) plexIdentity.demo = plexDemo;
     // Every configured source, through its type's module; no source is named here.
     const sources = createSources(config.sources || [], {
-      ...{ config, registry, pipeline, logger, plexFetch, jellyfinFetch, youtubeFetch, plexTv: plexIdentity },
+      ...{
+        config,
+        registry,
+        pipeline,
+        logger,
+        plexFetch,
+        jellyfinFetch,
+        youtubeFetch,
+        youtubeRunner,
+        plexTv: plexIdentity,
+      },
     });
     const plexAuth = sources.signIn.plex;
     const providers = new MediaProviders(sources.providers, pipeline);
@@ -171,6 +182,7 @@ function createApp(config, options = {}) {
         plexFetch,
         jellyfinFetch,
         youtubeFetch,
+        youtubeRunner,
         jellyfinDiscover,
         plexTv: plexIdentity,
       },

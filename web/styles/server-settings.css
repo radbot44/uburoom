@@ -304,6 +304,21 @@
   .server-source-add-library {
     margin-top: var(--space-16);
   }
+  .server-source-advanced {
+    margin-top: var(--space-12);
+    padding: var(--space-10) var(--space-12);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+  }
+  .server-source-advanced summary {
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .server-source-advanced-body {
+    display: grid;
+    gap: var(--space-10);
+    margin-top: var(--space-10);
+  }
   .server-source-server {
     display: flex;
     align-items: center;

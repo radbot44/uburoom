@@ -5,10 +5,21 @@ const fsp = require('node:fs').promises;
 const setup = require('./setup');
 const { youtubeProvider, YouTubeMedia } = require('./provider');
 const { checkApiKey } = require('./api');
-const { YouTubeSidecar } = require('./sidecar');
+const { YouTubeCache } = require('./ytdlp');
 
 const CONTROL = /[\u0000-\u001f\u007f]/;
-const DELIVERIES = new Set(['sidecar', 'embed']);
+const DELIVERIES = new Set(['ytdlp', 'embed']);
+const KNOWN_KEYS = new Set([
+  'delivery',
+  'api_key',
+  'yt_dlp',
+  'cache_directory',
+  'max_cache_gb',
+  'max_concurrent',
+  'cookies_file',
+  'po_token_url',
+  'playlist_limit',
+]);
 
 function cleanOptionalText(value, max, label, id) {
   if (value === undefined || value === null) return '';
@@ -18,38 +29,68 @@ function cleanOptionalText(value, max, label, id) {
   return value.trim();
 }
 
+function resolveMaybePath(value, base) {
+  if (!value) return '';
+  if (value.includes('/') || value.includes('\\') || value.startsWith('.')) return path.resolve(base, value);
+  return value;
+}
+
 function validate(settings, context = {}) {
   const id = context.id || 'youtube';
   const base = context.base || process.cwd();
-  const delivery = settings.delivery === undefined ? 'sidecar' : settings.delivery;
+  const dataDir = context.dataDirectory || path.resolve(base, 'data');
+
+  for (const key of Object.keys(settings)) {
+    if (!KNOWN_KEYS.has(key)) {
+      throw new Error(`sources ${id}: unknown youtube setting "${key}"; check config.example.yaml`);
+    }
+  }
+
+  const delivery = settings.delivery === undefined ? 'ytdlp' : settings.delivery;
   if (typeof delivery !== 'string' || !DELIVERIES.has(delivery)) {
-    throw new Error(`sources ${id}: youtube.delivery must be 'sidecar' or 'embed'`);
+    throw new Error(`sources ${id}: youtube.delivery must be 'ytdlp' or 'embed'`);
   }
 
   const apiKey = cleanOptionalText(settings.api_key, 256, 'youtube.api_key', id);
-  const sidecarUrlRaw = cleanOptionalText(settings.sidecar_url, 500, 'youtube.sidecar_url', id);
-  const sidecarToken = cleanOptionalText(settings.sidecar_token, 512, 'youtube.sidecar_token', id);
+  const ytDlpRaw = cleanOptionalText(settings.yt_dlp, 500, 'youtube.yt_dlp', id);
   const cacheDirRaw = cleanOptionalText(settings.cache_directory, 500, 'youtube.cache_directory', id);
+  const cookiesRaw = cleanOptionalText(settings.cookies_file, 500, 'youtube.cookies_file', id);
+  const poTokenRaw = cleanOptionalText(settings.po_token_url, 500, 'youtube.po_token_url', id);
 
-  let sidecarUrl = '';
-  if (sidecarUrlRaw) {
+  let poTokenUrl = '';
+  if (poTokenRaw) {
     let parsed;
     try {
-      parsed = new URL(sidecarUrlRaw);
+      parsed = new URL(poTokenRaw);
     } catch {
-      throw new Error(`sources ${id}: youtube.sidecar_url must be a valid URL`);
+      throw new Error(`sources ${id}: youtube.po_token_url must be a valid URL`);
     }
     if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.username || parsed.password) {
-      throw new Error(`sources ${id}: youtube.sidecar_url must be http:// or https:// without credentials`);
+      throw new Error(`sources ${id}: youtube.po_token_url must be http:// or https:// without credentials`);
     }
-    sidecarUrl = sidecarUrlRaw.replace(/\/+$/, '');
+    poTokenUrl = poTokenRaw.replace(/\/+$/, '');
   }
 
   if (delivery === 'embed' && !apiKey) {
     throw new Error(`sources ${id}: youtube.api_key is required when delivery is 'embed'`);
   }
-  if (delivery === 'sidecar' && !sidecarUrl) {
-    throw new Error(`sources ${id}: youtube.sidecar_url is required when delivery is 'sidecar'`);
+
+  let maxCacheGb = 20;
+  if (settings.max_cache_gb !== undefined) {
+    const n = Number(settings.max_cache_gb);
+    if (!Number.isFinite(n) || n < 0.1 || n > 2000) {
+      throw new Error(`sources ${id}: youtube.max_cache_gb must be a number between 0.1 and 2000`);
+    }
+    maxCacheGb = n;
+  }
+
+  let maxConcurrent = 2;
+  if (settings.max_concurrent !== undefined) {
+    const n = Number(settings.max_concurrent);
+    if (!Number.isInteger(n) || n < 1 || n > 4) {
+      throw new Error(`sources ${id}: youtube.max_concurrent must be an integer between 1 and 4`);
+    }
+    maxConcurrent = n;
   }
 
   let playlistLimit = 50;
@@ -61,8 +102,17 @@ function validate(settings, context = {}) {
     playlistLimit = n;
   }
 
-  const cacheDirectory = cacheDirRaw ? path.resolve(base, cacheDirRaw) : '';
-  return { delivery, apiKey, sidecarUrl, sidecarToken, cacheDirectory, playlistLimit };
+  return {
+    delivery,
+    apiKey,
+    ytDlp: resolveMaybePath(ytDlpRaw, base),
+    cacheDirectory: cacheDirRaw ? path.resolve(base, cacheDirRaw) : path.join(dataDir, 'youtube-cache'),
+    maxCacheGb,
+    maxConcurrent,
+    cookiesFile: cookiesRaw ? path.resolve(base, cookiesRaw) : '',
+    poTokenUrl,
+    playlistLimit,
+  };
 }
 
 function validateAll(entries) {
@@ -75,45 +125,76 @@ function create(entry, services) {
   return youtubeProvider({ source: entry, ...services });
 }
 
-async function check(entry, { youtubeFetch = fetch } = {}) {
+async function check(entry, { youtubeFetch = fetch, youtubeRunner, ffmpeg, ffprobe, platform } = {}) {
   const checks = [];
   const label = entry.name || entry.id;
-  if (entry.delivery === 'sidecar') {
-    if (!entry.sidecarUrl) {
-      checks.push({
-        category: 'Sources',
-        name: `${label} sidecar`,
-        status: 'fail',
-        message: 'Sidecar URL is not set',
-        remediation: 'Set sidecar_url in config.yaml or Server settings.',
-      });
-    } else {
+
+  if (entry.delivery === 'ytdlp') {
+    const cache = new YouTubeCache({
+      cacheDirectory: entry.cacheDirectory,
+      ytDlpPath: entry.ytDlp,
+      ffmpegPath: ffmpeg,
+      ffprobePath: ffprobe,
+      platform: platform || process.platform,
+      runCommand: youtubeRunner,
+    });
+    const tools = await cache.checkTools();
+    checks.push({
+      category: 'Sources',
+      name: `${label} yt-dlp`,
+      status: tools.ok ? 'pass' : 'fail',
+      message: tools.ok ? `yt-dlp ${tools.ytdlp} ready` : tools.error,
+      ...(!tools.ok ? { remediation: 'Install yt-dlp on PATH or set youtube.yt_dlp.' } : {}),
+    });
+    checks.push({
+      category: 'Sources',
+      name: `${label} FFmpeg muxing`,
+      status: tools.ffmpeg ? 'pass' : 'warn',
+      message: tools.ffmpeg
+        ? 'FFmpeg ready for high-bitrate video+audio downloads'
+        : 'FFmpeg not found; falling back to single-stream MP4 downloads',
+      ...(!tools.ffmpeg ? { remediation: 'Install FFmpeg on PATH or set tools.ffmpeg.' } : {}),
+    });
+
+    if (entry.cookiesFile) {
       try {
-        const health = await new YouTubeSidecar({
-          baseUrl: entry.sidecarUrl,
-          token: entry.sidecarToken,
-          fetch: youtubeFetch,
-        }).health();
+        const st = await fsp.stat(entry.cookiesFile);
         checks.push({
           category: 'Sources',
-          name: `${label} sidecar`,
-          status: health?.ok ? 'pass' : 'fail',
-          message: health?.ok
-            ? `Sidecar ready${health.ytdlp ? ` (yt-dlp ${health.ytdlp})` : ''}`
-            : 'Sidecar reported unhealthy',
-          ...(!health?.ok ? { remediation: 'Check the YouTube yt-dlp sidecar process and logs.' } : {}),
+          name: `${label} cookies file`,
+          status: st.isFile() ? 'pass' : 'fail',
+          message: st.isFile() ? entry.cookiesFile : 'Configured cookies path is not a file',
         });
-      } catch (error) {
+      } catch {
         checks.push({
           category: 'Sources',
-          name: `${label} sidecar`,
+          name: `${label} cookies file`,
           status: 'fail',
-          message: error.message || 'Sidecar unreachable',
-          remediation: 'Start the yt-dlp sidecar service and verify sidecar_url and sidecar_token.',
+          message: `Cookies file not found: ${entry.cookiesFile}`,
+        });
+      }
+    }
+
+    if (entry.cacheDirectory) {
+      try {
+        const st = await fsp.lstat(entry.cacheDirectory);
+        checks.push({
+          category: 'Sources',
+          name: `${label} cache directory`,
+          status: st.isDirectory() && !st.isSymbolicLink() ? 'pass' : 'warn',
+          message: st.isDirectory() ? entry.cacheDirectory : 'Cache path is not a plain directory',
+        });
+      } catch {
+        checks.push({
+          category: 'Sources',
+          name: `${label} cache directory`,
+          status: 'pass',
+          message: `Will be created on first download: ${entry.cacheDirectory}`,
         });
       }
     }
   }
+
   if (entry.apiKey) {
     try {
       await checkApiKey({ apiKey: entry.apiKey, fetch: youtubeFetch });
@@ -141,24 +222,7 @@ async function check(entry, { youtubeFetch = fetch } = {}) {
       remediation: 'Set youtube.api_key for embed delivery.',
     });
   }
-  if (entry.cacheDirectory) {
-    try {
-      const st = await fsp.lstat(entry.cacheDirectory);
-      checks.push({
-        category: 'Sources',
-        name: `${label} cache directory`,
-        status: st.isDirectory() && !st.isSymbolicLink() ? 'pass' : 'warn',
-        message: st.isDirectory() ? entry.cacheDirectory : 'Cache path is not a plain directory',
-      });
-    } catch {
-      checks.push({
-        category: 'Sources',
-        name: `${label} cache directory`,
-        status: 'warn',
-        message: `Cache directory does not exist yet: ${entry.cacheDirectory}`,
-      });
-    }
-  }
+
   return checks;
 }
 

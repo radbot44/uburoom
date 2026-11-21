@@ -5,13 +5,13 @@ const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const fsp = fs.promises;
-const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const YAML = require('yaml');
 
 const { parseYouTubeUrl, isAllowedThumbnailUrl } = require('../server/sources/youtube/urls');
 const { parseIsoDuration, fetchVideos, fetchPlaylist, checkApiKey } = require('../server/sources/youtube/api');
+const { YouTubeCache, safeCacheFile } = require('../server/sources/youtube/ytdlp');
 const { YouTubeMedia, YOUTUBE_SERVER } = require('../server/sources/youtube/provider');
 const { validateSources } = require('../server/sources');
 const { loadConfig } = require('../server/config');
@@ -20,9 +20,8 @@ const subtitles = require('../server/subtitles');
 const { fixture } = require('./helpers/account-app');
 
 const VIDEO_BYTES = Buffer.from('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz');
-const VTT_TEXT = 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nSidecar caption line\n';
+const VTT_TEXT = 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nBuilt-in yt-dlp caption\n';
 const SECRET_API_KEY = 'YT_SECRET_KEY_TEST_999';
-const SECRET_SIDECAR_TOKEN = 'SIDECAR_SECRET_TOKEN_999';
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -31,227 +30,107 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
-async function startStubSidecar(t, { token = '', failPrepareIds = new Set(), durationOffset = 0 } = {}) {
-  const ready = new Set();
-  const requests = [];
-  const warmCalls = [];
-  let preparePollCount = 0;
+function makeYoutubeRunner({ failIds = new Set(), durationOffset = 0, delayMs = 15, missingYtDlp = false } = {}) {
+  const calls = [];
+  const downloads = [];
 
-  const srv = http.createServer((req, res) => {
-    const url = new URL(req.url, 'http://127.0.0.1');
-    requests.push({ method: req.method, path: url.pathname, headers: req.headers });
-    if (token && req.headers.authorization !== `Bearer ${token}`) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Unauthorized' }));
-      return;
+  const runner = async (bin, args, options = {}) => {
+    calls.push({ bin, args: [...args], cwd: options.cwd });
+    if (missingYtDlp) {
+      throw Object.assign(new Error('yt-dlp not found'), { status: 500 });
+    }
+    if (bin.toLowerCase().includes('ffprobe')) {
+      const targetFile = args[args.length - 1];
+      const base = path.basename(targetFile, path.extname(targetFile));
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          format: { duration: String(42 + durationOffset) },
+          streams: [
+            { codec_type: 'video', codec_name: 'h264', width: 1280, height: 720 },
+            { codec_type: 'audio', codec_name: 'aac' },
+          ],
+          file: base,
+        }),
+        stderr: '',
+      };
     }
 
-    const chunks = [];
-    req.on('data', c => chunks.push(c));
-    req.on('end', () => {
-      const bodyText = Buffer.concat(chunks).toString('utf8');
-      const body = bodyText ? JSON.parse(bodyText) : {};
+    if (args.includes('--version')) {
+      return { code: 0, stdout: '2026.02.01\n', stderr: '' };
+    }
 
-      if (url.pathname === '/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            ok: true,
-            ytdlp: '2026.02.01',
-            ffmpeg: true,
-            cache: { files: ready.size, bytes: 0, maxBytes: 100000 },
+    if (args.includes('--dump-single-json')) {
+      const sep = args.indexOf('--');
+      assert.ok(sep >= 0 && sep === args.length - 2, 'URL must follow -- separator');
+      const url = args[sep + 1];
+      if (url.includes('playlist?list=')) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            id: 'PLtest123',
+            title: 'Builtin Playlist',
+            channel: 'Playlist Owner',
+            playlist_count: 3,
+            thumbnails: [{ url: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg' }],
+            entries: [
+              { id: 'dQw4w9WgXcQ', title: 'Track One', uploader: 'Chan One', duration: 42 },
+              { id: 'live1234567', title: 'Live Skip', is_live: true, duration: 0 },
+              { id: 'jNQXAC9IVRw', title: 'Track Two', uploader: 'Jawed', duration: 19 },
+            ],
           }),
-        );
-        return;
+          stderr: '',
+        };
       }
-      if (url.pathname === '/recent') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            items: [...ready].map(id => ({
-              id,
-              status: 'ready',
-              title: `Cached ${id}`,
-              channelTitle: 'Cached Channel',
-              duration: 42,
-              size: VIDEO_BYTES.length,
-              filename: `${id}.mp4`,
-              container: 'mp4',
-              videoCodec: 'h264',
-              audioCodec: 'aac',
-              mtimeMs: 1700000000000,
-              thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
-            })),
-          }),
-        );
-        return;
-      }
-      if (url.pathname === '/metadata' && req.method === 'POST') {
-        if (String(body.url).includes('playlist?list=')) {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(
-            JSON.stringify({
-              kind: 'playlist',
-              id: 'PLtest123',
-              title: 'Sidecar Playlist',
-              channelTitle: 'Playlist Owner',
-              itemCount: 2,
-              items: [
-                {
-                  id: 'dQw4w9WgXcQ',
-                  title: 'Track One',
-                  channelTitle: 'Chan One',
-                  duration: 42,
-                  thumbnailUrl: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
-                },
-                {
-                  id: 'jNQXAC9IVRw',
-                  title: 'Track Two',
-                  channelTitle: 'Jawed',
-                  duration: 19,
-                  thumbnailUrl: 'https://i.ytimg.com/vi/jNQXAC9IVRw/hqdefault.jpg',
-                },
-              ],
-            }),
-          );
-          return;
-        }
-        const match = /v=([A-Za-z0-9_-]{11})/.exec(String(body.url || ''));
-        const vid = match ? match[1] : 'dQw4w9WgXcQ';
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            kind: 'video',
-            video: {
-              id: vid,
-              title: `Video ${vid}`,
-              channelTitle: 'Demo Creator',
-              duration: 42,
-              thumbnailUrl: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
-            },
-          }),
-        );
-        return;
-      }
-      if (url.pathname === '/warm' && req.method === 'POST') {
-        warmCalls.push(body.items || []);
-        for (const item of body.items || []) ready.add(item.id);
-        res.writeHead(202, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ queued: (body.items || []).map(x => x.id) }));
-        return;
-      }
-      if (url.pathname === '/prepare' && req.method === 'POST') {
-        const id = body.id;
-        if (failPrepareIds.has(id)) {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ id, status: 'failed', error: 'Video blocked' }));
-          return;
-        }
-        if (!ready.has(id)) {
-          preparePollCount++;
-          res.writeHead(202, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ id, status: 'preparing' }));
-          setTimeout(() => ready.add(id), 40).unref?.();
-          return;
-        }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            id,
-            status: 'ready',
-            title: `Video ${id}`,
-            channelTitle: 'Demo Creator',
-            duration: 42 + durationOffset,
-            size: VIDEO_BYTES.length,
-            filename: `${id}.mp4`,
-            container: 'mp4',
-            videoCodec: 'h264',
-            audioCodec: 'aac',
-            width: 1280,
-            height: 720,
-            mtimeMs: 1700000000000,
-            thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
-            subtitles: [{ id: 'en', language: 'en', label: 'EN', format: 'vtt' }],
-          }),
-        );
-        return;
-      }
-      if (url.pathname.startsWith('/status/')) {
-        const id = decodeURIComponent(url.pathname.slice('/status/'.length));
-        if (!ready.has(id)) {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ id, status: 'preparing' }));
-          return;
-        }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            id,
-            status: 'ready',
-            title: `Video ${id}`,
-            channelTitle: 'Demo Creator',
-            duration: 42 + durationOffset,
-            size: VIDEO_BYTES.length,
-            filename: `${id}.mp4`,
-            container: 'mp4',
-            videoCodec: 'h264',
-            audioCodec: 'aac',
-            width: 1280,
-            height: 720,
-            mtimeMs: 1700000000000,
-            thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
-            subtitles: [{ id: 'en', language: 'en', label: 'EN', format: 'vtt' }],
-          }),
-        );
-        return;
-      }
-      if (url.pathname.startsWith('/files/')) {
-        const range = req.headers.range;
-        if (range) {
-          const m = /^bytes=(\d+)-(\d*)$/.exec(range);
-          const start = Number(m[1]);
-          const end = m[2] ? Math.min(VIDEO_BYTES.length - 1, Number(m[2])) : VIDEO_BYTES.length - 1;
-          const slice = VIDEO_BYTES.subarray(start, end + 1);
-          res.writeHead(206, {
-            'Content-Type': 'video/mp4',
-            'Content-Length': String(slice.length),
-            'Content-Range': `bytes ${start}-${end}/${VIDEO_BYTES.length}`,
-            'Accept-Ranges': 'bytes',
-          });
-          res.end(req.method === 'HEAD' ? undefined : slice);
-          return;
-        }
-        res.writeHead(200, {
-          'Content-Type': 'video/mp4',
-          'Content-Length': String(VIDEO_BYTES.length),
-          'Accept-Ranges': 'bytes',
-        });
-        res.end(req.method === 'HEAD' ? undefined : VIDEO_BYTES);
-        return;
-      }
-      if (url.pathname.startsWith('/subtitles/')) {
-        res.writeHead(200, {
-          'Content-Type': 'text/vtt; charset=utf-8',
-          'Content-Length': String(Buffer.byteLength(VTT_TEXT)),
-        });
-        res.end(req.method === 'HEAD' ? undefined : VTT_TEXT);
-        return;
-      }
-      res.writeHead(404);
-      res.end();
-    });
-  });
+      const vidMatch = /v=([A-Za-z0-9_-]{11})/.exec(url);
+      const vid = vidMatch ? vidMatch[1] : 'dQw4w9WgXcQ';
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          id: vid,
+          title: `Video ${vid}`,
+          channel: 'Demo Creator',
+          duration: 42,
+          thumbnail: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
+          upload_date: '20240301',
+        }),
+        stderr: '',
+      };
+    }
 
-  await new Promise(resolve => srv.listen(0, '127.0.0.1', resolve));
-  t.after(() => srv.close());
-  const port = srv.address().port;
-  return {
-    baseUrl: `http://127.0.0.1:${port}`,
-    requests,
-    warmCalls,
-    getPreparePolls: () => preparePollCount,
-    markReady: id => ready.add(id),
+    if (args.includes('-o')) {
+      const sep = args.indexOf('--');
+      assert.ok(sep >= 0 && sep === args.length - 2, 'URL must follow -- separator');
+      const url = args[sep + 1];
+      const vidMatch = /v=([A-Za-z0-9_-]{11})/.exec(url);
+      const vid = vidMatch ? vidMatch[1] : 'dQw4w9WgXcQ';
+      downloads.push(vid);
+      if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
+      if (failIds.has(vid)) {
+        return { code: 1, stdout: '', stderr: 'ERROR: Video unavailable\n' };
+      }
+      const stage = options.cwd;
+      await fsp.writeFile(path.join(stage, `${vid}.mp4`), VIDEO_BYTES);
+      await fsp.writeFile(path.join(stage, `${vid}.en.vtt`), VTT_TEXT, 'utf8');
+      await fsp.writeFile(
+        path.join(stage, `${vid}.info.json`),
+        JSON.stringify({
+          id: vid,
+          title: `Video ${vid}`,
+          channel: 'Demo Creator',
+          duration: 42,
+          thumbnail: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
+          upload_date: '20240301',
+        }),
+        'utf8',
+      );
+      return { code: 0, stdout: '', stderr: '' };
+    }
+
+    return { code: 1, stdout: '', stderr: 'unexpected command' };
   };
+
+  return { runner, calls, downloads };
 }
 
 function makeYoutubeFetch({ apiKey = SECRET_API_KEY, rejectKey = false, nonEmbeddableIds = new Set() } = {}) {
@@ -355,29 +234,38 @@ test('parseYouTubeUrl and isAllowedThumbnailUrl accept valid YouTube URLs and re
   assert.equal(isAllowedThumbnailUrl('https://evil.invalid/pic.jpg'), false);
 });
 
-test('validateSources enforces YouTube sidecar/embed requirements and single-source limit', () => {
-  const sidecarOnly = validateSources([
-    { id: 'youtube', type: 'youtube', delivery: 'sidecar', sidecar_url: 'http://127.0.0.1:8780/' },
-  ]);
-  assert.equal(sidecarOnly[0].delivery, 'sidecar');
-  assert.equal(sidecarOnly[0].sidecarUrl, 'http://127.0.0.1:8780');
-  assert.equal(sidecarOnly[0].apiKey, '');
+test('validateSources enforces built-in ytdlp defaults, embed api_key, bounds, and single-source limit', () => {
+  const ytdlpDefault = validateSources([{ id: 'youtube', type: 'youtube' }], {
+    base: path.resolve('c:/tmp-base'),
+    dataDirectory: path.resolve('c:/tmp-base/data'),
+    platform: process.platform,
+  });
+  assert.equal(ytdlpDefault[0].delivery, 'ytdlp');
+  assert.equal(ytdlpDefault[0].maxCacheGb, 20);
+  assert.equal(ytdlpDefault[0].maxConcurrent, 2);
+  assert.equal(ytdlpDefault[0].cacheDirectory, path.resolve('c:/tmp-base/data', 'youtube-cache'));
+  assert.equal(ytdlpDefault[0].apiKey, '');
 
   const embedOk = validateSources([{ id: 'yt', type: 'youtube', delivery: 'embed', api_key: 'AIza123' }]);
   assert.equal(embedOk[0].delivery, 'embed');
   assert.equal(embedOk[0].apiKey, 'AIza123');
 
-  assert.throws(() => validateSources([{ id: 'yt', type: 'youtube', delivery: 'sidecar' }]), /sidecar_url is required/);
-  assert.throws(() => validateSources([{ id: 'yt', type: 'youtube', delivery: 'embed' }]), /api_key is required/);
   assert.throws(
-    () => validateSources([{ id: 'yt', type: 'youtube', sidecar_url: 'http://user:pass@127.0.0.1:8780' }]),
+    () => validateSources([{ id: 'yt', type: 'youtube', sidecar_url: 'http://127.0.0.1:8780' }]),
+    /unknown youtube setting/,
+  );
+  assert.throws(() => validateSources([{ id: 'yt', type: 'youtube', delivery: 'embed' }]), /api_key is required/);
+  assert.throws(() => validateSources([{ id: 'yt', type: 'youtube', max_cache_gb: 0.01 }]), /max_cache_gb/);
+  assert.throws(() => validateSources([{ id: 'yt', type: 'youtube', max_concurrent: 9 }]), /max_concurrent/);
+  assert.throws(
+    () => validateSources([{ id: 'yt', type: 'youtube', po_token_url: 'http://user:pass@127.0.0.1:4416' }]),
     /without credentials/,
   );
   assert.throws(
     () =>
       validateSources([
-        { id: 'yt1', type: 'youtube', sidecar_url: 'http://127.0.0.1:8780' },
-        { id: 'yt2', type: 'youtube', sidecar_url: 'http://127.0.0.1:8781' },
+        { id: 'yt1', type: 'youtube' },
+        { id: 'yt2', type: 'youtube' },
       ]),
     /Only one youtube source/,
   );
@@ -418,54 +306,43 @@ test('YouTube Data API helper parses durations, batches video calls, and hides A
   );
 });
 
-test('YouTubeMedia prepares sidecar downloads, enforces cache_directory containment, loads VTT subtitles, and refuses embed delivery', async t => {
-  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-yt-cache-'));
+test('YouTubeCache coalesces downloads, probes media, evicts LRU items, and blocks traversal/symlinks', async t => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-yt-lru-'));
   const outsideDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-yt-outside-'));
   t.after(() =>
     Promise.all([fsp.rm(dir, { recursive: true, force: true }), fsp.rm(outsideDir, { recursive: true, force: true })]),
   );
 
-  const sidecar = await startStubSidecar(t, { token: SECRET_SIDECAR_TOKEN, durationOffset: 0.75 });
-  const provider = new YouTubeMedia({
-    delivery: 'sidecar',
-    sidecarUrl: sidecar.baseUrl,
-    sidecarToken: SECRET_SIDECAR_TOKEN,
+  const yt = makeYoutubeRunner({ delayMs: 25, durationOffset: 0.75 });
+  // One cached entry (~122 bytes including VTT) fits in 180 bytes; two exceed 180 and evict LRU.
+  const cache = new YouTubeCache({
     cacheDirectory: dir,
-    pipeline: { release: async () => {} },
-    fetch: makeYoutubeFetch(),
+    maxCacheBytes: 180,
+    maxConcurrent: 2,
+    runCommand: yt.runner,
   });
+  t.after(() => cache.close());
 
-  // Sidecar-only resolve (no Data API key needed).
-  const resolved = await provider.resolveUrl('https://youtu.be/dQw4w9WgXcQ');
-  assert.equal(resolved.kind, 'video');
-  assert.equal(resolved.item.id, 'dQw4w9WgXcQ');
-  assert.equal(resolved.item.type, 'movie');
-  assert.equal(resolved.item.duration, 42);
+  const tools = await cache.checkTools();
+  assert.equal(tools.ok, true);
+  assert.equal(tools.ytdlp, '2026.02.01');
 
-  // Prepare triggers /prepare + /status poll until ready, with tolerant duration margin.
-  const { media } = await provider.source('dQw4w9WgXcQ', undefined, { subtitleId: 'x0', browserSubtitles: true });
-  assert.equal(media.durationTolerance, 2);
-  assert.equal(media.tracks.subtitles.length, 1);
-  assert.equal(media.tracks.subtitles[0].delivery, 'text');
-  assert.ok(sidecar.getPreparePolls() >= 1);
+  // Coalesced concurrent prepare calls download once.
+  const [r1, r2] = await Promise.all([cache.prepare('dQw4w9WgXcQ'), cache.prepare('dQw4w9WgXcQ')]);
+  assert.equal(r1.filename, 'dQw4w9WgXcQ.mp4');
+  assert.equal(r2.filename, 'dQw4w9WgXcQ.mp4');
+  assert.equal(yt.downloads.filter(id => id === 'dQw4w9WgXcQ').length, 1);
 
-  // Without local file yet, request falls back to HTTP sidecar with Range header.
-  assert.equal(await provider.filePath(media), undefined);
-  const httpRangeRes = await provider.request(media.sourceStart, { headers: { Range: 'bytes=2-7' } });
-  assert.equal(httpRangeRes.status, 206);
-  assert.equal(await httpRangeRes.text(), '234567');
+  // Preparing a second video triggers LRU eviction of the first (including its .vtt and .meta.json).
+  await cache.prepare('jNQXAC9IVRw');
+  assert.equal(fs.existsSync(path.join(dir, 'dQw4w9WgXcQ.mp4')), false);
+  assert.equal(fs.existsSync(path.join(dir, 'dQw4w9WgXcQ.en.vtt')), false);
+  assert.equal(fs.existsSync(path.join(dir, 'dQw4w9WgXcQ.meta.json')), false);
+  assert.equal(fs.existsSync(path.join(dir, 'jNQXAC9IVRw.mp4')), true);
 
-  // With a safe regular file in cacheDirectory, filePath() resolves and reads directly from disk.
-  const localFile = path.join(dir, 'dQw4w9WgXcQ.mp4');
-  await fsp.writeFile(localFile, Buffer.from('LOCALDISK0123456789'));
-  assert.equal(await provider.filePath(media), path.resolve(localFile));
-  const diskRes = await provider.request(media.sourceStart, { headers: { Range: 'bytes=5-8' } });
-  assert.equal(diskRes.status, 206);
-  assert.equal(await diskRes.text(), 'DISK');
-
-  // Path traversal and symlinks in cacheDirectory are refused by filePath().
+  // Path traversal and symlinks in cacheDirectory are refused.
   await fsp.writeFile(path.join(outsideDir, 'secret.mp4'), 'OUTSIDE');
-  assert.equal(await provider.filePath({ filename: '../secret.mp4' }), undefined);
+  assert.equal(await safeCacheFile(dir, '../secret.mp4'), null);
   const linkPath = path.join(dir, 'LINK0000001.mp4');
   let symlinkCreated = false;
   try {
@@ -475,20 +352,63 @@ test('YouTubeMedia prepares sidecar downloads, enforces cache_directory containm
     /* Windows without developer mode may disallow file symlinks. */
   }
   if (symlinkCreated) {
-    assert.equal(await provider.filePath({ filename: 'LINK0000001.mp4' }), undefined);
+    assert.equal(await safeCacheFile(dir, 'LINK0000001.mp4'), null);
   }
+});
 
-  // WebVTT subtitle loading via server/subtitles.js
+test('YouTubeMedia prepares disk downloads, serves Range & VTT subtitles, and refuses embed delivery', async t => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-yt-media-'));
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+
+  const yt = makeYoutubeRunner({ durationOffset: 0.75 });
+  const provider = new YouTubeMedia({
+    delivery: 'ytdlp',
+    cacheDirectory: dir,
+    pipeline: { release: async () => {} },
+    fetch: makeYoutubeFetch(),
+    runCommand: yt.runner,
+  });
+  t.after(() => provider.close());
+
+  // Built-in ytdlp resolve works without Data API key.
+  const resolved = await provider.resolveUrl('https://youtu.be/dQw4w9WgXcQ');
+  assert.equal(resolved.kind, 'video');
+  assert.equal(resolved.item.id, 'dQw4w9WgXcQ');
+  assert.equal(resolved.item.type, 'movie');
+  assert.equal(resolved.item.duration, 42);
+
+  // Playlist fallback via yt-dlp drops live entries.
+  const pl = await provider.resolveUrl('https://www.youtube.com/playlist?list=PLtest123');
+  assert.equal(pl.kind, 'playlist');
+  assert.deepEqual(
+    pl.items.map(i => i.id),
+    ['dQw4w9WgXcQ', 'jNQXAC9IVRw'],
+  );
+
+  // Prepare populates disk cache, filePath(), byte ranges, and WebVTT subtitles.
+  const { media } = await provider.source('dQw4w9WgXcQ', undefined, { subtitleId: 'x0', browserSubtitles: true });
+  assert.equal(media.durationTolerance, 2);
+  assert.equal(media.tracks.subtitles.length, 1);
+  assert.equal(media.tracks.subtitles[0].delivery, 'text');
+  assert.equal(await provider.filePath(media), path.resolve(dir, 'dQw4w9WgXcQ.mp4'));
+
+  const diskRangeRes = await provider.request(media.sourceStart, { headers: { Range: 'bytes=2-7' } });
+  assert.equal(diskRangeRes.status, 206);
+  assert.equal(await diskRangeRes.text(), '234567');
+
+  await assert.rejects(() => provider.request(media.sourceStart, { headers: { Range: 'bytes=999-1000' } }), {
+    status: 416,
+  });
+
   const cues = await subtitles.load(media, new AbortController().signal);
   assert.equal(cues.length, 1);
-  assert.equal(cues[0].text, 'Sidecar caption line');
+  assert.equal(cues[0].text, 'Built-in yt-dlp caption');
 
-  // Artwork proxy returns verified image bytes.
   const art = await provider.artwork('dQw4w9WgXcQ');
   assert.equal(art.type, 'image/png');
   assert.equal(art.bytes.subarray(1, 4).toString(), 'PNG');
 
-  // Embed delivery validates metadata (and checks embeddable) and refuses playback truthfully until Stage 3.
+  // Embed delivery validates metadata (and embeddable flag) and refuses playback truthfully until Stage 3.
   const embedProvider = new YouTubeMedia({
     delivery: 'embed',
     apiKey: SECRET_API_KEY,
@@ -499,11 +419,11 @@ test('YouTubeMedia prepares sidecar downloads, enforces cache_directory containm
   await assert.rejects(() => embedProvider.source('dQw4w9WgXcQ'), { status: 501 });
 });
 
-test('library.resolve, playlist bulk queue, warmQueue, and operator Source Settings round-trip cleanly without leaking secrets', async t => {
+test('library.resolve, playlist bulk queue, warmQueue, streaming, and Source Settings work without leaking secrets', async t => {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-yt-app-'));
   t.after(() => fsp.rm(dir, { recursive: true, force: true }));
   const configFile = path.join(dir, 'config.yaml');
-  const sidecar = await startStubSidecar(t, { token: SECRET_SIDECAR_TOKEN, durationOffset: 0.75 });
+  const yt = makeYoutubeRunner({ durationOffset: 0.75 });
   const initialConfig = {
     access: { password: true },
     secrets: { server_password: 'fixture-private-password' },
@@ -518,9 +438,7 @@ test('library.resolve, playlist bulk queue, warmQueue, and operator Source Setti
         id: 'youtube',
         type: 'youtube',
         name: 'YouTube',
-        delivery: 'sidecar',
-        sidecar_url: sidecar.baseUrl,
-        sidecar_token: SECRET_SIDECAR_TOKEN,
+        delivery: 'ytdlp',
         api_key: SECRET_API_KEY,
       },
     ],
@@ -537,7 +455,7 @@ test('library.resolve, playlist bulk queue, warmQueue, and operator Source Setti
       guildId: 'guild',
       channels: ['commands'],
     },
-    { youtubeFetch: makeYoutubeFetch() },
+    { youtubeFetch: makeYoutubeFetch(), youtubeRunner: yt.runner },
   );
 
   // Unauthenticated client cannot resolve links.
@@ -562,7 +480,7 @@ test('library.resolve, playlist bulk queue, warmQueue, and operator Source Setti
   );
   assert.equal(resolvedVideo.status, 200);
   assert.equal(resolvedVideo.body.item.serverId, YOUTUBE_SERVER);
-  assert.doesNotMatch(JSON.stringify(resolvedVideo.body), new RegExp(`${SECRET_API_KEY}|${SECRET_SIDECAR_TOKEN}`));
+  assert.doesNotMatch(JSON.stringify(resolvedVideo.body), new RegExp(SECRET_API_KEY));
 
   const resolvedPlaylist = await host.request(
     '/api/watch/library/resolve?server=youtube&url=' +
@@ -572,7 +490,7 @@ test('library.resolve, playlist bulk queue, warmQueue, and operator Source Setti
   assert.equal(resolvedPlaylist.body.kind, 'playlist');
   assert.equal(resolvedPlaylist.body.items.length, 2);
 
-  // Create a room, join as viewer, and bulk-queue the YouTube playlist; verify /warm and 0.75s duration tolerance.
+  // Create a room, join with direct quality, and bulk-queue playlist; verify warmQueue and HTTP Range streaming.
   const created = await host.post('/api/watch/rooms', { name: 'YouTube Room' });
   assert.equal(created.status, 201);
   const roomId = created.body.id;
@@ -596,10 +514,10 @@ test('library.resolve, playlist bulk queue, warmQueue, and operator Source Setti
   });
   assert.equal(bulkRes.status, 200);
   assert.equal(bulkRes.body.status, 'applied', bulkRes.body.message);
-  await new Promise(resolve => setTimeout(resolve, 60));
-  assert.ok(sidecar.warmCalls.length >= 1);
+  await new Promise(resolve => setTimeout(resolve, 120));
+  assert.ok(yt.downloads.includes('dQw4w9WgXcQ'));
+  assert.ok(yt.downloads.includes('jNQXAC9IVRw'), 'warmQueue pre-warmed queued next video onto disk');
 
-  // Verify room playback transition accepted the 0.75s difference between API duration (42s) and sidecar probe (42.75s).
   const loadedState = (await host.request(`/api/watch/rooms/${roomId}?viewer=${viewerId}&quality=direct`)).body;
   assert.equal(loadedState.title, 'Video dQw4w9WgXcQ');
   assert.ok(loadedState.mediaUrl, 'viewer receives media stream URL');
@@ -609,59 +527,60 @@ test('library.resolve, playlist bulk queue, warmQueue, and operator Source Setti
   assert.equal(streamRange.status, 206);
   assert.equal(streamRange.body, '01234567');
 
-  const cachedBrowse = await host.request('/api/watch/library?server=youtube&section=youtube&q=Cached');
+  const cachedBrowse = await host.request('/api/watch/library?server=youtube&section=youtube&q=Video');
   assert.equal(cachedBrowse.status, 200);
   assert.equal(cachedBrowse.body.source, 'link');
   assert.ok(cachedBrowse.body.items.some(i => i.id === 'dQw4w9WgXcQ'));
 
-  // Verify doctor source checks recognize configured YouTube source shape.
+  // Verify doctor checks recognize configured YouTube source shape.
   const youtubeModule = require('../server/sources/youtube');
   const ytChecks = await youtubeModule.check(
-    validateSources([
-      { id: 'youtube', type: 'youtube', sidecar_url: sidecar.baseUrl, sidecar_token: SECRET_SIDECAR_TOKEN },
-    ])[0],
-    { youtubeFetch: makeYoutubeFetch() },
+    validateSources([{ id: 'youtube', type: 'youtube' }], {
+      base: dir,
+      dataDirectory: path.join(dir, 'data'),
+    })[0],
+    { youtubeFetch: makeYoutubeFetch(), youtubeRunner: yt.runner },
   );
   assert.equal(ytChecks[0].category, 'Sources');
   assert.equal(ytChecks[0].status, 'pass');
   assert.equal(typeof checkSources, 'function');
 
-  // Operator Sources API never exposes secrets and preserves untouched secrets on edit.
+  // Operator Sources API never exposes API key and preserves untouched key on edit.
   const list1 = await host.request('/api/operator/sources');
   assert.equal(list1.status, 200);
-  assert.doesNotMatch(JSON.stringify(list1.body), new RegExp(`${SECRET_API_KEY}|${SECRET_SIDECAR_TOKEN}`));
+  assert.doesNotMatch(JSON.stringify(list1.body), new RegExp(SECRET_API_KEY));
   const ytSummary = list1.body.sources.find(s => s.id === 'youtube');
+  assert.equal(ytSummary.delivery, 'ytdlp');
   assert.equal(ytSummary.hasApiKey, true);
-  assert.equal(ytSummary.hasSidecarToken, true);
 
   const edited = await host.post('/api/operator/sources', {
     revision: list1.body.revision,
     action: 'update',
     id: 'youtube',
     name: 'Room YouTube',
-    settings: { delivery: 'sidecar', sidecarUrl: sidecar.baseUrl },
+    settings: { delivery: 'ytdlp', maxCacheGb: 30 },
   });
   assert.equal(edited.status, 200);
-  assert.doesNotMatch(JSON.stringify(edited.body), new RegExp(`${SECRET_API_KEY}|${SECRET_SIDECAR_TOKEN}`));
+  assert.doesNotMatch(JSON.stringify(edited.body), new RegExp(SECRET_API_KEY));
   const onDisk1 = YAML.parse(fs.readFileSync(configFile, 'utf8'));
   assert.equal(onDisk1.sources[0].name, 'Room YouTube');
+  assert.equal(onDisk1.sources[0].max_cache_gb, 30);
   assert.equal(onDisk1.sources[0].api_key, SECRET_API_KEY);
-  assert.equal(onDisk1.sources[0].sidecar_token, SECRET_SIDECAR_TOKEN);
 
-  // Explicit clear removes saved API key without losing sidecar_token.
+  // Explicit clear removes saved API key.
   const cleared = await host.post('/api/operator/sources', {
     revision: edited.body.revision,
     action: 'update',
     id: 'youtube',
     name: 'Room YouTube',
-    settings: { delivery: 'sidecar', sidecarUrl: sidecar.baseUrl, clearApiKey: true },
+    settings: { delivery: 'ytdlp', maxCacheGb: 20, clearApiKey: true },
   });
   assert.equal(cleared.status, 200);
   const onDisk2 = YAML.parse(fs.readFileSync(configFile, 'utf8'));
   assert.equal(onDisk2.sources[0].api_key, undefined);
-  assert.equal(onDisk2.sources[0].sidecar_token, SECRET_SIDECAR_TOKEN);
+  assert.equal(onDisk2.sources[0].max_cache_gb, undefined);
 
-  // Operator setup flow can remove and re-add YouTube through `/api/operator/sources/setup`.
+  // Operator setup flow probes tools, configures built-in yt-dlp cache, and re-adds source cleanly.
   const removed = await host.post('/api/operator/sources', {
     revision: cleared.body.revision,
     action: 'remove',
@@ -670,23 +589,38 @@ test('library.resolve, playlist bulk queue, warmQueue, and operator Source Setti
   assert.equal(removed.status, 200);
   const opened = await host.post('/api/operator/sources/setup', { type: 'youtube' });
   assert.equal(opened.status, 200);
+
+  const probed = await host.post('/api/operator/sources/setup/step', {
+    flow: opened.body.flow,
+    step: 'probe',
+  });
+  assert.equal(probed.status, 200);
+  assert.equal(probed.body.ok, true);
+  assert.equal(probed.body.ytdlp, '2026.02.01');
+
   const configured = await host.post('/api/operator/sources/setup/step', {
     flow: opened.body.flow,
     step: 'configure',
-    delivery: 'sidecar',
-    sidecarUrl: sidecar.baseUrl,
-    sidecarToken: SECRET_SIDECAR_TOKEN,
+    delivery: 'ytdlp',
+    maxCacheGb: 15,
   });
   assert.equal(configured.status, 200);
   assert.equal(configured.body.ready, true);
-  assert.doesNotMatch(JSON.stringify(configured.body), new RegExp(SECRET_SIDECAR_TOKEN));
+
   const readded = await host.post('/api/operator/sources', {
     revision: removed.body.revision,
     action: 'add',
     flow: opened.body.flow,
-    name: 'Fresh YouTube',
+    name: 'Built-in YouTube',
     libraries: [],
   });
   assert.equal(readded.status, 200);
-  assert.equal(YAML.parse(fs.readFileSync(configFile, 'utf8')).sources[0].sidecar_token, SECRET_SIDECAR_TOKEN);
+  const onDisk3 = YAML.parse(fs.readFileSync(configFile, 'utf8'));
+  assert.deepEqual(onDisk3.sources[0], {
+    id: 'built-in-youtube',
+    type: 'youtube',
+    name: 'Built-in YouTube',
+    delivery: 'ytdlp',
+    max_cache_gb: 15,
+  });
 });

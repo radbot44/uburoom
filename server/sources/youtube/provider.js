@@ -1,7 +1,6 @@
 'use strict';
 
 const fsp = require('node:fs').promises;
-const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { PlaybackError } = require('../../errors');
 const { fileStream } = require('../../file-stream');
@@ -10,78 +9,77 @@ const { prepareStream } = require('../../media-delivery');
 const { runOperation, currentSignal } = require('../../operation');
 const { VIDEO_ID, PLAYLIST_ID, parseYouTubeUrl, isAllowedThumbnailUrl } = require('./urls');
 const { fetchVideos, fetchPlaylist } = require('./api');
-const { YouTubeSidecar, SAFE_ID, SAFE_TRACK, safeBaseName } = require('./sidecar');
+const { YouTubeCache, SAFE_ID, SAFE_TRACK, DEFAULT_MAX_CACHE_BYTES } = require('./ytdlp');
 
 const YOUTUBE_SERVER = 'youtube';
 const ORIGIN = 'uburoom-youtube://media';
 const ART_LIMIT = 5 * 1024 * 1024;
+const TEXT_LIMIT = 4 * 1024 * 1024;
 const META_TTL_MS = 10 * 60 * 1000;
 const META_CACHE_MAX = 500;
 const PLAYLIST_CACHE_MAX = 50;
 const PAGE = 30;
 
-const CONTAINER_MIME = {
-  '.mp4': 'video/mp4',
-  '.m4v': 'video/mp4',
-  '.webm': 'video/webm',
-  '.mkv': 'video/x-matroska',
-  '.mov': 'video/quicktime',
-};
-
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
-
-async function resolveCacheFile(cacheDirectory, filename) {
-  if (!cacheDirectory) return null;
-  const safe = safeBaseName(filename);
-  if (!safe) return null;
-  const dir = path.resolve(cacheDirectory);
-  const file = path.resolve(dir, safe);
-  if (path.dirname(file) !== dir) return null;
-  try {
-    const dirStat = await fsp.lstat(dir);
-    if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) return null;
-    const fileStat = await fsp.lstat(file);
-    if (!fileStat.isFile() || fileStat.isSymbolicLink()) return null;
-    return { file, stat: fileStat };
-  } catch {
-    return null;
-  }
-}
 
 /**
  * MediaProvider implementation for YouTube links and playlists backed by either
- * the local yt-dlp caching sidecar or (future) IFrame embed playback.
+ * the built-in `yt-dlp` rolling disk cache or (future) IFrame embed playback.
  */
 class YouTubeMedia {
   constructor({
-    delivery = 'sidecar',
+    delivery = 'ytdlp',
     apiKey = '',
-    sidecarUrl = '',
-    sidecarToken = '',
+    ytDlp = '',
+    ffmpegPath = '',
+    ffprobePath = '',
     cacheDirectory = '',
+    maxCacheGb = 20,
+    maxConcurrent = 2,
+    cookiesFile = '',
+    poTokenUrl = '',
     playlistLimit = 50,
     label = 'YouTube',
     pipeline,
     fetch = globalThis.fetch,
+    runCommand,
+    platform = process.platform,
     logger,
   } = {}) {
     this.kind = 'youtube';
     this.principal = 'configured';
     this.serverId = YOUTUBE_SERVER;
     this.name = label || 'YouTube';
-    this.delivery = delivery || 'sidecar';
+    this.delivery = delivery || 'ytdlp';
     this.apiKey = apiKey || '';
-    this.sidecarUrl = sidecarUrl || '';
     this.cacheDirectory = cacheDirectory || '';
     this.playlistLimit = Math.max(1, Math.min(Number(playlistLimit) || 50, 200));
     this.pipeline = pipeline;
     this.fetch = fetch || globalThis.fetch;
     this.logger = logger;
     this.prepareTimeoutMs = 120000;
-    this.sidecar = this.sidecarUrl
-      ? new YouTubeSidecar({ baseUrl: this.sidecarUrl, token: sidecarToken, fetch: this.fetch })
-      : null;
-    this.configured = this.delivery === 'embed' ? !!this.apiKey : !!this.sidecar;
+
+    const maxBytes = Number.isFinite(Number(maxCacheGb))
+      ? Math.round(Number(maxCacheGb) * 1024 * 1024 * 1024)
+      : DEFAULT_MAX_CACHE_BYTES;
+
+    this.cache =
+      this.delivery === 'ytdlp' && this.cacheDirectory
+        ? new YouTubeCache({
+            cacheDirectory: this.cacheDirectory,
+            maxCacheBytes: maxBytes,
+            maxConcurrent,
+            ytDlpPath: ytDlp,
+            ffmpegPath,
+            ffprobePath,
+            cookiesFile,
+            poTokenUrl,
+            platform,
+            runCommand,
+            logger,
+          })
+        : null;
+    this.configured = this.delivery === 'embed' ? !!this.apiKey : !!this.cache;
     this.videos = new Map();
     this.playlists = new Map();
     this.inFlight = new Map();
@@ -163,8 +161,8 @@ class YouTubeMedia {
         if (!found) throw fail('YouTube video is unavailable or private', 404);
         return this.cacheVideo(found);
       }
-      if (!this.sidecar) throw fail('YouTube metadata source is not configured', 500);
-      const res = await this.sidecar.metadata(url);
+      if (!this.cache) throw fail('YouTube metadata source is not configured', 500);
+      const res = await this.cache.metadata(url);
       return this.cacheVideo(res.video);
     });
   }
@@ -183,8 +181,8 @@ class YouTubeMedia {
           fetch: this.fetch,
           limit: this.playlistLimit,
         });
-      } else if (this.sidecar) {
-        pl = await this.sidecar.metadata(url, { limit: this.playlistLimit });
+      } else if (this.cache) {
+        pl = await this.cache.metadata(url, { limit: this.playlistLimit });
         if (pl.kind !== 'playlist') throw fail('That link did not resolve to a YouTube playlist', 400);
       } else {
         throw fail('YouTube metadata source is not configured', 500);
@@ -268,7 +266,7 @@ class YouTubeMedia {
         nextOffset: null,
       };
     }
-    const recent = this.sidecar ? await this.sidecar.recent(60).catch(() => []) : [];
+    const recent = this.cache ? await this.cache.recent(60).catch(() => []) : [];
     const items = recent.map(v => this.cacheVideo(v)).filter(v => Number(v?.duration) > 0);
     const rawSearch = query.q ?? query.search;
     const search = typeof rawSearch === 'string' ? rawSearch.trim().toLowerCase() : '';
@@ -295,8 +293,8 @@ class YouTubeMedia {
   }
 
   async recentlyAdded() {
-    if (!this.sidecar) return [];
-    const recent = await this.sidecar.recent(15).catch(() => []);
+    if (!this.cache) return [];
+    const recent = await this.cache.recent(15).catch(() => []);
     return recent
       .map(v => this.cacheVideo(v))
       .filter(v => Number(v?.duration) > 0)
@@ -390,12 +388,10 @@ class YouTubeMedia {
   }
 
   async warmQueue(items) {
-    if (this.closed || this.delivery !== 'sidecar' || !this.sidecar) return;
-    const valid = (items || [])
-      .filter(item => item?.id && VIDEO_ID.test(item.id))
-      .map(item => ({ id: item.id, url: `https://www.youtube.com/watch?v=${item.id}` }));
+    if (this.closed || this.delivery !== 'ytdlp' || !this.cache) return;
+    const valid = (items || []).filter(item => item?.id && VIDEO_ID.test(item.id)).map(item => ({ id: item.id }));
     if (!valid.length) return;
-    await this.sidecar.warm(valid);
+    await this.cache.warm(valid);
   }
 
   async artwork(id) {
@@ -449,18 +445,16 @@ class YouTubeMedia {
     if (this.delivery === 'embed') {
       throw Object.assign(
         new PlaybackError(
-          'YouTube IFrame embed delivery is not yet supported in this version; switch this YouTube source to sidecar delivery.',
+          'YouTube IFrame embed delivery is not yet supported in this version; switch this YouTube source to built-in yt-dlp cache.',
         ),
         { status: 501 },
       );
     }
-    if (!this.sidecar)
-      throw Object.assign(new PlaybackError('YouTube sidecar URL is not configured.'), { status: 500 });
+    if (!this.cache) {
+      throw Object.assign(new PlaybackError('YouTube cache directory is not configured.'), { status: 500 });
+    }
 
-    const prepared = await this.sidecar.prepare(id, {
-      url: `https://www.youtube.com/watch?v=${id}`,
-      signal: choices.signal || currentSignal(),
-    });
+    const prepared = await this.cache.prepare(id, { signal: choices.signal || currentSignal() });
     const cached = this.cacheVideo({ ...prepared, status: 'ready' });
     if (!(Number(prepared.duration) > 0)) {
       throw Object.assign(new PlaybackError('This YouTube video has no playable duration.'), { status: 400 });
@@ -537,9 +531,9 @@ class YouTubeMedia {
   }
 
   async filePath(media) {
-    if (!this.cacheDirectory || !media?.filename) return undefined;
-    const safe = await resolveCacheFile(this.cacheDirectory, media.filename);
-    return safe ? safe.file : undefined;
+    if (!this.cache || !media?.id) return undefined;
+    const hit = await this.cache.resolveMediaFile(media.id);
+    return hit ? hit.file : undefined;
   }
 
   url(resource) {
@@ -559,46 +553,54 @@ class YouTubeMedia {
     const url = this.url(resource);
     const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
     if (parts[0] === 'file' && SAFE_ID.test(parts[1] || '')) {
-      const id = parts[1];
-      const filename = parts[2];
-      if (this.cacheDirectory && filename) {
-        const safe = await resolveCacheFile(this.cacheDirectory, filename);
-        if (safe) {
-          const size = safe.stat.size;
-          const range = Object.entries(options.headers || {}).find(([k]) => k.toLowerCase() === 'range')?.[1];
-          let start = 0,
-            end = size - 1;
-          if (range) {
-            const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-            if (match && !match[1] && match[2]) start = Math.max(0, size - Number(match[2]));
-            else if (match?.[1]) {
-              start = Number(match[1]);
-              if (match[2]) end = Math.min(end, Number(match[2]));
-            }
-            if (!match || (!match[1] && !match[2]) || !Number.isSafeInteger(start) || start > end || start >= size)
-              throw fail('Requested range is outside this file', 416);
-          }
-          const ext = path.extname(safe.file).toLowerCase();
-          const headers = {
-            'Content-Type': CONTAINER_MIME[ext] || 'video/mp4',
-            'Content-Length': String(end - start + 1),
-            'Accept-Ranges': 'bytes',
-          };
-          if (range) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
-          if (options.method === 'HEAD' || !size) return new Response(null, { status: range ? 206 : 200, headers });
-          return new Response(fileStream(safe.file, { start, end, signal: options.signal }), {
-            status: range ? 206 : 200,
-            headers,
-          });
+      if (!this.cache) throw fail('YouTube cache is not configured', 500);
+      const hit = await this.cache.resolveMediaFile(parts[1]);
+      if (!hit) throw fail('Cached YouTube video is unavailable', 404);
+      const size = hit.stat.size;
+      const range = Object.entries(options.headers || {}).find(([k]) => k.toLowerCase() === 'range')?.[1];
+      let start = 0,
+        end = size - 1;
+      if (range) {
+        const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+        if (match && !match[1] && match[2]) start = Math.max(0, size - Number(match[2]));
+        else if (match?.[1]) {
+          start = Number(match[1]);
+          if (match[2]) end = Math.min(end, Number(match[2]));
+        }
+        if (!match || (!match[1] && !match[2]) || !Number.isSafeInteger(start) || start > end || start >= size) {
+          throw fail('Requested range is outside this file', 416);
         }
       }
-      if (!this.sidecar) throw fail('YouTube sidecar URL is not configured', 500);
-      return this.sidecar.openResource({ kind: 'media', id }, options);
+      const headers = {
+        'Content-Type': hit.contentType,
+        'Content-Length': String(size ? end - start + 1 : 0),
+        'Accept-Ranges': 'bytes',
+      };
+      if (range && size) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+      if (options.method === 'HEAD' || !size) return new Response(null, { status: range && size ? 206 : 200, headers });
+      return new Response(fileStream(hit.file, { start, end, signal: options.signal }), {
+        status: range ? 206 : 200,
+        headers,
+      });
     }
 
     if (parts[0] === 'sub' && SAFE_ID.test(parts[1] || '') && SAFE_TRACK.test(parts[2] || '')) {
-      if (!this.sidecar) throw fail('YouTube sidecar URL is not configured', 500);
-      return this.sidecar.openResource({ kind: 'subtitle', id: parts[1], trackId: parts[2] }, options);
+      if (!this.cache) throw fail('YouTube cache is not configured', 500);
+      const subFile = await this.cache.resolveSubtitleFile(parts[1], parts[2]);
+      if (!subFile) throw fail('Subtitle track unavailable', 404);
+      const stat = await fsp.stat(subFile);
+      if (stat.size > TEXT_LIMIT) throw fail('Subtitle file exceeds the supported size', 413);
+      if (options.method === 'HEAD') {
+        return new Response(null, {
+          status: 200,
+          headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'Content-Length': String(stat.size) },
+        });
+      }
+      const text = await fsp.readFile(subFile, { encoding: 'utf8', signal: options.signal });
+      return new Response(text, {
+        status: 200,
+        headers: { 'Content-Type': 'text/vtt; charset=utf-8' },
+      });
     }
 
     throw fail('Invalid YouTube media resource', 400);
@@ -610,23 +612,31 @@ class YouTubeMedia {
 
   async close() {
     this.closed = true;
+    await this.cache?.close();
   }
 }
 
 /**
  * One YouTube source as a media provider under the fixed `youtube` server identity.
  */
-function youtubeProvider({ source, pipeline, logger, youtubeFetch }) {
+function youtubeProvider({ source, config, pipeline, logger, youtubeFetch, youtubeRunner, platform }) {
   const provider = new YouTubeMedia({
     delivery: source.delivery,
     apiKey: source.apiKey,
-    sidecarUrl: source.sidecarUrl,
-    sidecarToken: source.sidecarToken,
+    ytDlp: source.ytDlp,
+    ffmpegPath: config?.ffmpegPath,
+    ffprobePath: config?.ffprobePath,
     cacheDirectory: source.cacheDirectory,
+    maxCacheGb: source.maxCacheGb,
+    maxConcurrent: source.maxConcurrent,
+    cookiesFile: source.cookiesFile,
+    poTokenUrl: source.poTokenUrl,
     playlistLimit: source.playlistLimit,
     label: source.name || 'YouTube',
     pipeline,
     fetch: youtubeFetch || fetch,
+    runCommand: youtubeRunner,
+    platform: platform || process.platform,
     logger,
   });
   return {
@@ -637,4 +647,4 @@ function youtubeProvider({ source, pipeline, logger, youtubeFetch }) {
   };
 }
 
-module.exports = { YouTubeMedia, youtubeProvider, YOUTUBE_SERVER, resolveCacheFile };
+module.exports = { YouTubeMedia, youtubeProvider, YOUTUBE_SERVER };

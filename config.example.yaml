@@ -92,14 +92,19 @@ sources: []
 #        name: 'TV'
 #        type: 'shows'
 #        paths: ['D:\Media\TV']
+#
+#  # YouTube links & playlists via built-in yt-dlp rolling cache (requires yt-dlp on PATH
+#  # or set below; FFmpeg enables 1080p+ merged MP4 downloads).
 #  - id: 'youtube'
 #    type: 'youtube'
 #    name: 'YouTube'
-#    delivery: 'sidecar' # 'sidecar' (yt-dlp cache) or 'embed' (YouTube IFrame, requires api_key).
-#    sidecar_url: 'http://127.0.0.1:8780'
-#    sidecar_token: '' # Optional Bearer token matching UBUROOM_YTDLP_TOKEN.
-#    cache_directory: '' # Optional local path to the sidecar cache directory for zero-hop streaming.
-#    api_key: '' # Optional for sidecar metadata/playlists; required when delivery is 'embed'.
+#    delivery: 'ytdlp' # 'ytdlp' (built-in rolling cache) or 'embed' (YouTube IFrame, requires api_key).
+#    max_cache_gb: 20 # LRU disk cache ceiling in GB (0.1 - 2000).
+#    api_key: '' # Optional for fast metadata & playlists; required when delivery is 'embed'.
+#    cache_directory: '' # Defaults to <data_directory>/youtube-cache.
+#    yt_dlp: '' # Blank searches PATH; or explicit path to yt-dlp executable.
+#    cookies_file: '' # Optional cookies.txt path for yt-dlp.
+#    po_token_url: '' # Optional bgutil PO token HTTP provider URL.
 
 discord:
   bot_token: ''

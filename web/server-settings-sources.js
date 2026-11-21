@@ -254,10 +254,28 @@ export function mount(panel, { request }) {
     const name = nameField(parent, draft.sourceName ?? '', 'YouTube');
     name.addEventListener('input', () => (draft.sourceName = name.value));
 
+    if (draft.probe) {
+      node(
+        'p',
+        parent,
+        draft.probe.ok
+          ? `Detected yt-dlp ${draft.probe.ytdlp}` +
+              (draft.probe.ffmpeg
+                ? ' · FFmpeg ready for high-bitrate downloads.'
+                : ' · FFmpeg not found (will use single-stream MP4 fallback).')
+          : draft.probe.error || 'yt-dlp was not found on PATH.',
+        draft.probe.ok ? 'hint' : 'server-source-problem',
+      );
+    }
+
     const deliverySet = node('fieldset', parent, null, 'server-source-servers');
     node('legend', deliverySet, 'Delivery mode');
     for (const [value, title, hint] of [
-      ['sidecar', 'yt-dlp sidecar cache (recommended)', 'Pre-warms videos locally with full sync and Web Audio.'],
+      [
+        'ytdlp',
+        'Built-in yt-dlp cache (recommended)',
+        'Managed by uburoom on this server with full sync and Web Audio.',
+      ],
       [
         'embed',
         'IFrame embed (API key configuration)',
@@ -270,7 +288,7 @@ export function mount(panel, { request }) {
         type: 'radio',
         name: 'youtube-delivery',
         value,
-        checked: (draft.delivery || 'sidecar') === value,
+        checked: (draft.delivery || 'ytdlp') === value,
       });
       radio.addEventListener('change', () => {
         draft.delivery = value;
@@ -281,57 +299,37 @@ export function mount(panel, { request }) {
       node('span', text, hint, 'hint');
     }
 
-    const field = (label, type, id, value, placeholder, onInput, extraHint, autocomplete = 'off') => {
-      const wrapper = node('label', parent, null, 'server-settings-field');
+    const field = (target, label, type, id, value, placeholder, onInput, extraHint, autocomplete = 'off') => {
+      const wrapper = node('label', target, null, 'server-settings-field');
       node('span', wrapper, label);
       const input = node('input', wrapper);
-      Object.assign(input, { type, id, autocomplete, value: value || '' });
+      Object.assign(input, { type, id, autocomplete, value: value ?? '' });
       if (placeholder) input.placeholder = placeholder;
       input.addEventListener('input', () => onInput(input.value));
       if (extraHint) node('span', wrapper, extraHint, 'hint');
       return input;
     };
 
-    if ((draft.delivery || 'sidecar') === 'sidecar') {
-      field(
-        'Sidecar URL',
-        'url',
-        'server-youtube-sidecar-url',
-        draft.sidecarUrl,
-        'http://127.0.0.1:8780',
-        v => (draft.sidecarUrl = v),
+    const mode = draft.delivery || 'ytdlp';
+    if (mode === 'ytdlp') {
+      const limitInput = field(
+        parent,
+        'Cache limit (GB)',
+        'number',
+        'server-youtube-max-cache-gb',
+        draft.maxCacheGb ?? '20',
+        '20',
+        v => (draft.maxCacheGb = v),
+        'Oldest downloaded videos are evicted automatically above this disk limit.',
       );
-      field(
-        'Sidecar token (optional)',
-        'password',
-        'server-youtube-sidecar-token',
-        draft.sidecarToken,
-        editing && source?.hasSidecarToken ? 'Saved — leave blank to keep existing' : 'Matches UBUROOM_YTDLP_TOKEN',
-        v => (draft.sidecarToken = v),
-        undefined,
-        'new-password',
-      );
-      if (editing && source?.hasSidecarToken) {
-        const clearRow = node('label', parent, null, 'form-checkbox');
-        const box = node('input', clearRow);
-        box.type = 'checkbox';
-        box.checked = !!draft.clearSidecarToken;
-        box.addEventListener('change', () => (draft.clearSidecarToken = box.checked));
-        node('span', clearRow, 'Remove saved sidecar token');
-      }
-      field(
-        'Local cache directory (optional)',
-        'text',
-        'server-youtube-cache-dir',
-        draft.cacheDirectory,
-        'e.g. ./sidecars/yt-dlp/cache',
-        v => (draft.cacheDirectory = v),
-        'Optional direct path to the sidecar cache folder on this host.',
-      );
+      limitInput.min = '0.1';
+      limitInput.max = '2000';
+      limitInput.step = '0.5';
     }
 
-    const keyRequired = (draft.delivery || 'sidecar') === 'embed';
+    const keyRequired = mode === 'embed';
     field(
+      parent,
       keyRequired ? 'YouTube Data API v3 key (required)' : 'YouTube Data API v3 key (optional)',
       'password',
       'server-youtube-api-key',
@@ -340,7 +338,7 @@ export function mount(panel, { request }) {
       v => (draft.apiKey = v),
       keyRequired
         ? 'Required for IFrame embed metadata and durations.'
-        : 'Optional fast metadata & playlist lookup without invoking yt-dlp.',
+        : 'Optional fast metadata & playlist lookup without spawning yt-dlp.',
       'new-password',
     );
     if (editing && source?.hasApiKey) {
@@ -351,16 +349,61 @@ export function mount(panel, { request }) {
       box.addEventListener('change', () => (draft.clearApiKey = box.checked));
       node('span', clearKeyRow, 'Remove saved API key');
     }
+
+    if (mode === 'ytdlp') {
+      const advanced = node('details', parent, null, 'server-source-advanced');
+      advanced.open = !!draft.advancedOpen;
+      advanced.addEventListener('toggle', () => (draft.advancedOpen = advanced.open));
+      node('summary', advanced, 'Advanced options');
+      const inner = node('div', advanced, null, 'server-source-advanced-body');
+      field(
+        inner,
+        'yt-dlp executable (optional)',
+        'text',
+        'server-youtube-ytdlp',
+        draft.ytDlp,
+        'Searches PATH when blank',
+        v => (draft.ytDlp = v),
+      );
+      field(
+        inner,
+        'Cache directory (optional)',
+        'text',
+        'server-youtube-cache-dir',
+        draft.cacheDirectory,
+        'Defaults to data/youtube-cache',
+        v => (draft.cacheDirectory = v),
+      );
+      field(
+        inner,
+        'Cookies file (optional)',
+        'text',
+        'server-youtube-cookies-file',
+        draft.cookiesFile,
+        'Path to Netscape cookies.txt',
+        v => (draft.cookiesFile = v),
+      );
+      field(
+        inner,
+        'PO token provider URL (optional)',
+        'url',
+        'server-youtube-po-token-url',
+        draft.poTokenUrl,
+        'http://127.0.0.1:4416',
+        v => (draft.poTokenUrl = v),
+      );
+    }
   }
   function renderEditYouTube(state) {
     const { source } = state;
     state.sourceName ??= source.name;
-    state.delivery ??= source.delivery || 'sidecar';
-    state.sidecarUrl ??= source.sidecarUrl || '';
+    state.delivery ??= source.delivery || 'ytdlp';
+    state.maxCacheGb ??= String(source.maxCacheGb ?? 20);
+    state.ytDlp ??= source.ytDlp || '';
     state.cacheDirectory ??= source.cacheDirectory || '';
-    state.sidecarToken ??= '';
+    state.cookiesFile ??= source.cookiesFile || '';
+    state.poTokenUrl ??= source.poTokenUrl || '';
     state.apiKey ??= '';
-    state.clearSidecarToken ??= false;
     state.clearApiKey ??= false;
     node('h3', body, 'Edit ' + sourceLabel(source));
     youtubeFormFields(body, state, { editing: true, source });
@@ -373,10 +416,11 @@ export function mount(panel, { request }) {
           name: state.sourceName,
           settings: {
             delivery: state.delivery,
-            sidecarUrl: state.sidecarUrl,
+            maxCacheGb: state.maxCacheGb === '' ? 20 : Number(state.maxCacheGb),
+            ytDlp: state.ytDlp,
             cacheDirectory: state.cacheDirectory,
-            ...(state.sidecarToken ? { sidecarToken: state.sidecarToken } : {}),
-            ...(state.clearSidecarToken ? { clearSidecarToken: true } : {}),
+            cookiesFile: state.cookiesFile,
+            poTokenUrl: state.poTokenUrl,
             ...(state.apiKey ? { apiKey: state.apiKey } : {}),
             ...(state.clearApiKey ? { clearApiKey: true } : {}),
           },
@@ -613,12 +657,16 @@ export function mount(panel, { request }) {
         view.listing = await step(flow, 'browse', { path: '' });
         if (!current()) return;
       } else if (type === 'youtube') {
-        view.delivery = 'sidecar';
-        view.sidecarUrl = 'http://127.0.0.1:8780';
-        view.sidecarToken = '';
+        view.delivery = 'ytdlp';
+        view.maxCacheGb = '20';
+        view.ytDlp = '';
         view.cacheDirectory = '';
+        view.cookiesFile = '';
+        view.poTokenUrl = '';
         view.apiKey = '';
         view.sourceName = 'YouTube';
+        view.probe = await step(flow, 'probe').catch(() => null);
+        if (!current()) return;
         view.phase = 'configure';
       }
       render();
@@ -963,17 +1011,19 @@ export function mount(panel, { request }) {
     node(
       'p',
       body,
-      'Play pasted YouTube links through a local yt-dlp cache sidecar with synced room playback and Web Audio.',
+      'Play pasted YouTube links with synced room playback and Web Audio using uburoom’s built-in yt-dlp cache.',
       'hint',
     );
     youtubeFormFields(body, view);
-    inlineActions(body, 'Verify & Add YouTube', () =>
+    inlineActions(body, 'Add YouTube', () =>
       act(async current => {
         await step(view.flow, 'configure', {
-          delivery: view.delivery || 'sidecar',
-          sidecarUrl: view.sidecarUrl || '',
-          sidecarToken: view.sidecarToken || '',
+          delivery: view.delivery || 'ytdlp',
+          maxCacheGb: view.maxCacheGb === '' ? 20 : Number(view.maxCacheGb),
+          ytDlp: view.ytDlp || '',
           cacheDirectory: view.cacheDirectory || '',
+          cookiesFile: view.cookiesFile || '',
+          poTokenUrl: view.poTokenUrl || '',
           apiKey: view.apiKey || '',
         });
         if (current()) await add(current, (view.sourceName || 'YouTube').trim() || 'YouTube', []);

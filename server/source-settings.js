@@ -30,22 +30,27 @@ function sourceSettings({
   plexFetch,
   jellyfinFetch,
   youtubeFetch,
+  youtubeRunner,
   jellyfinDiscover,
   plexTv,
   platform,
 }) {
   const { json, body, cookies, logins, user, protectedPost, validIdentity } = sessions;
+  const resolvedPlatform = platform || process.platform;
   const tools = {
     plexFetch: plexFetch || fetch,
     jellyfinFetch: jellyfinFetch || fetch,
     youtubeFetch: youtubeFetch || fetch,
+    ...(youtubeRunner ? { youtubeRunner } : {}),
+    ffmpeg: config.ffmpegPath,
+    ffprobe: config.ffprobePath,
+    platform: resolvedPlatform,
   };
   // `config.publicUrl` is read when a step runs: a test server learns its port after startup.
   const stepServices = {
     ...tools,
     plexTv,
     base: path.dirname(config.configFile || path.resolve('config.yaml')),
-    platform: platform || process.platform,
     ...(jellyfinDiscover ? { discover: jellyfinDiscover } : {}),
     get publicUrl() {
       return config.publicUrl;
@@ -181,8 +186,7 @@ function sourceSettings({
           if (!module.setup.update) throw fail('This source has no other settings to change');
           transform = await module.setup.update(data.settings, {
             base: path.dirname(config.configFile || path.resolve('config.yaml')),
-            platform: stepServices.platform,
-            youtubeFetch: tools.youtubeFetch,
+            ...tools,
             existing: sources.filter(source => source.type === entry.type && source.id !== entry.id),
           });
         }
