@@ -50,6 +50,6 @@ USER node
 EXPOSE 5756
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD node -e "const https = require('node:https'); let port = 5756; try { port = require('./server/config').loadConfig('/config/config.yaml', []).port; } catch {} const req = https.request({ host: '127.0.0.1', port, path: '/health', method: 'GET', rejectUnauthorized: false }, res => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.end();"
+    CMD node -e "let port = 5756, listen = 'https'; try { ({ port, listen } = require('./server/config').loadConfig('/config/config.yaml', [])); } catch {} const client = require(listen === 'http-proxy' ? 'node:http' : 'node:https'); const req = client.request({ host: '127.0.0.1', port, path: '/health', method: 'GET', rejectUnauthorized: false }, res => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.end();"
 
 CMD ["node", "server/index.js", "--config", "/config/config.yaml"]

@@ -8,7 +8,7 @@ Run uburoom alongside your Plex Media Server to host watch parties in a browser 
 
 - Node.js **22.13.0+** and npm.
 - A reachable Plex server and an authorized Plex token.
-- An HTTPS origin and certificate/key for uburoom, including when behind a reverse proxy.
+- An HTTPS origin, and a certificate/key for uburoom unless a trusted proxy or tunnel serves HTTPS in front of it (`server.listen: 'http-proxy'`).
 - A Discord application if using Discord login or Activity.
 - FFmpeg/FFprobe for subtitle extraction and optional local transcoding.
 
@@ -31,7 +31,8 @@ Set these values in your private `config.yaml`:
 | --- | --- |
 | `sources` | One entry per media source: Plex, Jellyfin or folders on this machine; see [media sources](#media-sources). |
 | `server.public_url` | Public HTTPS origin, with port if needed; no path. |
-| `server.tls_cert` / `server.tls_key` | Certificate and key paths for uburoom's HTTPS listener. |
+| `server.listen` | `https` (default): uburoom serves HTTPS itself. `http-proxy`: plain HTTP for the proxies in `server.trusted_proxies` only; see [remote access](remote-access.md). |
+| `server.tls_cert` / `server.tls_key` | Certificate and key paths for uburoom's HTTPS listener (`listen: https`). |
 | `access` | The [entry rules](#sign-in-and-access): who gets in. Discord server members by default; configure Discord below. |
 
 **Everyone uburoom admits can watch every library of every media source through that source's own account.** Choose who gets in with the [sign-in and access](#sign-in-and-access) settings, and give each source's account (a Plex token, a Jellyfin user) only the libraries people may watch here.
@@ -46,7 +47,7 @@ Set `rooms.pause_on_buffering: true` to pause playback for everyone when an acti
 
 The server defaults to `127.0.0.1:5756`. Configure `server.host`/`server.port` for your deployment and set `server.public_url` to the exact external HTTPS origin.
 
-Reverse proxies must forward WebSocket upgrades on `/watch-socket`. The upstream connection to uburoom is also HTTPS. Supply a certificate/key for the Node listener even if the reverse proxy terminates public TLS.
+Reverse proxies must forward WebSocket upgrades on `/watch-socket`. The upstream connection to uburoom is HTTPS by default. With `server.listen: 'http-proxy'` it is plain HTTP instead and no certificate is needed: only peers in `server.trusted_proxies` (required) may connect, other connections are dropped before a request is read, every request must carry `X-Forwarded-Proto: https` (else 421), and `GET /health` from the same machine is always answered. `server.public_url` stays HTTPS and cookies stay `Secure`; there is no plain-HTTP mode for browsers on the LAN. [Remote access](remote-access.md) has Cloudflare Tunnel, Tailscale and Caddy setups.
 
 By default (`server.trusted_proxies: []`), uburoom ignores all forwarding headers and uses the direct socket address for rate limiting and LAN vs. WAN delivery detection. When running behind a reverse proxy, list the proxy's quoted IPv4/IPv6 addresses or CIDRs in `server.trusted_proxies` (for example `['127.0.0.1', '::1']` on the same host, or a container bridge CIDR such as `['172.16.0.0/12']`) and set `server.trusted_proxy_header` to `'x-forwarded-for'` (default, walked right-to-left skipping trusted proxies), `'cf-connecting-ip'`, or `'x-real-ip'`. Both settings are YAML-only and require a restart to take effect; only list proxy addresses you control.
 

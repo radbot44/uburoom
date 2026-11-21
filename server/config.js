@@ -26,6 +26,7 @@ const KEYS = [
   'server.public_url',
   'server.tls_cert',
   'server.tls_key',
+  'server.listen',
   'server.public_web_app',
   'server.max_connections',
   'server.trusted_proxies',
@@ -304,6 +305,14 @@ function normalizeConfig(
       throw new Error('server.trusted_proxies entries must be valid IPv4/IPv6 addresses or CIDRs');
   }
   config.trustedProxies = trustedProxies;
+  // How uburoom listens (docs/tls-and-remote-access.md): its own HTTPS (default), or plain HTTP that
+  // only the configured proxies may reach. public_url stays HTTPS and cookies stay Secure either way.
+  config.listen = choice('server.listen', 'https', ['https', 'http-proxy']);
+  if (config.listen === 'http-proxy' && !trustedProxies.length)
+    throw new Error(
+      "server.listen: 'http-proxy' needs server.trusted_proxies: the proxies allowed to reach uburoom over plain HTTP",
+    );
+  config.tlsFilesSet = value.server?.tls_cert !== undefined || value.server?.tls_key !== undefined;
   config.trustedProxyHeader = choice('server.trusted_proxy_header', 'x-forwarded-for', [
     'x-forwarded-for',
     'cf-connecting-ip',

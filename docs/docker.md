@@ -226,9 +226,9 @@ If your host has an Intel processor with Quick Sync Video (QSV) or an AMD GPU on
 
 ## Optional: Caddy Reverse Proxy Recipe
 
-If you are hosting uburoom publicly and want automated HTTPS certificates via Let's Encrypt or ZeroSSL, [Caddy](https://caddyserver.com/) is recommended.
+If you are hosting uburoom publicly and want automated HTTPS certificates via Let's Encrypt or ZeroSSL, [Caddy](https://caddyserver.com/) is recommended. Caddy serves your domain over HTTPS and talks plain HTTP to uburoom over a private Compose network (`server.listen: 'http-proxy'`), so uburoom needs no certificate and Caddy needs no `tls_insecure_skip_verify`. Cloudflare Tunnel and Tailscale work the same way; see [remote access](remote-access.md) for every route.
 
-Below is an example `docker-compose.yml` that runs uburoom alongside Caddy:
+uburoom is only `expose`d, never published with `ports:`: published traffic can arrive from the Docker bridge gateway, which a broad CIDR would trust. Both services share a network with a fixed subnet, and `trusted_proxies` lists exactly that subnet.
 
 ```yaml
 services:
@@ -242,6 +242,8 @@ services:
     volumes:
       - ./config:/config
       - ./secrets:/var/lib/uburoom
+    networks:
+      - edge
 
   caddy:
     image: caddy:2-alpine
@@ -256,6 +258,14 @@ services:
       - caddy_config:/config
     depends_on:
       - uburoom
+    networks:
+      - edge
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
 
 volumes:
   caddy_data:
@@ -264,28 +274,27 @@ volumes:
 
 ### Example `Caddyfile`
 
-Caddy automatically handles WebSocket upgrade headers on `/watch-socket` and proxies requests to uburoom's HTTPS listener:
+Caddy gets a trusted certificate by itself, sends `X-Forwarded-For` and `X-Forwarded-Proto`, and passes WebSocket upgrades on `/watch-socket` without extra settings:
 
 ```caddy
 watch.example.com {
-    reverse_proxy https://uburoom:5756 {
-        # Trust uburoom's internal self-signed certificate:
-        transport http {
-            tls_insecure_skip_verify
-        }
-    }
+    reverse_proxy uburoom:5756
 }
 ```
 
-### Trusting Proxy Headers in `config.yaml`
-
-By default, uburoom ignores forwarding headers (`server.trusted_proxies: []`). When running behind Caddy on a Docker bridge network, configure `server.trusted_proxies` and `server.trusted_proxy_header` in `config.yaml` so rate limits and LAN detection see the real client IP instead of Caddy's container address:
+### `config.yaml` behind Caddy
 
 ```yaml
 server:
-  trusted_proxies: ['172.16.0.0/12'] # Docker bridge subnet range (or your Compose network CIDR)
+  listen: 'http-proxy'
+  host: '0.0.0.0'
+  port: 5756
+  public_url: 'https://watch.example.com'
+  trusted_proxies: ['172.30.0.0/24'] # the Compose network above
   trusted_proxy_header: 'x-forwarded-for'
 ```
 
+Remove `tls_cert` and `tls_key`; they are not read in this mode (the doctor warns if they are set). The container's health check follows `server.listen` and asks `/health` over plain HTTP.
+
 > [!NOTE]
-> Even when behind a TLS-terminating reverse proxy like Caddy or Nginx, uburoom requires its internal listener to be configured with HTTPS. Setting `tls_insecure_skip_verify` allows Caddy to proxy traffic securely over internal container networks to uburoom's HTTPS listener.
+> To keep uburoom's own HTTPS listener instead (the default, `server.listen: 'https'`), point Caddy at `https://uburoom:5756`. Caddy then has to trust uburoom's certificate, which for a self-signed one means turning verification off; `http-proxy` avoids that.

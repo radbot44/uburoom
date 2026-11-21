@@ -634,6 +634,8 @@ export function mount(host, deps) {
       return;
     }
     show('Join ' + preview.room.name + ' as a guest', 'Pick a name to show in the room.');
+    // A room invite asks for the name first, above the ways in.
+    $('entry-ways').before($('guest-join'));
     $('guest-join').hidden = false;
     const name = $('guest-name'),
       roll = $('guest-name-roll');

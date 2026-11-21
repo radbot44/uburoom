@@ -76,7 +76,8 @@ test('Jellyfin Quick Connect uses the selected member source and a single-use br
   assert.equal((await browser.request(route, start, { Authorization: 'Bearer fixture-activity' })).status, 403);
   const initiated = await browser.request(route, start);
   assert.equal(initiated.status, 200);
-  assert.deepEqual(Object.keys(initiated.body).sort(), ['code']);
+  assert.deepEqual(Object.keys(initiated.body).sort(), ['code', 'expiresIn']);
+  assert.ok(initiated.body.expiresIn > 500 && initiated.body.expiresIn <= 540);
   assert.match(initiated.headers['set-cookie'][0], /HttpOnly; Secure; SameSite=Lax/);
   const handle = browser.jar.get(binding);
   assert.ok(handle);
@@ -150,4 +151,27 @@ test('a verified Jellyfin identity from a source outside the entry rule does not
   const signIn = await source.signIn.password('Viewer', 'fixture-secret');
   const account = f.app.registry.resolve(signIn.provider, id, signIn.name);
   assert.equal(await f.app.access.refreshWatch(account.id), false);
+});
+
+test('cancelling Quick Connect ends the attempt: an approval afterwards signs nobody in', tls, async t => {
+  const f = await setup(t);
+  const alice = f.selected.addUser('Alice', 'alice-secret');
+  const browser = f.browser();
+  const initiated = await browser.request(route, { source: 'cabin', action: 'start' });
+  assert.equal(initiated.status, 200);
+  const handle = browser.jar.get(binding);
+  const cancelled = await browser.request(route, { source: 'cabin', action: 'cancel' });
+  assert.deepEqual(cancelled.body, { ok: true });
+  assert.match(cancelled.headers['set-cookie'].join(';'), new RegExp(binding + '=;'));
+  f.selected.approve(initiated.body.code, alice);
+  const polled = await browser.request(route, { source: 'cabin', action: 'poll' }, { Cookie: binding + '=' + handle });
+  assert.equal(polled.status, 400);
+  assert.match(polled.body.error, /expired/);
+  assert.equal(f.selected.state.calls.filter(call => call.path === 'Users/AuthenticateWithQuickConnect').length, 0);
+  assert.equal((await browser.request('/api/watch/me')).status, 401);
+  assert.equal(
+    (await browser.request(route, { source: 'cabin', action: 'cancel' }, { Origin: 'https://cross-origin.invalid' }))
+      .status,
+    403,
+  );
 });

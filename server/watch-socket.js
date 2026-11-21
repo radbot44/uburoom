@@ -466,6 +466,8 @@ function watchSockets({
   }
 
   server.on('upgrade', (req, socket, head) => {
+    // Already answered or refused (server/http/server.js, behind a proxy).
+    if (socket.destroyed || socket.writableEnded) return;
     if (req.url !== '/watch-socket') return socket.destroy();
     if (
       !allowed(req.headers.origin) ||
