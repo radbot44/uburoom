@@ -41,6 +41,7 @@ const messages = {
   CONFIG_UNSAFE_PATH: 'Configuration must be an existing regular file without symbolic or hard links',
   SOURCE_MISSING: 'That source is no longer in the configuration; read it again',
   SOURCE_INVALID: 'The configuration would not be valid with this change; nothing was saved',
+  CONFIG_EXISTS: 'A configuration file already exists there; it was left as it is',
 };
 class ConfigEditError extends Error {
   constructor(code) {
@@ -136,6 +137,21 @@ async function protectDirectory(directory) {
       [void]$acl.AddAccessRule($rule)
     }; [System.IO.Directory]::SetAccessControl($env:UBUROOM_EDIT_DIRECTORY,$acl)`,
     { UBUROOM_EDIT_DIRECTORY: directory },
+  );
+}
+
+/** Makes a file readable and writable only by this user (and SYSTEM on Windows), whatever its folder allows. */
+async function protectFile(file) {
+  if (process.platform !== 'win32') return fs.chmod(file, 0o600);
+  await powershell(
+    `$acl=[System.Security.AccessControl.FileSecurity]::new();
+    $owner=[System.Security.Principal.WindowsIdentity]::GetCurrent().User;
+    $acl.SetOwner($owner); $acl.SetAccessRuleProtection($true,$false);
+    foreach($sid in @($owner,[System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))){
+      $rule=[System.Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl','Allow');
+      [void]$acl.AddAccessRule($rule)
+    }; [System.IO.File]::SetAccessControl($env:UBUROOM_EDIT_FILE,$acl)`,
+    { UBUROOM_EDIT_FILE: file },
   );
 }
 
@@ -373,6 +389,64 @@ async function writePrivate(file, bytes, original) {
 }
 
 /**
+ * Creates a configuration file that does not exist yet, for first-run setup: never replaces or reads
+ * an existing one (or a link where it would go). The bytes must be a valid configuration. They are
+ * written privately in a protected folder beside it, then linked into place, which fails if anything
+ * appeared there meanwhile; where the filesystem has no hard links, an exclusive create is used.
+ * The file ends readable only by this user.
+ * @param {string} selectedPath
+ * @param {Buffer} bytes
+ */
+function createConfigFile(selectedPath, bytes) {
+  const file = path.resolve(selectedPath);
+  return serialize(async () => {
+    try {
+      validate(bytes, file);
+      const parent = await fs.lstat(path.dirname(file));
+      if (!parent.isDirectory()) throw failure('CONFIG_UNSAFE_PATH');
+      const existing = await fs.lstat(file).then(
+        () => true,
+        error => {
+          if (error.code === 'ENOENT') return false;
+          throw error;
+        },
+      );
+      if (existing) throw failure('CONFIG_EXISTS');
+      const directory = await fs.mkdtemp(path.join(path.dirname(file), '.uburoom-config-'));
+      try {
+        await protectDirectory(directory);
+        const staged = path.join(directory, 'config.yaml');
+        await writePrivate(staged, bytes);
+        if (revision(await fs.readFile(staged)) !== revision(bytes)) throw failure('CONFIG_IO');
+        await protectFile(staged);
+        try {
+          await fs.link(staged, file);
+        } catch (error) {
+          if (error.code === 'EEXIST') throw failure('CONFIG_EXISTS');
+          // No hard links here: an exclusive create still never replaces anything.
+          await writePrivate(file, bytes);
+          await protectFile(file);
+        }
+        if (process.platform !== 'win32') {
+          const handle = await fs.open(path.dirname(file), 'r');
+          try {
+            await handle.sync();
+          } finally {
+            await handle.close();
+          }
+        }
+        return { revision: revision(bytes) };
+      } finally {
+        await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+      }
+    } catch (error) {
+      if (error instanceof ConfigEditError) throw error;
+      throw error?.code === 'EEXIST' ? failure('CONFIG_EXISTS') : failure('CONFIG_IO');
+    }
+  });
+}
+
+/**
  * The path is selected by the server, not HTTP. Remote callers supply a
  * synchronous beforeReplace authorization check, also run after queueing.
  * @param {string} [selectedPath]
@@ -515,4 +589,4 @@ function createConfigEditor(selectedPath = configPath()) {
   }
 }
 
-module.exports = { createConfigEditor };
+module.exports = { createConfigEditor, createConfigFile };

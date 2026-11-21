@@ -52,42 +52,55 @@ function validPassword(value) {
 
 const digest = (/** @type {string} */ token) => createHash('sha256').update(token).digest('hex');
 
+// One process-wide count of hashes running, shared by every caller.
+let hashing = 0;
+/**
+ * @param {string} password
+ * @param {Buffer} salt
+ * @param {{N: number, r: number, p: number, keylen: number}} params
+ * @returns {Promise<Buffer>}
+ */
+async function derive(password, salt, params) {
+  if (hashing >= MAX_HASHING) throw invalid('Sign-in is busy; try again shortly', 'ACCOUNT_BUSY');
+  hashing++;
+  try {
+    return await new Promise((resolve, reject) =>
+      scrypt(
+        password,
+        salt,
+        params.keylen,
+        { N: params.N, r: params.r, p: params.p, maxmem: 128 * params.N * params.r * 2 },
+        (error, key) => (error ? reject(error) : resolve(key)),
+      ),
+    );
+  } finally {
+    hashing--;
+  }
+}
+/**
+ * A password as stored: its scrypt hash, salt and parameters. Checks the length first.
+ * @param {unknown} password
+ */
+async function hashPassword(password) {
+  const salt = randomBytes(16);
+  const key = await derive(validPassword(password), salt, SCRYPT);
+  return { hash: key.toString('base64'), salt: salt.toString('base64'), params: JSON.stringify(SCRYPT) };
+}
+/** @param {any} value */
+const storedHash = value =>
+  !!value &&
+  typeof value.hash === 'string' &&
+  typeof value.salt === 'string' &&
+  typeof value.params === 'string' &&
+  !!value.hash &&
+  !!value.salt;
+
 /**
  * @param {{registry: InstanceType<typeof import('../accounts').Accounts>, now?: () => number}} services
  */
 function createUburoomAccounts({ registry, now = Date.now }) {
   const repo = () => repositories(registry.db).uburoomAccounts;
-  let hashing = 0;
 
-  /**
-   * @param {string} password
-   * @param {Buffer} salt
-   * @param {{N: number, r: number, p: number, keylen: number}} params
-   * @returns {Promise<Buffer>}
-   */
-  async function derive(password, salt, params) {
-    if (hashing >= MAX_HASHING) throw invalid('Sign-in is busy; try again shortly', 'ACCOUNT_BUSY');
-    hashing++;
-    try {
-      return await new Promise((resolve, reject) =>
-        scrypt(
-          password,
-          salt,
-          params.keylen,
-          { N: params.N, r: params.r, p: params.p, maxmem: 128 * params.N * params.r * 2 },
-          (error, key) => (error ? reject(error) : resolve(key)),
-        ),
-      );
-    } finally {
-      hashing--;
-    }
-  }
-  /** @param {string} password */
-  async function hashPassword(password) {
-    const salt = randomBytes(16);
-    const key = await derive(password, salt, SCRYPT);
-    return { hash: key.toString('base64'), salt: salt.toString('base64'), params: JSON.stringify(SCRYPT) };
-  }
   /** A fresh link; only its hash is stored. @param {'set'|'reset'} purpose */
   function newLink(purpose) {
     const token = randomBytes(32).toString('base64url');
@@ -122,9 +135,9 @@ function createUburoomAccounts({ registry, now = Date.now }) {
    * @param {string} name
    * @param {{hash: string, salt: string, params: string}|undefined} password
    * @param {{hash: string, expires: number, purpose: string}|undefined} link
+   * @param {string} [subject] - chosen ahead (first-run setup names the operator before the account exists)
    */
-  function insert(username, name, password, link) {
-    const subject = randomUUID();
+  function insert(username, name, password, link, subject = randomUUID()) {
     registry.transaction(() => {
       if (repo().byUsername(username)) throw invalid('That username is taken', 'ACCOUNT_TAKEN');
       const userId = registry.create(name);
@@ -156,14 +169,17 @@ function createUburoomAccounts({ registry, now = Date.now }) {
     },
     /**
      * The first account, made directly with its password (no link): for the setup wizard, before
-     * anyone can sign in. The caller decides whether the installation may still do this.
-     * @param {{username: unknown, name?: unknown, password: unknown}} input
+     * anyone can sign in. The caller decides whether the installation may still do this. Setup passes
+     * the password already hashed (`hashed`, from `hashPassword`) and the `subject` it wrote as operator.
+     * @param {{username: unknown, name?: unknown, password?: unknown, hashed?: any, subject?: string}} input
      */
-    async createFirst({ username, name, password }) {
+    async createFirst({ username, name, password, hashed, subject }) {
       const normalized = normalizeUsername(username);
       const display = displayName(typeof name === 'string' && name.trim() ? name : normalized);
-      const hashed = await hashPassword(validPassword(password));
-      const subject = insert(normalized, display, hashed, undefined);
+      if (subject !== undefined && (typeof subject !== 'string' || !/^[A-Za-z0-9._@-]{1,100}$/.test(subject)))
+        throw invalid('Account not created');
+      const stored = storedHash(hashed) ? hashed : await hashPassword(password);
+      subject = insert(normalized, display, stored, undefined, subject);
       const created = account(subject);
       registry.seen(created.userId);
       registry.audit(created.userId, 'uburoom-account-create-first', { subject, username: normalized });
@@ -285,4 +301,4 @@ function createUburoomAccounts({ registry, now = Date.now }) {
   };
 }
 
-module.exports = { createUburoomAccounts, normalizeUsername, PROVIDER, LINK_MS, PASSWORD_MIN };
+module.exports = { createUburoomAccounts, normalizeUsername, hashPassword, PROVIDER, LINK_MS, PASSWORD_MIN };
