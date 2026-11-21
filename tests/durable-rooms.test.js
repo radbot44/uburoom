@@ -22,7 +22,7 @@ test(
     const f = await fixture(t, true, { shareChannelId: '100000000000000050' }),
       creator = await f.login('host'),
       viewer = await f.login('guest');
-    const remote = require('./helpers/discord-channel').discordChannel(f.config);
+    const remote = require('./helpers/discord-channel').discordChannel({ ...f.config, guildId: 'share-channel-guild' });
     remote.attach(f.app.hub);
     const id = (await creator.call('/api/watch/rooms', { keepEmpty: true })).body.id,
       root = '/api/watch/rooms/' + id;
@@ -261,7 +261,7 @@ test(
   tls,
   async t => {
     const f = await fixture(t, true, { shareChannelId: '100000000000000050' });
-    const remote = require('./helpers/discord-channel').discordChannel(f.config);
+    const remote = require('./helpers/discord-channel').discordChannel({ ...f.config, guildId: 'share-channel-guild' });
     remote.attach(f.app.hub);
     const creator = await f.login('host'),
       host = await f.login('guest');
@@ -405,7 +405,7 @@ test(
       409,
     );
     assert.equal(remote.messages.size, 0, 'expired publication cannot post');
-    remote.channel.guildId = 'another-guild';
+    remote.channel.guildId = undefined;
     assert.notEqual((await dispatch(creator)).body.status, 'applied');
     assert.equal(remote.messages.size, 0);
     remote.channel.guildId = f.config.guildId;

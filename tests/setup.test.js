@@ -262,8 +262,18 @@ test('each step is checked by the server', async t => {
     botToken: DISCORD.token,
   });
   assert.equal(discord.status, 200);
-  assert.deepEqual(discord.body.discordSetup.servers, ['Movie Night Crew']);
+  assert.deepEqual(discord.body.discordSetup.servers, [{ id: '100000000000000020', name: 'Movie Night Crew' }]);
   assert.match(discord.body.discordSetup.inviteUrl, /client_id=100000000000000010&scope=bot/);
+  assert.equal(
+    (await post('/setup/api/access', { ...rules, discord: true, excludedGuildIds: ['forged'] })).status,
+    400,
+  );
+  const exclusions = await post('/setup/api/access', {
+    ...rules,
+    discord: true,
+    excludedGuildIds: ['100000000000000020'],
+  });
+  assert.deepEqual(exclusions.body.excludedGuildIds, ['100000000000000020']);
   assert.equal((await post('/setup/api/access', { ...rules, discord: true, password: 'server pass 1' })).status, 200);
   // 5. Where people watch
   assert.equal((await post('/setup/api/network', { where: 'computer', port: 70000 })).status, 400);

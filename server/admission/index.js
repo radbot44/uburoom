@@ -13,7 +13,7 @@ const RECHECK_MS = 5 * 60000,
 /**
  * Admission: the only code that decides who gets in. The owner picks entry rules in `access:`
  * and **any one** matching rule admits (docs/media-sources.md):
- * - `discordServer`: a verified Discord identity that is a member of `discord.guild_id`;
+ * - `discordServer`: a verified Discord identity that belongs to an eligible server the bot joined;
  * - `sourceMembers`: a verified identity the named source says is its member (that source
  *   module's `members`, e.g. a Plex account that can reach a Plex source's server);
  * - `password`: a server-wide guest who entered `secrets.server_password` (its current revision);
@@ -134,7 +134,7 @@ class Admission {
     )
       return true;
     let unanswered = false;
-    // Discord server membership; a Discord Activity is always checked against its guild.
+    // The Activity login also checks the account's voice channel through the bot.
     if ((this.settings.discordServer || context?.activity === true) && discord) {
       const access = this.discordAccess();
       let member;

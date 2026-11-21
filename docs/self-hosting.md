@@ -71,14 +71,14 @@ Sign-in proves who someone is; **entry rules** decide whether they get in, and *
 
 | Setting | Behavior |
 | --- | --- |
-| `access.discord_server` | `true` (default): members of `discord.guild_id` who sign in with Discord. |
+| `access.discord_server` | `true` (default): Discord members of eligible servers the bot has joined. |
 | `access.source_members` | Source ids whose members may come in, e.g. `['living-room']`. For a Plex source, a Plex account that can reach that server. For Jellyfin, an enabled user on that Jellyfin server. Members of one source never get in through a rule naming another, and the rule never hides any source's media from people admitted another way. |
 | `access.password` | `true`: anyone who enters `secrets.server_password` comes in as a guest under a name they type (or a random one they keep). The browser keeps that sign-in; another browser is another guest. Changing the password signs out everyone who got in with the old one. Wrong guesses are limited per address. |
 | `access.accounts` | `true`: uburoom's own accounts, while enabled and with a password; their sign-in form is shown on the entry page. |
 | `secrets.server_password` | The password for `access.password`; required with it and refused without it. |
 | `server.max_connections: 256` | Open room connections (one per browser tab or app window) accepted at once; 1–4096. Further connections are refused until one closes. |
 | `server.public_web_app: false` | Restrict playback to verified Discord Activity. Browser handoff remains available for account linking/management. |
-| `operator.identities` | Exact verified identities, quoted `'discord:<id>'`, `'plex:<id>'`, `'uburoom:<subject>'` or `'jellyfin:<server id>:<user id>'`, authorized to open **Server settings** in the browser (the 18-key allowlist across Rooms, Directory and Transcoding). Saved edits write to `config.yaml` and require a manual restart to take effect. |
+| `operator.identities` | Exact verified identities, quoted `'discord:<id>'`, `'plex:<id>'`, `'uburoom:<subject>'` or `'jellyfin:<server id>:<user id>'`, authorized to open **Server settings** in the browser. Saved edits write to `config.yaml` and require a restart. |
 
 The entry page shows only what the rules offer: Discord sign-in with `discord_server`, Plex sign-in when a member rule names a Plex source, and the password step with `password`. Plex can still be linked from Account for personal watch-state sync whenever a Plex source is configured. Outside visitors who match no rule can come in through a `/join/<code>` room invite with `guests.enabled: true`. Changing the rules signs everyone out. `/auth/owner` supports the configured Discord owner's OAuth recovery; the owner is always admitted.
 
@@ -205,7 +205,7 @@ At capacity, a conversion may wait briefly or reuse an existing compatible outpu
 
 ## Discord (optional)
 
-Create an application in the [Discord Developer Portal](https://discord.com/developers/applications) and fill in `discord.bot_token`, `client_id`, `client_secret`, `owner_id` and `guild_id`.
+Create an application in the [Discord Developer Portal](https://discord.com/developers/applications) and fill in `discord.bot_token`, `client_id`, `client_secret` and `owner_id`. Invite the bot to servers whose members should be able to sign in. Exclude a server through Server settings → Access or add its quoted ID to `discord.excluded_guild_ids`, then restart. Setup and Server settings warn if a server reports more than 500 members.
 
 - Invite the bot with the `bot` scope. Administrator, Message Content and voice-connection permissions are not required.
 - Set OAuth callback to `https://your-origin/auth/callback`.
@@ -216,7 +216,7 @@ Optional host-directory discovery can use Discord Server Members/Presence intent
 
 ### Publish rooms to Discord
 
-Set `discord.share_channel_id` to one quoted text-channel ID in `discord.guild_id`; blank disables new publishing. Give the bot **View Channel**, **Send Messages**, **Embed Links** and **Read Message History** in that channel, then restart uburoom. No additional privileged Gateway intent or bot commands are needed.
+Set `discord.share_channel_id` to the quoted ID of a server text channel the bot can access. Its server is the destination for new Discord watch nights. Leave it blank to disable new publishing and Discord watch nights. Give the bot **View Channel**, **Send Messages**, **Embed Links** and **Read Message History** in that channel, then restart uburoom. Scheduled events also need **Create Events** in its Discord server.
 
 In the Room section or Room settings → Viewers, **Share** shows the full invite URL with Copy invite link and Share invite… for everyone. Room leaders, hosts (including All hosts, excluding room guests) and active admins can explicitly **Publish** a preview to the configured channel, view the post or remove it. Publishing is independent of the editable Room settings permission. It sends no participant names or automatic mentions. Publishing uses current room details and checks current host/access permissions; settings changes, playback changes and people joining do not require reopening Share. Removal checks current host authority and the room's current post independently of the preview.
 

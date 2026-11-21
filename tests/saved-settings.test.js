@@ -27,7 +27,6 @@ discord:
   client_id: '100000000000000010'
   client_secret: 'fixture-private-client-secret'
   owner_id: '100000000000000001'
-  guild_id: '100000000000000020'
 sources:
   - id: 'plex'
     type: 'plex'
@@ -76,8 +75,14 @@ test(
       'room owner authority is not server-operator capability',
     );
     assert.equal((await admin.post('/api/watch/admin-mode', { enabled: true })).status, 200);
+    const guilds = '/api/operator/discord/servers';
+    const server = { id: '100000000000000020', name: 'Fixture Discord', memberCount: 735 };
+    f.app.access.raw().joinedServers = () => [server];
+    assert.equal((await anonymous.request(guilds)).status, 401);
+    assert.deepEqual((await browser.request(guilds)).body, { servers: [server] });
     for (const denied of [ordinary, admin]) {
       assert.equal((await denied.request(endpoint)).status, 403);
+      assert.equal((await denied.request(guilds)).status, 403);
       assert.equal(
         (await f.save(denied, { revision: 'a'.repeat(64), changes: { 'rooms.max_members': 12 } })).status,
         403,
@@ -104,7 +109,12 @@ test(
       assert.equal(Object.hasOwn(initial.settings, key), false);
     const payload = {
       revision: initial.revision,
-      changes: { ...initial.settings, 'rooms.max_members': 12, 'transcoding.max_jobs': 2 },
+      changes: {
+        ...initial.settings,
+        'discord.excluded_guild_ids': [server.id],
+        'rooms.max_members': 12,
+        'transcoding.max_jobs': 2,
+      },
     };
     assert.equal((await browser.request(endpoint, payload)).status, 403, 'save requires CSRF proof');
     assert.equal((await f.save(browser, payload, { Origin: 'https://attacker.invalid' })).status, 403);
@@ -121,6 +131,8 @@ test(
     assert.equal(response.headers['cache-control'], 'no-store');
     const saved = await browser.request(endpoint);
     assert.equal(saved.body.settings['rooms.max_members'], 12);
+    assert.deepEqual(saved.body.settings['discord.excluded_guild_ids'], [server.id]);
+    assert.deepEqual(f.config.discordExcludedGuildIds, [], 'saved exclusions apply after restart');
     assert.notEqual(saved.body.revision, initial.revision);
     assert.equal(
       (await browser.request('/api/operator/settings')).body.settings.rooms.limits.maxMembers,
@@ -383,7 +395,6 @@ test(
       f.config.clientSecret,
       f.config.clientId,
       f.config.ownerId,
-      f.config.guildId,
       f.provider.subjects.guest2,
       '101',
       '102',

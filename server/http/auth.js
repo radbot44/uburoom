@@ -156,7 +156,7 @@ function authRoutes({
         }
         if (!config.accessPolicy && !(await access.refresh(identity.id)))
           return json(res, 403, {
-            error: 'Sign in as a member of the configured Discord server; the bot must be connected.',
+            error: 'Sign in as a member of a Discord server that allows entry. The bot must be connected.',
           });
         const id = randomBytes(32).toString('hex');
         // Signing in replaces a guest session in this browser.

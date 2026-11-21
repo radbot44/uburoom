@@ -74,7 +74,7 @@ async function startBot(config, link, { createClient = options => new Client(opt
     log.info('Not configured. Browser playback and HTTPS setup are available.');
     return;
   }
-  if (!config.ownerId || !config.guildId) throw new Error('Configure Discord owner and guild');
+  if (!config.ownerId) throw new Error('Configure the Discord owner');
   const client = createClient({
     rest: { timeout: 10000, retries: 0, rejectOnRateLimit: () => true },
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
@@ -94,8 +94,12 @@ async function startBot(config, link, { createClient = options => new Client(opt
       log.warn('Could not check optional directory intents. Known uburoom account search remains available.');
     }
   }
-  link.access.connect(discordAccess(client, config.guildId, log));
-  client.on(Events.ClientReady, () => log.info('Connected to the configured guild.'));
+  link.access.connect(discordAccess(client, config.discordExcludedGuildIds, log));
+  client.on(Events.ClientReady, () => {
+    const count = client.guilds.cache.size;
+    if (count) log.info(`Connected to ${count} Discord server${count === 1 ? '' : 's'}.`);
+    else log.warn('Add the bot to a Discord server so its members can get in.');
+  });
   client.on(Events.Error, error => log.error(loginFailure(error).message));
   client.on(Events.ShardError, error => log.error(loginFailure(error).message));
   client.on(Events.ShardDisconnect, event =>
@@ -110,10 +114,6 @@ async function startBot(config, link, { createClient = options => new Client(opt
   } catch {
     /* Retain the last authenticated account name if Discord lookup fails. */
   }
-  // Clear any previously registered guild commands.
-  try {
-    await client.application?.commands?.set([], config.guildId);
-  } catch {}
   return client;
 }
 module.exports = { startBot, connectBot };

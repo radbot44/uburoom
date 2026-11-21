@@ -51,7 +51,7 @@ function openAccounts(config) {
   // Password grants are process-local and reset on restart.
   // The entry rules hold no secret; the server password's own revision ends its sessions (server/admission/).
   const policy = config.accessPolicy ? [hash(JSON.stringify(config.accessPolicy))] : [];
-  const identity = [config.publicUrl, config.ownerId, config.guildId, config.clientId, ...policy];
+  const identity = [config.publicUrl, config.ownerId, config.clientId, ...policy];
   try {
     return { registry, accounts: loginStore(JSON.stringify(identity), vault, registry) };
   } catch (error) {
@@ -171,7 +171,17 @@ function createApp(config, options = {}) {
     });
     const route = createRoutes({
       ...{ config, registry, accounts, sessions, access, hub, rooms, files, signIn, setOwnerName },
-      ...{ watchRoutes, accountRoutes, operatorRoutes: operatorHttp({ config, registry, editor, ...sessions }) },
+      ...{
+        watchRoutes,
+        accountRoutes,
+        operatorRoutes: operatorHttp({
+          config,
+          registry,
+          editor,
+          discordServers: () => access.raw()?.joinedServers?.(),
+          ...sessions,
+        }),
+      },
       uburoomAccountRoutes: uburoomAccountsHttp.routes,
       sourceSettingsRoutes: sourceSettingsHttp.routes,
       setupRoutes: setupHttp.routes,

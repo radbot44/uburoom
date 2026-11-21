@@ -3,11 +3,7 @@
 /**
  * Everything Discord-specific in first-run setup, in one place: checking the application the owner
  * made, finding which servers its bot has joined, the link that adds the bot to another server, and
- * the settings written for the "Members of your Discord servers" entry rule.
- *
- * Members of any server the bot has joined get in (owner decision, 2026-11-21); there is no server
- * to pick. Until the backend follows that rule (personal/handoff-discord-any-server.md), the config
- * still names one guild: see `settings`.
+ * the settings written for the Discord entry rule.
  */
 const API = 'https://discord.com/api/v10';
 const SNOWFLAKE = /^\d{17,20}$/;
@@ -67,14 +63,32 @@ const bot = token => ({ headers: { Authorization: 'Bot ' + token, Accept: 'appli
  * Server settings ask here.
  * @param {string} botToken
  * @param {typeof fetch} fetcher
- * @returns {Promise<{id: string, name: string}[]>}
+ * @returns {Promise<{id: string, name: string, memberCount?: number}[]>}
  */
 async function joinedServers(botToken, fetcher) {
-  const guilds = await call(fetcher, '/users/@me/guilds?limit=' + MAX_SERVERS, bot(botToken));
-  if (!guilds) throw fail('Discord refused the bot token; reset it under Bot and paste the new one');
-  return (Array.isArray(guilds) ? guilds : [])
-    .filter(guild => SNOWFLAKE.test(String(guild?.id)))
-    .map(guild => ({ id: String(guild.id), name: text(guild.name) || 'Discord server' }));
+  const servers = new Map();
+  let after;
+  for (;;) {
+    const query = new URLSearchParams({ limit: String(MAX_SERVERS), with_counts: 'true', ...(after ? { after } : {}) });
+    const page = await call(fetcher, '/users/@me/guilds?' + query, bot(botToken));
+    if (!page) throw fail('Discord refused the bot token; reset it under Bot and paste the new one');
+    if (!Array.isArray(page)) throw fail('Discord didn’t return a server list', 502);
+    for (const guild of page) {
+      if (!SNOWFLAKE.test(String(guild?.id))) continue;
+      servers.set(String(guild.id), {
+        id: String(guild.id),
+        name: text(guild.name) || 'Discord server',
+        ...(Number.isSafeInteger(guild.approximate_member_count) && guild.approximate_member_count >= 0
+          ? { memberCount: guild.approximate_member_count }
+          : {}),
+      });
+    }
+    if (page.length < MAX_SERVERS) return [...servers.values()];
+    const next = String(page.at(-1)?.id);
+    if (!SNOWFLAKE.test(next) || (after && BigInt(next) <= BigInt(after)) || servers.size >= 1000)
+      throw fail('Discord returned too many servers to review here', 502);
+    after = next;
+  }
 }
 
 /** The page that adds this application's bot to a server the owner chooses. */
@@ -127,7 +141,7 @@ async function verify(input, { fetch: fetcher = fetch } = {}) {
 function summary(verified, publicUrl) {
   return {
     application: verified.name,
-    servers: verified.servers.map(server => server.name),
+    servers: verified.servers,
     inviteUrl: inviteUrl(verified.clientId),
     redirectUrl: publicUrl + '/auth/callback',
   };
@@ -136,8 +150,9 @@ function summary(verified, publicUrl) {
 /**
  * The config settings the Discord entry rule writes, or a reason it can't be on yet.
  * @param {Awaited<ReturnType<typeof verify>>} verified
+ * @param {string[]} [excluded]
  */
-function settings(verified) {
+function settings(verified, excluded = []) {
   if (!verified.servers.length) throw fail('Add the bot to a Discord server first, then check again');
   return {
     discord: {
@@ -145,10 +160,7 @@ function settings(verified) {
       client_id: verified.clientId,
       client_secret: verified.clientSecret,
       owner_id: verified.ownerId,
-      // TODO(discord-any-server): members of every joined server get in once the backend admits any
-      // guild the bot is in (personal/handoff-discord-any-server.md); then write no guild at all.
-      // Until then the first joined server is the one whose members are let in.
-      guild_id: verified.servers[0].id,
+      excluded_guild_ids: excluded,
     },
   };
 }

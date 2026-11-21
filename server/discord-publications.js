@@ -73,13 +73,13 @@ class DiscordPublications {
       .catch(() => {});
     return task;
   }
-  async channel(channelId = this.config.shareChannelId, guildId = this.config.guildId) {
+  async channel(channelId = this.config.shareChannelId, guildId) {
     const client = this.hub.discord.client;
     if (!client?.isReady()) throw fail('Discord is unavailable. Try again when the bot reconnects.');
     if (!channelId) throw fail('Discord publishing is unavailable. Try again shortly.');
     const channel = await client.channels.fetch(channelId);
-    if (channel?.guildId !== guildId || channel.type !== ChannelType.GuildText)
-      throw fail('Choose a text channel in the configured Discord server.');
+    if (!channel?.guildId || (guildId && channel.guildId !== guildId) || channel.type !== ChannelType.GuildText)
+      throw fail('Choose a Discord server text channel the bot can access.');
     const permissions = channel.permissionsFor(client.user);
     if (
       !permissions?.has([
@@ -251,10 +251,7 @@ class DiscordPublications {
     if (this.config.shareChannelId || publication) {
       try {
         value.channelName = (
-          await this.channel(
-            publication?.channelId || this.config.shareChannelId,
-            publication?.guildId || this.config.guildId,
-          )
+          await this.channel(publication?.channelId || this.config.shareChannelId, publication?.guildId)
         ).name;
         value.available = true;
       } catch (error) {
@@ -312,7 +309,7 @@ class DiscordPublications {
       await this.check(room, actor, ticket);
       if (
         publication?.channelId !== undefined &&
-        (publication.channelId !== channel.id || publication.guildId !== this.config.guildId)
+        (publication.channelId !== channel.id || publication.guildId !== channel.guildId)
       )
         throw fail('Remove the previous room post before publishing to the new channel.', 409);
       if (publication && !publication.messageId) {
@@ -346,7 +343,7 @@ class DiscordPublications {
         this.sent.set(id, JSON.stringify(this.payload(preview)));
       } else {
         publication = {
-          guildId: this.config.guildId,
+          guildId: channel.guildId,
           channelId: channel.id,
           channelName: channel.name,
           active: true,

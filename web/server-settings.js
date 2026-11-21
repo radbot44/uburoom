@@ -88,6 +88,7 @@ function mount({ request, trigger }) {
         )
       : {};
   const dirty = () => !!base && Object.keys(changes()).length > 0;
+  const savedControl = control => !panels.accounts.contains(control) && !panels.sources.contains(control);
   popups.register(dialog, { dirty, busy: () => saving });
   dialog.addEventListener('close', () => {
     if (dialog.open) return;
@@ -105,8 +106,7 @@ function mount({ request, trigger }) {
     save.setAttribute('aria-busy', String(saving));
     // Accounts and Sources act at once and keep their own busy state; only the saved-settings fields wait for a draft.
     for (const control of content.querySelectorAll('input,select,button'))
-      if (!panels.accounts.contains(control) && !panels.sources.contains(control))
-        control.disabled = busy || !draft || control.dataset.fixed === 'true';
+      if (savedControl(control)) control.disabled = busy || !draft || control.dataset.fixed === 'true';
     for (const item of permissionControls) {
       const own = draft?.[item.key]?.includes(item.cap),
         inherited = item.role === 'host' && draft?.['rooms.viewer_permissions']?.includes(item.cap);
@@ -140,6 +140,7 @@ function mount({ request, trigger }) {
   }
   for (const [key, label] of [
     ['rooms', 'Rooms'],
+    ['access', 'Access'],
     ['directory', 'Directory'],
     ['transcoding', 'Transcoding'],
     ['sources', 'Sources'],
@@ -215,6 +216,45 @@ function mount({ request, trigger }) {
   }
   const accountsPanel = uburoomServerAccounts.mount(panels.accounts, { request });
   const sourcesPanel = uburoomServerSources.mount(panels.sources, { request });
+  const excludedGuilds = 'discord.excluded_guild_ids';
+  labels[excludedGuilds] = 'Discord server exclusions';
+  node('h3', panels.access, 'Discord servers');
+  node('p', panels.access, 'Uncheck a server to exclude it from Discord entry after restart.', 'hint');
+  const guildRows = node('div', panels.access);
+  let joinedGuilds;
+  writers.set(excludedGuilds, excluded => {
+    guildRows.replaceChildren();
+    if (!joinedGuilds?.length)
+      node(
+        'p',
+        guildRows,
+        joinedGuilds ? 'The bot hasn’t joined a Discord server.' : 'Discord server list unavailable.',
+        'hint',
+      );
+    const servers = new Map((joinedGuilds || []).map(server => [server.id, server]));
+    for (const id of excluded)
+      if (!servers.has(id)) servers.set(id, { id, name: `Previously excluded server (${id})` });
+    for (const { id, name, memberCount } of servers.values()) {
+      const label = node('label', guildRows, null, 'form-checkbox');
+      const input = node('input', label);
+      input.type = 'checkbox';
+      input.checked = !excluded.includes(id);
+      node('span', label, name);
+      input.addEventListener('change', () => {
+        const next = new Set(draft[excludedGuilds]);
+        if (input.checked) next.delete(id);
+        else next.add(id);
+        set(excludedGuilds, [...next].sort());
+      });
+      if (memberCount > 500)
+        node(
+          'p',
+          guildRows,
+          `About ${memberCount.toLocaleString()} members. Leave checked only if you want them to have access.`,
+          'hint',
+        );
+    }
+  });
   const capacity = node('div', panels.rooms, null, 'server-settings-grid');
   for (const [name, label] of [
     ['max_saved', 'Saved rooms limit'],
@@ -452,8 +492,12 @@ function mount({ request, trigger }) {
     message.textContent = 'Loading saved settings…';
     error.textContent = '';
     try {
-      const value = await request('/api/operator/settings/saved');
+      const [value, guilds] = await Promise.all([
+        request('/api/operator/settings/saved'),
+        request('/api/operator/discord/servers').catch(() => null),
+      ]);
       if (id !== generation || !dialog.open) return;
+      joinedGuilds = guilds?.servers;
       conflicts = new Set(
         Object.keys(patch).filter(
           key => !same(key, base[key], value.settings[key]) && !same(key, patch[key], value.settings[key]),
@@ -492,7 +536,7 @@ function mount({ request, trigger }) {
   save.addEventListener('click', async () => {
     if (save.disabled || busy) return;
     for (const input of content.querySelectorAll('input,select'))
-      if (!input.validity.valid) {
+      if (savedControl(input) && !input.validity.valid) {
         selectSection(Object.keys(panels).find(key => panels[key].contains(input)));
         input.reportValidity();
         return;

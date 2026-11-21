@@ -54,7 +54,6 @@ discord:
   client_id: '100000000000000010'
   client_secret: 'fixture-private-client-secret'
   owner_id: '100000000000000001'
-  guild_id: '100000000000000020'
 ${SOURCES}storage:
   credential_key_file: './original.key'
 `,

@@ -168,9 +168,15 @@ class RoomEvents {
           const guild = await this.discord.guild();
           value.available = true;
           value.guildName = guild.name;
-          await this.sync(id, record, guild, { finish: false });
         } catch (error) {
           value.available ??= false;
+          value.error = this.safeError(error);
+        }
+      }
+      if (canManage && this.discord.ready()) {
+        try {
+          await this.syncPosted(id, record, { finish: false });
+        } catch (error) {
           value.error = this.safeError(error);
         }
       }
@@ -265,7 +271,7 @@ class RoomEvents {
       if (event.discord && !event.discord.eventId)
         throw fail('The event could not be confirmed. Check Discord before changing it.', 409);
       if (action === 'room.event.cancel') {
-        if (!event.discord || !this.discord.configured()) {
+        if (!event.discord || !(this.config.botToken || this.hub.discord.client)) {
           await current();
           await this.remove(event.id);
           return applied('Event canceled.');
@@ -409,6 +415,20 @@ class RoomEvents {
       if (JSON.stringify(next) !== JSON.stringify(event)) await this.save({ ...next, updatedAt: Date.now() });
     }
   }
+  async syncPosted(id, record, options) {
+    const ids = new Set(
+      this.forRoom(id)
+        .map(event => event.discord?.guildId)
+        .filter(Boolean),
+    );
+    const results = await Promise.allSettled(
+      [...ids].map(async guildId => {
+        await this.sync(id, record, await this.discord.guild(guildId), options);
+      }),
+    );
+    const failure = results.find(result => result.status === 'rejected');
+    if (failure) throw failure.reason;
+  }
   async reconcile() {
     if (this.stopped) return;
     const now = iso(Date.now());
@@ -428,7 +448,7 @@ class RoomEvents {
               this.lane(id, async () => {
                 const record = this.room(id);
                 if (!record) return;
-                await this.sync(id, record, await this.discord.guild());
+                await this.syncPosted(id, record);
                 this.errors.delete(id);
               }).catch(error => this.errors.set(id, this.safeError(error))),
             )

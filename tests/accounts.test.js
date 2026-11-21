@@ -855,7 +855,7 @@ test(
       app.registry.link(account.id, 'plex', '101', 'Fixture Plex');
       app.registry.credential('plex', '101', { token: 'private-restore-plex' });
       const store = require('../server/storage').loginStore(
-        JSON.stringify([config.publicUrl, config.ownerId, config.guildId, config.clientId]),
+        JSON.stringify([config.publicUrl, config.ownerId, config.clientId]),
         app.registry.vault,
         app.registry,
       );

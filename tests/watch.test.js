@@ -339,7 +339,14 @@ test(
           JSON.stringify(
             url.endsWith('/token')
               ? { access_token: 'discord-fixture' }
-              : { id: 'demo-guest', username: 'Verified guest' },
+              : url.endsWith('/activity-instances/fixture-instance')
+                ? {
+                    application_id: config.clientId,
+                    instance_id: 'fixture-instance',
+                    location: { kind: 'gc', guild_id: 'guild', channel_id: 'call' },
+                    users: ['demo-guest'],
+                  }
+                : { id: 'demo-guest', username: 'Verified guest' },
           ),
         ),
     });
@@ -349,6 +356,9 @@ test(
       isMember: () => member,
       voiceChannel: () => 'call',
       validVoiceChannel: () => true,
+      activityVoice: async (subject, guild, channel) =>
+        member && subject === 'demo-guest' && guild === 'guild' && channel === 'call',
+      activityLocation: () => member,
       options: () => ({ available: true }),
     });
     await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
@@ -407,7 +417,7 @@ test(
       await request(
         '/api/watch/activity-login',
         'POST',
-        { code: 'fixture', userId: 'host', owner: true },
+        { code: 'fixture', instanceId: 'fixture-instance', userId: 'host', guildId: 'spoofed', owner: true },
         { Origin: activityOrigin },
       )
     ).body;
@@ -439,7 +449,14 @@ test(
     );
     member = false;
     assert.equal(
-      (await request('/api/watch/activity-login', 'POST', { code: 'fixture' }, { Origin: activityOrigin })).status,
+      (
+        await request(
+          '/api/watch/activity-login',
+          'POST',
+          { code: 'fixture', instanceId: 'fixture-instance' },
+          { Origin: activityOrigin },
+        )
+      ).status,
       403,
     );
     assert.equal(

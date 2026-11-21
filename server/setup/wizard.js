@@ -229,6 +229,7 @@ function createWizard({
     accounts: true,
     guests: true,
     discord: false,
+    excludedGuildIds: [],
   });
   const rules = () => {
     const chosen = draft.access || defaults();
@@ -265,6 +266,7 @@ function createWizard({
         accounts: data.accounts === true,
         guests: data.guests === true,
         discord: data.discord === true,
+        excludedGuildIds: [],
       };
       if (data.password !== null && data.password !== undefined) {
         if (typeof data.password !== 'string' || [...data.password].length < 8 || data.password.length > 1024)
@@ -273,7 +275,15 @@ function createWizard({
       } else if (data.keepPassword === true && draft.access?.password) chosen.password = draft.access.password;
       if (chosen.discord) {
         if (!draft.discord) throw fail('Paste the Discord application’s details first');
-        discord.settings(draft.discord);
+        const ids = new Set([
+          ...draft.discord.servers.map(server => server.id),
+          ...(draft.access?.excludedGuildIds || []),
+        ]);
+        const excluded = data.excludedGuildIds ?? [];
+        if (!Array.isArray(excluded) || excluded.some(id => !ids.has(id)))
+          throw fail('Choose Discord servers from the list');
+        chosen.excludedGuildIds = [...new Set(excluded)];
+        discord.settings(draft.discord, chosen.excludedGuildIds);
       }
       if (!chosen.sourceMembers.length && !chosen.password && !chosen.accounts && !chosen.discord)
         throw fail('Turn on at least one way in besides room invites');
@@ -360,7 +370,9 @@ function createWizard({
     // Checked again: sources may have changed since.
     access.set({ ...rules(), password: draft.access.password ?? null });
     if (!draft.network) throw fail('Choose where people watch (step 5)');
-    const discordSettings = draft.access.discord ? discord.settings(draft.discord) : undefined;
+    const discordSettings = draft.access.discord
+      ? discord.settings(draft.discord, draft.access.excludedGuildIds)
+      : undefined;
     return { draft, list, rules: rules(), discordSettings };
   }
 

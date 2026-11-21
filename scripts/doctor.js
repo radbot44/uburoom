@@ -886,13 +886,13 @@ function checkAccess(config) {
       message: 'Let in: ' + rules.join('; ') + (config.guests?.enabled ? '; room invites' : ''),
     },
   ];
-  if (access.discordServer && !(config.clientId && config.clientSecret && config.guildId))
+  if (access.discordServer && !(config.clientId && config.clientSecret && config.ownerId && config.botToken))
     checks.push({
       category: 'Access',
       name: 'Discord sign-in',
       status: 'warn',
       message: 'access.discord_server is on, but Discord sign-in is not configured, so nobody can use it.',
-      remediation: 'Set discord.client_id, discord.client_secret and discord.guild_id, or turn the rule off.',
+      remediation: 'Set the Discord bot token, client ID, client secret and owner ID, or turn the rule off.',
     });
   return checks;
 }

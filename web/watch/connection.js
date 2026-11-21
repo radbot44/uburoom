@@ -169,7 +169,7 @@ export function mount(host, deps) {
     };
     if (options.prompt !== null) authorizeArgs.prompt = options.prompt ?? 'none';
     const { code } = await store.connection.sdk.commands.authorize(authorizeArgs);
-    const auth = await api('/api/watch/activity-login', { code });
+    const auth = await api('/api/watch/activity-login', { code, instanceId: store.connection.sdk.instanceId });
     if (!(await store.connection.sdk.commands.authenticate({ access_token: auth.accessToken })))
       throw new Error('Discord Activity authentication failed');
     if (scope.includes('rpc.activities.write')) richPresenceAuthorized = true;

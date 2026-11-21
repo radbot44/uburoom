@@ -15,7 +15,11 @@ Uburoom's account, administration, and access architecture enforces layered auth
 | Server operator | Verified Discord or Plex subject explicitly selected in YAML; independent of room roles and admission |
 | Reporting | Actual verified Plex subject with server access, independently of the source/encoder credential |
 
-**Approved entry policy ([media sources](media-sources.md#admission)):** the owner picks entry rules in `access:` and any one that matches admits. `discord_server`: a verified Discord member of the configured guild. `source_members`: a verified identity the named source vouches for through its module's `members` (Plex: the account reaches that source's pinned server. Jellyfin: a verified user of that source's Jellyfin server); members of source A never get in through a rule naming only source B. `password`: a server-wide guest (`users.guest`) whose browser session carries the current `secrets.server_password` revision; the revision is kept beside the password sealed with the credential key, so the database alone holds no verifier, and a changed password ends those sessions. `accounts`: an enabled uburoom account with a password, signed in as that account. Room invites admit guests to their room when `guests.enabled: true`. Discord Activities are always checked against the guild. Everyone admitted, guests included, browses and plays every library of every source through the source's own credential; a viewer's own provider permissions play no part, and no rule changes what a source serves. For a Plex source with `delivery: 'auto'`, that credential is its dedicated non-owner `direct_token` account; see [delivery](self-hosting.md#delivery).
+The owner picks entry rules in `access:`. Any matching rule admits a viewer. The `discord_server` rule verifies membership in an eligible server the bot joined. Operators can exclude servers through Server settings → Access. A Discord Activity also verifies its own instance and voice channel through Discord and the bot.
+
+The `source_members` rule requires a verified identity the selected source vouches for through `members`. Plex verifies that the account reaches the pinned server. Jellyfin verifies a user of the selected Jellyfin server. The `password` rule admits server-wide guests whose browser session carries the current password revision. The revision is sealed with the credential key, so the database alone holds no verifier. Changing the password ends those sessions. The `accounts` rule requires an enabled uburoom account with a password. Room invites admit guests to the invited room when `guests.enabled: true`. [Entry rules](media-sources.md#admission)
+
+Every admitted viewer uses the source's credential to browse and play its libraries. Plex auto delivery uses the dedicated `direct_token` account. [Delivery](self-hosting.md#delivery)
 
 Provider-confirmed admission lasts five minutes between checks, so a removed viewer can stay up to that long. After that only the provider's own denial removes an admitted viewer; one that gives no answer is asked again every 30 seconds, for up to 12 hours since the last confirmation. Nobody new is admitted without an answer, and a linked-provider change starts over.
 
@@ -58,7 +62,7 @@ The Jellyfin source module (`server/sources/jellyfin/`) offers what the identity
 
 | Provider | Boundary |
 | --- | --- |
-| Discord | Configured guild only; exclude bots and bound pagination. Request optional member/presence intents only when application flags permit; missing capabilities warn without disabling ordinary operations. Read presence only from a ready shard. |
+| Discord | List eligible servers with ready shards. Exclude bots, deduplicate accounts and bound pagination across servers. Request optional member and presence intents when application flags permit. |
 
 Search debounce is 250 ms in the client; shared provider success cache is 60 seconds and failure backoff is 15 seconds. Provider failure leaves local account search available with an informative notice.
 
@@ -94,7 +98,7 @@ Saves are serialized within the process, retain a verified backup in a protected
 
 ### Administration boundaries and configuration safety
 
-- Private `config.yaml` remains the sole configuration authority. The 18-key allowlist in `server/config-editor.js` (Rooms, Directory and Transcoding) is the complete browser-editable scope; access policy, single-room mode, retention/history deletion, operator IDs, credentials, connections and paths remain YAML-only.
+- Private `config.yaml` remains the sole configuration authority. The allowlist in `server/config-editor.js` covers selected Rooms, Directory and Transcoding settings and Discord server exclusions under Access. The entry rules themselves, single-room mode, retention, operator identities, credentials, connections and paths are set in YAML.
 - Saving never exposes secret-bearing YAML content, creates competing stores, implicitly restarts services or alters provider registration.
 - Operators can edit the supported settings with complete-file validation and revision conflict rejection. Room Admin mode is not global configuration authority.
 - Ordinary viewers cannot administer the server; creators, explicit hosts, All hosts and room Admin mode change no media access. Losing admission rejects existing media/caption grants, including subtitle windows. Provider checks cache for up to 30 seconds and item checks for 3 seconds; active proxy streams recheck every 2 seconds (subtitle resources every 1 second). Already-issued direct Plex URLs remain subject to PMS enforcement.

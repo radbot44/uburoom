@@ -27,6 +27,12 @@ function watchIdentity({ config, hub, user, webActor, entryPolicy, validIdentity
     const token = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization || '')?.[1];
     const identity = req.headers.authorization ? token && identities.get(token) : await user(req);
     if (!identity || !validIdentity(identity) || (identity.expires != null && identity.expires <= Date.now())) return;
+    const location = identity.activityLocation;
+    if (
+      location &&
+      hub.access.raw()?.activityLocation?.(location.subject, location.guildId, location.channelId) === false
+    )
+      return;
     if (token && identity.expires != null) identity.expires = Math.max(identity.expires, Date.now() + 3600000);
     return identity;
   }

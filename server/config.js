@@ -17,7 +17,7 @@ const KEYS = [
   'discord.client_id',
   'discord.client_secret',
   'discord.owner_id',
-  'discord.guild_id',
+  'discord.excluded_guild_ids',
   'discord.command_channel_ids',
   'discord.share_channel_id',
   'discord.rich_presence',
@@ -121,6 +121,10 @@ function normalizeConfig(
       for (const key of Object.keys(node)) {
         const name = prefix + '.' + key;
         if (KEYS.includes(name)) continue;
+        if (name === 'discord.guild_id')
+          throw new Error(
+            'Remove discord.guild_id. Use discord.excluded_guild_ids for Discord servers that should not grant entry.',
+          );
         if (!KEYS.some(known => known.startsWith(name + '.')))
           throw new Error('Unknown setting in ' + section + '; check config.example.yaml');
         object(node[key], 'Configuration section');
@@ -202,7 +206,7 @@ function normalizeConfig(
     clientId: get('discord.client_id'),
     clientSecret: get('discord.client_secret'),
     ownerId: get('discord.owner_id'),
-    guildId: get('discord.guild_id'),
+    discordExcludedGuildIds: list('discord.excluded_guild_ids') || [],
     channels: list('discord.command_channel_ids') || [],
     shareChannelId: get('discord.share_channel_id'),
     discordRichPresence: boolean('discord.rich_presence', true),
@@ -387,8 +391,8 @@ function normalizeConfig(
     (!config.accessPolicy.discord || !config.clientId || !config.clientSecret || !config.ownerId)
   )
     throw new Error('Activity-only access requires Discord authorization and configured client credentials/owner');
-  if (!config.accessPolicy.publicWeb && (!config.botToken || !config.guildId))
-    throw new Error('Activity-only access requires a Discord bot and guild for verified membership');
+  if (!config.accessPolicy.publicWeb && !config.botToken)
+    throw new Error('Activity-only access requires a Discord bot for verified membership');
   if (config.singleRoom && !config.singleRoomLeaderPlexId) {
     if (!config.accessPolicy.discord && config.accessPolicy.plex) {
       if (!ownerAccountSources(config.sources).length)
@@ -401,16 +405,20 @@ function normalizeConfig(
       );
   }
   if (!config.host.trim()) throw new Error('server.host must not be empty');
-  for (const key of ['clientId', 'ownerId', 'guildId']) {
+  for (const key of ['clientId', 'ownerId']) {
     if (config[key] && !/^\d{17,20}$/.test(config[key]))
       throw new Error('discord IDs must be quoted numeric Developer Mode IDs');
   }
+  if (
+    config.discordExcludedGuildIds.some(id => !/^\d{17,20}$/.test(id)) ||
+    new Set(config.discordExcludedGuildIds).size !== config.discordExcludedGuildIds.length
+  )
+    throw new Error('discord.excluded_guild_ids requires distinct quoted Discord server IDs');
   if (config.channels.some(id => !/^\d{17,20}$/.test(id)))
     throw new Error('discord.command_channel_ids requires exact quoted IDs');
   if (config.shareChannelId && !/^\d{17,20}$/.test(config.shareChannelId))
     throw new Error('discord.share_channel_id requires one quoted Discord channel ID');
-  if (config.shareChannelId && (!config.botToken || !config.guildId))
-    throw new Error('discord.share_channel_id requires discord.bot_token and discord.guild_id');
+  if (config.shareChannelId && !config.botToken) throw new Error('discord.share_channel_id requires discord.bot_token');
   const logFile = get('logging.file');
   config.logging = {
     level: choice('logging.level', 'info', ['error', 'warn', 'info', 'debug']),

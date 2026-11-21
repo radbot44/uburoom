@@ -32,13 +32,25 @@ async function fixture(t, changes = {}) {
     accessPolicy: accessPolicy({ sourceMembers: ['plex'] }),
     ...changes,
   };
-  const app = createApp(config, { plexFetch: provider.fetch, oauthFetch: provider.discordFetch, plexDemo: provider });
+  const oauthFetch = (url, options) =>
+    String(url).endsWith('/activity-instances/fixture-instance')
+      ? Promise.resolve(
+          Response.json({
+            application_id: config.clientId,
+            instance_id: 'fixture-instance',
+            location: { kind: 'gc', guild_id: 'guild', channel_id: 'voice' },
+            users: [provider.subjects.guest],
+          }),
+        )
+      : provider.discordFetch(url, options);
+  const app = createApp(config, { plexFetch: provider.fetch, oauthFetch, plexDemo: provider });
   const members = new Set(Object.values(provider.subjects));
   app.access.connect({
     refresh: async id => members.has(id),
     isMember: id => members.has(id),
     voiceChannel: () => 'voice',
     validVoiceChannel: id => id === 'voice',
+    activityVoice: async (id, guild, channel) => members.has(id) && guild === 'guild' && channel === 'voice',
     options: () => ({ available: true }),
   });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
@@ -211,7 +223,11 @@ test('Activity-only rejects browser sessions and spoofed frame query while accep
   assert.equal((await browser.request('/api/watch/me?frame_id=spoof')).status, 401);
   assert.equal((await browser.request('/api/watch/rooms')).status, 401);
   const headers = { Origin: 'https://' + f.config.clientId + '.discordsays.com' };
-  const issued = await browser.request('/api/watch/activity-login', { code: 'guest' }, headers);
+  const issued = await browser.request(
+    '/api/watch/activity-login',
+    { code: 'guest', instanceId: 'fixture-instance' },
+    headers,
+  );
   assert.equal(issued.status, 200);
   headers.Authorization = 'Bearer ' + issued.body.token;
   assert.equal((await browser.request('/api/watch/me', undefined, headers)).status, 200);
@@ -226,7 +242,11 @@ test('Activity can approve browser Plex linking without enabling browser playbac
     activity = f.browser(),
     browser = f.browser();
   const headers = { Origin: 'https://' + f.config.clientId + '.discordsays.com' };
-  const issued = await activity.request('/api/watch/activity-login', { code: 'guest' }, headers);
+  const issued = await activity.request(
+    '/api/watch/activity-login',
+    { code: 'guest', instanceId: 'fixture-instance' },
+    headers,
+  );
   headers.Authorization = 'Bearer ' + issued.body.token;
   assert.equal((await activity.request('/api/watch/me', undefined, headers)).status, 200);
   const issue = (await activity.request('/api/watch/handoff', { connectPlex: true }, headers)).body;
@@ -258,7 +278,11 @@ test('Activity can approve browser Plex linking without enabling browser playbac
     401,
     'linking revokes the original Activity bearer',
   );
-  const renewed = await activity.request('/api/watch/activity-login', { code: 'guest' }, { Origin: headers.Origin });
+  const renewed = await activity.request(
+    '/api/watch/activity-login',
+    { code: 'guest', instanceId: 'fixture-instance' },
+    { Origin: headers.Origin },
+  );
   headers.Authorization = 'Bearer ' + renewed.body.token;
   assert.equal(
     (await activity.request('/api/watch/me', undefined, headers)).status,
@@ -723,7 +747,11 @@ test('Activity viewers keep the Discord recheck, and watch through the source cr
   const f = await fixture(t);
   const activity = f.browser();
   const headers = { Origin: 'https://' + f.config.clientId + '.discordsays.com' };
-  const issued = await activity.request('/api/watch/activity-login', { code: 'guest' }, headers);
+  const issued = await activity.request(
+    '/api/watch/activity-login',
+    { code: 'guest', instanceId: 'fixture-instance' },
+    headers,
+  );
   assert.equal(issued.status, 200);
   headers.Authorization = 'Bearer ' + issued.body.token;
   const me = await activity.request('/api/watch/me', undefined, headers);
@@ -968,7 +996,11 @@ test('same-account Activity handoff replaces a browser room-pass cookie with ful
   assert.equal((await visitor.request('/api/watch/me')).body.guestRoomId, id);
   f.members.add(f.provider.subjects.guest);
   const headers = { Origin: 'https://' + f.config.clientId + '.discordsays.com' };
-  const issued = await activity.request('/api/watch/activity-login', { code: 'guest' }, headers);
+  const issued = await activity.request(
+    '/api/watch/activity-login',
+    { code: 'guest', instanceId: 'fixture-instance' },
+    headers,
+  );
   headers.Authorization = 'Bearer ' + issued.body.token;
   const handoff = (await activity.request('/api/watch/handoff', {}, headers)).body;
   await visitor.request('/auth/handoff');

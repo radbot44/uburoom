@@ -8,6 +8,54 @@ const { discordAccess } = require('../server/sharing');
 const { Admission } = require('../server/admission');
 const { accessPolicy } = require('./helpers/access');
 
+test('any eligible Discord guild can grant entry, while exclusions, outages and guild removal stay distinct', async () => {
+  const client = new EventEmitter();
+  client.isReady = () => true;
+  const calls = [];
+  const guild = (id, roles) => ({
+    id,
+    available: true,
+    shard: { status: Status.Ready },
+    members: {
+      async fetch() {
+        calls.push(id);
+        if (!roles) throw Object.assign(new Error('Unknown member'), { code: 10007 });
+        return { user: { bot: false }, roles: { cache: new Map(roles.map(role => [role, {}])) } };
+      },
+    },
+  });
+  const first = guild('first'),
+    second = guild('second', ['role-two']),
+    third = guild('third', ['role-three']);
+  const excluded = guild('excluded', ['private-role']);
+  client.guilds = { cache: new Map([first, second, third, excluded].map(guild => [guild.id, guild])) };
+  const access = discordAccess(client, ['excluded']);
+  assert.equal(await access.refresh('member'), true);
+  assert.deepEqual(calls, ['first', 'second', 'third']);
+  assert.equal(access.hasRole('member', 'role-two'), true);
+  assert.equal(access.hasRole('member', 'role-three'), true);
+  assert.equal(access.hasRole('member', 'private-role'), false);
+  third.available = false;
+  client.emit(Events.GuildUnavailable, third);
+  assert.equal(await access.refresh('member'), true, 'a positive result beats an outage');
+  assert.equal(access.hasRole('member', 'role-three'), false);
+  let answer;
+  second.members.fetch = () => new Promise(resolve => (answer = resolve));
+  const checking = access.refresh('member');
+  await new Promise(resolve => setImmediate(resolve));
+  client.guilds.cache.delete('second');
+  client.emit(Events.GuildDelete, second);
+  answer({ user: { bot: false } });
+  assert.equal(await checking, undefined, 'a removed guild cannot grant a late positive result');
+  assert.equal(access.isMember('member'), false);
+  assert.equal(await access.refresh('member'), undefined, 'unavailable is distinct from a complete denial');
+  client.guilds.cache.delete('third');
+  client.emit(Events.GuildDelete, third);
+  assert.equal(await access.refresh('member'), false, 'the excluded guild cannot grant entry');
+  client.guilds.cache.delete('first');
+  assert.equal(await access.refresh('member'), false, 'zero eligible guilds cannot grant entry');
+});
+
 test('optional host-directory intents follow application flags without breaking ordinary bot login', async t => {
   t.mock.method(console, 'log', () => {});
   t.mock.method(console, 'warn', () => {});
@@ -71,7 +119,7 @@ test('Discord directory pages the configured guild, excludes bots, and rejects c
     },
   };
   client.guilds = { cache: new Map([['configured', guild]]) };
-  const access = discordAccess(client, 'configured');
+  const access = discordAccess(client);
   assert.equal((await access.directory()).length, 999);
   assert.equal(calls, 2);
   assert.equal(access.discordOnline('person'), true);
@@ -96,13 +144,18 @@ function fakeClient(login) {
   return client;
 }
 
-test('bot clears its guild command set on startup and registers no message or interaction listeners', async t => {
+test('bot starts without rewriting guild commands or registering message and interaction listeners', async t => {
   t.mock.method(console, 'log', () => {});
   const client = fakeClient(async () => {
     queueMicrotask(() => client.emit(Events.ClientReady));
     return 'fixture';
   });
-  client.guilds = { cache: new Map() };
+  client.guilds = {
+    cache: new Map([
+      ['guild', {}],
+      ['another', {}],
+    ]),
+  };
   client.isReady = () => true;
   client.users = { fetch: async () => ({ username: 'Owner' }) };
   const registrations = [];
@@ -117,7 +170,7 @@ test('bot clears its guild command set on startup and registers no message or in
   await startBot({ botToken: 'fixture', ownerId: 'owner', guildId: 'guild' }, link, {
     createClient: () => client,
   });
-  assert.deepEqual(registrations, [[[], 'guild']]);
+  assert.deepEqual(registrations, []);
   assert.equal(client.listenerCount(Events.MessageCreate), 0);
   assert.equal(client.listenerCount(Events.InteractionCreate), 0);
   await client.destroy();
@@ -186,12 +239,12 @@ test('Discord membership is fetched per request, caches in-flight lookups, and v
   };
   client.guilds = { cache: new Map([['guild', g]]) };
   client.isReady = () => true;
-  const access = discordAccess(client, 'guild');
+  const access = discordAccess(client);
   assert.equal(await access.refresh('friend'), true);
   assert.equal(access.isMember('friend'), true);
   assert.equal(access.hasRole('friend', 'moderator'), true);
   assert.equal(access.voiceChannel('friend'), voice);
-  assert.deepEqual(access.options(), { available: true, guildName: 'Test guild' });
+  assert.deepEqual(access.options(), { available: true });
   assert.equal(await access.refresh('friend'), true);
   assert.equal(calls, 2);
   role = false;

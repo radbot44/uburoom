@@ -3,10 +3,22 @@ const { hash } = require('./core');
 const { isServerOperator } = require('./operator-policy');
 const { runningSettings } = require('./operator-settings');
 
-function operatorHttp({ config, registry, editor, user, protectedPost, validIdentity, logins, cookies, body, json }) {
+function operatorHttp({
+  config,
+  registry,
+  editor,
+  discordServers,
+  user,
+  protectedPost,
+  validIdentity,
+  logins,
+  cookies,
+  body,
+  json,
+}) {
   // The settings this process is running with. Flush before the final checks, rather than deferring
   // the response: logout, account changes or operator removal during persistence must win.
-  async function running(req, res, reply) {
+  async function running(req, res, reply, value) {
     const login = await user(req);
     const current = () =>
       !!login &&
@@ -18,11 +30,15 @@ function operatorHttp({ config, registry, editor, user, protectedPost, validIden
     await registry.flush();
     if (!current()) return reply(401, { error: 'Sign in to read operator settings' });
     if (!isServerOperator(registry, config, login.userId)) return reply(403, { error: 'Server operator required' });
-    return reply(200, runningSettings(config));
+    return reply(200, value());
   }
   async function route(req, res, url, reply) {
     if (req.method === 'GET' && url.pathname === '/api/operator/settings') {
-      await running(req, res, reply);
+      await running(req, res, reply, () => runningSettings(config));
+      return true;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/operator/discord/servers') {
+      await running(req, res, reply, () => ({ servers: discordServers?.() ?? null }));
       return true;
     }
     if (url.pathname !== '/api/operator/settings/saved' || !['GET', 'POST'].includes(req.method)) return false;

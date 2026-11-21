@@ -2,7 +2,7 @@
 
 See [ROADMAP.md](ROADMAP.md) for priorities and milestone status. This specification defines product behavior and boundaries; detailed verification evidence stays in [docs/testing.md](docs/testing.md).
 
-uburoom is a self-hosted Plex watch-together application. Each installation supplies its own Plex server, Discord application/bot/guild, public HTTPS origin and credentials. One Node process serves the website, authenticated room WebSockets, HTTP auth/catalog/media APIs, Discord integration and media transport; SQLite stores linked accounts and native playback history.
+uburoom is a self-hosted Plex watch-together application. Each installation can connect its own Plex server and Discord application and bot, and supplies its public HTTPS origin and credentials. One Node process serves the website, authenticated room WebSockets, HTTP auth/catalog/media APIs, Discord integration and media transport. SQLite stores linked accounts and native playback history.
 
 Reliable, smooth playback for nontechnical viewers is the primary player goal. Browser and Discord Activity playback should automatically select and recover compatible delivery while preserving the chosen video content, audio and subtitles. Plex-level video content coverage and real client verification are tracked in [the playback reliability plan](docs/playback-reliability.md); that plan is not a claim of completed support.
 

@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2zb
+# Config schema v2zc
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -98,7 +98,7 @@ discord:
   client_id: ''
   client_secret: ''
   owner_id: ''
-  guild_id: ''
+  excluded_guild_ids: [] # Quoted server IDs whose members cannot use that server for entry.
   command_channel_ids: [] # e.g. ['123456789012345678']
   share_channel_id: '' # One text channel for explicit room publication; blank disables it.
   rich_presence: true # Allow opted-in Discord Activity viewers to publish personal Rich Presence.
@@ -129,7 +129,7 @@ access:
   # can watch every library of every media source. Each sign-in button is shown
   # only for a rule that needs it. Turn on at least one. Outside visitors can also
   # come in through a room invite (see guests below).
-  discord_server: true # Members of discord.guild_id, signing in with Discord.
+  discord_server: true # Members of eligible servers the bot has joined, signing in with Discord.
   source_members: [] # Plex or Jellyfin source IDs whose server members may come in, e.g. ['living-room']:
   # for a Plex source, people whose Plex account can reach that server.
   password: false # Anyone who knows secrets.server_password, as a named guest.

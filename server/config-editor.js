@@ -10,9 +10,9 @@ const { configPath, parseConfig, normalizeConfig } = require('./config');
 const { runningSettings } = require('./operator-settings');
 const execute = promisify(execFile);
 
-// YAML paths, deliberately narrower than the read-only operator API. No access,
-// retention/history deletion, single-room, identity, connection or path settings.
+// Explicit YAML paths allowed in the saved operator settings dialog.
 const EDITABLE = new Set([
+  'discord.excluded_guild_ids',
   'directory.expose_discord_members',
   'rooms.max_saved',
   'rooms.max_open',
@@ -67,6 +67,7 @@ const metadata = stat =>
 
 function editableSettings(config) {
   const values = {
+    'discord.excluded_guild_ids': config.discordExcludedGuildIds,
     'directory.expose_discord_members': config.directory.discord,
     'rooms.host_permissions': Object.keys(config.roomPermissions.host).filter(key => config.roomPermissions.host[key]),
     'rooms.viewer_permissions': Object.keys(config.roomPermissions.viewer).filter(

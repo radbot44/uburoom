@@ -421,6 +421,10 @@ function watchHttp({
         const data = await body(req);
         if (typeof data.code !== 'string' || !data.code || data.code.length > 512)
           throw new Error('Invalid login code');
+        if (typeof data.instanceId !== 'string' || !/^[\w-]{1,200}$/.test(data.instanceId)) {
+          json(res, 403, { error: 'Discord Activity instance unavailable' });
+          return true;
+        }
         const response = await oauthFetch('https://discord.com/api/oauth2/token', {
           method: 'POST',
           signal: AbortSignal.timeout(10000),
@@ -440,20 +444,37 @@ function watchHttp({
         });
         if (!profile.ok) throw new Error('Discord identity unavailable');
         const identity = await profile.json();
-        // Never trust guild/channel/user IDs supplied by the iframe. Membership
-        // and its current voice channel come from the connected bot's guild.
+        const instance = await oauthFetch(
+          `https://discord.com/api/v10/applications/${config.clientId}/activity-instances/${data.instanceId}`,
+          {
+            signal: AbortSignal.timeout(5000),
+            redirect: 'error',
+            headers: { Authorization: 'Bot ' + config.botToken },
+          },
+        );
+        const details = instance.ok ? await instance.json() : null;
+        const location = details?.location;
+        // The instance location and occupants come from Discord. The bot also checks
+        // current membership and voice state in precisely that eligible guild.
         if (
           config.accessPolicy?.discord === false ||
-          !(await hub.access.refresh(identity.id)) ||
-          !hub.access.validVoiceChannel(hub.access.voiceChannel(identity.id))
+          details?.application_id !== config.clientId ||
+          details?.instance_id !== data.instanceId ||
+          !Array.isArray(details?.users) ||
+          !details.users.includes(identity.id) ||
+          location?.kind !== 'gc' ||
+          !location.guild_id ||
+          !location.channel_id ||
+          !(await hub.access.raw()?.activityVoice?.(identity.id, location.guild_id, location.channel_id))
         ) {
-          json(res, 403, { error: 'Join a voice channel in the configured Discord server first' });
+          json(res, 403, { error: 'Join a voice channel in a Discord server that allows entry first' });
           return true;
         }
         const login = discordIdentity({
           userId: identity.id,
           name: EngineName(identity.global_name || identity.username),
           activity: true,
+          activityLocation: { subject: identity.id, guildId: location.guild_id, channelId: location.channel_id },
         });
         json(res, 200, {
           ...issue(login),

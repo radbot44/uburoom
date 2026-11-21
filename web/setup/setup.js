@@ -685,15 +685,43 @@ function ruleRow(source, view) {
     el('p', { class: 'hint' }, locked ? 'Your account gets in this way.' : MEMBER_HINT[source.type] || ''),
   );
 }
+let excludedDiscord = new Set();
 function renderDiscord(setup) {
   $('discord-servers-field').hidden = !setup;
   if (!setup) return;
   $('discord-invite').href = setup.inviteUrl;
-  $('discord-servers').replaceChildren(
-    ...(setup.servers.length
-      ? setup.servers.map(name => el('li', {}, name))
-      : [el('li', { class: 'hint' }, 'The bot hasn’t joined a server yet.')]),
-  );
+  const list = $('discord-servers');
+  const byId = new Map([...list.children].map(row => [row.dataset.guild, row]));
+  const ids = new Set(setup.servers.map(server => server.id));
+  for (const [id, row] of byId) if (!ids.has(id) && (id || ids.size)) row.remove();
+  if (!ids.size && !list.firstElementChild)
+    list.append(el('li', { class: 'hint' }, 'The bot hasn’t joined a server yet.'));
+  setup.servers.forEach(({ id, name, memberCount }, index) => {
+    let row = byId.get(id);
+    if (!row) {
+      const input = el('input', { type: 'checkbox' });
+      input.addEventListener('change', () => {
+        if (input.checked) excludedDiscord.delete(id);
+        else excludedDiscord.add(id);
+      });
+      row = el(
+        'li',
+        { 'data-guild': id },
+        el('label', { class: 'form-checkbox' }, input, el('span')),
+        el('p', { class: 'hint' }),
+      );
+    }
+    row.querySelector('input').checked = !excludedDiscord.has(id);
+    const title = row.querySelector('span'),
+      warning = row.querySelector('p');
+    if (title.textContent !== name) title.textContent = name;
+    warning.hidden = !(memberCount > 500);
+    if (!warning.hidden) {
+      const detail = `About ${memberCount.toLocaleString()} members. Leave checked only if you want them to have access.`;
+      if (warning.textContent !== detail) warning.textContent = detail;
+    }
+    if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null);
+  });
 }
 function toggles() {
   const password = $('rule-password').checked,
@@ -716,6 +744,7 @@ async function loadAccess() {
   $('rule-guests').checked = accessView.guests;
   $('rule-discord').checked = accessView.discord || !$('rule-discord-setup').hidden;
   $('discord-redirect').textContent = accessView.redirectUrl;
+  excludedDiscord = new Set(accessView.excludedGuildIds);
   renderDiscord(accessView.discordSetup);
   toggles();
 }
@@ -750,6 +779,7 @@ $('access-next').addEventListener('click', () =>
       accounts: $('rule-accounts').checked,
       guests: $('rule-guests').checked,
       discord: $('rule-discord').checked,
+      excludedGuildIds: [...excludedDiscord],
     });
     $('server-pass').value = '';
     await open('network');

@@ -1,5 +1,6 @@
 'use strict';
 const {
+  ChannelType,
   PermissionFlagsBits,
   GuildScheduledEventEntityType,
   GuildScheduledEventPrivacyLevel,
@@ -23,7 +24,7 @@ class DiscordEventSync {
     return this.events.config;
   }
   configured() {
-    return !!(this.config.guildId && (this.config.botToken || this.hub.discord.client));
+    return !!(this.config.shareChannelId && (this.config.botToken || this.hub.discord.client));
   }
   ready() {
     return !!this.hub.discord.client?.isReady();
@@ -31,9 +32,16 @@ class DiscordEventSync {
   request(action, current) {
     return discordRequest(action, { signal: this.lifetime.signal, ...(current ? { current } : {}) });
   }
-  async guild(guildId = this.config.guildId) {
+  async guild(guildId) {
     const client = this.hub.discord.client;
     if (!client?.isReady()) throw fail('Discord is reconnecting. Try again shortly.');
+    if (!guildId) {
+      if (!this.config.shareChannelId) throw fail('Set a Discord share channel to post new watch nights.');
+      const channel = await this.request(() => client.channels.fetch(this.config.shareChannelId));
+      if (!channel?.guildId || channel.type !== ChannelType.GuildText)
+        throw fail('Choose a Discord server text channel the bot can access.');
+      guildId = channel.guildId;
+    }
     const guild = await client.guilds.fetch(guildId);
     const member = guild.members.me || (await this.request(() => guild.members.fetchMe()));
     if (!member.permissions.has(PermissionFlagsBits.CreateEvents))

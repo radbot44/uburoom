@@ -84,7 +84,7 @@ One checkbox per entry rule, with a one-line hint each:
 | Anyone who knows the server password (shows a password field when ticked) | Off |
 | uburoom accounts you create | On |
 | Guests with a room invite | On |
-| Members of your Discord server (when ticked, shows application setup, the OAuth2 redirect, bot credentials and the joined servers. The first listed guild is the one whose members can get in.) | Off |
+| Members of your Discord servers. Setup shows the OAuth2 redirect, bot credentials and joined servers. Uncheck a server to exclude it. Servers with more than 500 members show a warning. | Off |
 
 ### 5. Where will people watch?
 
@@ -172,7 +172,7 @@ Where the build differs from the text above, or decides something it left open. 
 - **Hand-off link instead of a form POST.** Open uburoom goes to `<public_url>/auth/setup#ticket=…`; that page posts the ticket from the app's own origin. A form POST does not survive the browser's certificate warning for the new self-signed certificate, and the fragment never reaches a log. The ticket is single-use and lasts two minutes. A uburoom account is created when the app starts, so it exists even if the link is never used.
 - **The operator's own way in stays on (step 4).** Admission does not let the operator in by being the operator, so the rule that admits the operator's account cannot be turned off: "uburoom accounts you create" for a uburoom account, or the Plex source when there is one (checkbox shown on and disabled, "Your account gets in this way."). With several Plex sources, at least one must stay on. A Plex operator with no Plex source is asked to add one or use a uburoom account.
 - **Server password:** at least 8 characters.
-- **Discord (step 4):** the pasted Application ID, client secret and bot token are checked with Discord; `discord.owner_id` is the application's owner (or its team's owner). The joined servers come from one lookup (`server/setup/discord.js`, `joinedServers`) and are shown read-only, re-read when the page regains focus. Until the any-server backend lands, `discord.guild_id` is written as the first joined server (`TODO(discord-any-server)`). The redirect shown is `/auth/callback`, the route uburoom uses.
+- **Discord (step 4):** setup verifies the pasted Application ID, client secret and bot token with Discord and records the application's owner or team's owner in `discord.owner_id`. The joined server list refreshes when the page regains focus. Servers that the operator unchecks go into `discord.excluded_guild_ids`. The redirect uses `/auth/callback`.
 - **Discord (step 6):** use the final URL shown under Check and finish to update OAuth2 Redirects in the Developer Portal, especially if the address or port changed. Setup's local checks do not validate the registered redirect. The implemented wizard awaits owner acceptance.
 - **Step 6 media sources** uses each source module's connection check (an unreachable server is a fix, not a warning) and then its full check (a failure is a fix).
 - **Existing data:** a uburoom account from setup needs a data folder without a database; with existing data, step 6 asks to move it aside or sign in with Plex.

@@ -55,6 +55,8 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 | P13 rooms/queues | B/C/D | Real multi-viewer continuation, recovery, writer/load, and UX |
 | P14 access/admin | A/B complete; C/D release checks | Three-outcome local scope closed; real admission/revocation/handoff and independent operator recovery remain release gates |
 
+Discord admission across eligible servers adds fixture coverage for excluded servers, role union, partial outages, late membership results after a server leaves, and operator-only saved exclusions. On 2026-11-21 the local implementation passed 662 Node tests with zero failures or skips and all four `npm run smoke` runners in Chrome and Firefox. Both browsers also exercised the large-server warning and saved exclusions in setup and Server settings → Access. Setup kept checkbox identity, focus and the draft exclusion when the server list refreshed and when the reported member count changed. Activity launch still needs a real Discord check of the verified instance, participant and voice channel. Exercise both an eligible server and an excluded server before rollout.
+
 P5/P6 human check: watch together ~3 minutes, pause/resume/seek, background one tab ~10 seconds and return. Technical timing remains separate. Design authorization is not visual acceptance; neither permits deployment.
 
 ---

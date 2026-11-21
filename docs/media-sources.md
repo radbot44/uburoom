@@ -104,7 +104,7 @@ The owner switches on any combination of entry rules. **Any one matching rule le
 
 | Entry rule | How someone proves it | Notes |
 | --- | --- | --- |
-| Discord server | Sign in with Discord; member of `discord.guild_id` | As today |
+| Discord server | Sign in with Discord as a member of a server the bot joined and the operator allows | Any eligible server |
 | Members of a Plex source | Sign in with Plex; their plex.tv account can reach that server | Picked per source. Today's "access to the pinned server" check, generalized |
 | Members of a Jellyfin source | Sign in with a Jellyfin account on that server | Picked per source. Signing in to that server is the proof |
 | Server password | Enter the password, then type a name or keep a random ubumfa word | A guest, not an account: the browser keeps the sign-in (S3) |
