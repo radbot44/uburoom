@@ -6,6 +6,7 @@ const os = require('node:os');
 const YAML = require('yaml');
 const Policy = require('./room-policy');
 const { findOnPath } = require('./media-tools');
+const { validateSources, ownerAccountSources } = require('./sources');
 const ROOT = path.resolve(__dirname, '..');
 
 const KEYS = [
@@ -13,18 +14,6 @@ const KEYS = [
   'operator.plex_id',
   'directory.expose_discord_members',
   ...Object.keys(require('./room-limits').SETTINGS).map(key => 'rooms.' + key),
-  'jellyfin.url',
-  'jellyfin.api_key',
-  'jellyfin.user',
-  'plex.url',
-  'plex.token',
-  'plex.machine_identifier',
-  'plex.delivery',
-  'plex.client_url',
-  'plex.lan_client_url',
-  'plex.direct_token',
-  'plex.reporting_enabled',
-  'plex.reporting_watch_state',
   'discord.bot_token',
   'discord.client_id',
   'discord.client_secret',
@@ -46,7 +35,6 @@ const KEYS = [
   'storage.data_directory',
   'tools.ffmpeg',
   'tools.ffprobe',
-  'local_media.libraries',
   'rooms.host_permissions',
   'rooms.viewer_permissions',
   'rooms.admin_discord_ids',
@@ -122,6 +110,8 @@ function normalizeConfig(
   };
   object(value, 'config.yaml');
   for (const section of Object.keys(value)) {
+    // Media sources are a list; each source type checks its own entries (server/sources/).
+    if (section === 'sources') continue;
     if (!KEYS.some(key => key.startsWith(section + '.')))
       throw new Error('Unknown config.yaml section; check the example');
     object(value[section], 'Configuration section');
@@ -198,24 +188,6 @@ function normalizeConfig(
   const relative = path.relative(ROOT, credentialKeyFile);
   if (!relative.startsWith('..' + path.sep) && !path.isAbsolute(relative))
     throw new Error('storage.credential_key_file must be outside the project folder');
-  const plexUrl = get('plex.url');
-  if (plexUrl) {
-    let url;
-    try {
-      url = new URL(plexUrl);
-    } catch {
-      throw new Error('plex.url must be an HTTP(S) origin');
-    }
-    if (
-      !['http:', 'https:'].includes(url.protocol) ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash ||
-      url.pathname !== '/'
-    )
-      throw new Error('plex.url must be an HTTP(S) origin');
-  }
   const config = {
     host: get('server.host', '127.0.0.1'),
     port,
@@ -224,9 +196,6 @@ function normalizeConfig(
     tlsKey: resolveFile('server.tls_key', 'certs/server-key.pem'),
     accountFile: path.join(resolveFile('storage.data_directory', 'data'), 'accounts.sqlite'),
     credentialKeyFile,
-    plexUrl,
-    plexToken: get('plex.token'),
-    plexMachineIdentifier: get('plex.machine_identifier'),
     botToken: get('discord.bot_token'),
     clientId: get('discord.client_id'),
     clientSecret: get('discord.client_secret'),
@@ -257,131 +226,11 @@ function normalizeConfig(
     throw new Error('operator.discord_id must be a quoted Discord account ID');
   if (config.serverOperator.plexId && !/^\d{1,20}$/.test(config.serverOperator.plexId))
     throw new Error('operator.plex_id must be a quoted Plex account ID');
-  // Folders of videos on this machine. Each library keeps its id for as long as its
-  // queue entries and resume positions should survive, wherever its folder moves.
-  const libraries = value.local_media?.libraries ?? [];
-  if (
-    !Array.isArray(libraries) ||
-    libraries.length > 32 ||
-    libraries.some(
-      library =>
-        !library ||
-        typeof library !== 'object' ||
-        Array.isArray(library) ||
-        Object.keys(library).some(key => !['id', 'name', 'paths', 'parse_names', 'type'].includes(key)) ||
-        typeof library.id !== 'string' ||
-        !/^[a-z][a-z0-9-]{0,31}$/.test(library.id) ||
-        typeof library.name !== 'string' ||
-        !library.name.trim() ||
-        library.name.length > 100 ||
-        /[\u0000-\u001f\u007f]/.test(library.name) ||
-        !Array.isArray(library.paths) ||
-        !library.paths.length ||
-        library.paths.length > 16 ||
-        library.paths.some(folder => typeof folder !== 'string' || !folder) ||
-        (library.parse_names !== undefined && typeof library.parse_names !== 'boolean') ||
-        (library.type !== undefined && !['movies', 'shows'].includes(library.type)),
-    )
-  )
-    throw new Error(
-      'local_media.libraries requires up to 32 entries with a quoted id (lowercase letters, digits and hyphens, starting with a letter), name and paths (a list of 1-16 folders), and optionally type (movies or shows) and parse_names (true or false)',
-    );
-  if (new Set(libraries.map(library => library.id)).size !== libraries.length)
-    throw new Error('local_media.libraries must not repeat an id');
-  // Windows paths ignore case, so 'F:/Film' and 'f:/film' are the same folder there.
-  const folders = libraries.flatMap(library =>
-    library.paths.map(folder => {
-      const resolved = path.resolve(base, folder);
-      return platform === 'win32' ? resolved.toLowerCase() : resolved;
-    }),
-  );
-  if (new Set(folders).size !== folders.length) throw new Error('local_media.libraries must not repeat a folder');
-  config.localMedia = {
-    // Pictures made for local videos live in the data folder, never beside the media.
-    artDirectory: path.join(resolveFile('storage.data_directory', 'data'), 'local-art'),
-    libraries: libraries.map(library => ({
-      id: library.id,
-      name: library.name.trim(),
-      paths: library.paths.map(folder => path.resolve(base, folder)),
-      parseNames: library.parse_names ?? true,
-      type: library.type || 'movies',
-    })),
-  };
-  // One Jellyfin server, seen through one of its users. Blank url leaves it out.
-  const jellyfinUrl = get('jellyfin.url');
-  if (jellyfinUrl) {
-    let url;
-    try {
-      url = new URL(jellyfinUrl);
-    } catch {
-      throw new Error('jellyfin.url must be an HTTP(S) address');
-    }
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash)
-      throw new Error('jellyfin.url must be an HTTP(S) address without credentials or a query');
-    const apiKey = get('jellyfin.api_key'),
-      user = get('jellyfin.user');
-    if (!apiKey || !/^[\x21-\x7e]{1,200}$/.test(apiKey) || apiKey.includes('"'))
-      throw new Error('jellyfin.api_key is required with jellyfin.url');
-    if (!user || user.length > 100 || /[\u0000-\u001f\u007f]/.test(user))
-      throw new Error('jellyfin.user is required with jellyfin.url: the Jellyfin user whose libraries are offered');
-    config.jellyfin = { url: url.origin + url.pathname.replace(/\/+$/, ''), apiKey, user };
-  }
-  config.plexReporting = {
-    enabled: boolean('plex.reporting_enabled', true),
-    watchState: boolean('plex.reporting_watch_state', true),
-  };
-  config.plexDelivery = {
-    mode: choice('plex.delivery', 'proxy', ['proxy', 'auto']),
-    clientUrl: get('plex.client_url'),
-    lanClientUrl: get('plex.lan_client_url'),
-    // The dedicated non-owner Plex account everyone watches through when delivery is direct,
-    // because browsers receive tokens derived from it. Never the owner's plex.token.
-    token: get('plex.direct_token'),
-  };
-  if (config.plexDelivery.clientUrl) {
-    let client;
-    try {
-      client = new URL(config.plexDelivery.clientUrl);
-    } catch {
-      throw new Error('plex.client_url must be an HTTPS origin');
-    }
-    if (
-      client.protocol !== 'https:' ||
-      client.username ||
-      client.password ||
-      client.search ||
-      client.hash ||
-      client.pathname !== '/'
-    )
-      throw new Error('plex.client_url must be an HTTPS origin');
-    config.plexDelivery.clientUrl = client.origin;
-  }
-  if (config.plexDelivery.lanClientUrl) {
-    let lanClient;
-    try {
-      lanClient = new URL(config.plexDelivery.lanClientUrl);
-    } catch {
-      throw new Error('plex.lan_client_url must be an HTTPS origin');
-    }
-    if (
-      lanClient.protocol !== 'https:' ||
-      lanClient.username ||
-      lanClient.password ||
-      lanClient.search ||
-      lanClient.hash ||
-      lanClient.pathname !== '/'
-    )
-      throw new Error('plex.lan_client_url must be an HTTPS origin');
-    config.plexDelivery.lanClientUrl = lanClient.origin;
-  }
-  if (config.plexDelivery.mode === 'auto' && !config.plexDelivery.clientUrl)
-    throw new Error('plex.client_url is required for automatic direct delivery');
-  if (config.plexDelivery.mode === 'auto' && !config.plexDelivery.token)
-    throw new Error('plex.direct_token is required for automatic direct delivery');
-  if (config.plexDelivery.token && config.plexDelivery.mode !== 'auto')
-    throw new Error("plex.direct_token is used only with plex.delivery: 'auto'");
-  if (config.plexDelivery.token && config.plexDelivery.token === config.plexToken)
-    throw new Error('plex.direct_token must belong to a dedicated non-owner Plex account, not plex.token');
+  config.sources = validateSources(value.sources, {
+    base,
+    platform,
+    dataDirectory: resolveFile('storage.data_directory', 'data'),
+  });
   config.singleRoom = boolean('rooms.single_room', false);
   config.pauseOnBuffering = boolean('rooms.pause_on_buffering', false);
   config.directory = {
@@ -483,7 +332,6 @@ function normalizeConfig(
   if (!config.transcoding.qualities.length) throw new Error('Offer Original or at least one transcoding quality');
   if (config.accessPolicy.password.length > 1024)
     throw new Error('secrets.entry_password must contain at most 1024 characters');
-  if (config.plexDelivery.token && !config.plexUrl) throw new Error('plex.direct_token requires plex.url');
   if (
     !config.accessPolicy.publicWeb &&
     (!config.accessPolicy.discord || !config.clientId || !config.clientSecret || !config.ownerId)
@@ -493,8 +341,10 @@ function normalizeConfig(
     throw new Error('Activity-only access requires a Discord bot and guild for verified membership');
   if (config.singleRoom && !config.singleRoomLeaderPlexId) {
     if (!config.accessPolicy.discord && config.accessPolicy.plex) {
-      if (!config.plexToken)
-        throw new Error('Single-room mode requires plex.token or rooms.single_room_leader_plex_id for Plex leadership');
+      if (!ownerAccountSources(config.sources).length)
+        throw new Error(
+          'Single-room mode requires a Plex source or rooms.single_room_leader_plex_id for Plex leadership',
+        );
     } else if (!config.ownerId)
       throw new Error(
         'Single-room mode requires discord.owner_id or rooms.single_room_leader_plex_id for fixed room leadership',

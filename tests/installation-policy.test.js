@@ -1,4 +1,5 @@
 'use strict';
+const { validateSources } = require('../server/sources');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),
@@ -24,8 +25,9 @@ async function fixture(t, changes = {}) {
     demo: true,
     unifiedAccounts: true,
     demoSubjects: provider.subjects,
-    plexUrl: 'http://plex-fixture.invalid:32400',
-    plexToken: 'fixture-owner',
+    sources: validateSources([
+      { id: 'plex', type: 'plex', url: 'http://plex-fixture.invalid:32400', token: 'fixture-owner' },
+    ]),
     accessPolicy: { discord: true, plex: true, password: '', publicWeb: true },
     ...changes,
   };
@@ -436,9 +438,9 @@ test('single room fixes creator, assigns configured hosts and requires explicit 
 test('conversion policy follows Plex, fails closed when unknown and counts jobs rather than users', async () => {
   let disabled = '1',
     reads = 0;
-  const { Plex } = require('../server/plex');
+  const { Plex } = require('../server/sources/plex/plex');
   const server = settings =>
-    new Plex({ plexUrl: 'http://plex-fixture.invalid:32400', plexToken: 'fixture-owner' }, async () => {
+    new Plex({ url: 'http://plex-fixture.invalid:32400', token: 'fixture-owner' }, async () => {
       reads++;
       return new Response(JSON.stringify({ MediaContainer: { Setting: settings() } }));
     });
@@ -492,10 +494,10 @@ test('Plex conversions reserve/release shared global capacity and follow video-c
   const provider = accountFixture();
   let onlyRemux = '0',
     copy = false;
-  const plex = new (require('../server/plex').Plex)(
+  const plex = new (require('../server/sources/plex/plex').Plex)(
     {
-      plexUrl: 'http://plex-fixture.invalid:32400',
-      plexToken: 'fixture-owner',
+      url: 'http://plex-fixture.invalid:32400',
+      token: 'fixture-owner',
       transcoding: { policy: 'follow_provider', provider: true, uburoom: true, formats: ['av1'], maxJobs: 1 },
     },
     async (input, options) => {
@@ -551,10 +553,10 @@ test('Plex conversions reserve/release shared global capacity and follow video-c
 test('Plex requests opportunistic directStream when burn and fallback compatible are inactive, recording decisions', async () => {
   const provider = accountFixture();
   const decisions = [];
-  const plex = new (require('../server/plex').Plex)(
+  const plex = new (require('../server/sources/plex/plex').Plex)(
     {
-      plexUrl: 'http://plex-fixture.invalid:32400',
-      plexToken: 'fixture-owner',
+      url: 'http://plex-fixture.invalid:32400',
+      token: 'fixture-owner',
       transcoding: { policy: 'follow_provider', provider: true, uburoom: true, formats: ['av1'], maxJobs: 2 },
     },
     async (input, options) => {
@@ -846,7 +848,7 @@ test('Plex-only single room derives its fixed leader from token or explicit ID, 
     fail = true;
   const request = f.app.plexAuth.request.bind(f.app.plexAuth);
   f.app.plexAuth.request = async (resource, options) => {
-    if (resource === '/user' && options?.token === f.config.plexToken) {
+    if (resource === '/user' && options?.token === f.config.sources[0].token) {
       if (fail) throw new Error('fixture rejection');
       lookups++;
       return { id: 101, username: 'token-account' };

@@ -1,5 +1,6 @@
 /* Actual software WebM conversion and watch clients; only synthetic providers/media. */
 'use strict';
+const { validateSources } = require('../server/sources');
 const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs'),
   path = require('node:path'),
@@ -35,8 +36,9 @@ async function main() {
     demo: true,
     unifiedAccounts: true,
     demoSubjects: fixture.subjects,
-    plexUrl: 'http://plex-fixture.invalid:32400',
-    plexToken: 'fixture-owner',
+    sources: validateSources([
+      { id: 'plex', type: 'plex', url: 'http://plex-fixture.invalid:32400', token: 'fixture-owner' },
+    ]),
     ffmpegPath: findOnPath('ffmpeg'),
     ffprobePath: findOnPath('ffprobe'),
     transcoding: {

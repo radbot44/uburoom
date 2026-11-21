@@ -195,7 +195,7 @@ export function mount(host, deps) {
       throw new Error('The player and server versions differ. Reload after the server update.');
     $('plex-login').hidden =
       !store.identity.config.unifiedAccounts ||
-      !store.identity.config.plexConfigured ||
+      !store.identity.config.plexSignIn ||
       store.identity.config.access?.plex === false;
     const discordButton = $('welcome').querySelector('.discord-button');
     discordButton.hidden = store.identity.config.access?.discord === false;

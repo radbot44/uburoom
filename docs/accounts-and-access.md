@@ -15,7 +15,7 @@ Uburoom's account, administration, and access architecture enforces layered auth
 | Server operator | Verified Discord or Plex subject explicitly selected in YAML; independent of room roles and admission |
 | Reporting | Actual verified Plex subject with server access, independently of the source/encoder credential |
 
-**Approved sharing policy ([media sources](media-sources.md)):** Discord sign-in requires membership in the configured guild; standalone Plex sign-in requires access to the pinned Plex server. Outside visitors without either membership enter through `/join/<code>` room invites when `guests.enabled: true`. Everyone admitted, guests included, browses and plays every Plex, Jellyfin and local library through the source's own credential; a viewer's own Plex permissions, links and denials play no part. With `plex.delivery: 'auto'`, that credential is the dedicated non-owner `plex.direct_token` account, because browsers receive tokens derived from it; see [delivery](self-hosting.md#delivery).
+**Approved sharing policy ([media sources](media-sources.md)):** Discord sign-in requires membership in the configured guild; standalone Plex sign-in requires access to any configured Plex source's pinned server. Outside visitors without either membership enter through `/join/<code>` room invites when `guests.enabled: true`. Everyone admitted, guests included, browses and plays every Plex, Jellyfin and local library through the source's own credential; a viewer's own Plex permissions, links and denials play no part. For a Plex source with `delivery: 'auto'`, that credential is its dedicated non-owner `direct_token` account, because browsers receive tokens derived from it; see [delivery](self-hosting.md#delivery).
 
 Provider-confirmed admission lasts five minutes between checks, so a removed viewer can stay up to that long. After that only the provider's own denial removes an admitted viewer; one that gives no answer is asked again every 30 seconds, for up to 12 hours since the last confirmation. Nobody new is admitted without an answer, and a linked-provider change starts over.
 
@@ -98,7 +98,7 @@ Further Plex-only/Activity association work must bind fresh Plex proof to the ex
 
 ## Plex activity and viewer attribution
 
-Product reporting architecture in `server/plex-reporting.js` decouples local viewer history, Plex activity visibility, and personal Plex resume/watched/history writes.
+Product reporting architecture in `server/sources/plex/reporting.js` decouples local viewer history, Plex activity visibility, and personal Plex resume/watched/history writes.
 
 ### Reporting identifier mapping
 

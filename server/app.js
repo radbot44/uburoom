@@ -3,17 +3,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { hash } = require('./core');
 const { loginStore } = require('./storage');
-const { Plex } = require('./plex');
 const { MediaPipeline } = require('./media-pipeline');
 const { MediaProviders } = require('./media-providers');
-const { plexProvider } = require('./plex-provider');
-const { localProvider } = require('./local-provider');
-const { jellyfinProvider } = require('./jellyfin-provider');
+const { createSources } = require('./sources');
 const { createRooms } = require('./watch');
 const { watchHttp } = require('./watch-http');
 const { watchSockets } = require('./watch-socket');
 const { Accounts, credentialVault } = require('./accounts');
-const { PlexAuth } = require('./plex-auth');
 const { accountHttp } = require('./account-http');
 const { operatorHttp } = require('./operator-http');
 const { createConfigEditor } = require('./config-editor');
@@ -99,8 +95,11 @@ function createApp(config, options = {}) {
     const { accounts } = opened;
     registry = opened.registry;
     const pipeline = new MediaPipeline(config, { logger });
-    const plex = new Plex(config, plexFetch, { logger, pipeline });
-    const plexAuth = new PlexAuth(config, registry, plex, plexFetch);
+    // Every configured source, through its type's module; no source is named here.
+    const sources = createSources(config.sources || [], {
+      ...{ config, registry, pipeline, logger, plexFetch, jellyfinFetch },
+    });
+    const plexAuth = sources.signIn.plex;
     if (config.demo) plexAuth.demo = plexDemo;
     // Who may enter. The rooms and routes are built last, so earlier services find them when called.
     let hub, watch, watchRoutes, accountRoutes;
@@ -117,14 +116,7 @@ function createApp(config, options = {}) {
     const entryPolicy = new AccessPolicy(config, registry, plexAuth, () => access.raw(), { logger, guests });
     const access = createAccess({ registry, config, plexAuth, entryPolicy });
     const sessions = createSessions({ config, logger, registry, accounts, access, oauthFetch });
-    const providers = new MediaProviders(
-      [
-        plexProvider({ plex, config, registry, plexAuth }),
-        jellyfinProvider({ config, pipeline, registry, logger, fetcher: jellyfinFetch }),
-        localProvider({ config, pipeline, logger }),
-      ].filter(Boolean),
-      pipeline,
-    );
+    const providers = new MediaProviders(sources.providers, pipeline);
     // Rooms, and the hub that authorizes work in them.
     const { ports, setOwnerName } = createHubPorts({
       ...{ config, logger, registry, accounts, access, plexAuth, providers, guests, sessions },
@@ -133,7 +125,6 @@ function createApp(config, options = {}) {
     ({ hub, watch } = createRooms({
       config,
       ports,
-      plex,
       pipeline,
       providers,
       demoMedia: demoMedia(),

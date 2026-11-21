@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { filmName, sortTitle } = require('../server/local/names');
+const { filmName, sortTitle } = require('../server/sources/folders/names');
 
 const options = { latestYear: 2026 };
 const name = (file, folder = '', alone = false) => filmName(file, folder, alone, options);
@@ -65,7 +65,7 @@ test('sort titles skip a leading article', () => {
 });
 
 test('episode names give their show, season, number and title', () => {
-  const { episodeName } = require('../server/local/names');
+  const { episodeName } = require('../server/sources/folders/names');
   const name = (file, folders = []) => episodeName(file, folders, { latestYear: 2026 });
   assert.deepEqual(name('Show.S01E02.The.Title.1080p.WEB-DL.x264-GRP.mkv'), {
     show: 'Show',

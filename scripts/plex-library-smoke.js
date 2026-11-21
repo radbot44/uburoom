@@ -1,5 +1,6 @@
 /* Library UX against synthetic Plex data in Chrome and Firefox (--browsers=chrome,firefox); no private media or accounts. */
 'use strict';
+const { validateSources } = require('../server/sources');
 const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs'),
   path = require('node:path'),
@@ -24,8 +25,9 @@ async function main(name) {
     demo: true,
     unifiedAccounts: true,
     demoSubjects: fixture.subjects,
-    plexUrl: 'http://127.0.0.1:32400',
-    plexToken: 'synthetic-fixture-only',
+    sources: validateSources([
+      { id: 'plex', type: 'plex', url: 'http://127.0.0.1:32400', token: 'synthetic-fixture-only' },
+    ]),
   };
   let failNext = false;
   let shelfReads = 0;
@@ -155,7 +157,7 @@ async function main(name) {
       p = url.pathname,
       query = url.searchParams;
     // plex.tv sign-in and account checks belong to the account fixture; the library is this server.
-    if (url.origin !== new URL(config.plexUrl).origin) return fixture.fetch(input, options);
+    if (url.origin !== new URL(config.sources[0].url).origin) return fixture.fetch(input, options);
     // The server root names the machine; the server pins it as this provider's identity.
     if (p === '/') return new Response(JSON.stringify({ MediaContainer: { machineIdentifier: 'library-fixture' } }));
     if (failNext && p.endsWith('/all')) {

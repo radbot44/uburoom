@@ -19,8 +19,11 @@ async function editingFixture(t) {
     file = path.join(directory, "selected [fixture] 'config'.yaml");
   const source = [
     '# Private fixture header',
-    'plex:',
-    "  token: 'fixture-secret:#not-a-comment' # keep secret comment",
+    'sources:',
+    "  - id: 'plex'",
+    "    type: 'plex'",
+    "    url: 'http://127.0.0.1:32400'",
+    "    token: 'fixture-secret:#not-a-comment' # keep secret comment",
     'storage:',
     "  credential_key_file: './keys/original.key' # keep original key path",
     'tools:',
@@ -110,7 +113,7 @@ test('YAML editor preserves comments/private settings, protects backup/replaceme
   ])
     assert.ok(saved.includes(comment));
   assert.equal(saved.replace(/\r\n/g, '').includes('\n'), false, 'preserve CRLF convention');
-  assert.equal(after.plexToken, running.plexToken);
+  assert.equal(after.sources[0].token, running.sources[0].token);
   assert.equal(after.credentialKeyFile, path.join(path.dirname(file), 'keys/original.key'));
   assert.equal(after.roomLimits.inactiveDays, 180);
   assert.equal(after.roomLimits.maxMembers, 12);
@@ -179,7 +182,10 @@ test('YAML editor rejects forbidden/invalid edits and validates the entire file 
   assert.equal(await fs.promises.readFile(file, 'utf8'), source);
   // Even untouched invalid settings must prevent persistence, with parser and
   // validator errors hidden from callers.
-  for (const invalid of [source + "server: {port: 'fixture-secret'}\n", "plex: {token: 'fixture-secret'\n"]) {
+  for (const invalid of [
+    source + "server: {port: 'fixture-secret'}\n",
+    "sources: [{id: 'plex', token: 'fixture-secret'\n",
+  ]) {
     await fs.promises.writeFile(file, invalid);
     const hash = require('node:crypto').createHash('sha256').update(invalid).digest('hex');
     await assert.rejects(

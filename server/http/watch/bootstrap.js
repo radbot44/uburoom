@@ -23,8 +23,10 @@ function pageBootstrap({
     clientId: config.clientId,
     discordRichPresence: config.discordRichPresence !== false,
     demo: !!config.demo,
-    // Plex sign-in needs the Plex server itself, not just any media provider.
-    plexConfigured: watch.providers.has('plex'),
+    // Every media source by name and type, and whether it is available; never an address or credential.
+    sources: watch.providers.summary(),
+    // A Plex sign-in lets people in only when some Plex source can vouch for them.
+    plexSignIn: !!entryPolicy?.plexAuth?.admits,
     testVideo: !!watch.demoMedia,
     access: entryPolicy?.public(),
     guests: !!hub.guestsEnabled(),

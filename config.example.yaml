@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2w
+# Config schema v2x
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -14,41 +14,71 @@
 secrets:
   entry_password: '' # Optional extra password, in addition to provider requirements.
 
-plex:
-  url: 'http://127.0.0.1:32400'
-  token: ''
-  machine_identifier: '' # Leave blank to detect and remember your Plex server.
-  # Everyone admitted watches every library through this server's account.
-  # proxy: media goes through uburoom. auto: supported browsers fetch original
-  # files and Plex HLS straight from Plex (Activity stays proxied), with the
-  # proxy as recovery. Browsers then get tokens derived from direct_token, so
-  # auto needs a dedicated account and everyone watches what it can see.
-  delivery: 'proxy' # proxy | auto
-  client_url: '' # Required for auto: viewer-reachable HTTPS Plex origin, no path.
-  lan_client_url: '' # Optional LAN HTTPS Plex origin override; blank auto-detects from Plex.
-  # Required for auto, unused otherwise. A dedicated Plex account with access to
-  # your libraries that does not own the server (checked against plex.tv); NEVER
-  # token above. To get its token: open a private browser window, sign in at
-  # https://app.plex.tv as that account, press F12, and type
-  # localStorage.myPlexAccessToken in the console. The token is a password, so
-  # paste it only here. Signing that browser out, or removing its device from the
-  # account's Plex devices, stops it working, and Plex media is unavailable until
-  # you replace it or switch back to proxy.
-  direct_token: ''
-
-  # REPORTING: report active playback and watch progress for verified Plex accounts.
-  # Viewers without their own Plex sign-in (guests included) are never reported.
-  reporting_enabled: true # Enable timeline activity reporting to Plex.
-  reporting_watch_state: true # Allow personal watch-state (resume/scrobble) synchronization.
-
-# A Jellyfin server, shown in the library beside Plex. Blank url leaves it out.
-# Everyone who is admitted watches through the one Jellyfin user named here and
-# sees what that user may see; it adds no way in. Original files play as they are
-# and uburoom converts the rest itself (needs FFmpeg); Jellyfin does not transcode.
-jellyfin:
-  url: '' # e.g. 'http://127.0.0.1:8096', including any base path.
-  api_key: '' # Jellyfin Dashboard -> API Keys. Keep this file private.
-  user: '' # A Jellyfin username; give it only the libraries people may watch here.
+# MEDIA SOURCES: any number of Plex servers, Jellyfin servers and folders on this
+# machine, all equal. Everyone admitted watches every library of every source
+# through that source's own account; a source never lets anyone in by itself.
+# Each entry has an id (quoted; letters, digits, dots, hyphens, underscores) that
+# you keep for good and never reuse for another server, a type, an optional name
+# shown on its libraries, and its type's settings. Order is the library order.
+# Uncomment and fill in the ones you use. Restart after changes.
+sources: []
+#  - id: 'living-room'
+#    type: 'plex'
+#    name: '' # Optional; blank uses the name the server reports.
+#    url: 'http://127.0.0.1:32400' # Reachable from this machine; no path.
+#    token: '' # The Plex token uburoom reads this server with.
+#    machine_identifier: '' # Blank: detect once and remember this server.
+#    # proxy: media goes through uburoom. auto: supported browsers fetch original
+#    # files and Plex HLS straight from Plex (Activity stays proxied), with the
+#    # proxy as recovery. Browsers then get tokens derived from direct_token, so
+#    # auto needs a dedicated account and everyone watches what it can see.
+#    delivery: 'proxy' # proxy | auto
+#    client_url: '' # Required for auto: viewer-reachable HTTPS Plex origin, no path.
+#    lan_client_url: '' # Optional LAN HTTPS Plex origin override; blank auto-detects.
+#    # Required for auto, unused otherwise: a dedicated Plex account with access to
+#    # your libraries that does not own the server (checked against plex.tv); NEVER
+#    # token above. To get it, sign in at https://app.plex.tv as that account in a
+#    # private window, press F12 and type localStorage.myPlexAccessToken in the
+#    # console. It is a password; paste it only here. Signing that browser out stops
+#    # it working, and this source's media is unavailable until you replace it.
+#    direct_token: ''
+#    # Report playback to the viewer's own Plex account, for verified Plex sign-ins
+#    # that can reach this server. Others (guests included) are never reported.
+#    reporting_enabled: true # Now-playing activity.
+#    reporting_watch_state: true # Let viewers opt in to resume/watched sync.
+#
+#  # Seen through one Jellyfin user: everyone admitted sees what that user may
+#  # see. Original files play as they are and uburoom converts the rest itself
+#  # (needs FFmpeg); Jellyfin does not transcode.
+#  - id: 'jellyfin'
+#    type: 'jellyfin'
+#    url: 'http://127.0.0.1:8096' # Including any base path.
+#    api_key: '' # Jellyfin Dashboard -> API Keys.
+#    user: '' # A Jellyfin username; give it only the libraries people may watch here.
+#
+#  # Folders of videos on this machine (needs FFprobe, and FFmpeg for files a
+#  # browser cannot play as they are). Each library: a short id, the name shown,
+#  # and one or more folders (subfolders included), listed together as one library.
+#  # Keep library ids (unique across all folders sources) and the source id for
+#  # good: queues and resume positions are recorded under them and a file's place
+#  # inside its folder, so folders can move but a changed id forgets them. When
+#  # two folders hold the same file at the same place, the first listed is used.
+#  # parse_names (default true) reads release names as a film's title and year:
+#  # 65.2023.2160p.BluRay.x265-GROUP.mkv shows as "65" (2023); false shows the
+#  # file name. type is 'movies' (default) or 'shows': a shows library groups files
+#  # named like Show.S01E02.mkv (or Show/Season 1/02 - Title.mkv) into shows,
+#  # seasons and episodes.
+#  - id: 'local'
+#    type: 'folders'
+#    libraries:
+#      - id: 'films'
+#        name: 'Films'
+#        paths: ['D:\Media\Films', 'E:\Films']
+#        parse_names: true
+#      - id: 'tv'
+#        name: 'TV'
+#        type: 'shows'
+#        paths: ['D:\Media\TV']
 
 discord:
   bot_token: ''
@@ -83,7 +113,7 @@ operator:
 access:
   # Choose sign-in methods. Both false allows anonymous guests (not guest passes).
   # Discord sign-in requires guild membership; standalone Plex sign-in requires
-  # access to the pinned Plex server. Outside visitors need a room guest invite.
+  # access to any configured Plex source. Outside visitors need a room guest invite.
   # Everyone admitted can watch every library of every media source.
   discord: true
   plex: true
@@ -110,30 +140,6 @@ tools:
   # Needed for subtitle extraction and optional AV1/VP9/VP8 conversion.
   ffmpeg: ''
   ffprobe: '' # Searches PATH first, then defaults beside the selected ffmpeg.
-
-# Folders of videos on this machine, shown in the library beside Plex. Everyone who
-# is admitted may watch them; they add no way in. Needs FFprobe, and FFmpeg for
-# files a browser cannot play as they are.
-local_media:
-  # Each entry: a short id, the name shown, and one or more folders (subfolders
-  # included), listed together as one library. Keep an id for good: queues and
-  # resume positions are recorded under it and a file's place inside its folder,
-  # so folders can move but a changed id forgets them. When two folders hold the
-  # same file at the same place, the first listed is used. parse_names (default
-  # true) reads release names as a film's title and year, like Plex:
-  # 65.2023.2160p.BluRay.x265-GROUP.mkv shows as "65" (2023); false shows the file
-  # name. type is 'movies' (default) or 'shows': a shows library groups files
-  # named like Show.S01E02.mkv (or Show/Season 1/02 - Title.mkv) into shows,
-  # seasons and episodes. Example:
-  #   - id: 'films'
-  #     name: 'Films'
-  #     paths: ['D:\Media\Films', 'E:\Films']
-  #     parse_names: true
-  #   - id: 'tv'
-  #     name: 'TV'
-  #     type: 'shows'
-  #     paths: ['D:\Media\TV']
-  libraries: []
 
 # Logging behavior
 logging:

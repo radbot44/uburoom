@@ -1,4 +1,5 @@
 'use strict';
+const { validateSources } = require('../../server/sources');
 // A full app with fixture Discord and Plex accounts, signed-in browsers and an optional delivery fetch, for account tests.
 const fs = require('node:fs'),
   path = require('node:path'),
@@ -21,8 +22,9 @@ async function fixture(t, deliveryFetch, overrides = {}, services = {}) {
     demo: true,
     unifiedAccounts: true,
     demoSubjects: provider.subjects,
-    plexUrl: 'http://plex-fixture.invalid:32400',
-    plexToken: 'fixture-owner',
+    sources: validateSources([
+      { id: 'plex', type: 'plex', url: 'http://plex-fixture.invalid:32400', token: 'fixture-owner' },
+    ]),
     ...overrides,
   };
   const app = createApp(config, {

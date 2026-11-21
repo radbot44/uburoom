@@ -1,15 +1,15 @@
 'use strict';
 const { randomUUID } = require('node:crypto');
-const { qualityId } = require('../../shared/engine.mjs');
-const { PlaybackError } = require('../errors');
-const { classifyHdr } = require('../media-tools');
-const Tracks = require('../media-tracks');
+const { qualityId } = require('../../../shared/engine.mjs');
+const { PlaybackError } = require('../../errors');
+const { classifyHdr } = require('../../media-tools');
+const Tracks = require('../../media-tracks');
 const PlexTracks = require('./tracks');
-const Output = require('../plex-output');
-const Sources = require('../plex-source');
-const { prepareStream } = require('../media-delivery');
+const Output = require('../../plex-output');
+const Sources = require('../../plex-source');
+const { prepareStream } = require('../../media-delivery');
 const { plexIdentity } = require('./identity');
-const { runOperation, currentSignal } = require('../operation');
+const { runOperation, currentSignal } = require('../../operation');
 
 function parseChapters(item) {
   if (!Array.isArray(item?.Chapter)) return [];

@@ -1,5 +1,6 @@
 /* Isolated fixture server and on-screen page helpers for rendered UI checks. No .env or real providers. */
 'use strict';
+const { validateSources } = require('../../server/sources');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -64,8 +65,9 @@ async function startFixtureServer({ localLibrary = false } = {}) {
     demo: true,
     unifiedAccounts: true,
     demoSubjects: subjects,
-    plexUrl: 'http://plex-fixture.invalid:32400',
-    plexToken: 'fixture-owner',
+    sources: validateSources([
+      { id: 'plex', type: 'plex', url: 'http://plex-fixture.invalid:32400', token: 'fixture-owner' },
+    ]),
     roomAdministrators: { discord: [subjects.guest2], plex: [], discordRoles: [] },
     roomLimits: { maxQueue: 120 },
   };
@@ -124,11 +126,14 @@ async function startFixtureServer({ localLibrary = false } = {}) {
       );
     localFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-fixture-film-'));
     fs.copyFileSync(path.join(root, 'assets/demo/sync-test.mp4'), path.join(localFolder, 'Local Film.mp4'));
-    config.localMedia = {
+    config.sources.push({
+      id: 'local',
+      type: 'folders',
+      name: '',
       // Pictures go beside the fixture folder, not inside it, as they do beside the media in a real library.
       artDirectory: localFolder + '-art',
-      libraries: [{ id: 'film', name: 'Film', paths: [localFolder] }],
-    };
+      libraries: [{ id: 'film', name: 'Film', paths: [localFolder], parseNames: true, type: 'movies' }],
+    });
   }
   const app = createApp(config, { plexFetch, oauthFetch: fixture.discordFetch, plexDemo: fixture });
   if (localFolder) {

@@ -9,7 +9,7 @@ const { inspect } = require('node:util');
 const { createApp } = require('../server/app');
 const { Hub } = require('../server/core');
 const { liveWatch } = require('./helpers/live-room');
-const { Plex } = require('../server/plex');
+const { Plex } = require('../server/sources/plex/plex');
 
 test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the same reporting occurrence', async () => {
   const hub = new Hub({ ownerId: 'host' }, []);
@@ -788,7 +788,7 @@ test(
 test('Plex requests keep credentials server-side, restrict origins, prepare transcodes, and format episode metadata', async () => {
   const requests = [],
     token = 'private-fixture-token';
-  const plex = new Plex({ plexUrl: 'http://127.0.0.1:32400', plexToken: token }, async (url, options) => {
+  const plex = new Plex({ url: 'http://127.0.0.1:32400', token: token }, async (url, options) => {
     requests.push({ url, options });
     if (url.pathname.endsWith('/decision'))
       return new Response(
@@ -845,7 +845,7 @@ test('Plex requests keep credentials server-side, restrict origins, prepare tran
     assert.equal(String(request.url).includes(token), false);
   }
   const refused = new Plex(
-    { plexUrl: 'http://127.0.0.1:32400', plexToken: token },
+    { url: 'http://127.0.0.1:32400', token: token },
     async url =>
       new Response(
         JSON.stringify({
@@ -891,7 +891,7 @@ test('Plex requests keep credentials server-side, restrict origins, prepare tran
     },
   ];
   const metaPlex = new Plex(
-    { plexUrl: 'http://127.0.0.1:32400', plexToken: 'fixture' },
+    { url: 'http://127.0.0.1:32400', token: 'fixture' },
     async () => new Response(JSON.stringify({ MediaContainer: { Metadata: episodes } })),
   );
   assert.equal(metaPlex.items([episodes[2]])[0].subtitle, 'Show · Season 2 · Episode 1 · 2026');
@@ -902,7 +902,7 @@ test('Plex requests keep credentials server-side, restrict origins, prepare tran
 test('viewer quality ceilings include fitting Original and survive lower outputs without raising or replacing the preference', async t => {
   const hub = new Hub({ ownerId: 'host' }, []);
   hub.access = { isMember: () => true, refresh: async () => true };
-  const catalog = new Plex({ plexUrl: 'http://fixture.invalid', plexToken: 'fixture' });
+  const catalog = new Plex({ url: 'http://fixture.invalid', token: 'fixture' });
   const attempted = [];
   const plex = {
     pipeline: catalog.pipeline,

@@ -1,5 +1,5 @@
 'use strict';
-const { resilientFetch } = require('../resilience');
+const { resilientFetch } = require('../../resilience');
 const { plexIdentity } = require('./identity');
 
 // The Plex HTTP client for one token: resource URLs on the configured server only, and

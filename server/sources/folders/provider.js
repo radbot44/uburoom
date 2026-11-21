@@ -2,18 +2,18 @@
 const fs = require('node:fs');
 const fsp = fs.promises;
 const path = require('node:path');
-const { fileStream } = require('./file-stream');
+const { fileStream } = require('../../file-stream');
 const { createHash, randomUUID } = require('node:crypto');
-const { PlaybackError } = require('./errors');
-const { classifyHdr } = require('./media-tools');
-const Tracks = require('./media-tracks');
-const { LocalIndex } = require('./local/index');
-const { LocalArt } = require('./local/art');
-const { prepareStream } = require('./media-delivery');
-const { runOperation, currentSignal } = require('./operation');
+const { PlaybackError } = require('../../errors');
+const { classifyHdr } = require('../../media-tools');
+const Tracks = require('../../media-tracks');
+const { LocalIndex } = require('./library-index');
+const { LocalArt } = require('./art');
+const { prepareStream } = require('../../media-delivery');
+const { runOperation, currentSignal } = require('../../operation');
 
-/** The server id every local library is recorded under. */
-const LOCAL_SERVER = 'local-media';
+/** The server id a folders source's media is recorded under: its own, derived from the source id. */
+const folderServer = id => 'folders:' + id;
 const ORIGIN = 'uburoom-local://media';
 const PAGE = 48,
   TEXT_LIMIT = 4 * 1024 * 1024;
@@ -79,11 +79,13 @@ function decodeText(bytes) {
 class LocalMedia {
   /**
    * @param {{id: string, name: string, paths: string[], parseNames?: boolean}[]} libraries
-   * @param {{pipeline: any, logger?: any, artDirectory?: string}} services `artDirectory` holds the pictures
-   *   made for local videos; without one, local videos have none.
+   * @param {{pipeline: any, logger?: any, artDirectory?: string, serverId?: string}} services `artDirectory`
+   *   holds the pictures made for local videos; without one, local videos have none. `serverId` is the
+   *   identity this source's media is recorded under.
    */
-  constructor(libraries, { pipeline, logger, artDirectory }) {
+  constructor(libraries, { pipeline, logger, artDirectory, serverId = folderServer('local') }) {
     this.libraries = libraries;
+    this.serverId = serverId;
     this.pipeline = pipeline;
     this.index = new LocalIndex(libraries, { logger });
     this.art = artDirectory ? new LocalArt({ directory: artDirectory, tools: () => pipeline.av1, logger }) : undefined;
@@ -141,7 +143,7 @@ class LocalMedia {
     return this.libraries.length > 0;
   }
   get principal() {
-    return LOCAL_SERVER;
+    return this.serverId;
   }
   get root() {
     return this;
@@ -672,7 +674,7 @@ class LocalMedia {
     });
     media.selection = Tracks.select(media.tracks, choices);
     media.sourceStart = `${ORIGIN}/file/${entry.token}`;
-    media.sourceKey = JSON.stringify([LOCAL_SERVER, entry.token, stat.size, stat.mtimeMs]);
+    media.sourceKey = JSON.stringify([this.serverId, entry.token, stat.size, stat.mtimeMs]);
     media.captionVersion = randomUUID();
     media.subtitleAbort = new AbortController();
     return { media, detail: {} };
@@ -690,15 +692,14 @@ class LocalMedia {
 }
 
 /**
- * The configured local libraries as a media provider, or nothing when none are configured.
- * @param {{config: any, pipeline: any, logger?: any}} services
- * @returns {import('./media-providers').MediaProvider | undefined}
+ * One folders source as a media provider.
+ * @param {{source: {id: string, libraries: any[], artDirectory?: string}, pipeline: any, logger?: any}} services
+ * @returns {import('../../media-providers').MediaProvider}
  */
-function localProvider({ config, pipeline, logger }) {
-  const libraries = config.localMedia?.libraries || [];
-  if (!libraries.length) return;
-  const local = new LocalMedia(libraries, { pipeline, logger, artDirectory: config.localMedia.artDirectory });
-  return { kind: 'local', root: local, identity: async () => LOCAL_SERVER, scopeFor: async () => local };
+function localProvider({ source, pipeline, logger }) {
+  const serverId = folderServer(source.id);
+  const local = new LocalMedia(source.libraries, { pipeline, logger, artDirectory: source.artDirectory, serverId });
+  return { kind: 'local', root: local, identity: async () => serverId, scopeFor: async () => local };
 }
 
-module.exports = { LocalMedia, localProvider, LOCAL_SERVER };
+module.exports = { LocalMedia, localProvider, folderServer };

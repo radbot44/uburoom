@@ -1,5 +1,6 @@
 /* Media shared controls and sticky layout in disposable Chrome/Firefox rooms. */
 'use strict';
+const { validateSources } = require('../server/sources');
 const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -37,8 +38,9 @@ async function main() {
       demo: true,
       unifiedAccounts: true,
       demoSubjects: fixture.subjects,
-      plexUrl: 'http://plex-fixture.invalid:32400',
-      plexToken: 'fixture-owner',
+      sources: validateSources([
+        { id: 'plex', type: 'plex', url: 'http://plex-fixture.invalid:32400', token: 'fixture-owner' },
+      ]),
     };
     const plexFetch = async (input, options) => {
       const pathname = new URL(input).pathname;

@@ -1,5 +1,6 @@
 /* Toast wiring in isolated Chrome/Firefox profiles with disposable accounts. */
 'use strict';
+const { validateSources } = require('../server/sources');
 const { EVIDENCE } = require('./lib/evidence');
 const fs = require('node:fs'),
   path = require('node:path'),
@@ -23,8 +24,9 @@ async function main() {
       demo: true,
       unifiedAccounts: true,
       demoSubjects: fixture.subjects,
-      plexUrl: 'http://plex-fixture.invalid:32400',
-      plexToken: 'fixture-owner',
+      sources: validateSources([
+        { id: 'plex', type: 'plex', url: 'http://plex-fixture.invalid:32400', token: 'fixture-owner' },
+      ]),
     };
     const app = createApp(config, { plexFetch: fixture.fetch, oauthFetch: fixture.discordFetch, plexDemo: fixture });
     app.access.connect({

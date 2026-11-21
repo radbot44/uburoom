@@ -1,7 +1,7 @@
 'use strict';
-const { PlexDelivery } = require('./plex/delivery');
-const { PlexReporting } = require('./plex-reporting');
-const { serverName } = require('./media-providers');
+const { PlexDelivery } = require('./delivery');
+const { PlexReporting } = require('./reporting');
+const { serverName } = require('../../media-providers');
 
 const failure = (message, status = 409) => Object.assign(new Error(message), { status });
 
@@ -10,19 +10,29 @@ const failure = (message, status = 409) => Object.assign(new Error(message), { s
  * through, and the two things only Plex offers: playback reports to a viewer's own Plex
  * account and direct delivery from the Plex server. Catalog, sessions and transcodes
  * stay in server/plex.js.
- * @param {{plex: any, config?: any, registry?: any, plexAuth?: any}} services
- * @returns {import('./media-providers').MediaProvider}
+ * @param {{plex: any, source?: any, registry?: any, plexAuth?: any, pin?: any}} services - `source` is the
+ *   source entry; `plexAuth` this source's own server access (server/sources/plex/auth.js).
+ * @returns {import('../../media-providers').MediaProvider}
  */
-function plexProvider({ plex, config = {}, registry, plexAuth }) {
+function plexProvider({ plex, source = {}, registry, plexAuth, pin = plexAuth?.pin }) {
   let identifying;
   const provider = {
     kind: 'plex',
     root: plex,
-    reporting: services => new PlexReporting({ config, plexAuth, registry, ...services }),
+    reporting: services =>
+      new PlexReporting({
+        settings: source.reporting,
+        serverId: () => provider.serverId,
+        plexAuth,
+        registry,
+        ...services,
+      }),
     // Direct delivery checks its dedicated account with plex.tv, so it needs the Plex sign-in services.
-    direct: plexAuth ? new PlexDelivery(config, plex, plexAuth, actor => provider.scopeFor(actor)) : undefined,
+    direct: plexAuth ? new PlexDelivery(source, plex, plexAuth, actor => provider.scopeFor(actor)) : undefined,
     /** The server's own name (Plex's friendlyName), known once `identity()` has answered. */
     serverName: '',
+    /** The machine identifier, once `identity()` has answered. */
+    serverId: undefined,
     // The machine identifier, pinned the first time it is seen so a different
     // server behind the same address is refused rather than mistaken for this one.
     identity() {
@@ -30,14 +40,12 @@ function plexProvider({ plex, config = {}, registry, plexAuth }) {
         identifying = (async () => {
           const info = await plex.json('/');
           const id = info.machineIdentifier,
-            pinned = config.plexMachineIdentifier || registry.meta('plexMachineIdentifier');
+            pinned = source.machineIdentifier || pin?.get();
           if (typeof id !== 'string' || !id || (pinned && id !== pinned))
             throw failure('The configured Plex server identity changed', 503);
-          if (!pinned) {
-            registry.meta('plexMachineIdentifier', id);
-            await registry.flush();
-          }
+          if (!pinned) await pin?.set(id);
           provider.serverName = serverName(info.friendlyName);
+          provider.serverId = id;
           return id;
         })();
         identifying.catch(() => {

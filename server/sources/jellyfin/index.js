@@ -1,0 +1,83 @@
+'use strict';
+// A Jellyfin server, seen through one of its users, as a media source. See server/sources/index.js.
+const { Jellyfin, jellyfinProvider } = require('./provider');
+
+const SETTINGS = ['url', 'api_key', 'user'];
+
+/** One `type: 'jellyfin'` entry. Returns `{url, apiKey, user}`. */
+function validate(raw, { id }) {
+  const where = 'sources ' + id + ': ';
+  for (const key of Object.keys(raw))
+    if (!SETTINGS.includes(key)) throw new Error(where + 'unknown Jellyfin setting; check config.example.yaml');
+  for (const key of SETTINGS)
+    if (raw[key] !== undefined && typeof raw[key] !== 'string')
+      throw new Error(where + key + ' must be a quoted string');
+  let url;
+  try {
+    url = new URL(raw.url || '');
+  } catch {
+    throw new Error(where + 'url must be an HTTP(S) address');
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash)
+    throw new Error(where + 'url must be an HTTP(S) address without credentials or a query');
+  const apiKey = raw.api_key || '',
+    user = raw.user || '';
+  if (!apiKey || !/^[\x21-\x7e]{1,200}$/.test(apiKey) || apiKey.includes('"'))
+    throw new Error(where + 'api_key is required');
+  if (!user || user.length > 100 || /[\u0000-\u001f\u007f]/.test(user))
+    throw new Error(where + 'user is required: the Jellyfin user whose libraries are offered');
+  return { url: url.origin + url.pathname.replace(/\/+$/, ''), apiKey, user };
+}
+
+function validateAll(entries) {
+  const addresses = entries.map(entry => entry.url);
+  if (new Set(addresses).size !== addresses.length) throw new Error('Two Jellyfin sources must not use the same url');
+}
+
+function create(entry, { pipeline, logger, pin, jellyfinFetch = fetch }) {
+  return jellyfinProvider({ source: entry, pipeline, pin, logger, fetcher: jellyfinFetch });
+}
+
+/** The server answers, and the API key and user can list libraries. */
+async function check(entry, { ffmpeg } = {}) {
+  const checks = [];
+  const jellyfin = new Jellyfin(entry, { pipeline: {} });
+  const step = async (name, action, remediation) => {
+    try {
+      checks.push({ category: 'Sources', name, status: 'pass', message: await action() });
+      return true;
+    } catch (error) {
+      checks.push({ category: 'Sources', name, status: 'fail', message: String(error.message || error), remediation });
+      return false;
+    }
+  };
+  const reached = await step(
+    'Jellyfin server',
+    async () => {
+      const info = await jellyfin.json('System/Info/Public');
+      return `Reached ${String(info.ServerName || 'Jellyfin').slice(0, 60)} ${String(info.Version || '').slice(0, 20)} at ${entry.url}`;
+    },
+    "Check the source's url (include any base path) and that the server is running.",
+  );
+  if (reached)
+    await step(
+      'Jellyfin API key and user',
+      async () => {
+        await jellyfin.userId();
+        const libraries = await jellyfin.libraries();
+        return `User "${entry.user}" offers ${libraries.length} movie or show ${libraries.length === 1 ? 'library' : 'libraries'}`;
+      },
+      "Create an API key in the Jellyfin dashboard and set the source's user to an existing username.",
+    );
+  if (!ffmpeg)
+    checks.push({
+      category: 'Sources',
+      name: 'Jellyfin media tools',
+      status: 'warn',
+      message: 'Without FFmpeg, only files a browser plays as they are can be watched.',
+      remediation: 'Install FFmpeg on PATH or set tools.ffmpeg.',
+    });
+  return checks;
+}
+
+module.exports = { validate, validateAll, create, check };

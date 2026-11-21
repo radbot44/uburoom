@@ -1,12 +1,12 @@
 'use strict';
 const { createHash } = require('node:crypto');
-const { MediaPipeline } = require('./media-pipeline');
-const { PlexClient } = require('./plex/client');
-const { PlexAccess } = require('./plex/access');
-const { PlexCatalog } = require('./plex/catalog');
-const { PlexTranscode } = require('./plex/transcode');
-const { PlexSessions } = require('./plex/sessions');
-const { PlexChecks } = require('./plex/checks');
+const { MediaPipeline } = require('../../media-pipeline');
+const { PlexClient } = require('./client');
+const { PlexAccess } = require('./access');
+const { PlexCatalog } = require('./catalog');
+const { PlexTranscode } = require('./transcode');
+const { PlexSessions } = require('./sessions');
+const { PlexChecks } = require('./checks');
 
 // One Plex server, seen through one token. The work is split by concern:
 // client (HTTP to the configured server), access (what this token may see),
@@ -17,14 +17,20 @@ const { PlexChecks } = require('./plex/checks');
 // No arbitrary upstream URLs: callers select Plex IDs, and only Plex-produced
 // media paths on the configured server are eligible for proxying.
 class Plex {
-  constructor(config, fetcher = fetch, { logger, pipeline } = {}, scoped) {
+  /**
+   * @param {{url?: string, token?: string}} source - The source entry: its server address and token.
+   * @param {typeof fetch} [fetcher]
+   * @param {{logger?: any, pipeline?: any, config?: any}} [services] - Without a pipeline, the Plex owns one set up from
+   *   `config` (by default the `source` object itself, as tests build it).
+   */
+  constructor(source, fetcher = fetch, { logger, pipeline, config = source || {} } = {}, scoped) {
     if (scoped) {
       this.shared = scoped.shared;
       this.client = new PlexClient(this, scoped.client);
     } else {
       let base;
-      if (config.plexUrl) {
-        base = new URL(config.plexUrl);
+      if (source?.url) {
+        base = new URL(source.url);
         if (
           !['http:', 'https:'].includes(base.protocol) ||
           base.username ||
@@ -35,7 +41,7 @@ class Plex {
         )
           throw new Error('PLEX_URL must be an HTTP(S) origin');
       }
-      this.client = new PlexClient(this, { fetcher, token: config.plexToken, base, principal: 'discord-shared' });
+      this.client = new PlexClient(this, { fetcher, token: source?.token, base, principal: 'discord-shared' });
       // State every scope shares: the pipeline streams play through, Plex sessions and
       // their part locks. A Plex built without a pipeline owns one and closes it.
       this.shared = {

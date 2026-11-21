@@ -1,24 +1,27 @@
 // @ts-check
 'use strict';
-const { runOperation } = require('./operation');
+const { runOperation } = require('../../operation');
 const { randomUUID } = require('node:crypto');
-const { plexIdentity } = require('./plex/identity');
-const { DIRECT_CLIENT } = require('./plex-auth');
-const { RECONNECT_GRACE_MS } = require('../shared/sync');
+const { plexIdentity } = require('./identity');
+const { DIRECT_CLIENT } = require('./auth');
+const { RECONNECT_GRACE_MS } = require('../../../shared/sync');
 const RECOVERABLE = new Set(['stream-changed', 'delivery-changed', 'observation-timeout']);
 
 class PlexReporting {
   /**
    * @param {Object} [options]
-   * @param {Object} [options.config]
+   * @param {{enabled?: boolean, watchState?: boolean}} [options.settings] - The source's `reporting` settings.
+   * @param {() => string|undefined} [options.serverId] - The server identity this source last answered with;
+   *   media recorded under another server is not this source's to report.
    * @param {Object} [options.hub]
    * @param {Object} [options.plexAuth]
    * @param {Object} [options.registry]
    * @param {() => number} [options.now]
    * @param {(room: Object, viewer: Object) => Promise<boolean>} [options.authorize]
    */
-  constructor({ config, hub, plexAuth, registry, now = Date.now, authorize } = {}) {
-    this.config = config || hub?.config || {};
+  constructor({ settings, serverId, hub, plexAuth, registry, now = Date.now, authorize } = {}) {
+    this.settings = settings || {};
+    this.serverId = serverId;
     this.hub = hub;
     this.plexAuth = plexAuth || hub?.plexAuth;
     this.registry = registry;
@@ -39,7 +42,7 @@ class PlexReporting {
    * @returns {boolean}
    */
   isEligible(userId) {
-    if (!userId || this.config.plexReporting?.enabled === false) return false;
+    if (!userId || this.settings.enabled === false) return false;
     const identity = this.registry.identities(userId)?.find(i => i.provider === 'plex' && i.verified);
     const cred =
       identity &&
@@ -50,7 +53,7 @@ class PlexReporting {
   }
 
   /**
-   * @param {import('./types').Viewer|string} viewer
+   * @param {import('../../types').Viewer|string} viewer
    * @returns {Object|undefined}
    */
   _findSession(viewer) {
@@ -60,6 +63,18 @@ class PlexReporting {
     for (const session of this.sessions.values()) {
       if (session.viewer === viewer) return session;
     }
+  }
+
+  /** Whether this source lets viewers opt in to personal watch-state sync for this media. */
+  watchStateAllowed(media) {
+    return this.settings.enabled !== false && this.settings.watchState !== false && (!media || this.owns(media));
+  }
+
+  /** Whether media was recorded under this source's own server. */
+  owns(media) {
+    // A source that has not answered who it is yet cannot have prepared media under another server.
+    const own = this.serverId?.();
+    return !own || !media.roomServerId || media.roomServerId === own;
   }
 
   subject(userId) {
@@ -174,15 +189,16 @@ class PlexReporting {
   }
 
   /**
-   * @param {import('./types').Room} room
-   * @param {import('./types').Viewer} viewer
+   * @param {import('../../types').Room} room
+   * @param {import('../../types').Viewer} viewer
    * @param {string} viewerId
    * @param {Object} data Decoded observation payload
    * @param {Object} observed Accepted tracking result
    */
   async observe(room, viewer, viewerId, data, observed) {
-    if (this.closed || this.config.plexReporting?.enabled === false) return;
+    if (this.closed || this.settings.enabled === false) return;
     if (!room?.media || room.media.kind !== 'plex' || !room.media.id) return;
+    if (!this.owns(room.media)) return;
     if (!this.isEligible(viewer.userId)) {
       const existing = this.sessions.get(viewerId);
       if (existing) {
@@ -194,7 +210,7 @@ class PlexReporting {
     if (viewer && !viewer.viewerId && viewerId) viewer.viewerId = viewerId;
 
     const allowActivity = viewer.plexReporting !== false;
-    const allowWatchState = !!(viewer.plexWatchState && this.config.plexReporting?.watchState !== false);
+    const allowWatchState = !!(viewer.plexWatchState && this.settings.watchState !== false);
     if (!allowActivity) {
       await this.endViewer(room, viewerId, 'opt-out');
       return;
@@ -317,7 +333,7 @@ class PlexReporting {
 
     // Refresh consent if modified mid-session
     session.consent.activity = viewer.plexReporting !== false;
-    session.consent.watchState = !!(viewer.plexWatchState && this.config.plexReporting?.watchState !== false);
+    session.consent.watchState = !!(viewer.plexWatchState && this.settings.watchState !== false);
 
     const stateChanged = reportedState !== session.lastState;
     const advanced = observed.credit?.reason === 'credited' || observed.credit?.reason === 'baseline';
@@ -417,7 +433,7 @@ class PlexReporting {
               !next.activityOnly &&
               session.consent.watchState &&
               session.viewer.plexWatchState &&
-              this.config.plexReporting?.watchState !== false &&
+              this.settings.watchState !== false &&
               Number.isFinite(session.duration) &&
               session.duration > 0
             )
@@ -448,7 +464,7 @@ class PlexReporting {
 
   /**
    * Update consent dynamically for an active viewer session.
-   * @param {import('./types').Viewer|string} viewer
+   * @param {import('../../types').Viewer|string} viewer
    * @param {{activity?: boolean, watchState?: boolean}} consent
    */
   updateConsent(viewer, consent) {
@@ -464,7 +480,7 @@ class PlexReporting {
   /**
    * Classify lifecycle changes centrally. Recoverable changes suspend the
    * occurrence; terminal teardown never uses the shared producer's identity.
-   * @param {import('./types').Viewer|string} viewer
+   * @param {import('../../types').Viewer|string} viewer
    * @param {string} [reason]
    */
   async end(viewer, reason) {

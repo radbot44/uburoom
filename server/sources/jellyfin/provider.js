@@ -1,13 +1,13 @@
 'use strict';
 const { createHash, randomUUID } = require('node:crypto');
-const { PlaybackError } = require('./errors');
-const { classifyHdr } = require('./media-tools');
-const Tracks = require('./media-tracks');
-const { prepareStream } = require('./media-delivery');
-const { resilientFetch } = require('./resilience');
-const { runOperation } = require('./operation');
-const { serverName } = require('./media-providers');
-const { version } = require('../package.json');
+const { PlaybackError } = require('../../errors');
+const { classifyHdr } = require('../../media-tools');
+const Tracks = require('../../media-tracks');
+const { prepareStream } = require('../../media-delivery');
+const { resilientFetch } = require('../../resilience');
+const { runOperation } = require('../../operation');
+const { serverName } = require('../../media-providers');
+const { version } = require('../../../package.json');
 
 const GUID = /^[a-f0-9]{32}$/i;
 const TICKS = 10000000;
@@ -57,12 +57,13 @@ function unavailable(item) {
 class Jellyfin {
   /**
    * @param {{url: string, apiKey: string, user: string}} settings
-   * @param {{pipeline: any, registry?: any, logger?: any, fetcher?: typeof fetch}} services
+   * @param {{pipeline: any, pin?: {get(): string|undefined, set(id: string): Promise<void>}, logger?: any,
+   *   fetcher?: typeof fetch}} services - `pin` remembers the server id this source first answered with.
    */
-  constructor(settings, { pipeline, registry, logger, fetcher = fetch }) {
+  constructor(settings, { pipeline, pin, logger, fetcher = fetch }) {
     this.settings = settings;
     this.pipeline = pipeline;
-    this.registry = registry;
+    this.pin = pin;
     this.logger = logger;
     this.fetch = resilientFetch(fetcher);
     // A server may live under a path, so resources resolve inside it, never beside it.
@@ -170,13 +171,10 @@ class Jellyfin {
       this.identifying = (async () => {
         const info = await this.json('System/Info/Public');
         const id = info.Id,
-          pinned = this.registry?.meta('jellyfinServerId');
+          pinned = this.pin?.get();
         if (typeof id !== 'string' || !GUID.test(id) || (pinned && id !== pinned))
           throw failure('The configured Jellyfin server identity changed', 503);
-        if (!pinned && this.registry) {
-          this.registry.meta('jellyfinServerId', id);
-          await this.registry.flush();
-        }
+        if (!pinned) await this.pin?.set(id);
         this.serverName = serverName(info.ServerName);
         return id;
       })();
@@ -723,13 +721,12 @@ class Jellyfin {
 }
 
 /**
- * The configured Jellyfin server as a media provider, or nothing when none is configured.
- * @param {{config: any, pipeline: any, registry?: any, logger?: any, fetcher?: typeof fetch}} services
- * @returns {import('./media-providers').MediaProvider | undefined}
+ * One Jellyfin source as a media provider.
+ * @param {{source: any, pipeline: any, pin?: any, logger?: any, fetcher?: typeof fetch}} services
+ * @returns {import('../../media-providers').MediaProvider}
  */
-function jellyfinProvider({ config, pipeline, registry, logger, fetcher }) {
-  if (!config.jellyfin?.url) return;
-  const jellyfin = new Jellyfin(config.jellyfin, { pipeline, registry, logger, fetcher });
+function jellyfinProvider({ source, pipeline, pin, logger, fetcher }) {
+  const jellyfin = new Jellyfin(source, { pipeline, pin, logger, fetcher });
   return {
     kind: 'jellyfin',
     root: jellyfin,

@@ -14,7 +14,7 @@ const {
 const { PlaybackError } = require('../server/errors');
 const { fakeRuns, fakeTools } = require('./helpers/fake-ffmpeg');
 const { classifyHdr, run, segments } = require('../server/media-tools');
-const { Plex } = require('../server/plex');
+const { Plex } = require('../server/sources/plex/plex');
 const Engine = require('../shared/engine.mjs');
 
 test('AV1 derives a bounded source frame clock for CFR film and high frame rate video', () => {

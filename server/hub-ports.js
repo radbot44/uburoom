@@ -52,10 +52,10 @@ function createHubPorts({
             return registry.resolve('discord', config.ownerId, 'Assigned account', false);
           let profile;
           try {
-            profile = await plexAuth.request('/user', { token: config.plexToken });
+            profile = await plexAuth.ownerProfile();
           } catch {
             throw new Error(
-              'Cannot identify the single-room leader from plex.token; check the token or set rooms.single_room_leader_plex_id',
+              "Cannot identify the single-room leader from the first Plex source's token; check it or set rooms.single_room_leader_plex_id",
             );
           }
           if (!/^\d{1,20}$/.test(String(profile?.id || '')))

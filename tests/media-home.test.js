@@ -1,8 +1,8 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Plex } = require('../server/plex');
-const { plexProvider } = require('../server/plex-provider');
+const { Plex } = require('../server/sources/plex/plex');
+const { plexProvider } = require('../server/sources/plex/provider');
 const { MediaProviders } = require('../server/media-providers');
 
 test("Continue watching is only ever a viewer's own Plex progress, never the shared account's", async () => {
@@ -73,7 +73,7 @@ test('the Plex catalog reads On Deck and recent additions twenty at a time, keep
     duration: 1800000,
     viewOffset: 900000,
   };
-  const plex = new Plex({ plexUrl: 'http://127.0.0.1:32400', plexToken: 'fixture-private-token' }, url => {
+  const plex = new Plex({ url: 'http://127.0.0.1:32400', token: 'fixture-private-token' }, url => {
     requests.push(url.pathname + '?' + url.searchParams.get('X-Plex-Container-Size'));
     return new Response(JSON.stringify({ MediaContainer: { Metadata: [episode] } }));
   });

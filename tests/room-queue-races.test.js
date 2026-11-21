@@ -1,4 +1,5 @@
 'use strict';
+const { validateSources } = require('../server/sources');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
@@ -353,6 +354,7 @@ test('a final checkpoint failure still closes provider/reporting and the applica
     ownerId: '111111111111111111',
     guildId: 'guild',
     channels: ['commands'],
+    sources: validateSources([{ id: 'plex', type: 'plex', url: 'http://127.0.0.1:32400', token: 'fixture' }]),
     accountFile: path.join(directory, 'accounts.sqlite'),
     credentialKeyFile: path.join(directory, 'original.key'),
   });

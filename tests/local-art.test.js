@@ -7,8 +7,8 @@ const os = require('node:os');
 const { findOnPath } = require('../server/media-tools');
 const { AV1 } = require('../server/av1');
 const { run } = require('../server/media-tools');
-const { LocalMedia } = require('../server/local-provider');
-const { frameScore } = require('../server/local/art');
+const { LocalMedia } = require('../server/sources/folders/provider');
+const { frameScore } = require('../server/sources/folders/art');
 
 const ffmpeg = findOnPath('ffmpeg'),
   ffprobe = findOnPath('ffprobe');

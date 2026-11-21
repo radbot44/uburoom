@@ -24,6 +24,8 @@ async function main() {
     throw error;
   }
   logger.info('Server', `Server address: ${config.publicUrl}`);
+  // Two sources reporting one server is a configuration mistake; their media stays unavailable until fixed.
+  void app.watch.providers.verify().catch(error => logger.error('Sources', error.message));
   logger.info(
     'Server',
     `Private credential key: ${path.resolve(config.credentialKeyFile)} (preserve and back up separately)`,

@@ -1,8 +1,9 @@
 'use strict';
+const { validateSources } = require('../server/sources');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { Plex } = require('../server/plex');
+const { Plex } = require('../server/sources/plex/plex');
 const { liveWatch } = require('./helpers/live-room');
 const { Hub } = require('../server/core');
 const Tracks = require('../server/media-tracks');
@@ -14,7 +15,7 @@ const path = require('node:path');
 const https = require('node:https');
 const { createApp } = require('../server/app');
 
-const catalogPart = (part, options) => Tracks.catalog(require('../server/plex/tracks').streams(part), options);
+const catalogPart = (part, options) => Tracks.catalog(require('../server/sources/plex/tracks').streams(part), options);
 function provider() {
   const state = {
     selected: undefined,
@@ -211,10 +212,7 @@ function provider() {
     }
     return json({});
   };
-  const plex = new Plex(
-    { plexUrl: 'http://fixture.invalid:32400', plexToken: 'fixture', ffmpegPath: 'fixture' },
-    fetch,
-  );
+  const plex = new Plex({ url: 'http://fixture.invalid:32400', token: 'fixture', ffmpegPath: 'fixture' }, fetch);
   return { plex, state, streams };
 }
 test('track catalog distinguishes source IDs, selected flags, roles and text versus burn-in', () => {
@@ -596,8 +594,7 @@ test('browser subtitle resources enforce grants, selection generations and expli
     ownerId: 'demo-host',
     guildId: 'guild',
     channels: ['commands'],
-    plexUrl: 'http://fixture.invalid:32400',
-    plexToken: 'fixture',
+    sources: validateSources([{ id: 'plex', type: 'plex', url: 'http://fixture.invalid:32400', token: 'fixture' }]),
     ffmpegPath: 'fixture',
   };
   let member = true;
@@ -774,8 +771,7 @@ test('media grants reject stale playlists, subtitles and revoked viewers during 
     ownerId: 'demo-host',
     guildId: 'guild',
     channels: ['commands'],
-    plexUrl: 'http://fixture.invalid:32400',
-    plexToken: 'fixture',
+    sources: validateSources([{ id: 'plex', type: 'plex', url: 'http://fixture.invalid:32400', token: 'fixture' }]),
   };
   let member = true,
     waitCaption,
@@ -937,8 +933,7 @@ test('streaming media bodies complete with progressing chunks beyond header dead
     ownerId: 'demo-host',
     guildId: 'guild',
     channels: ['commands'],
-    plexUrl: 'http://fixture.invalid:32400',
-    plexToken: 'fixture',
+    sources: validateSources([{ id: 'plex', type: 'plex', url: 'http://fixture.invalid:32400', token: 'fixture' }]),
   };
   let upstreamAborted = false;
   const app = createApp(config, {
@@ -1092,7 +1087,7 @@ test('multi-version Plex items resolve subtitles and metadata from the selected/
   assert.equal(selected.part.id, 20, 'select picks the eligible available part 20');
 
   // Test Plex.details picks eligible available media (Media[1])
-  const plex = new Plex({ plexUrl: 'https://plex.example.com', plexToken: 'tok' }, async () => {
+  const plex = new Plex({ url: 'https://plex.example.com', token: 'tok' }, async () => {
     return new Response(JSON.stringify({ MediaContainer: { Metadata: [multiItem] } }), {
       headers: { 'Content-Type': 'application/json' },
     });
@@ -1183,7 +1178,7 @@ test('codecMatches and trackItem handle PCM audio and embedded closed captions w
 
   // Buster Keaton / PCM scenario: Plex says pcm at index 1, file has pcm_s16le at index 1
   const pcmMedia = {
-    provider: { checks: new (require('../server/plex/checks').PlexChecks)({}) },
+    provider: { checks: new (require('../server/sources/plex/checks').PlexChecks)({}) },
     tracks: {
       audio: [{ id: '1', index: 1, codec: 'pcm' }],
       subtitles: [],
@@ -1344,7 +1339,7 @@ test('codecMatches and trackItem handle PCM audio and embedded closed captions w
 
   let decisionUrl;
   const hdrPlex = new Plex(
-    { plexUrl: 'http://fixture.invalid:32400', plexToken: 'fixture', ffmpegPath: 'fixture' },
+    { url: 'http://fixture.invalid:32400', token: 'fixture', ffmpegPath: 'fixture' },
     async input => {
       const url = new URL(input);
       const json = value =>

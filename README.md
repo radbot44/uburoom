@@ -31,7 +31,7 @@ Follow the [Docker guide](docs/docker.md). It mounts one `config/` folder for yo
 ## First-time setup
 
 1. Copy [`config.example.yaml`](config.example.yaml) to `config.yaml` (in Docker, `config/config.yaml`). Keep it private.
-2. Connect a media source in `config.yaml`: `plex` (URL and token), `jellyfin` (URL and API key) or `local_media` (folders). See [self-hosting](docs/self-hosting.md) for each.
+2. List your media sources under `sources:` in `config.yaml`: any number of `plex` (URL and token), `jellyfin` (URL and API key) and `folders` entries. See [media sources](docs/self-hosting.md#media-sources).
 3. Set `server.public_url` to the HTTPS address people will use, and give uburoom a certificate and key (`server.tls_cert`, `server.tls_key`). uburoom always serves HTTPS. For a quick test on your own computer, [development](docs/development.md) shows how to make a local certificate.
 4. Run `npm run doctor`. It checks your configuration, tools and storage and tells you what to fix.
 5. Start uburoom and open `https://<your address>/watch`. Check sign-in and playback from another device, not just your own computer.

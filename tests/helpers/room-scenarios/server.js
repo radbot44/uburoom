@@ -1,4 +1,5 @@
 'use strict';
+const { validateSources } = require('../../../server/sources');
 // A real uburoom server assembled from the existing isolated fixtures: the
 // account/Plex fixture used by the demo and smoke runners, demo identities,
 // the bundled demo video and an in-memory account database. Restart scenarios
@@ -8,7 +9,7 @@ const fs = require('node:fs'),
   path = require('node:path'),
   https = require('node:https');
 const { createApp } = require('../../../server/app');
-const { Plex } = require('../../../server/plex');
+const { Plex } = require('../../../server/sources/plex/plex');
 const { accountFixture } = require('../../../scripts/account-fixture');
 const root = path.join(__dirname, '../../..');
 const certFile = path.join(root, 'certs/server-cert.pem');
@@ -46,8 +47,9 @@ async function startServer({ disk = false } = {}) {
     demo: true,
     unifiedAccounts: true,
     demoSubjects: provider.subjects,
-    plexUrl: 'http://plex-fixture.invalid:32400',
-    plexToken: 'fixture-owner',
+    sources: validateSources([
+      { id: 'plex', type: 'plex', url: 'http://plex-fixture.invalid:32400', token: 'fixture-owner' },
+    ]),
     ...(directory
       ? {
           accountFile: path.join(directory, 'accounts.sqlite'),
@@ -69,7 +71,7 @@ async function startServer({ disk = false } = {}) {
     },
   };
   async function plexFetch(input, options) {
-    if (gate && new URL(input).hostname === new URL(config.plexUrl).hostname) await gate.promise;
+    if (gate && new URL(input).hostname === new URL(config.sources[0].url).hostname) await gate.promise;
     return provider.fetch(input, options);
   }
   let app, port;
