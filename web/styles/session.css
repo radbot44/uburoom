@@ -118,8 +118,29 @@
   .form-error:empty {
     display: none;
   }
-  .welcome:has(.entry-form:not([hidden])) .login-options {
+  /* The list of ways in (web/watch/entry-ways.js): same-size buttons, with a form opening inline
+     under its button. Every row, button or form, is one grid gap apart whichever forms are open. */
+  .login-options .entry-form,
+  .login-options .guest-join {
     margin-top: 0;
+  }
+  .provider-button > svg {
+    width: 24px;
+    height: 24px;
+    flex: none;
+  }
+  .jellyfin-sign-in {
+    display: grid;
+    gap: var(--space-12);
+  }
+  .jellyfin-sign-in p {
+    margin: 0;
+  }
+  .jellyfin-quick-connect {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-8);
+    text-align: center;
   }
   .discord-symbol {
     display: grid;

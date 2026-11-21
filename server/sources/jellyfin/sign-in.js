@@ -148,6 +148,10 @@ function jellyfinSignIn({ client, serverId, registry, now = Date.now, requireAdm
       }
       return accept(result);
     },
+    /** Ends a Quick Connect attempt; later polls and exchanges find it expired. */
+    cancel(id) {
+      if (typeof id === 'string') attempts.delete(id);
+    },
     sweep,
     close: () => attempts.clear(),
   };
