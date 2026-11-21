@@ -163,4 +163,9 @@ async function check(entry, { ffmpeg, ffprobe } = {}) {
   return checks;
 }
 
-module.exports = { validate, validateAll, create, check };
+/** The source's libraries, for Server settings: a folders source defines them itself, so all are offered. */
+async function libraries(entry) {
+  return entry.libraries.map(library => ({ id: library.id, name: library.name, type: library.type }));
+}
+
+module.exports = { validate, validateAll, create, check, libraries };

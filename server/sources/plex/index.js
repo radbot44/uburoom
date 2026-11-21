@@ -6,6 +6,7 @@ const { Plex } = require('./plex');
 const { PlexAuth, PlexMembers } = require('./auth');
 const { PlexTv } = require('../../identity/plex');
 const { plexProvider } = require('./provider');
+const { validateLibraries } = require('../libraries');
 
 const SETTINGS = [
   'url',
@@ -17,7 +18,9 @@ const SETTINGS = [
   'direct_token',
   'reporting_enabled',
   'reporting_watch_state',
+  'libraries',
 ];
+const SECTION = /^\d{1,20}$/;
 
 /** An HTTPS origin (no path, query or credentials), or undefined when blank. */
 function httpsOrigin(value, label) {
@@ -91,6 +94,8 @@ function validate(raw, { id }) {
     machineIdentifier: text('machine_identifier'),
     delivery,
     reporting: { enabled: flag('reporting_enabled', true), watchState: flag('reporting_watch_state', true) },
+    // Plex section keys this source offers; null offers every section, including later ones.
+    libraries: validateLibraries(raw.libraries, where, value => (SECTION.test(value) ? value : undefined)),
   };
 }
 
@@ -186,4 +191,47 @@ async function check(entry) {
   });
 }
 
-module.exports = { validate, validateAll, create, check, signIn, ownerAccount: true, memberIdentity: 'plex' };
+/**
+ * Every movie and show library on the server, whether this source offers it or not, for the
+ * operator choosing which to offer: `{id, name, type, count?}`. A count Plex does not give is left out.
+ * @param {any} entry
+ * @param {{plexFetch?: typeof fetch}} [services]
+ */
+async function libraries(entry, { plexFetch = fetch } = {}) {
+  const plex = new Plex({ url: entry.url, token: entry.token }, plexFetch, { pipeline: {} });
+  const sections = ((await plex.client.rawJson('/library/sections')).Directory || []).filter(
+    section => ['movie', 'show'].includes(section?.type) && SECTION.test(String(section.key)),
+  );
+  return Promise.all(
+    sections.slice(0, 200).map(async section => {
+      const id = String(section.key);
+      let count;
+      try {
+        const page = await plex.client.rawJson(
+          '/library/sections/' + id + '/all?X-Plex-Container-Start=0&X-Plex-Container-Size=0',
+        );
+        const total = Number(page.totalSize ?? page.size);
+        if (Number.isSafeInteger(total) && total >= 0) count = total;
+      } catch {
+        /* Listed without a count. */
+      }
+      return {
+        id,
+        name: String(section.title || 'Library').slice(0, 100),
+        type: section.type === 'show' ? 'shows' : 'movies',
+        ...(count === undefined ? {} : { count }),
+      };
+    }),
+  );
+}
+
+module.exports = {
+  validate,
+  validateAll,
+  create,
+  check,
+  libraries,
+  signIn,
+  ownerAccount: true,
+  memberIdentity: 'plex',
+};

@@ -11,19 +11,23 @@ class PlexAccess {
   }
   async allows(id) {
     const baseId = plexIdentity(this.plex.id(id)).ratingKey;
-    return this.plex.checkItem(
-      'play:' + baseId,
-      '/library/metadata/' + baseId,
-      item => String(item.ratingKey) === baseId && ['movie', 'episode'].includes(item.type),
+    return offered(
+      this.plex.checkItem(
+        'play:' + baseId,
+        '/library/metadata/' + baseId,
+        item => String(item.ratingKey) === baseId && ['movie', 'episode'].includes(item.type),
+      ),
     );
   }
   async visible(id, type) {
     const baseId = String(id).split(':')[0];
     const key = (type === 'collection' ? 'collection:' : 'item:') + this.plex.id(baseId);
-    return this.plex.checkItem(
-      key,
-      (type === 'collection' ? '/library/collections/' : '/library/metadata/') + this.plex.id(baseId),
-      item => String(item.ratingKey) === String(baseId),
+    return offered(
+      this.plex.checkItem(
+        key,
+        (type === 'collection' ? '/library/collections/' : '/library/metadata/') + this.plex.id(baseId),
+        item => String(item.ratingKey) === String(baseId),
+      ),
     );
   }
   invalidateAccess() {
@@ -61,6 +65,16 @@ class PlexAccess {
         .catch(() => {});
     }
     return task.join();
+  }
+}
+
+/** An item in a library the source does not offer is simply not allowed: no outage, no error. */
+async function offered(check) {
+  try {
+    return await check;
+  } catch (error) {
+    if (error?.libraryOff) return false;
+    throw error;
   }
 }
 
