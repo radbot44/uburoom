@@ -12,6 +12,7 @@ export function jellyfinEntry(api) {
   function show(message) {
     status.hidden = !message;
     status.textContent = message;
+    if (message) status.scrollIntoView({ block: 'nearest' });
   }
 
   return sources => {
