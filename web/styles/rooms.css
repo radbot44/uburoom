@@ -651,6 +651,10 @@
     font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
+  .telemetry-score-badge:not([data-quality]),
+  .telemetry-session-score:not([data-quality]) {
+    color: var(--muted);
+  }
   .telemetry-score-badge[data-quality='excellent'] {
     color: var(--success);
   }

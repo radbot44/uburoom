@@ -285,9 +285,11 @@ export function mount(host, deps) {
         $('entry-password-open').hidden = !access.password || admission.activityOnly;
         $('empty-title').textContent = admission.activityOnly
           ? 'Discord Activity only'
-          : access.password && !signIns
-            ? 'Enter uburoom'
-            : 'Sign in to join';
+          : admission.identity
+            ? 'This account can’t join'
+            : access.password && !signIns
+              ? 'Enter uburoom'
+              : 'Sign in to join';
         $('guest-join').hidden = true;
         $('entry-status').textContent = admission.activityOnly
           ? 'Open uburoom through Discord Activity. Browser playback is disabled.'

@@ -607,6 +607,28 @@
     border-radius: inherit;
     opacity: 0;
   }
+  .library-art-fill {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    border-radius: inherit;
+    pointer-events: none;
+    background: var(--chrome-background);
+    opacity: 0;
+  }
+  .library-art.loaded .library-art-fill {
+    opacity: 1;
+  }
+  .library-art-fill-image {
+    position: absolute;
+    inset: calc(-1 * var(--space-24));
+    background-position: center;
+    background-size: cover;
+    filter: blur(18px) brightness(0.6) saturate(0.85);
+  }
+  .library-art.poster-fill > img {
+    object-fit: contain;
+  }
   .library-art.loaded img {
     opacity: 1;
   }

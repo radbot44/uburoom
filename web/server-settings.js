@@ -240,6 +240,8 @@ function mount({ request, trigger }) {
       input.type = 'checkbox';
       input.checked = !excluded.includes(id);
       node('span', label, name);
+      if (Number.isFinite(memberCount))
+        node('span', label, `${memberCount.toLocaleString()} ${memberCount === 1 ? 'member' : 'members'}`, 'hint');
       input.addEventListener('change', () => {
         const next = new Set(draft[excludedGuilds]);
         if (input.checked) next.delete(id);

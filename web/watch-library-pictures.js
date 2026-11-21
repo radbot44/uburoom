@@ -7,6 +7,34 @@ const KEEP = 160,
   AT_ONCE = 4;
 
 /**
+ * Fits a wide thumbnail (such as a 16:9 YouTube thumbnail) inside a portrait poster box
+ * on top of a darkened, blurred copy of itself instead of cropping its sides.
+ * @param {HTMLElement} box
+ * @param {HTMLImageElement} img
+ * @param {{enabled?: boolean, fillClass?: string}} [options]
+ */
+export function syncPosterFill(box, img, { enabled = true, fillClass = 'library-art-fill' } = {}) {
+  const wide = enabled && !!img.src && img.complete && img.naturalWidth > img.naturalHeight;
+  box.classList.toggle('poster-fill', wide);
+  const existing = [...box.children].find(child => child.classList.contains(fillClass));
+  if (!wide) {
+    existing?.remove();
+    return;
+  }
+  const fill = existing || box.ownerDocument.createElement('span');
+  if (!existing) {
+    fill.className = fillClass;
+    fill.setAttribute('aria-hidden', 'true');
+    const layer = box.ownerDocument.createElement('span');
+    layer.className = fillClass + '-image';
+    fill.append(layer);
+    box.insertBefore(fill, img);
+  }
+  const layer = /** @type {HTMLElement|null} */ (fill.firstElementChild);
+  if (layer) layer.style.backgroundImage = 'url(' + img.src + ')';
+}
+
+/**
  * @param {{doc: Document, fetchArt: (item: string, kind: string, type: string, signal: AbortSignal) => Promise<Blob>}} options
  */
 export function pictureLoader({ doc, fetchArt }) {
@@ -114,10 +142,17 @@ export function pictureLoader({ doc, fetchArt }) {
     img.dataset.kind = kind;
     img.dataset.type = item.type;
     img.onload = () => {
-      img.parentElement?.classList.add('loaded');
+      const currentBox = img.parentElement;
+      if (!currentBox) return;
+      currentBox.classList.add('loaded');
+      syncPosterFill(currentBox, img, {
+        enabled: img.dataset.kind === 'poster' && !currentBox.classList.contains('landscape'),
+      });
     };
-    if (img.src) box.classList.toggle('loaded', img.complete && img.naturalWidth > 0);
-    else if (images.has(key)) {
+    if (img.src) {
+      box.classList.toggle('loaded', img.complete && img.naturalWidth > 0);
+      syncPosterFill(box, img, { enabled: kind === 'poster' && !box.classList.contains('landscape') });
+    } else if (images.has(key)) {
       img.src = images.get(key);
       // A details picture already fetched (a prefetch, or the page's first render) shows at once: no text
       // title first and no fade. Only one that arrives while the page is open fades in.

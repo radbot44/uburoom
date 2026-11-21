@@ -3,6 +3,7 @@ import * as uburoomControls from './watch-controls.js';
 import * as uburoomDialogs from './watch-dialogs.js';
 import * as uburoomIcons from './icons.js';
 import * as uburoomPopover from './watch-popover.js';
+import { syncPosterFill } from './watch-library-pictures.js';
 
 function formatTime(seconds) {
   const s = Math.max(0, Math.floor(seconds || 0));
@@ -922,9 +923,11 @@ function mount(
     img.dataset.item = item.mediaId || item.id;
     img.dataset.type = item.type || 'movie';
     if (item.serverId) img.dataset.server = item.serverId;
+    img.addEventListener('load', () => syncPosterFill(box, img, { fillClass: 'queue-art-fill' }));
     const cached = images.get(img.dataset.item + ':' + img.dataset.type);
     if (cached) {
       img.src = cached;
+      if (img.complete && img.naturalWidth > 0) syncPosterFill(box, img, { fillClass: 'queue-art-fill' });
       parent.querySelector('.queue-row-backdrop').style.backgroundImage = 'url(' + cached + ')';
     } else {
       observedImages.add(img);

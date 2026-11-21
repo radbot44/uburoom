@@ -197,6 +197,24 @@
     height: 100%;
     object-fit: cover;
   }
+  .queue-art-fill {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    border-radius: inherit;
+    pointer-events: none;
+    background: var(--chrome-background);
+  }
+  .queue-art-fill-image {
+    position: absolute;
+    inset: calc(-1 * var(--space-12));
+    background-position: center;
+    background-size: cover;
+    filter: blur(10px) brightness(0.6) saturate(0.85);
+  }
+  .queue-art.poster-fill img {
+    object-fit: contain;
+  }
   .queue-title-link {
     display: block;
     border: 0;

@@ -219,6 +219,29 @@ async function main() {
         assert.equal(await run(attr(icon, 'data-quality')), 'fair');
         assert.equal(await run(colorIs('--muted')), true, theme + ' retained level is muted');
       }
+      quality(1, { confidence: 'provisional', reason: 'awaiting-measurements' });
+      await run('refreshState()');
+      await until(
+        attr(icon, 'aria-label') + '==="Sync details for Demo host: Sync quality: Calibrating"',
+        'Unmeasured calibrating badge',
+      );
+      await run(press(icon));
+      await until(
+        text('.viewer-telemetry-card .telemetry-score-badge') + '==="Calibrating"',
+        'Unmeasured calibrating card',
+      );
+      quality(1, { confidence: 'provisional', reason: 'awaiting-measurements', updatedAt: Date.now() - 20000 });
+      await run('refreshState()');
+      await until(
+        attr(icon, 'aria-label') + '==="Sync details for Demo host: Sync quality: No recent sync data"',
+        'Unmeasured no-recent-data badge',
+      );
+      await until(
+        text('.viewer-telemetry-card .telemetry-score-badge') + '==="No recent sync data"',
+        'Unmeasured no-recent-data card',
+      );
+      await run(press('.telemetry-card-close'));
+      await until('!document.querySelector(".viewer-telemetry-card")', 'Telemetry card closed');
       await run(pressId('theme-toggle'));
       await until('document.documentElement.dataset.theme==="dark"', 'Dark theme restored');
       quality(0.94);
@@ -719,10 +742,36 @@ async function main() {
         'the Room panel has no permission controls and a host cannot edit management permissions',
       );
       await until(hasText('#room-current-people', 'Demo guest') + ' && ' + enabled('#room-transfer'), 'Host controls');
-      await run(settingsSection('general') + ';' + choose('room-settings-visibility', 'private'));
+      await run(settingsSection('general') + ';' + press('#room-settings-visibility-group [data-value=private]'));
+      await until(
+        attr('#room-settings-panels', 'aria-busy') + '==="false" && ' + text('#room-settings-status') + '==="Saved"',
+        'Private visibility saved',
+      );
       await waitFor(() => app.watch.rooms.get(id).visibility === 'private', 'Private cohost room');
+      const assertPrivateSelected = async label => {
+        assert.equal(
+          await run(attr('#room-settings-visibility-group [data-value=private]', 'aria-pressed')),
+          'true',
+          label + ': private pressed',
+        );
+        assert.equal(
+          await run(attr('#room-settings-visibility-group [data-value=public]', 'aria-pressed')),
+          'false',
+          label + ': public unpressed',
+        );
+        assert.equal(
+          await run(text('#room-visibility-details')),
+          'The leader, assigned hosts, and invited viewers can join.',
+          label + ': private helper text',
+        );
+      };
+      await assertPrivateSelected('desktop after save');
       await until(enabled('#room-transfer'), 'Transfer still available');
       await browser.viewport(host, 390, 844);
+      await closeSettings();
+      await run(pressId('room-settings-open'));
+      await until(shown('#room-settings-content'), 'Mobile settings reopened');
+      await assertPrivateSelected('mobile after reopen');
       await shot('phone-settings');
       assert.equal(
         await run(byId('room-settings-dialog') + '.scrollWidth <= ' + byId('room-settings-dialog') + '.clientWidth'),

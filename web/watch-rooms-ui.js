@@ -84,6 +84,7 @@ function mount({
   let details,
     section = 'general',
     renameDraft = '',
+    visibilityDraft,
     draftRoom,
     generation = 0,
     busy = false,
@@ -198,6 +199,33 @@ function mount({
     if (sec < 60) return 'Updated ' + sec + 's ago';
     return 'Updated ' + Math.round(sec / 60) + 'm ago';
   }
+  const NO_RECENT_SYNC_REASONS = new Set([
+    'no-sessions',
+    'measurements-unavailable',
+    'measurement-expired',
+    'measurement-stale',
+    'measurement-interrupted',
+  ]);
+  function isUnmeasuredSync(sync) {
+    if (!sync || typeof sync !== 'object') return true;
+    if (!Number.isFinite(sync.score) || sync.score < 0 || sync.score > 1) return true;
+    if (sync.confidence === 'provisional') return true;
+    return (
+      sync.confidence !== 'confident' && (sync.reason === 'no-sessions' || sync.reason === 'measurements-unavailable')
+    );
+  }
+  function unmeasuredSyncLabel(sync, person) {
+    const status = sync?.status;
+    const reason = sync?.reason;
+    if (
+      (person && !person.present) ||
+      NO_RECENT_SYNC_REASONS.has(reason) ||
+      ['stale', 'disconnected', 'offline', 'error'].includes(status)
+    ) {
+      return 'No recent sync data';
+    }
+    return 'Calibrating';
+  }
 
   function closeTelemetryCard() {
     if (activeTelemetryAnchor) {
@@ -265,6 +293,7 @@ function mount({
       person.syncQuality && typeof person.syncQuality === 'object'
         ? person.syncQuality
         : { status: 'unknown', reason: 'measurements-unavailable', sessions: [] };
+    const unmeasured = isUnmeasuredSync(sync);
     const score = Number.isFinite(sync.score) && sync.score >= 0 && sync.score <= 1 ? sync.score : 1;
     const level = sync.level || uburoomSyncQuality.level(score, sync.lastKnownLevel) || 'excellent';
     const scorePct = Math.round(score * 100);
@@ -280,10 +309,12 @@ function mount({
     const scoreBadge = node(
       'span',
       statusRow,
-      scorePct + '% (' + (level.charAt(0).toUpperCase() + level.slice(1)) + ')',
+      unmeasured
+        ? unmeasuredSyncLabel(sync, person)
+        : scorePct + '% (' + (level.charAt(0).toUpperCase() + level.slice(1)) + ')',
       'telemetry-score-badge',
     );
-    scoreBadge.dataset.quality = level;
+    if (!unmeasured) scoreBadge.dataset.quality = level;
 
     // Health: the device with the issue first, otherwise the first device that reported.
     const healthSession = sessions.find(s => s.issue && s.issue === sync.issue) || sessions.find(s => s.health) || {};
@@ -316,10 +347,16 @@ function mount({
       node('p', sessionList, 'Connected devices (' + sessions.length + '):', 'telemetry-session-title');
       sessions.forEach((s, idx) => {
         const sRow = node('div', sessionList, undefined, 'telemetry-session-row');
+        const sUnmeasured = isUnmeasuredSync(s);
         const sScore = Math.round(Math.max(0, Math.min(1, s.score || 0)) * 100);
         node('span', sRow, 'Device ' + (idx + 1) + ' · ' + (s.status || 'unknown'), 'telemetry-session-device');
-        const sBadge = node('span', sRow, sScore + '%', 'telemetry-session-score');
-        sBadge.dataset.quality = s.level || 'excellent';
+        const sBadge = node(
+          'span',
+          sRow,
+          sUnmeasured ? unmeasuredSyncLabel(s, person) : sScore + '%',
+          'telemetry-session-score',
+        );
+        if (!sUnmeasured) sBadge.dataset.quality = s.level || 'excellent';
       });
     }
 
@@ -597,6 +634,7 @@ function mount({
               sq.score,
               sq.level,
               sq.confidence,
+              sq.reason,
               sq.lastKnownLevel,
               sq.issue,
               sq.sessions?.map(s => [
@@ -604,6 +642,8 @@ function mount({
                 s.level,
                 s.lastKnownLevel,
                 s.status,
+                s.confidence,
+                s.reason,
                 p.id === activeTelemetryPersonId ? s.health : undefined,
               ]),
             ]
@@ -696,6 +736,7 @@ function mount({
           person.syncQuality && typeof person.syncQuality === 'object'
             ? person.syncQuality
             : { status: 'unknown', reason: 'measurements-unavailable', sessions: [] };
+        const unmeasured = isUnmeasuredSync(sync);
         const levels = { excellent: 'Excellent', good: 'Good', fair: 'Fair', poor: 'Poor' };
         const icons = { excellent: 'wifi', good: 'wifi-2', fair: 'wifi-1', poor: 'wifi-0' };
         const score = Number.isFinite(sync.score) && sync.score >= 0 && sync.score <= 1 ? sync.score : 1;
@@ -705,19 +746,28 @@ function mount({
               session => session && Number.isFinite(session.score) && session.status !== 'disconnected',
             )
           : [];
-        const scoreLines = (sessions.length ? sessions : [{ score }]).map(session => {
-          const value = Math.max(0, Math.min(1, session.score));
-          const sessionLevel = uburoomSyncQuality.level(value, session.level || session.lastKnownLevel) || 'excellent';
-          return 'Sync quality: ' + Math.round(value * 100) + '% (' + levels[sessionLevel] + ')';
-        });
+        const scoreLines = sessions.length
+          ? sessions.map(session => {
+              if (isUnmeasuredSync(session)) return 'Sync quality: ' + unmeasuredSyncLabel(session, person);
+              const value = Math.max(0, Math.min(1, session.score));
+              const sessionLevel =
+                uburoomSyncQuality.level(value, session.level || session.lastKnownLevel) || 'excellent';
+              return 'Sync quality: ' + Math.round(value * 100) + '% (' + levels[sessionLevel] + ')';
+            })
+          : [
+              'Sync quality: ' +
+                (unmeasured
+                  ? unmeasuredSyncLabel(sync, person)
+                  : Math.round(score * 100) + '% (' + levels[level] + ')'),
+            ];
         const tooltip = scoreLines.join('\n');
         const quality = node('button', row, undefined, 'room-roster-sync-quality');
         quality.type = 'button';
-        quality.dataset.quality = level;
+        if (!unmeasured) quality.dataset.quality = level;
         quality.dataset.confidence =
           sync.confidence === 'confident' ? 'confident' : sync.confidence === 'provisional' ? 'provisional' : 'reduced';
         quality.title = tooltip;
-        quality.setAttribute('aria-label', 'Sync details for ' + person.name + ': ' + tooltip.replace(/\g/g, ', '));
+        quality.setAttribute('aria-label', 'Sync details for ' + person.name + ': ' + tooltip.replace(/\n/g, ', '));
         quality.setAttribute('aria-haspopup', 'dialog');
         quality.setAttribute('aria-expanded', activeTelemetryPersonId === person.id ? 'true' : 'false');
         // A guest with a playback issue shows a warning instead of their sync level.
@@ -726,7 +776,7 @@ function mount({
           quality.title = ISSUE_LABELS[sync.issue] + '\n' + tooltip;
           quality.setAttribute(
             'aria-label',
-            'Sync details for ' + person.name + ': ' + ISSUE_LABELS[sync.issue] + ', ' + tooltip.replace(/\g/g, ', '),
+            'Sync details for ' + person.name + ': ' + ISSUE_LABELS[sync.issue] + ', ' + tooltip.replace(/\n/g, ', '),
           );
         }
         const qualityIcon = uburoomIcons.icon(document, sync.issue ? 'alert-triangle' : icons[level] || 'wifi');
@@ -894,6 +944,7 @@ function mount({
     selectSection(targetSection);
     const ticket = ++generation;
     details = undefined;
+    visibilityDraft = undefined;
     $('room-settings-content').hidden = true;
     setSettingsStatus('Loading room settings…');
     if (!dialog.open) show(dialog);
@@ -954,6 +1005,7 @@ function mount({
     draftRecord = { ...base, name: options.name?.trim() || 'Room', visibility: options.visibility };
     details = draftRecord;
     capacityDraft = undefined;
+    visibilityDraft = undefined;
     draftRoom = details.id;
     renameDraft = details.name;
     openedFromSaved = false;
@@ -1133,13 +1185,14 @@ function mount({
     $('room-dates').hidden = !value.createdAt;
     $('room-capacity-details').textContent = 'Server maximum ' + $('room-member-limit').max;
     $('room-viewer-count').textContent = 'Viewers (' + new Set(value.viewers.map(person => person.id)).size + ')';
+    const shownVisibility = visibilityDraft ?? value.visibility;
     $('room-visibility-details').textContent =
-      value.visibility === 'private'
+      shownVisibility === 'private'
         ? 'The leader, assigned hosts, and invited viewers can join.'
         : 'Eligible viewers can find and join this room.';
     updateFieldActions();
     if ($('room-rename').value !== renameDraft) $('room-rename').value = renameDraft;
-    $('room-settings-visibility').value = value.visibility;
+    $('room-settings-visibility').value = shownVisibility;
     for (const id of ['room-rename', 'room-rename-save', 'room-settings-visibility'])
       $(id).disabled = busy || !value.capabilities.roomSettings;
     $('room-host-disclosure').hidden = !!value.draft || !value.capabilities.addHosts;
@@ -1367,6 +1420,7 @@ function mount({
       : focused?.id
         ? '#' + CSS.escape(focused.id)
         : undefined;
+    if (change.action === 'visibility') visibilityDraft = change.visibility;
     busy = true;
     renderSettings();
     setSettingsStatus('Saving…');
@@ -1378,15 +1432,19 @@ function mount({
           details = result;
           if (change.action === 'maxMembers') capacityDraft = undefined;
           if (change.action === 'rename') renameDraft = result.name;
+          if (change.action === 'visibility') visibilityDraft = undefined;
+          renderSettings();
         }
         setSettingsStatus('Saved', true);
       }
       await changed();
     } catch (error) {
+      if (change.action === 'visibility') visibilityDraft = undefined;
       if (ticket === generation && dialog.open) setSettingsStatus(error.message, false, true);
       else fail(error.message);
     } finally {
       busy = false;
+      if (change.action === 'visibility') visibilityDraft = undefined;
       if (ticket === generation && dialog.open) {
         const notice = $('room-settings-status').textContent;
         renderSettings();
