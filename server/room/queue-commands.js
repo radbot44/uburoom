@@ -706,6 +706,7 @@ module.exports = {
           },
           undefined,
         );
+      this.warmQueue(id);
       return { status: 'applied', ...value };
     } finally {
       if (room?.transition?.kind === 'queue') room.transition = undefined;

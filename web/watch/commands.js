@@ -68,7 +68,7 @@ export function mount(host, deps) {
       const result = await deps.roomLink.command(
         id,
         { viewerId: store.identity.viewerId, epoch, expiresAt: timing.serverTime + 2500, command },
-        preparing ? { timeoutMs: 35000 } : {},
+        preparing ? { timeoutMs: 120000 } : {},
       );
       if (store.room.selected !== id) return { status: 'unavailable' };
       if (result.status !== 'applied') throw new Error(result.message);

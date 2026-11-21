@@ -373,7 +373,8 @@
   .server-source-confirm > h3 {
     margin-top: 0;
   }
-  .server-settings-dialog input[type='password'] {
+  .server-settings-dialog input[type='password'],
+  .server-settings-dialog input[type='url'] {
     box-sizing: border-box;
     width: 100%;
     min-width: 0;

@@ -1,6 +1,8 @@
-/** A library's icon: a folder for local folders, so they stand apart from Plex and Jellyfin movie libraries. */
+/** A library's icon: a folder for local folders, a link or YouTube mark for link sources. */
 export function sectionIcon(section) {
-  return section.source === 'folder' ? 'folder' : section.mediaType === 'show' ? 'tv' : 'film';
+  if (section.source === 'folder') return 'folder';
+  if (section.source === 'link') return section.serverKind === 'youtube' ? 'brand-youtube' : 'link';
+  return section.mediaType === 'show' ? 'tv' : 'film';
 }
 
 /** Each media server's own mark, shown beside its name on its libraries' cards. */
@@ -21,9 +23,11 @@ function homeCards(items = []) {
     const source =
       section.source === 'folder'
         ? { text: section.serverName || 'Local folders' }
-        : mark
-          ? { text: section.serverName || mark.label, logo: mark.logo, label: mark.label }
-          : undefined;
+        : section.source === 'link'
+          ? { text: section.serverName || 'YouTube' }
+          : mark
+            ? { text: section.serverName || mark.label, logo: mark.logo, label: mark.label }
+            : undefined;
     return {
       id: section.id,
       title: section.title,

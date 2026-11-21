@@ -94,17 +94,22 @@ module.exports = {
   /**
    * @param {Room} room
    * @param {(work: MediaWork) => any} action
-   * @param {{kind?: MediaWork['kind'], signal?: AbortSignal}} [options]
+   * @param {{kind?: MediaWork['kind'], signal?: AbortSignal, timeoutMs?: number}} [options]
    * @returns {MediaWork}
    */
-  startMediaWork(room, action, { kind = 'preload', signal } = {}) {
+  startMediaWork(room, action, { kind = 'preload', signal, timeoutMs } = {}) {
     const controller = new AbortController();
+    const limit =
+      timeoutMs ??
+      (kind === 'transition' || kind === 'preload'
+        ? Math.max(30000, ...(this.providers?.list || []).map(p => p.root?.prepareTimeoutMs || 0))
+        : 30000);
     const work = {
       room,
       kind,
       controller,
       committing: false,
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]),
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(limit), ...(signal ? [signal] : [])]),
       promise: Promise.resolve(),
     };
     this.mediaWork.add(work);
@@ -145,6 +150,42 @@ module.exports = {
     } finally {
       owned?.clear();
     }
+  },
+  /** Notifies media providers that want to pre-warm upcoming queue items on disk. */
+  warmQueue(roomId) {
+    if (this.shuttingDown || !roomId || !this.providers) return;
+    if (this.hub?.rooms?.get(roomId)?.closed) return;
+    const pending = this.roomState.queue.pending(roomId).slice(0, 2);
+    const autoNext = this.roomState.store.get(roomId)?.autoQueue?.next;
+    const items = [...pending, ...(autoNext ? [autoNext] : [])].filter(
+      item => item?.mediaId && item.mediaId !== 'demo',
+    );
+    if (!items.length) return;
+    const byServer = new Map();
+    for (const item of items) {
+      const key = item.serverId || '';
+      if (!byServer.has(key)) byServer.set(key, []);
+      byServer.get(key).push({
+        id: item.mediaId,
+        title: item.title,
+        duration: item.duration,
+        type: item.type,
+        serverId: item.serverId,
+      });
+    }
+    void Promise.allSettled(
+      [...byServer.entries()].map(async ([serverId, serverItems]) => {
+        const entry = serverId
+          ? (await this.providers.find(serverId).catch(() => undefined)) || this.providers.primary
+          : this.providers.primary;
+        if (!entry?.root?.warmQueue) return;
+        try {
+          await entry.root.warmQueue(serverItems);
+        } catch (error) {
+          this.hub?.logger?.warn?.('QueueWarm', error?.message || String(error));
+        }
+      }),
+    );
   },
   /**
    * Prepare-then-adopt for autoplay. During the countdown the next video's metadata, its

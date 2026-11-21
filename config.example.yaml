@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2zc
+# Config schema v2zd
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -92,6 +92,14 @@ sources: []
 #        name: 'TV'
 #        type: 'shows'
 #        paths: ['D:\Media\TV']
+#  - id: 'youtube'
+#    type: 'youtube'
+#    name: 'YouTube'
+#    delivery: 'sidecar' # 'sidecar' (yt-dlp cache) or 'embed' (YouTube IFrame, requires api_key).
+#    sidecar_url: 'http://127.0.0.1:8780'
+#    sidecar_token: '' # Optional Bearer token matching UBUROOM_YTDLP_TOKEN.
+#    cache_directory: '' # Optional local path to the sidecar cache directory for zero-hop streaming.
+#    api_key: '' # Optional for sidecar metadata/playlists; required when delivery is 'embed'.
 
 discord:
   bot_token: ''

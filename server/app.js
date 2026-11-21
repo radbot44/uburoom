@@ -86,6 +86,7 @@ function createApp(config, options = {}) {
     authorizeUrl = 'https://discord.com/oauth2/authorize',
     plexFetch = fetch,
     jellyfinFetch = fetch,
+    youtubeFetch = fetch,
     // Tests and fixtures answer "who runs Jellyfin?" themselves rather than broadcasting on the network.
     jellyfinDiscover,
     plexDemo,
@@ -105,7 +106,7 @@ function createApp(config, options = {}) {
     if (config.demo) plexIdentity.demo = plexDemo;
     // Every configured source, through its type's module; no source is named here.
     const sources = createSources(config.sources || [], {
-      ...{ config, registry, pipeline, logger, plexFetch, jellyfinFetch, plexTv: plexIdentity },
+      ...{ config, registry, pipeline, logger, plexFetch, jellyfinFetch, youtubeFetch, plexTv: plexIdentity },
     });
     const plexAuth = sources.signIn.plex;
     const providers = new MediaProviders(sources.providers, pipeline);
@@ -162,7 +163,17 @@ function createApp(config, options = {}) {
     });
     // Server settings → Sources: saved to config.yaml, applied after a restart.
     const sourceSettingsHttp = sourceSettings({
-      ...{ config, registry, editor, sessions, plexFetch, jellyfinFetch, jellyfinDiscover, plexTv: plexIdentity },
+      ...{
+        config,
+        registry,
+        editor,
+        sessions,
+        plexFetch,
+        jellyfinFetch,
+        youtubeFetch,
+        jellyfinDiscover,
+        plexTv: plexIdentity,
+      },
     });
     // The operator arriving from first-run setup, already signed in (server/setup/).
     const setupHttp = setupHandoff({

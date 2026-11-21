@@ -173,7 +173,7 @@ function createSourceFlows({ stepServices }) {
     closeAll: () => [...flows.keys()].forEach(close),
     /** Starts adding a source of `type`; a new flow ends the owner's last one. */
     open(owner, type) {
-      if (typeof type !== 'string' || !TYPES[type]?.setup) throw fail('Choose Plex, Jellyfin or a folder');
+      if (typeof type !== 'string' || !TYPES[type]?.setup) throw fail('Choose Plex, Jellyfin, a folder or YouTube');
       sweep();
       for (const [id, flow] of flows) if (flow.owner === owner) close(id);
       if (flows.size >= MAX_FLOWS) throw fail('Too many sources are being added; try again shortly', 429);

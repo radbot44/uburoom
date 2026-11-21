@@ -302,6 +302,29 @@ function mount(
   popups.register(bulkDialog, { busy: () => bulkPending, dirty: () => bulkDirty });
 
   async function bulk(item, trigger) {
+    if (item.type === 'playlist') {
+      const roomId = getState()?.id;
+      if (!roomId || !getState()?.capabilities?.addQueue) return;
+      try {
+        const result = await mutate('bulk', {
+          type: 'playlist',
+          mediaId: item.id,
+          ...(item.serverId ? { serverId: item.serverId } : {}),
+          unfinished: false,
+          includeSpecials: false,
+        });
+        if (trigger) {
+          uburoomPopover.show(trigger, {
+            text:
+              'Videos added to queue' + (Number.isInteger(result?.addedCount) ? ': ' + result.addedCount : '') + '.',
+            state: 'success',
+          });
+        }
+      } catch (error) {
+        if (trigger) uburoomPopover.show(trigger, { text: error.message, state: 'error' });
+      }
+      return;
+    }
     if (bulkDialog.open) return;
     const roomId = getState()?.id;
     if (!roomId) return;

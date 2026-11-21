@@ -161,6 +161,28 @@ function mount(
   count.setAttribute('aria-live', 'polite');
   const overview = node('div', host, undefined, 'library-overview');
   overview.hidden = true;
+  const linkBar = node('div', host, undefined, 'library-link-bar');
+  linkBar.hidden = true;
+  const linkForm = node('form', linkBar, undefined, 'library-link-form');
+  const linkField = node('label', linkForm, undefined, 'library-link-field');
+  linkField.append(uburoomIcons.icon(doc, 'link'));
+  const linkInput = node('input', linkField);
+  linkInput.type = 'url';
+  linkInput.id = 'library-link-input';
+  linkInput.placeholder = 'Paste a YouTube video or playlist link…';
+  linkInput.setAttribute('aria-label', 'YouTube video or playlist link');
+  linkInput.autocomplete = 'off';
+  linkInput.maxLength = 500;
+  const linkSubmit = node('button', linkForm, undefined, 'primary library-link-submit');
+  linkSubmit.type = 'submit';
+  linkSubmit.id = 'library-link-submit';
+  linkSubmit.textContent = 'Load link';
+  const linkClear = button(linkForm, 'Clear link', 'close', 'quiet library-link-clear');
+  linkClear.hidden = true;
+  const linkStatus = node('p', linkBar, '', 'hint library-link-status');
+  linkStatus.setAttribute('role', 'status');
+  linkStatus.setAttribute('aria-live', 'polite');
+  const linkResults = node('div', linkBar, undefined, 'library-link-results');
   const results = node('div', host, undefined, 'library');
   results.id = 'library';
   const footer = node('div', host, undefined, 'library-footer');
@@ -177,7 +199,7 @@ function mount(
   sentinel.hidden = true;
   const landing = node('div', host, undefined, 'library-landing');
   landing.hidden = true;
-  overview.before(landing);
+  linkBar.before(landing);
   tools.hidden = true;
   row.hidden = true;
   chips.hidden = true;
@@ -199,6 +221,8 @@ function mount(
     generation = 0,
     controller,
     detailController,
+    linkController,
+    linkResolveVersion = 0,
     // Reads that belong to the room being browsed; a room change aborts them.
     roomController,
     timer,
@@ -824,7 +848,9 @@ function mount(
       collectionIndex = screen.kind === 'library' && screen.tab === 'collections';
     scopeActions.replaceChildren();
     const section = sections.find(item => item.id === screen.section);
+    const isLinkSection = !details && !atHome && (section?.source === 'link' || screen.source === 'link');
     scopeActions.hidden =
+      isLinkSection ||
       !autoQueue ||
       !getPlayer()?.durable ||
       screen.kind !== 'library' ||
@@ -843,9 +869,16 @@ function mount(
       scroll.tuck(false);
     }
     row.hidden = details || atHome;
+    linkBar.hidden = !isLinkSection;
+    sortWrap.hidden = isLinkSection;
+    direction.hidden = isLinkSection;
     chips.hidden = details || atHome;
     filterButton.hidden =
-      !screen.section || section?.filters === false || collectionIndex || ['show', 'season'].includes(screen.kind);
+      isLinkSection ||
+      !screen.section ||
+      section?.filters === false ||
+      collectionIndex ||
+      ['show', 'season'].includes(screen.kind);
     filterButton.classList.toggle('filter-active', !filters.hidden || !!(screen.genre || screen.year));
     const filterSpan = filterButton.querySelector('.filter-label');
     if (filterSpan)
@@ -857,8 +890,9 @@ function mount(
       filterButton.classList.remove('filter-active');
     }
     if (search.value !== screen.q) search.value = screen.q || '';
-    search.placeholder =
-      screen.kind === 'season' || screen.onlySeason
+    search.placeholder = isLinkSection
+      ? 'Filter cached videos'
+      : screen.kind === 'season' || screen.onlySeason
         ? 'Search episodes'
         : collectionIndex
           ? 'Search collections'
@@ -985,17 +1019,22 @@ function mount(
           const placeholder = node('div', results, undefined, 'library-skeleton');
           placeholder.setAttribute('aria-hidden', 'true');
         }
-      if (!screen.items.length && !screen.loading)
+      if (!screen.items.length && !screen.loading) {
+        const currentSection = sections.find(item => item.id === screen.section);
+        const isLink = currentSection?.source === 'link' || screen.source === 'link';
         node(
           'p',
           results,
           screen.q || screen.genre || screen.year
             ? 'No matches. Try another search or clear the filters.'
-            : screen.tab === 'collections'
-              ? 'No collections in this library.'
-              : 'No titles here yet.',
+            : isLink
+              ? 'Paste a YouTube video or playlist link above to preview or queue it.'
+              : screen.tab === 'collections'
+                ? 'No collections in this library.'
+                : 'No titles here yet.',
           'library-empty',
         );
+      }
     }
     // A page opened from the queue knows only a title until its details arrive; it shows nothing until then
     // rather than a bare placeholder that is replaced a moment later.
@@ -1122,6 +1161,7 @@ function mount(
       current.items = append ? [...current.items, ...added] : added;
       current.total = data.total;
       current.nextOffset = data.nextOffset;
+      if (data.source) current.source = data.source;
       current.loading = false;
       if (append) {
         renderTools();
@@ -1386,6 +1426,96 @@ function mount(
         scroll.restoreAnchor(anchor);
       }),
   );
+  async function resolveLink(rawUrl) {
+    if (!room) return;
+    const url = String(rawUrl || '').trim();
+    if (!url) {
+      linkStatus.textContent = 'Paste a YouTube video or playlist link first.';
+      linkInput.focus();
+      return;
+    }
+    linkController?.abort();
+    linkController = new AbortController();
+    const resolveId = ++linkResolveVersion;
+    const roomVersion = generation;
+    linkSubmit.disabled = true;
+    linkClear.hidden = false;
+    linkStatus.textContent = 'Resolving YouTube link…';
+    linkResults.replaceChildren();
+    try {
+      const data = await request('library.resolve', scoped({ url }), linkController.signal);
+      if (resolveId !== linkResolveVersion || roomVersion !== generation) return;
+      if (data.kind === 'playlist') {
+        const plTitle = data.title || 'YouTube playlist';
+        linkStatus.textContent =
+          plTitle + ' · ' + (data.items?.length || 0) + (data.items?.length === 1 ? ' video' : ' videos');
+        const bar = node('div', linkResults, undefined, 'library-link-playlist');
+        const info = node('div', bar, undefined, 'library-link-playlist-info');
+        node('strong', info, plTitle);
+        if (data.channelTitle) node('span', info, data.channelTitle, 'hint');
+        if (data.items?.length && addBulkToQueue && canAddQueue()) {
+          const section = sections.find(item => item.id === screen?.section);
+          const bulkBtn = button(bar, 'Add playlist to queue', 'queue', 'primary library-queue-add');
+          bulkBtn.dataset.queue = data.id;
+          bulkBtn.dataset.queueItem = 'true';
+          bulkBtn.append(node('span', null, `Add all ${data.items.length} to queue`));
+          bulkBtn.onclick = () => {
+            if (!bulkBtn.disabled) {
+              void addBulkToQueue(
+                {
+                  id: data.id,
+                  type: 'playlist',
+                  title: plTitle,
+                  serverId: data.items[0]?.serverId || section?.serverId || screen?.server,
+                },
+                bulkBtn,
+              );
+            }
+          };
+        }
+        const grid = node('div', linkResults, undefined, 'library-link-grid library');
+        for (const item of data.items || []) tile(item, { parent: grid, shape: 'landscape' });
+      } else if (data.kind === 'video' && data.item) {
+        linkStatus.textContent = '';
+        const grid = node('div', linkResults, undefined, 'library-link-grid library');
+        tile(data.item, { parent: grid, shape: 'landscape' });
+        if (data.playlist?.url) {
+          const rowHint = node('div', linkResults, undefined, 'library-link-playlist-hint');
+          const plBtn = button(rowHint, 'Load full playlist', 'queue', 'quiet');
+          plBtn.append(node('span', null, 'This link includes a playlist — load playlist instead'));
+          plBtn.onclick = () => {
+            linkInput.value = data.playlist.url;
+            void resolveLink(data.playlist.url);
+          };
+        }
+      } else {
+        linkStatus.textContent = 'Could not resolve that YouTube link.';
+      }
+      setBusy(busy);
+    } catch (err) {
+      if (resolveId !== linkResolveVersion || roomVersion !== generation || err.name === 'AbortError') return;
+      linkStatus.textContent = err.message || 'Could not resolve YouTube link.';
+    } finally {
+      if (resolveId === linkResolveVersion) linkSubmit.disabled = false;
+    }
+  }
+  linkForm.addEventListener('submit', event => {
+    event.preventDefault();
+    void resolveLink(linkInput.value);
+  });
+  linkInput.addEventListener('input', () => {
+    linkClear.hidden = !linkInput.value.trim() && !linkResults.childElementCount && !linkStatus.textContent;
+  });
+  linkClear.addEventListener('click', () => {
+    linkController?.abort();
+    linkResolveVersion++;
+    linkInput.value = '';
+    linkStatus.textContent = '';
+    linkResults.replaceChildren();
+    linkClear.hidden = true;
+    linkSubmit.disabled = false;
+    linkInput.focus();
+  });
   retry.onclick = () => errorAction?.();
   let initialData = initialLibrary;
   async function setRoom(id) {
@@ -1399,6 +1529,8 @@ function mount(
     requestVersion++;
     controller?.abort();
     detailController?.abort();
+    linkController?.abort();
+    linkResolveVersion++;
     clearTimeout(timer);
     roomController?.abort();
     roomController = new AbortController();
@@ -1427,6 +1559,12 @@ function mount(
     chips.replaceChildren();
     chips.hidden = true;
     row.hidden = true;
+    linkBar.hidden = true;
+    linkInput.value = '';
+    linkStatus.textContent = '';
+    linkResults.replaceChildren();
+    linkClear.hidden = true;
+    linkSubmit.disabled = false;
     results.hidden = true;
     scopeActions.replaceChildren();
     scopeActions.hidden = true;

@@ -1132,6 +1132,86 @@
     font-size: var(--font-size-14);
     margin: var(--space-16) 0;
   }
+  .library-link-bar {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+    margin-bottom: var(--space-16);
+    padding: var(--space-12);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+    background: var(--elevated);
+  }
+  .library-link-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-8);
+  }
+  .library-link-field {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1 1 240px;
+    min-width: 0;
+    height: var(--watch-control-height);
+  }
+  .library-link-field > svg {
+    position: absolute;
+    left: 11px;
+    width: 16px;
+    height: 16px;
+    color: var(--muted);
+    pointer-events: none;
+  }
+  .library-link-field input[type='url'] {
+    box-sizing: border-box;
+    width: 100%;
+    height: var(--watch-control-height);
+    min-height: var(--watch-control-height);
+    margin: 0;
+    padding: 0 var(--space-12) 0 34px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+  }
+  .library-link-field input[type='url']:focus {
+    border-color: var(--primary);
+    outline: none;
+  }
+  .library-link-status:empty {
+    display: none;
+  }
+  .library-link-results {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+  }
+  .library-link-results:empty {
+    display: none;
+  }
+  .library-link-playlist {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-8);
+  }
+  .library-link-playlist-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .library-link-grid {
+    padding: 0;
+    margin: 0;
+  }
+  .library-link-playlist-hint {
+    display: flex;
+    justify-content: flex-start;
+  }
   .library-skeleton {
     aspect-ratio: 2/3;
     border-radius: var(--radius-12);

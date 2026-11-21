@@ -284,14 +284,14 @@ test('command deadlines use fresh mapped time and never queue controls without a
   ctx.roomLink.command = send;
   ctx.state.durable = true;
   for (const [action, mediaUrl, timeoutMs] of [
-    ['media.tracks.set', 'fixture', 35000],
-    ['media.stream.refresh', 'fixture', 35000],
-    ['queue.bulk', 'fixture', 35000],
+    ['media.tracks.set', 'fixture', 120000],
+    ['media.stream.refresh', 'fixture', 120000],
+    ['queue.bulk', 'fixture', 120000],
     ['media.play', 'fixture', undefined],
-    ['media.play', undefined, 35000],
+    ['media.play', undefined, 120000],
     ['queue.add', 'fixture', undefined],
-    ['queue.add', undefined, 35000],
-    ['queue.suggestion.accept', undefined, 35000],
+    ['queue.add', undefined, 120000],
+    ['queue.suggestion.accept', undefined, 120000],
   ]) {
     ctx.state.mediaUrl = mediaUrl;
     await ctx.execute({ action });

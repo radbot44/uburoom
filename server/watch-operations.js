@@ -632,7 +632,12 @@ function watchOperations({
       (await login(context))?.userId === auth.actor.userId;
     if (!(await eligible())) return result(403, { error: 'Library access requires room access' });
     // The library names the server it is browsing; with none named it is the first one configured.
-    const server = text(args.server) ?? undefined;
+    let server = text(args.server) ?? undefined;
+    if (op === 'library.resolve' && server === undefined) {
+      const resolver = watch.providers?.list?.find(p => p.root?.configured && typeof p.root?.resolveUrl === 'function');
+      if (!resolver) return result(400, { error: 'No link source is configured' });
+      server = resolver === watch.providers.primary ? undefined : await watch.providers.identityOf(resolver);
+    }
     const provider = await hub.mediaFor(auth.actor, server);
     const scopeCurrent = async () => (await hub.mediaFor(auth.actor, server)).principal === provider.principal;
     const itemVisible = async () =>
@@ -670,7 +675,16 @@ function watchOperations({
       await stamp([data.item]);
       if (data.item) applyRoomProgress(watch, args.room, [data.item]);
     } else if (op === 'library.filters') data = await provider.filters(text(args.section));
-    else if (op === 'library.shelves') {
+    else if (op === 'library.resolve') {
+      const url = text(args.url);
+      if (!url) return result(400, { error: 'Paste a video or playlist link' });
+      if (typeof provider.resolveUrl !== 'function')
+        return result(400, { error: 'This source does not resolve links' });
+      data = await provider.resolveUrl(url);
+      const items = [data?.item, ...(data?.items || [])].filter(Boolean);
+      await stamp(items);
+      if (items.length) applyRoomProgress(watch, args.room, items);
+    } else if (op === 'library.shelves') {
       data = await watch.providers.shelves(auth.actor, (actor, serverId) => hub.mediaFor(actor, serverId));
       // Recently added shows the room's progress as other library tiles do; Continue watching stays the viewer's own.
       if (data.recentlyAdded.length) applyRoomProgress(watch, args.room, data.recentlyAdded);
@@ -757,6 +771,7 @@ function watchOperations({
     'library.availability': input => library('library.availability', input),
     'library.filters': input => library('library.filters', input),
     'library.art': input => library('library.art', input),
+    'library.resolve': input => library('library.resolve', input),
     'library.shelves': input => library('library.shelves', input),
     async 'playback.history'({ auth, current }) {
       const history = await watch.tracking.history(auth.actor.userId);

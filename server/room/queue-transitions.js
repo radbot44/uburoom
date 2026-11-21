@@ -264,6 +264,7 @@ module.exports = {
           room.revision++;
           this.changed(room);
           this.prepareStreams(room);
+          this.warmQueue(record.id);
         },
         undefined,
       );
@@ -517,7 +518,7 @@ module.exports = {
             target.serverId &&
             (target.serverId !== prepared.roomServerId ||
               (entry &&
-                (Math.abs(target.duration - prepared.duration) > 0.5 ||
+                (Math.abs(target.duration - prepared.duration) > Math.max(0.5, prepared.durationTolerance || 0) ||
                   (prepared.type && target.type !== prepared.type))))
           )
             throw Object.assign(new Error('The queued video changed; choose it again from the library'), {
@@ -660,6 +661,7 @@ module.exports = {
       }
       // New media (or a restart of the current one): prepare everyone's stream now.
       this.prepareStreams(room);
+      this.warmQueue(record.id);
       return {
         status: 'applied',
         message: 'Viewing room updated.',

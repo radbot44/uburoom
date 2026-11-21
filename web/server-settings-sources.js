@@ -6,8 +6,8 @@
 import * as uburoomControls from './watch-controls.js';
 import * as uburoomIcons from './icons.js';
 
-const TYPE_LABEL = { plex: 'Plex', jellyfin: 'Jellyfin', folders: 'Folder' };
-const ADD_LABEL = { plex: 'Add Plex', jellyfin: 'Add Jellyfin', folders: 'Add a folder' };
+const TYPE_LABEL = { plex: 'Plex', jellyfin: 'Jellyfin', folders: 'Folder', youtube: 'YouTube' };
+const ADD_LABEL = { plex: 'Add Plex', jellyfin: 'Add Jellyfin', folders: 'Add a folder', youtube: 'Add YouTube' };
 const POLL_MS = 2000,
   POLL_LIMIT = 150;
 const STEP_TIMEOUT = 25000;
@@ -35,6 +35,7 @@ export function mount(panel, { request }) {
   const typeIcon = (parent, type) => {
     const holder = node('span', parent, null, 'server-source-icon');
     if (type === 'folders') holder.append(uburoomIcons.icon(doc, 'folder'));
+    else if (type === 'youtube') holder.append(uburoomIcons.icon(doc, 'brand-youtube'));
     else {
       const image = node('img', holder);
       Object.assign(image, {
@@ -114,7 +115,7 @@ export function mount(panel, { request }) {
   function libraryCount(source) {
     const known = details.get(source.id);
     if (!known) return 'Checking…';
-    if (source.type === 'folders') return source.address;
+    if (source.type === 'folders' || source.type === 'youtube') return source.address;
     if (!known.libraries) return 'Libraries unknown';
     const total = known.libraries.length,
       on = known.libraries.filter(library => library.offered).length;
@@ -249,8 +250,149 @@ export function mount(panel, { request }) {
         render();
       });
   }
+  function youtubeFormFields(parent, draft, { editing = false, source = null } = {}) {
+    const name = nameField(parent, draft.sourceName ?? '', 'YouTube');
+    name.addEventListener('input', () => (draft.sourceName = name.value));
+
+    const deliverySet = node('fieldset', parent, null, 'server-source-servers');
+    node('legend', deliverySet, 'Delivery mode');
+    for (const [value, title, hint] of [
+      ['sidecar', 'yt-dlp sidecar cache (recommended)', 'Pre-warms videos locally with full sync and Web Audio.'],
+      [
+        'embed',
+        'IFrame embed (API key configuration)',
+        'Configures Data API metadata; embed playback is reserved for a later update.',
+      ],
+    ]) {
+      const row = node('label', deliverySet, null, 'server-source-server');
+      const radio = node('input', row);
+      Object.assign(radio, {
+        type: 'radio',
+        name: 'youtube-delivery',
+        value,
+        checked: (draft.delivery || 'sidecar') === value,
+      });
+      radio.addEventListener('change', () => {
+        draft.delivery = value;
+        render();
+      });
+      const text = node('span', row, null, 'server-account-who');
+      node('strong', text, title);
+      node('span', text, hint, 'hint');
+    }
+
+    const field = (label, type, id, value, placeholder, onInput, extraHint, autocomplete = 'off') => {
+      const wrapper = node('label', parent, null, 'server-settings-field');
+      node('span', wrapper, label);
+      const input = node('input', wrapper);
+      Object.assign(input, { type, id, autocomplete, value: value || '' });
+      if (placeholder) input.placeholder = placeholder;
+      input.addEventListener('input', () => onInput(input.value));
+      if (extraHint) node('span', wrapper, extraHint, 'hint');
+      return input;
+    };
+
+    if ((draft.delivery || 'sidecar') === 'sidecar') {
+      field(
+        'Sidecar URL',
+        'url',
+        'server-youtube-sidecar-url',
+        draft.sidecarUrl,
+        'http://127.0.0.1:8780',
+        v => (draft.sidecarUrl = v),
+      );
+      field(
+        'Sidecar token (optional)',
+        'password',
+        'server-youtube-sidecar-token',
+        draft.sidecarToken,
+        editing && source?.hasSidecarToken ? 'Saved — leave blank to keep existing' : 'Matches UBUROOM_YTDLP_TOKEN',
+        v => (draft.sidecarToken = v),
+        undefined,
+        'new-password',
+      );
+      if (editing && source?.hasSidecarToken) {
+        const clearRow = node('label', parent, null, 'form-checkbox');
+        const box = node('input', clearRow);
+        box.type = 'checkbox';
+        box.checked = !!draft.clearSidecarToken;
+        box.addEventListener('change', () => (draft.clearSidecarToken = box.checked));
+        node('span', clearRow, 'Remove saved sidecar token');
+      }
+      field(
+        'Local cache directory (optional)',
+        'text',
+        'server-youtube-cache-dir',
+        draft.cacheDirectory,
+        'e.g. ./sidecars/yt-dlp/cache',
+        v => (draft.cacheDirectory = v),
+        'Optional direct path to the sidecar cache folder on this host.',
+      );
+    }
+
+    const keyRequired = (draft.delivery || 'sidecar') === 'embed';
+    field(
+      keyRequired ? 'YouTube Data API v3 key (required)' : 'YouTube Data API v3 key (optional)',
+      'password',
+      'server-youtube-api-key',
+      draft.apiKey,
+      editing && source?.hasApiKey ? 'Saved — leave blank to keep existing' : 'AIza...',
+      v => (draft.apiKey = v),
+      keyRequired
+        ? 'Required for IFrame embed metadata and durations.'
+        : 'Optional fast metadata & playlist lookup without invoking yt-dlp.',
+      'new-password',
+    );
+    if (editing && source?.hasApiKey) {
+      const clearKeyRow = node('label', parent, null, 'form-checkbox');
+      const box = node('input', clearKeyRow);
+      box.type = 'checkbox';
+      box.checked = !!draft.clearApiKey;
+      box.addEventListener('change', () => (draft.clearApiKey = box.checked));
+      node('span', clearKeyRow, 'Remove saved API key');
+    }
+  }
+  function renderEditYouTube(state) {
+    const { source } = state;
+    state.sourceName ??= source.name;
+    state.delivery ??= source.delivery || 'sidecar';
+    state.sidecarUrl ??= source.sidecarUrl || '';
+    state.cacheDirectory ??= source.cacheDirectory || '';
+    state.sidecarToken ??= '';
+    state.apiKey ??= '';
+    state.clearSidecarToken ??= false;
+    state.clearApiKey ??= false;
+    node('h3', body, 'Edit ' + sourceLabel(source));
+    youtubeFormFields(body, state, { editing: true, source });
+    inlineActions(body, 'Save source', () =>
+      act(async current => {
+        const result = await request('/api/operator/sources', {
+          revision,
+          action: 'update',
+          id: source.id,
+          name: state.sourceName,
+          settings: {
+            delivery: state.delivery,
+            sidecarUrl: state.sidecarUrl,
+            cacheDirectory: state.cacheDirectory,
+            ...(state.sidecarToken ? { sidecarToken: state.sidecarToken } : {}),
+            ...(state.clearSidecarToken ? { clearSidecarToken: true } : {}),
+            ...(state.apiKey ? { apiKey: state.apiKey } : {}),
+            ...(state.clearApiKey ? { clearApiKey: true } : {}),
+          },
+        });
+        if (!current()) return;
+        accept(result);
+        details.clear();
+        status.textContent = 'Saved. Restart uburoom to apply it.';
+        show({ name: 'list' });
+        checkAll();
+      }),
+    );
+  }
   function renderEdit({ source }) {
     if (source.folders) return renderEditFolders(view);
+    if (source.type === 'youtube') return renderEditYouTube(view);
     const known = details.get(source.id);
     node('h3', body, 'Edit ' + sourceLabel(source));
     const name = nameField(body, source.name, source.id);
@@ -470,6 +612,14 @@ export function mount(panel, { request }) {
       } else if (type === 'folders') {
         view.listing = await step(flow, 'browse', { path: '' });
         if (!current()) return;
+      } else if (type === 'youtube') {
+        view.delivery = 'sidecar';
+        view.sidecarUrl = 'http://127.0.0.1:8780';
+        view.sidecarToken = '';
+        view.cacheDirectory = '';
+        view.apiKey = '';
+        view.sourceName = 'YouTube';
+        view.phase = 'configure';
       }
       render();
     });
@@ -807,6 +957,30 @@ export function mount(panel, { request }) {
     );
   }
 
+  function renderAddYouTube() {
+    node('h3', body, 'Add YouTube');
+    if (!view.flow) return node('p', body, 'Starting…', 'hint');
+    node(
+      'p',
+      body,
+      'Play pasted YouTube links through a local yt-dlp cache sidecar with synced room playback and Web Audio.',
+      'hint',
+    );
+    youtubeFormFields(body, view);
+    inlineActions(body, 'Verify & Add YouTube', () =>
+      act(async current => {
+        await step(view.flow, 'configure', {
+          delivery: view.delivery || 'sidecar',
+          sidecarUrl: view.sidecarUrl || '',
+          sidecarToken: view.sidecarToken || '',
+          cacheDirectory: view.cacheDirectory || '',
+          apiKey: view.apiKey || '',
+        });
+        if (current()) await add(current, (view.sourceName || 'YouTube').trim() || 'YouTube', []);
+      }),
+    );
+  }
+
   function render() {
     body.replaceChildren();
     body.dataset.view = view.name === 'add' ? 'add-' + view.type : view.name;
@@ -815,6 +989,7 @@ export function mount(panel, { request }) {
     else if (view.name === 'remove') renderRemove(view);
     else if (view.type === 'plex') renderAddPlex();
     else if (view.type === 'jellyfin') renderAddJellyfin();
+    else if (view.type === 'youtube') renderAddYouTube();
     else renderAddFolder();
     setBusy(busy);
     if (view.name !== 'list') body.querySelector('h3')?.scrollIntoView?.({ block: 'nearest' });

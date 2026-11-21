@@ -407,13 +407,13 @@ const COMMANDS = Object.freeze({
     preparesSaved: true,
     args(a) {
       if (
-        !['show', 'season'].includes(a.type) ||
+        !['show', 'season', 'playlist'].includes(a.type) ||
         typeof a.mediaId !== 'string' ||
         !ITEM.test(a.mediaId) ||
         typeof a.unfinished !== 'boolean' ||
         typeof a.includeSpecials !== 'boolean'
       )
-        throw new Error('Choose show or season queue options');
+        throw new Error('Choose show, season or playlist queue options');
       return withServer(
         { type: a.type, mediaId: a.mediaId, unfinished: a.unfinished, includeSpecials: a.includeSpecials },
         a,

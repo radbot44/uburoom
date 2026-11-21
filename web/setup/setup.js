@@ -5,7 +5,7 @@ import { icon } from '/icons.js';
 import { spriteMarkup } from '/shared/icons-data.mjs';
 
 const POLL_MS = 2000;
-const TYPE_LABEL = { plex: 'Plex', jellyfin: 'Jellyfin', folders: 'Folder' };
+const TYPE_LABEL = { plex: 'Plex', jellyfin: 'Jellyfin', folders: 'Folder', youtube: 'YouTube' };
 const TYPE_PICTURE = { plex: '/assets/plex-icon.png', jellyfin: '/assets/jellyfin-icon.svg' };
 const MEMBER_RULE = {
   plex: name => ['People with access to ', name, ' (Plex)'],
@@ -38,7 +38,7 @@ function el(tag, props = {}, ...children) {
 const picture = (type, size) =>
   TYPE_PICTURE[type]
     ? el('img', { src: TYPE_PICTURE[type], alt: '', width: String(size), height: String(size) })
-    : icon(document, 'folder');
+    : icon(document, type === 'youtube' ? 'brand-youtube' : 'folder');
 
 // ----- Screens, errors and requests -----
 

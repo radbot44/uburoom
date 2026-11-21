@@ -758,6 +758,15 @@ const glyphs = Object.freeze({
     ['path', { d: 'M9.7 17l4.6 0' }],
   ],
   folder: [['path', { d: 'M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2' }]],
+  link: [
+    ['path', { d: 'M9 15l6 -6' }],
+    ['path', { d: 'M11 6l.463 -.536a5 5 0 0 1 7.071 7.072l-.534 .464' }],
+    ['path', { d: 'M13 18l-.397 .534a5.068 5.068 0 0 1 -7.127 0a4.972 4.972 0 0 1 0 -7.071l.524 -.463' }],
+  ],
+  'brand-youtube': [
+    ['path', { d: 'M2 8a4 4 0 0 1 4 -4h12a4 4 0 0 1 4 4v8a4 4 0 0 1 -4 4h-12a4 4 0 0 1 -4 -4v-8z' }],
+    ['path', { d: 'M10 9l5 3l-5 3z' }],
+  ],
 });
 const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 function resolveName(name, seekSeconds = 15) {

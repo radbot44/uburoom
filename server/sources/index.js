@@ -34,6 +34,7 @@ const TYPES = {
   plex: require('./plex'),
   jellyfin: require('./jellyfin'),
   folders: require('./folders'),
+  youtube: require('./youtube'),
 };
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;

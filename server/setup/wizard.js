@@ -55,13 +55,14 @@ function createWizard({
   plexTv,
   plexFetch = fetch,
   jellyfinFetch = fetch,
+  youtubeFetch = fetch,
   jellyfinDiscover,
   discordFetch = fetch,
   platform = process.platform,
   origin,
 }) {
   const base = path.dirname(configFile);
-  const tools = { plexFetch, jellyfinFetch };
+  const tools = { plexFetch, jellyfinFetch, youtubeFetch };
   const context = { base, platform, dataDirectory: path.resolve(base, 'data') };
   // Setup bound beyond loopback (a container, a NAS) is reached from elsewhere; so is uburoom after it.
   const wide = !LOOPBACK.has(setupHost);
@@ -72,6 +73,7 @@ function createWizard({
   const flows = flowsCore.createSourceFlows({
     stepServices: {
       ...tools,
+      base,
       plexTv,
       platform,
       ...(jellyfinDiscover ? { discover: jellyfinDiscover } : {}),

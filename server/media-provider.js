@@ -42,6 +42,10 @@
  *   An item's picture, already bounded in size. A backdrop is the wide background art behind a details page; a logo is the transparent title image a movie or show may have.
  * @property {(id: string) => Promise<boolean>} allows - Whether this scope may watch an item.
  * @property {(id: string, type?: string) => Promise<boolean>} visible - Whether this scope may see an item at all.
+ * @property {(url: string) => Promise<any>} [resolveUrl]
+ *   Optional link resolver turning a pasted video or playlist URL into library metadata.
+ * @property {(items: any[]) => Promise<void>} [warmQueue]
+ *   Optional background warmer notified when the active queue order changes.
  * @property {(mediaId: string) => Promise<any>} [nextEpisodeOffer]
  *   The episode that follows one that just ended, for providers that know series order.
  * @property {() => Promise<CatalogItem[]>} [recentlyAdded] - The newest additions this scope can see (Media Home).
@@ -78,6 +82,8 @@
  *   The file on this machine a prepared item's bytes come from, when they are a plain local
  *   file with nothing to hide. FFmpeg then reads it directly instead of through the byte
  *   bridge, which matters for seek-heavy work such as finding keyframes.
+ * @property {number} [prepareTimeoutMs]
+ *   Optional ceiling for media preparation commands when cold source fetching takes longer than default.
  * @property {() => Promise<any>} [close] - Called on the configured scope at shutdown.
  */
 
