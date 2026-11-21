@@ -499,6 +499,45 @@ function checkTlsCertificates(config) {
   const certPath = config.tlsCert;
   const keyPath = config.tlsKey;
 
+  // Behind a trusted proxy uburoom speaks plain HTTP to it and reads no certificate
+  // (docs/tls-and-remote-access.md).
+  if (config.listen === 'http-proxy') {
+    const host = new URL(config.publicUrl).hostname;
+    const loopbackBind = ['127.0.0.1', '::1', 'localhost'].includes(config.host);
+    const container = fs.existsSync('/.dockerenv') || fs.existsSync('/run/.containerenv');
+    checks.push({
+      category: 'TLS / Certificates',
+      name: 'Behind a proxy',
+      status: 'pass',
+      message: `Plain HTTP only from ${config.trustedProxies.join(', ')}; the proxy serves ${config.publicUrl} over HTTPS.`,
+    });
+    if (config.tlsFilesSet)
+      checks.push({
+        category: 'TLS / Certificates',
+        name: 'Unused certificate settings',
+        status: 'warn',
+        message: "server.tls_cert and server.tls_key are not read with server.listen: 'http-proxy'.",
+        remediation: 'Remove them, or switch server.listen back to https.',
+      });
+    if (!loopbackBind && !container)
+      checks.push({
+        category: 'TLS / Certificates',
+        name: 'Proxy bind address',
+        status: 'warn',
+        message: `Listening for plain HTTP on ${config.host}; only server.trusted_proxies may connect, but other machines can reach the port.`,
+        remediation: "With the proxy on this machine, set server.host: '127.0.0.1'.",
+      });
+    if (['localhost', '127.0.0.1', '::1', '[::1]'].includes(host))
+      checks.push({
+        category: 'TLS / Certificates',
+        name: 'Public address',
+        status: 'warn',
+        message: `server.public_url is ${config.publicUrl}; behind a proxy it should be the address people open.`,
+        remediation: 'Set server.public_url to the HTTPS address the proxy or tunnel publishes.',
+      });
+    return checks;
+  }
+
   const isHttps = config.publicUrl.startsWith('https:');
   if (!isHttps) {
     checks.push({

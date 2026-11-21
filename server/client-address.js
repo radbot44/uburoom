@@ -96,4 +96,17 @@ function trustProxies(config) {
   activeConfig = config;
 }
 
-module.exports = { clientAddress, isLocalAddress, normalizeAddress, trustProxies };
+/** Whether a connection's peer is one of the configured proxies. */
+function trustedPeer(address, trustedProxies) {
+  const blockList = compileTrustedProxies(trustedProxies);
+  const peer = normalizeAddress(address);
+  return !!blockList && !!peer && isTrustedAddress(blockList, peer);
+}
+
+/** Whether a connection's peer is this machine. */
+function loopbackPeer(address) {
+  const peer = normalizeAddress(address);
+  return peer === '::1' || /^127\./.test(peer);
+}
+
+module.exports = { clientAddress, isLocalAddress, normalizeAddress, trustProxies, trustedPeer, loopbackPeer };
