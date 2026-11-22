@@ -193,8 +193,9 @@ function startPgsJob(av1, media) {
   const abort = AbortSignal.any([media.subtitleAbort.signal, controller.signal, AbortSignal.timeout(300000)]);
   const job = { media, version, controller, chunks: [], size: 0, listeners: new Set(), complete: false, error: null };
   job.promise = runOperation(abort, async () => {
-    const release = await acquireSlot(abort);
+    let release;
     try {
+      release = await acquireSlot(abort);
       if (!av1?.ffmpeg || !Number.isSafeInteger(track.index))
         throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
       await av1.input({ ...media, start: media.sourceStart }, abort, async url => {
@@ -265,7 +266,7 @@ function startPgsJob(av1, media) {
         } catch {}
       throw job.error;
     } finally {
-      release();
+      release?.();
       job.listeners.clear();
       if (job.media.subtitleJob === job) job.media.subtitleJob = undefined;
     }
@@ -523,8 +524,9 @@ async function load(av1, media, signal) {
   const abort = AbortSignal.any([media.subtitleAbort.signal, AbortSignal.timeout(85000)]);
   const job = { media, version };
   job.promise = runOperation(abort, async () => {
-    const release = await acquireSlot(abort);
+    let release;
     try {
+      release = await acquireSlot(abort);
       let result;
       if (track.external) {
         const { data: file, index } = track.resources || {};
@@ -559,10 +561,11 @@ async function load(av1, media, signal) {
       target.subtitleAssets = result.assets;
       return result;
     } finally {
-      release();
+      release?.();
       if (job.media.subtitleJob === job) job.media.subtitleJob = undefined;
     }
   });
+  job.promise.catch(() => {});
   media.subtitleJob = job;
   return awaitJob(job.promise, signal);
 }
@@ -724,8 +727,9 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
   job = { media, controller, users: 0, complete: false };
   job.promise = Promise.resolve().then(() =>
     runOperation(abort, async () => {
-      const release = await acquireSlot(abort);
+      let release;
       try {
+        release = await acquireSlot(abort);
         const format =
           track.delivery === 'ass'
             ? 'ass'
@@ -986,12 +990,13 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
         if (abort.aborted) throw error;
         throw classifyExtractionError(error);
       } finally {
-        release();
+        release?.();
         job.complete = true;
         if (job.media.windowJobs?.get(cacheKey) === job) job.media.windowJobs.delete(cacheKey);
       }
     }),
   );
+  job.promise.catch(() => {});
   media.windowJobs.set(cacheKey, job);
   return waitWindow(job, signal);
 }

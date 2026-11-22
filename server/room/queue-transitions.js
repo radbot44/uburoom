@@ -13,7 +13,7 @@ const { randomUUID } = require('node:crypto');
 const { isHost } = require('../core');
 const { PlaybackError } = require('../errors');
 const { observePlaybackEnd, clearPlaybackEnd } = require('../playback-end');
-const { expired } = require('./common');
+const { expired, sourceMediaKey } = require('./common');
 
 /**
  * Moving between videos: load, next and previous, the end of a video, autoplay and ending offers.
@@ -55,7 +55,8 @@ module.exports = {
         const viewer = [...room.viewers.values()][0];
         let changed = false;
         for (const item of needed) {
-          if (!room.endingMeta.has(item.mediaId)) {
+          const metaKey = sourceMediaKey(item.serverId, item.mediaId);
+          if (!room.endingMeta.has(metaKey)) {
             let meta;
             try {
               const provider = await this.catalogScope(viewer?.actor, item.serverId);
@@ -80,7 +81,7 @@ module.exports = {
               () => {
                 if (room.media) return false;
                 room.endingMeta ||= new Map();
-                room.endingMeta.set(item.mediaId, meta);
+                room.endingMeta.set(metaKey, meta);
                 while (room.endingMeta.size > 8) room.endingMeta.delete(room.endingMeta.keys().next().value);
                 return true;
               },
@@ -135,14 +136,18 @@ module.exports = {
     }
     try {
       const offer = await provider.nextEpisodeOffer(completed.mediaId);
+      const offerServerId = offer?.serverId ?? completed.serverId;
       await this.inRoom(
         room,
         () => {
           if (room.epoch !== epoch || this.roomState.store.get(record.id)?.queueRevision !== revision) return;
-          room.endingOffer = { key, offer: offer || null };
+          room.endingOffer = {
+            key,
+            offer: offer ? { ...offer, ...(offerServerId ? { serverId: offerServerId } : {}) } : null,
+          };
           if (offer) {
             room.endingMeta ||= new Map();
-            room.endingMeta.set(offer.mediaId, {
+            room.endingMeta.set(sourceMediaKey(offerServerId, offer.mediaId), {
               summary: offer.summary || '',
               subtitle: offer.subtitle || '',
               hasLandscape: offer.hasLandscape,

@@ -895,3 +895,39 @@ test('autoQueue.next assigns a stable UUID and preserves serverId:mediaId skippe
   await f.queue.playNow(room.id, f.creator, sampleItem(1));
   assert.deepEqual(f.store.get(room.id).autoQueue.skipped, []);
 });
+
+test('shuffle auto-queue never immediately returns a just-skipped item and returns null when all candidates are skipped until reset', async t => {
+  const f = fixture(t);
+  const room = await f.store.create(f.creator);
+  const corpus = [sampleItem(1), sampleItem(2)];
+
+  // Configure random (shuffle) mode over a 2-item pool.
+  await f.queue.configureAuto(room.id, f.creator, {
+    mode: 'random',
+    scope: { type: 'show', id: '100', serverId: 'plex-server-1' },
+  });
+  const first = f.queue.computeAutoNext(room.id, corpus);
+  assert.ok(first.next, 'initial shuffle picks a candidate');
+  const firstId = first.next.mediaId;
+
+  // Skipping the first item must pick the other item, never the one just skipped.
+  const afterSkip1 = await f.queue.skipAuto(room.id, f.creator, corpus);
+  assert.ok(afterSkip1.next, 'second candidate is offered after first is skipped');
+  assert.notEqual(afterSkip1.next.mediaId, firstId, 'must not immediately return the just-skipped item');
+
+  // Skipping the remaining candidate means every candidate was skipped -> show no suggestion until explicit reset.
+  const afterSkip2 = await f.queue.skipAuto(room.id, f.creator, corpus);
+  assert.equal(afterSkip2.next, null, 'all candidates skipped yields no suggestion instead of bouncing back');
+
+  // Recomputing without a reset keeps next === null.
+  assert.equal(f.queue.computeAutoNext(room.id, corpus).next, null);
+
+  // Explicit reset (playing an item) clears skipped and allows suggesting the remaining non-active candidate.
+  await f.queue.playNow(room.id, f.creator, sampleItem(1));
+  const afterReset = f.queue.computeAutoNext(room.id, corpus);
+  assert.equal(afterReset.next?.mediaId, '102');
+
+  // With 101 active and 102 the sole non-active candidate, skipping 102 must not bounce back to 102.
+  const afterSkipOnly = await f.queue.skipAuto(room.id, f.creator, corpus);
+  assert.equal(afterSkipOnly.next, null, 'skipping sole non-active candidate returns null, not the skipped item');
+});

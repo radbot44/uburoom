@@ -251,3 +251,126 @@ test('a member rule admits the members of the sources it names, and only those',
   assert.equal((await visitor.request('/api/watch/config')).body.plexSignIn, false);
   assert.equal((await both.browser().request('/api/watch/config')).body.plexSignIn, true);
 });
+
+test(
+  'multi-source availability and ending-screen metadata qualify by source + mediaId when raw IDs collide',
+  tls,
+  async t => {
+    const { randomUUID } = require('node:crypto');
+    const f = await sources(t, ['a', 'b']);
+    const watch = f.app.watch;
+    const host = f.app.registry.resolve('discord', f.provider.subjects.host, 'Host');
+    const actor = { userId: host.id, name: 'Host' };
+    const serverA = 'fixture-machine';
+    const serverB = 'machine-b';
+    const roomId = await watch.roomState.create(actor, {
+      name: 'Collision Room',
+      visibility: 'public',
+      keepEmpty: true,
+    });
+    const room = watch.rooms.get(roomId);
+    const record = { id: roomId };
+    const viewerId = randomUUID();
+    await watch.join(room, actor, viewerId);
+
+    let availA = true;
+    let availB = false;
+    const makeScope = (serverId, getAvail, detailsObj) => ({
+      principal: 'owner:' + serverId,
+      availability: async ids => new Map(ids.map(id => [id, getAvail()])),
+      allows: async () => true,
+      details: async () => detailsObj,
+      prepare: async () => ({
+        id: '42',
+        title: serverId === serverA ? 'Film A' : 'Film B',
+        duration: 60,
+        kind: 'movie',
+        format: 'file',
+        roomServerId: serverId,
+        resources: new Map(),
+        provider: { id: serverId },
+      }),
+      stop: async () => {},
+    });
+    const scopeA = makeScope(serverA, () => availA, {
+      summary: 'Summary from A',
+      subtitle: 'Subtitle A',
+      hasLandscape: true,
+      hasPoster: false,
+    });
+    const scopeB = makeScope(serverB, () => availB, {
+      summary: 'Summary from B',
+      subtitle: 'Subtitle B',
+      hasLandscape: false,
+      hasPoster: true,
+    });
+    const origMediaFor = watch.hub.mediaFor;
+    const origCatalogScope = watch.catalogScope;
+    t.after(() => {
+      watch.hub.mediaFor = origMediaFor;
+      watch.catalogScope = origCatalogScope;
+    });
+    watch.hub.mediaFor = async (_actor, serverId) => (serverId === serverB ? scopeB : scopeA);
+    watch.catalogScope = async (_actor, serverId) => (serverId === serverB ? scopeB : scopeA);
+
+    // Queue item from B has raw mediaId '42'; current room.media from A also has raw mediaId '42'.
+    await watch.roomState.queue.add(record.id, host.id, {
+      serverId: serverB,
+      mediaId: '42',
+      type: 'movie',
+      title: 'Film B',
+      duration: 60,
+    });
+    room.media = {
+      id: '42',
+      title: 'Film A',
+      duration: 60,
+      kind: 'movie',
+      format: 'file',
+      roomServerId: serverA,
+      provider: scopeA,
+      resources: new Map(),
+    };
+    room.mediaVersion = randomUUID();
+    const viewer = room.viewers.get(viewerId);
+    viewer.localDelivery = true;
+
+    // Case 1: A is available, B is unavailable -> current item (A) stays available, only B is listed unavailable.
+    await watch.prepareViewer(room, actor, viewerId);
+    assert.notEqual(viewer.media?.unavailable, true, 'available source A current item is not marked unavailable by B');
+    assert.equal(viewer.unavailableMedia.length, 1);
+    assert.equal(viewer.unavailableMedia[0].serverId, serverB);
+    assert.equal(viewer.unavailableMedia[0].title, 'Film B');
+
+    // Case 2: Flip availability (A unavailable, B available) -> current item (A) MUST be detected as unavailable
+    // even though the queue already has a different-source entry with raw mediaId '42'.
+    availA = false;
+    availB = true;
+    await watch.prepareViewer(room, actor, viewerId);
+    assert.equal(viewer.media?.unavailable, true, 'unavailable source A current item is detected despite B in queue');
+    assert.equal(viewer.unavailableMedia.length, 1);
+    assert.equal(viewer.unavailableMedia[0].serverId, serverA);
+    assert.equal(viewer.unavailableMedia[0].title, 'Film A');
+
+    // Case 3: Ending-screen metadata with completed item from A ('42') and next item from B ('42').
+    // Complete A into history while B ('42') remains pending next.
+    await watch.roomState.queue.playNow(record.id, host.id, {
+      serverId: serverA,
+      mediaId: '42',
+      type: 'movie',
+      title: 'Film A',
+      duration: 60,
+    });
+    await watch.roomState.queue.completeCurrent(record.id);
+    room.media = undefined;
+    room.endingMeta = undefined;
+    await watch.refreshEndingMeta(room);
+    const view = watch.view(room, actor, viewerId);
+    assert.equal(view.ending?.completed?.serverId, serverA);
+    assert.equal(view.ending?.next?.serverId, serverB);
+    assert.equal(view.ending?.next?.summary, 'Summary from B', 'ending next summary comes from B, not A');
+    assert.equal(view.ending?.next?.subtitle, 'Subtitle B', 'ending next subtitle comes from B, not A');
+    assert.equal(view.ending?.next?.hasLandscape, false);
+    assert.equal(view.ending?.next?.hasPoster, true);
+  },
+);

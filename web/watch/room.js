@@ -21,8 +21,6 @@ export function mount(host, deps) {
         !(store.identity.directRoomEntry && store.identity.pageBootstrap?.targetRoom?.media),
     );
     $('current-room').hidden = !inRoom;
-    $('room-lobby').hidden = inRoom;
-    if (!inRoom && store.lobby.knownRooms) deps.renderRoomChoices?.(store.lobby.knownRooms, $('lobby-rooms'));
     $('rooms').hidden = true;
     $('refresh').hidden = true;
     $('room-bar').hidden = !store.identity.me && $('auth-overlay').hidden;

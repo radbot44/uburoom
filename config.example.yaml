@@ -12,8 +12,9 @@
 ##################################
 # API connections and secrets first. Blank Discord credentials disable the bot.
 secrets:
-  # The server password (access.password). Knowing it is enough to get in, as a
-  # guest with a name of their own choosing; changing it signs those guests out.
+  # The server password (access.password), at least 8 characters. Knowing it is
+  # enough to get in, as a guest with a name of their own choosing; changing it
+  # signs those guests out. Shorter hand-edited passwords block startup.
   server_password: ''
 
 # MEDIA SOURCES: any number of Plex servers, Jellyfin servers and folders on this

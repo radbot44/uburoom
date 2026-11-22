@@ -2032,3 +2032,29 @@ test('room deletion waits for media cleanup while preserving the row and a healt
   assert.equal(f.app.hub.rooms.has(id), false);
   assert.equal((await creator.call('/api/watch/rooms')).status, 200);
 });
+
+test('withClosedLock preserves caller error without unhandledRejection and keeps later operations working', async t => {
+  const f = await fixture(t, false);
+  const roomState = f.app.watch.roomState;
+  const unhandled = [];
+  const onUnhandled = reason => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  t.after(() => process.off('unhandledRejection', onUnhandled));
+
+  const roomId = randomUUID();
+  const boom = new Error('closed-room edit failed');
+  await assert.rejects(
+    roomState.withClosedLock(roomId, async () => {
+      throw boom;
+    }),
+    err => err === boom,
+  );
+  // Allow any unhandled rejection microtasks/timers to fire.
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(unhandled, [], 'rejected closed-room lock must not leave an unhandledRejection');
+  assert.equal(roomState.closedLocks.has(roomId), false, 'lock entry cleaned up after rejection');
+
+  const next = await roomState.withClosedLock(roomId, async () => 'recovered');
+  assert.equal(next, 'recovered', 'later closed-room operations still run cleanly');
+  assert.equal(roomState.closedLocks.has(roomId), false);
+});

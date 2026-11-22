@@ -571,14 +571,14 @@ class RoomQueue {
           item =>
             !used.has(item.mediaId) && !active.has(item.mediaId) && !skipped.has(item.serverId + ':' + item.mediaId),
         );
-        if (!available.length && items.some(item => !active.has(item.mediaId)) && used.size >= poolIds.size) {
-          autoQueue.cycle++;
-          used = new Set([...active].filter(id => poolIds.has(id)));
-          available = items.filter(
+        if (!available.length && used.size >= poolIds.size) {
+          const unskipped = items.filter(
             item => !active.has(item.mediaId) && !skipped.has(item.serverId + ':' + item.mediaId),
           );
-          if (!available.length) {
-            available = items.filter(item => !active.has(item.mediaId));
+          if (unskipped.length) {
+            autoQueue.cycle++;
+            used = new Set([...active].filter(id => poolIds.has(id)));
+            available = unskipped;
           }
         }
         if (available.length) {

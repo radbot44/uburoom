@@ -372,3 +372,45 @@ test('YAML editor saves access rules, write-only server password, and source mem
   after = loadConfig(file);
   assert.deepEqual(after.accessPolicy.sourceMembers, ['plex', 'jf-home']);
 });
+
+test('YAML backup pruning is scoped to the owning config and preserves ambiguous older backups', async t => {
+  const { directory, file: fileA, editor: editorA, source } = await editingFixture(t);
+  const fileB = path.join(directory, 'other.yaml');
+  await fs.promises.writeFile(fileB, source, 'utf8');
+  const editorB = createConfigEditor(fileB);
+
+  // Create an older ambiguous backup directory without an .owner marker.
+  const legacyDir = path.join(directory, '.uburoom-config-legacy-0001');
+  await fs.promises.mkdir(legacyDir, { recursive: true });
+  await fs.promises.writeFile(path.join(legacyDir, 'original.yaml'), source, 'utf8');
+
+  // Save B twice so B owns 2 backup directories in the same folder.
+  let revB = (await editorB.read()).revision;
+  for (let i = 0; i < 2; i++) {
+    revB = (await editorB.save({ revision: revB, changes: { 'rooms.max_members': 11 + i } })).revision;
+  }
+
+  // Save A five times so A's pruning runs past the keep=3 limit.
+  let revA = (await editorA.read()).revision;
+  for (let i = 0; i < 5; i++) {
+    revA = (await editorA.save({ revision: revA, changes: { 'rooms.max_members': 21 + i } })).revision;
+  }
+
+  const dirs = (await fs.promises.readdir(directory)).filter(name => name.startsWith('.uburoom-config-'));
+  let ownedByA = 0;
+  let ownedByB = 0;
+  let legacyPresent = false;
+  for (const name of dirs) {
+    const ownerPath = path.join(directory, name, '.owner');
+    if (name === '.uburoom-config-legacy-0001') {
+      legacyPresent = true;
+      continue;
+    }
+    const owner = (await fs.promises.readFile(ownerPath, 'utf8')).trim();
+    if (owner === path.basename(fileA)) ownedByA++;
+    else if (owner === path.basename(fileB)) ownedByB++;
+  }
+  assert.equal(ownedByA, 3, 'config A routine backups are pruned to newest 3');
+  assert.equal(ownedByB, 2, 'saving config A does not prune config B backups');
+  assert.equal(legacyPresent, true, 'ambiguous older backups without .owner are preserved');
+});

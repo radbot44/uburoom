@@ -223,3 +223,91 @@ test('subtitle offset store persists per (mediaId, track), deletes zeros, and ev
   const broken = createSubtitleOffsetStore(memoryStorage({ 'uburoom.subtitleOffsets': '{not-json' }));
   assert.equal(broken.get('m1', 't1'), 0);
 });
+
+test('uburoomSubtitles refetches pruned text windows and restores dropped cues on rewind', async () => {
+  const originalVttCue = global.VTTCue;
+  const originalFetch = global.fetch;
+  global.VTTCue = class FakeVTTCue {
+    constructor(startTime, endTime, text) {
+      this.startTime = startTime;
+      this.endTime = endTime;
+      this.text = text;
+    }
+  };
+  const { video } = createFakeTrackEnv();
+  const requests = [];
+  const makeCues = (startSec, count) =>
+    Array.from({ length: count }, (_, i) => ({
+      start: startSec + i,
+      end: startSec + i + 0.8,
+      text: 'Cue ' + (startSec + i),
+    }));
+  try {
+    const baseUrl = 'https://example.com/captions-windowed';
+    const windowUrl = baseUrl + '/sub-1/window';
+    global.fetch = async url => {
+      const target = String(url);
+      requests.push(target);
+      if (target === baseUrl) {
+        return new Response(JSON.stringify({ format: 'cues', window: windowUrl }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const parsed = new URL(target);
+      const atMs = Number(parsed.searchParams.get('atMs'));
+      if (atMs < 1500000) {
+        return new Response(JSON.stringify(makeCues(0, 1500)), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Subtitle-Start-Ms': '0',
+            'X-Subtitle-End-Ms': '1500000',
+          },
+        });
+      }
+      return new Response(JSON.stringify(makeCues(2000, 1100)), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Subtitle-Start-Ms': '1500000',
+          'X-Subtitle-End-Ms': '3200000',
+        },
+      });
+    };
+
+    const subs = new uburoomSubtitles(video, () => {});
+    video.currentTime = 5;
+    subs.update({ subtitleUrl: baseUrl, tracks: { subtitleOffset: 0 } });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(subs.cues.length, 1500);
+    assert.ok(subs.cues.some(c => c.text === 'Cue 5'));
+
+    // Jump forward and load 1100 more cues (2600 > 2500) -> prunes earliest 600 cues including Cue 5.
+    video.currentTime = 2500;
+    subs.textWindows.check(2500);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(subs.cues.length, 2000);
+    assert.equal(
+      subs.cues.some(c => c.text === 'Cue 5'),
+      false,
+      'Cue 5 was pruned when total cues exceeded 2500',
+    );
+    assert.equal(subs.textWindows.covered(5000), false, 'pruned earlier window is no longer marked covered');
+
+    // Rewinding to t=5 must refetch the missing window and restore Cue 5.
+    const beforeRewind = requests.length;
+    video.currentTime = 5;
+    subs.textWindows.check(5);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.ok(requests.length > beforeRewind, 'rewind triggered a fresh window fetch');
+    assert.ok(
+      subs.cues.some(c => c.text === 'Cue 5'),
+      'rewound cue is restored instead of dropped by seen cache',
+    );
+    subs.destroy();
+  } finally {
+    global.VTTCue = originalVttCue;
+    global.fetch = originalFetch;
+  }
+});

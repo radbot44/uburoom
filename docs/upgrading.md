@@ -28,4 +28,4 @@ Set `storage.credential_key_file` outside the project or preserve the existing p
 
 Keep prior code and a matched restricted backup. Code rollback alone does not restore schema/state. Crossing incompatible layouts requires a deliberate matched restore and can discard subsequent changes, including sign-outs and revocations. Do not pair a database with a newly generated key.
 
-See the selected code's [configuration example](../config.example.yaml) and the storage baseline above. For restore verification, see [testing](testing.md).
+See the selected code's [configuration example](../config.example.yaml) and the storage baseline above. Note that `secrets.server_password` now requires at least 8 characters when `access.password` is enabled; hand-edited server passwords shorter than eight characters block startup until updated. For restore verification, see [testing](testing.md).

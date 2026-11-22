@@ -459,6 +459,16 @@ class uburoomTextWindows {
       if (this.fetching === pending) this.fetching = undefined;
     }
   }
+  prune(keepStartMs, keepEndMs, droppedCues = []) {
+    const kept = [];
+    for (const item of this.intervals) {
+      const startMs = Math.max(item.startMs, keepStartMs);
+      const endMs = Math.min(item.endMs, keepEndMs);
+      if (endMs > startMs) kept.push({ startMs, endMs });
+    }
+    this.intervals = kept;
+    for (const cue of droppedCues) this.seen.delete(Math.round(cue.end * 1000) + '|' + cue.text);
+  }
   retry() {
     this.failures = 0;
     this.retryAt = 0;
@@ -777,8 +787,16 @@ class uburoomSubtitles {
             if (this.cues.length > 2500) {
               const now = this.mediaTime() - (this.offset || 0);
               this.cues.sort((a, b) => Math.abs(a.start - now) - Math.abs(b.start - now));
-              this.cues.length = 2000;
+              const dropped = this.cues.splice(2000);
               this.cues.sort((a, b) => a.start - b.start);
+              let leftCutMs = 0,
+                rightCutMs = Infinity;
+              const nowMs = Math.round(now * 1000);
+              for (const cue of dropped) {
+                if (cue.start <= now) leftCutMs = Math.max(leftCutMs, Math.min(nowMs, Math.ceil(cue.end * 1000)));
+                else rightCutMs = Math.min(rightCutMs, Math.max(nowMs, Math.floor(cue.start * 1000)));
+              }
+              this.textWindows?.prune(leftCutMs, rightCutMs, dropped);
               replaced = true;
             }
             if (replaced) this.rebuild();

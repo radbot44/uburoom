@@ -162,10 +162,11 @@ class WatchRooms {
   }
   withClosedLock(id, action) {
     const previous = this.closedLocks.get(id) || Promise.resolve();
-    const run = previous.catch(() => {}).then(action);
-    const tail = run.finally(() => {
+    const run = previous.then(action);
+    const cleanup = () => {
       if (this.closedLocks.get(id) === tail) this.closedLocks.delete(id);
-    });
+    };
+    const tail = run.then(cleanup, cleanup);
     this.closedLocks.set(id, tail);
     return run;
   }

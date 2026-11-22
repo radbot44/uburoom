@@ -118,7 +118,11 @@ export function mount(host, deps) {
           : ending.state === 'offer' && ending.next
             ? deps.execute({
                 action: 'queue.offer.start',
-                args: { mediaId: ending.next.mediaId, showId: ending.next.showId },
+                args: {
+                  mediaId: ending.next.mediaId,
+                  showId: ending.next.showId,
+                  ...(ending.next.serverId ? { serverId: ending.next.serverId } : {}),
+                },
               })
             : ending.state === 'finished' && ending.completed
               ? deps.execute({
@@ -131,10 +135,15 @@ export function mount(host, deps) {
 
     startNowBtn.onclick = () => {
       if (!store.room.state?.ending?.next) return;
+      const nextItem = store.room.state.ending.next;
       deps
         .execute({
           action: 'queue.offer.start',
-          args: { mediaId: store.room.state.ending.next.mediaId, showId: store.room.state.ending.next.showId },
+          args: {
+            mediaId: nextItem.mediaId,
+            showId: nextItem.showId,
+            ...(nextItem.serverId ? { serverId: nextItem.serverId } : {}),
+          },
         })
         .catch(error => deps.fail(error.message));
     };
@@ -171,7 +180,7 @@ export function mount(host, deps) {
       artMediaId &&
       artItem.thumb !== 'none' &&
       /^[A-Za-z0-9_-]{1,64}(?::[A-Za-z0-9_-]{1,64})?$/.test(String(artMediaId))
-        ? artMediaId + ':' + artType
+        ? (artItem.serverId || '') + ':' + artMediaId + ':' + artType
         : '';
     const backdrop = $('ending-backdrop');
     if (backdrop && backdrop.dataset.artKey !== artKey) {

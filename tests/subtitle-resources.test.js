@@ -1289,3 +1289,69 @@ line ${seconds}
     SubtitleResources.clear(media);
   }
 });
+
+test('whole-track subtitle load clears failed job after slot-wait timeout so Retry succeeds once capacity frees up', async () => {
+  const gate = Promise.withResolvers();
+  const makeMedia = (id, block) => ({
+    captionVersion: 'cap-' + id,
+    subtitleAbort: new AbortController(),
+    selection: {
+      subtitle: {
+        available: true,
+        delivery: 'ass',
+        external: true,
+        resources: { data: '/sub/' + id + '.ass' },
+      },
+    },
+    provider: {
+      request: async (_path, { signal }) => {
+        if (block) {
+          await Promise.race([
+            gate.promise,
+            new Promise((_, reject) => signal?.addEventListener('abort', () => reject(signal.reason), { once: true })),
+          ]);
+        }
+        return new Response('[Script Info]\nTitle: ' + id + '\n', { status: 200 });
+      },
+    },
+  });
+
+  const m1 = makeMedia('slot-1', true);
+  const m2 = makeMedia('slot-2', true);
+  const m3 = makeMedia('retry-target', false);
+  const origTimeout = AbortSignal.timeout;
+  try {
+    // Occupy both extraction slots.
+    const p1 = SubtitleResources.load(null, m1);
+    const p2 = SubtitleResources.load(null, m2);
+    await new Promise(resolve => setTimeout(resolve, 15));
+
+    // Third whole-track load times out waiting for an extraction slot.
+    AbortSignal.timeout = () => {
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), 25);
+      return ctrl.signal;
+    };
+    let p3;
+    try {
+      p3 = SubtitleResources.load(null, m3);
+    } finally {
+      AbortSignal.timeout = origTimeout;
+    }
+    await assert.rejects(p3);
+    assert.equal(m3.subtitleJob, undefined, 'failed slot-wait job must be cleared so Retry does not replay it');
+
+    // Free capacity and retry on the same media/captionVersion.
+    gate.resolve();
+    await Promise.all([p1, p2]);
+    const retried = await SubtitleResources.load(null, m3);
+    assert.equal(retried.format, 'ass');
+    assert.match(retried.assets.get('data').toString('utf8'), /Title: retry-target/);
+  } finally {
+    AbortSignal.timeout = origTimeout;
+    gate.resolve();
+    SubtitleResources.clear(m1);
+    SubtitleResources.clear(m2);
+    SubtitleResources.clear(m3);
+  }
+});

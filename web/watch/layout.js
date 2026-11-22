@@ -204,16 +204,14 @@ export function mount(host, deps) {
     $('room-bar').hidden = !store.identity.me && $('auth-overlay').hidden;
     const inRoom = Boolean(store.room.selected || store.identity.directRoomEntry);
     const lobbyHidden = inRoom || !store.identity.me;
-    // The Upcoming list refreshes whenever the lobby comes back into view.
-    if (
-      $('room-lobby').hidden &&
-      !lobbyHidden &&
-      store.connection.transport?.ready &&
-      store.identity.me?.durableRooms &&
-      !store.identity.config?.singleRoom
-    )
-      void deps.lobbyEvents.refresh();
+    const opening = $('room-lobby').hidden && !lobbyHidden;
     $('room-lobby').hidden = lobbyHidden;
+    if (opening) {
+      if (store.lobby.knownRooms) deps.renderRoomChoices?.(store.lobby.knownRooms, $('lobby-rooms'));
+      // The Upcoming list refreshes whenever the lobby comes back into view.
+      if (store.connection.transport?.ready && store.identity.me?.durableRooms && !store.identity.config?.singleRoom)
+        void deps.lobbyEvents.refresh();
+    }
   }
   function updateActivityLayout(event) {
     if (event) store.player.layoutMode = event.layout_mode;

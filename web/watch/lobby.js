@@ -161,7 +161,6 @@ export function mount(host, deps) {
     if (store.room.selected) deps.syncRoomUrl(store.room.selected);
     $('lobby-error').textContent = '';
     renderRooms($('rooms'), rooms);
-    if (!$('room-lobby').hidden) renderRoomChoices(rooms, $('lobby-rooms'));
     if ($('room-dialog').open && !store.lobby.creating) {
       renderRoomChoices(rooms);
     }
@@ -183,6 +182,7 @@ export function mount(host, deps) {
         if (store.player.immersive) deps.toggleDrawer(false);
       }
     }
+    if (!$('room-lobby').hidden) renderRoomChoices(rooms, $('lobby-rooms'));
     $('status').textContent =
       !store.identity.config?.singleRoom && !store.room.selected && rooms.length
         ? 'Choose an active room or create your own.'

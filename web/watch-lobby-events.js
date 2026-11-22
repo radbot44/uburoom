@@ -13,6 +13,7 @@ function mount({ request, schedule, join, reopen, changed }) {
     more = $('lobby-events-more'),
     scheduleButton = $('lobby-schedule');
   const popover = (anchor, options) => uburoomPopover.show(anchor, options);
+  const latestEvents = new Map();
   let value,
     expanded = false,
     generation = 0,
@@ -79,6 +80,8 @@ function mount({ request, schedule, join, reopen, changed }) {
     }
   }
   function card(event) {
+    const key = event.key;
+    const current = () => latestEvents.get(key) || event;
     const row = document.createElement('div');
     row.className = 'saved-room lobby-event';
     const copy = document.createElement('div'),
@@ -102,7 +105,7 @@ function mount({ request, schedule, join, reopen, changed }) {
         textButton(
           'Join',
           'login',
-          button => guarded(button, () => join(event.roomId)),
+          button => guarded(button, () => join(current().roomId)),
           event.live ? 'primary' : 'quiet',
         ),
       );
@@ -111,7 +114,7 @@ function mount({ request, schedule, join, reopen, changed }) {
         textButton(
           'Open room',
           undefined,
-          button => guarded(button, () => reopen(event.roomId)),
+          button => guarded(button, () => reopen(current().roomId)),
           event.live ? 'primary' : 'quiet',
         ),
       );
@@ -122,12 +125,13 @@ function mount({ request, schedule, join, reopen, changed }) {
       actions.append(waiting);
     }
     if (event.canManage) {
-      if (event.canEdit) actions.append(iconButton('Edit event', 'edit', () => schedule({ event, onChange: refresh })));
+      if (event.canEdit)
+        actions.append(iconButton('Edit event', 'edit', () => schedule({ event: current(), onChange: refresh })));
       if (event.invite)
         actions.append(
           iconButton('Copy invite', 'copy', button =>
             guarded(button, async () => {
-              await navigator.clipboard.writeText(event.invite);
+              await navigator.clipboard.writeText(current().invite);
               popover(button, { text: 'Invite link copied', state: 'success' });
             }),
           ),
@@ -135,17 +139,18 @@ function mount({ request, schedule, join, reopen, changed }) {
       actions.append(
         iconButton('Cancel event', 'trash', button =>
           guarded(button, async () => {
+            const latest = current();
             const release = button.closest('dialog') ? dialogs.hold(button.closest('dialog')) : () => {};
             try {
-              const where = event.discord ? ' It is also canceled in Discord.' : '';
-              if (!(await dialogs.confirm('Cancel “' + event.title + '”?' + where, { destructive: true }))) return;
+              const where = latest.discord ? ' It is also canceled in Discord.' : '';
+              if (!(await dialogs.confirm('Cancel “' + latest.title + '”?' + where, { destructive: true }))) return;
             } finally {
               release();
             }
             popover(button, { text: 'Canceling…', state: 'loading' });
             const result = await request('room.events.command', {
-              roomId: event.roomId,
-              args: { action: 'room.event.cancel', eventKey: event.key },
+              roomId: latest.roomId,
+              args: { action: 'room.event.cancel', eventKey: latest.key },
             });
             if (result.status !== 'applied') throw new Error(result.message || 'The event could not be canceled.');
             await refresh();
@@ -176,6 +181,8 @@ function mount({ request, schedule, join, reopen, changed }) {
   }
   function render() {
     const events = value?.events || [];
+    latestEvents.clear();
+    for (const event of events) latestEvents.set(event.key, event);
     scheduleButton.hidden = !value?.canSchedule;
     section.hidden = !events.length;
     const shownEvents = expanded ? events : events.slice(0, SHOWN);

@@ -1132,3 +1132,32 @@ test('single-room leadership resolves single_room_leader and serverOperator.iden
     'explicit rooms.single_room_leader outranks serverOperator and ownerId',
   );
 });
+
+test('explicit legacy Plex single-room leader is not replaced by a verified operator on upgrade', async t => {
+  const f = await fixture(t, {
+    singleRoom: true,
+    ownerId: '',
+    singleRoomLeaderPlexId: '102',
+    serverOperator: { identities: [{ provider: 'uburoom', subject: 'verified-op' }] },
+    accessPolicy: { ...accessPolicy({ accounts: true }), plex: true },
+  });
+  const legacyLeader = f.app.registry.resolve('plex', '102', 'Legacy Plex Leader', true);
+  const verifiedOp = f.app.registry.resolve('uburoom', 'verified-op', 'Verified Operator', true);
+  assert.notEqual(legacyLeader.id, verifiedOp.id, 'legacy Plex leader and verified operator are distinct identities');
+  assert.ok(f.app.registry.identity('uburoom', 'verified-op')?.verified);
+
+  // Persist an existing single room owned by the legacy Plex leader before upgrade/ensureSingle.
+  const persisted = await f.app.watch.roomState.store.create(legacyLeader.id, { name: 'Room', visibility: 'public' });
+  f.app.registry.meta('singleRoomId', persisted.id);
+  await f.app.registry.flush();
+
+  const caller = f.app.registry.resolve('discord', f.provider.subjects.guest, 'Caller');
+  const roomId = await f.app.watch.roomState.ensureSingle({ userId: caller.id });
+  assert.equal(roomId, persisted.id, 'reuses persisted single room');
+  const ensured = f.app.watch.roomState.store.get(roomId);
+  assert.equal(
+    ensured.creatorId,
+    legacyLeader.id,
+    'explicit rooms.single_room_leader_plex_id must not be replaced by a verified operator',
+  );
+});

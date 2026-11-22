@@ -41,6 +41,10 @@ function formatEntrySubtitle(entry) {
   return entry.parentTitle || '';
 }
 
+function sourceMediaKey(serverId, mediaId) {
+  return String(serverId || '') + '\0' + String(mediaId || '');
+}
+
 module.exports = {
   REJOIN,
   ROOM_KEYS,
@@ -50,4 +54,5 @@ module.exports = {
   expired,
   later,
   formatEntrySubtitle,
+  sourceMediaKey,
 };

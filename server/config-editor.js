@@ -258,16 +258,27 @@ function serializeYaml(doc, source = '', options = {}) {
   return next;
 }
 
-/** Ensures at most `keep` routine backup folders remain beside the config file; preserved recovery backups stay untouched. */
+/** Ensures at most `keep` routine backup folders owned by `file` remain beside it; other configs, ambiguous older backups, and preserved recovery backups stay untouched. */
 async function pruneBackups(file, currentDirectory, keep = 3) {
   const parent = path.dirname(file);
+  const ownerName = path.basename(file);
+  const sameOwner = value =>
+    process.platform === 'win32' ? value.toLowerCase() === ownerName.toLowerCase() : value === ownerName;
   const entries = await fs.readdir(parent, { withFileTypes: true }).catch(() => []);
   const candidates = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !entry.name.startsWith('.uburoom-config-')) continue;
     const dir = path.join(parent, entry.name);
     const contents = new Set(await fs.readdir(dir).catch(() => []));
-    if (!contents.has('original.yaml') || contents.has('replacement.yaml') || contents.has('.preserve')) continue;
+    if (
+      !contents.has('original.yaml') ||
+      contents.has('replacement.yaml') ||
+      contents.has('.preserve') ||
+      !contents.has('.owner')
+    )
+      continue;
+    const owner = await fs.readFile(path.join(dir, '.owner'), 'utf8').catch(() => '');
+    if (!owner || !sameOwner(owner.trim())) continue;
     const stat = await fs.lstat(path.join(dir, 'original.yaml'), { bigint: true }).catch(() => undefined);
     if (!stat) continue;
     candidates.push({ dir, isCurrent: dir === currentDirectory, mtimeNs: stat.mtimeNs, name: entry.name });
@@ -689,6 +700,7 @@ function createConfigEditor(selectedPath = configPath()) {
           await protectDirectory(directory);
           await writePrivate(backupPath, original.bytes);
           if (revision(await fs.readFile(backupPath)) !== original.revision) throw failure('CONFIG_IO');
+          await writePrivate(path.join(directory, '.owner'), Buffer.from(path.basename(file) + '\n', 'utf8'));
           backupReady = true;
           await writePrivate(replacement, bytes, original);
           if (revision(await fs.readFile(replacement)) !== nextRevision) throw failure('CONFIG_IO');

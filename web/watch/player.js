@@ -433,6 +433,13 @@ export function mount(host, deps) {
     deps.renderBrowsing();
     deps.renderVisibility();
     deps.placeRoomBar();
+    if (
+      (reason === 'kicked' || reason === 'room-poll') &&
+      !store.room.selected &&
+      store.connection.transport?.ready &&
+      !store.identity.me?.guestRoomId
+    )
+      void deps.refreshRooms?.().catch(() => {});
     deps.renderTransport();
     document.title = 'uburoom watch';
     deps.fail(message);

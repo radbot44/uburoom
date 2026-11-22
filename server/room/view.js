@@ -22,7 +22,7 @@ const {
   settleRoomTimeline,
   snapshotReadiness,
 } = require('../../shared/sync');
-const { REJOIN, formatEntrySubtitle } = require('./common');
+const { REJOIN, formatEntrySubtitle, sourceMediaKey } = require('./common');
 
 // A number for each object, so a stamp can tell one stream record from its replacement.
 const references = new WeakMap();
@@ -248,7 +248,7 @@ module.exports = {
       completed?.type === 'episode' &&
       queueSummary.autoQueue.mode === 'off' &&
       room.endingOffer?.key !== completed?.id + ':' + queueSummary?.queueRevision;
-    const needsSummary = next && !room.endingMeta?.has(next.mediaId);
+    const needsSummary = next && !room.endingMeta?.has(sourceMediaKey(next.serverId, next.mediaId));
     if (needsOffer || needsSummary) void this.refreshEndingMeta(room);
   },
   /**
@@ -384,6 +384,7 @@ module.exports = {
         const endingOffer =
           room.endingOffer?.key === completed?.id + ':' + queueSummary?.queueRevision ? room.endingOffer.offer : null;
         const hasInterstitial = !room.media && !!(completed || next || endingOffer);
+        const nextMeta = next ? room.endingMeta?.get(sourceMediaKey(next.serverId, next.mediaId)) : undefined;
         const ending = hasInterstitial
           ? {
               state: room.autoplayCountdown ? 'countdown' : next ? 'upNext' : endingOffer ? 'offer' : 'finished',
@@ -391,6 +392,7 @@ module.exports = {
                 ? {
                     entryId: completed.id,
                     mediaId: completed.mediaId,
+                    ...(completed.serverId ? { serverId: completed.serverId } : {}),
                     type: completed.type,
                     title: completed.title,
                     subtitle: formatEntrySubtitle(completed),
@@ -401,13 +403,14 @@ module.exports = {
                 ? {
                     entryId: next.id,
                     mediaId: next.mediaId,
+                    ...(next.serverId ? { serverId: next.serverId } : {}),
                     type: next.type,
                     title: next.title,
-                    subtitle: room.endingMeta?.get(next.mediaId)?.subtitle || formatEntrySubtitle(next),
+                    subtitle: nextMeta?.subtitle || formatEntrySubtitle(next),
                     duration: next.duration,
-                    summary: room.endingMeta?.get(next.mediaId)?.summary || '',
-                    hasLandscape: Boolean(room.endingMeta?.get(next.mediaId)?.hasLandscape ?? next.hasLandscape),
-                    hasPoster: Boolean(room.endingMeta?.get(next.mediaId)?.hasPoster ?? next.hasPoster),
+                    summary: nextMeta?.summary || '',
+                    hasLandscape: Boolean(nextMeta?.hasLandscape ?? next.hasLandscape),
+                    hasPoster: Boolean(nextMeta?.hasPoster ?? next.hasPoster),
                     source:
                       next.provenance === 'following' ||
                       next.provenance === 'random' ||

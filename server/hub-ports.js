@@ -57,11 +57,11 @@ function createHubPorts({
               'Assigned account',
               false,
             );
+          if (config.singleRoomLeaderPlexId)
+            return registry.resolve('plex', config.singleRoomLeaderPlexId, 'Assigned account', false);
           const operators = config.serverOperator?.identities || [];
           const verifiedOp = operators.find(op => registry.identity(op.provider, op.subject)?.verified);
           if (verifiedOp) return registry.resolve(verifiedOp.provider, verifiedOp.subject, 'Assigned account', false);
-          if (config.singleRoomLeaderPlexId)
-            return registry.resolve('plex', config.singleRoomLeaderPlexId, 'Assigned account', false);
           if (operators.length && !config.ownerId)
             return registry.resolve(operators[0].provider, operators[0].subject, 'Assigned account', false);
           if (config.accessPolicy?.discord !== false || !config.accessPolicy?.plex)

@@ -156,3 +156,237 @@ test('watchPage renders authenticated and unauthenticated bootstrap data safely 
     /watch\.html template target missing/,
   );
 });
+
+test('Watch Night upcoming card description-only update preserves DOM node while Edit uses the latest revision', async t => {
+  const lobbyEventsMod = await import('../web/watch-lobby-events.js');
+  const prevDoc = global.document;
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  t.after(() => {
+    global.document = prevDoc;
+  });
+
+  function makeNode(tag) {
+    const node = {
+      tagName: tag.toUpperCase(),
+      className: '',
+      id: '',
+      hidden: false,
+      disabled: false,
+      textContent: '',
+      title: '',
+      dataset: {},
+      attributes: {},
+      children: [],
+      listeners: {},
+      parentNode: null,
+      get firstChild() {
+        return this.children[0] || null;
+      },
+      get nextSibling() {
+        if (!this.parentNode) return null;
+        const idx = this.parentNode.children.indexOf(this);
+        return idx >= 0 ? this.parentNode.children[idx + 1] || null : null;
+      },
+      setAttribute(k, v) {
+        this.attributes[k] = String(v);
+      },
+      getAttribute(k) {
+        return this.attributes[k] ?? null;
+      },
+      addEventListener(type, fn) {
+        this.listeners[type] = fn;
+      },
+      append(...items) {
+        for (const item of items) {
+          if (typeof item === 'string') {
+            this.textContent += item;
+            continue;
+          }
+          if (item.parentNode) item.remove();
+          item.parentNode = this;
+          this.children.push(item);
+        }
+      },
+      prepend(...items) {
+        for (const item of items.reverse()) {
+          if (typeof item === 'string') continue;
+          if (item.parentNode) item.remove();
+          item.parentNode = this;
+          this.children.unshift(item);
+        }
+      },
+      insertBefore(item, ref) {
+        if (item.parentNode) item.remove();
+        item.parentNode = this;
+        const idx = ref ? this.children.indexOf(ref) : -1;
+        if (idx >= 0) this.children.splice(idx, 0, item);
+        else this.children.push(item);
+      },
+      remove() {
+        if (!this.parentNode) return;
+        const idx = this.parentNode.children.indexOf(this);
+        if (idx >= 0) this.parentNode.children.splice(idx, 1);
+        this.parentNode = null;
+      },
+      replaceWith(next) {
+        if (!this.parentNode) return;
+        const parent = this.parentNode;
+        const idx = parent.children.indexOf(this);
+        if (idx >= 0) {
+          next.parentNode = parent;
+          parent.children[idx] = next;
+          this.parentNode = null;
+        }
+      },
+      querySelector(sel) {
+        if (sel === 'svg') return this.children.find(c => c.tagName === 'SVG') || null;
+        return null;
+      },
+      querySelectorAll(sel) {
+        if (sel === ':scope > .lobby-event') return this.children.filter(c => c.className.includes('lobby-event'));
+        return [];
+      },
+    };
+    return node;
+  }
+
+  const byId = new Map([
+    ['lobby-events', makeNode('section')],
+    ['lobby-event-list', makeNode('div')],
+    ['lobby-events-more', makeNode('button')],
+    ['lobby-schedule', makeNode('button')],
+    ['room-lobby', Object.assign(makeNode('div'), { hidden: true })],
+  ]);
+  global.document = {
+    getElementById: id => byId.get(id),
+    createElement: tag => makeNode(tag),
+    createElementNS: (_ns, tag) => makeNode(tag),
+  };
+
+  let editedEvent;
+  const mounted = lobbyEventsMod.mount({
+    request: async () => ({ canSchedule: true, events: [] }),
+    schedule: ({ event }) => {
+      editedEvent = event;
+    },
+    join: async () => {},
+    reopen: async () => {},
+  });
+
+  const baseEvent = {
+    key: 'evt-1',
+    title: 'Friday Watch Night',
+    description: 'Original description',
+    eventVersion: 1,
+    roomId: 'room-1',
+    roomName: 'Friday Watch Night',
+    start: '2026-12-01T20:00:00.000Z',
+    end: '2026-12-01T22:00:00.000Z',
+    live: false,
+    active: true,
+    canManage: true,
+    canEdit: true,
+    invite: 'https://example.test/join/abc',
+  };
+  mounted.hydrate({ canSchedule: true, events: [baseEvent] });
+  const list = byId.get('lobby-event-list');
+  assert.equal(list.children.length, 1);
+  const firstCard = list.children[0];
+  const actions = firstCard.children[1];
+  const editButton = actions.children.find(btn => btn.getAttribute('aria-label') === 'Edit event');
+  assert.ok(editButton, 'Edit event button rendered');
+
+  // Description-only update bumps eventVersion without changing visible card fields.
+  mounted.hydrate({
+    canSchedule: true,
+    events: [{ ...baseEvent, description: 'Updated description', eventVersion: 2 }],
+  });
+  assert.equal(list.children[0], firstCard, 'description-only update preserves existing card DOM node');
+
+  editButton.listeners.click();
+  assert.equal(editedEvent?.description, 'Updated description', 'Edit opens with updated description');
+  assert.equal(editedEvent?.eventVersion, 2, 'Edit opens with latest eventVersion');
+});
+
+test('opening the lobby when the current room becomes unavailable renders the latest room list immediately', async t => {
+  const { mountModule, stubDocument } = require('./helpers/watch-module');
+  const lobbyMod = await import('../web/watch/lobby.js');
+  const layoutMod = await import('../web/watch/layout.js');
+
+  const prevMatchMedia = global.matchMedia;
+  const prevResizeObserver = global.ResizeObserver;
+  const prevScrollY = global.scrollY;
+  const prevAddEventListener = global.addEventListener;
+  global.matchMedia = () => ({ matches: false, addEventListener() {} });
+  global.ResizeObserver = class {
+    observe() {}
+    disconnect() {}
+  };
+  global.scrollY = 0;
+  global.addEventListener = () => {};
+  t.after(() => {
+    if (prevMatchMedia === undefined) delete global.matchMedia;
+    else global.matchMedia = prevMatchMedia;
+    if (prevResizeObserver === undefined) delete global.ResizeObserver;
+    else global.ResizeObserver = prevResizeObserver;
+    if (prevScrollY === undefined) delete global.scrollY;
+    else global.scrollY = prevScrollY;
+    if (prevAddEventListener === undefined) delete global.addEventListener;
+    else global.addEventListener = prevAddEventListener;
+  });
+
+  const rendered = [];
+  const doc = stubDocument({ createComment: () => ({ after() {} }) });
+  doc.getElementById('room-lobby').hidden = true;
+  doc.getElementById('lobby-rooms').id = 'lobby-rooms';
+
+  let layoutApi;
+  let lobbyApi;
+  let lobbyEventsRefreshed = 0;
+  const mounted = mountModule(lobbyMod, {
+    document: doc,
+    me: { id: 'u1', durableRooms: true },
+    config: { singleRoom: false },
+    selected: 'room-old',
+    knownRooms: [{ id: 'room-old', name: 'Old Room', viewers: 1 }],
+    transport: { ready: true, connectionId: 'c1' },
+    syncRoomUrl: () => {},
+    diagnostics: { record() {} },
+    renderEnding: () => {},
+    toggleDrawer: () => {},
+    library: { setRoom() {}, setBusy() {} },
+    queue: { clear() {} },
+    renderVisibility: () => {},
+    renderTransport: () => {},
+    renderScheduleButton: () => {},
+    placeRoomBar: () => layoutApi?.placeRoomBar(),
+    lobbyEvents: { refresh: async () => lobbyEventsRefreshed++ },
+    unavailable: () => {
+      // Simulate player.unavailable() calling placeRoomBar() which unhides #room-lobby.
+      layoutApi.placeRoomBar();
+    },
+  });
+  t.after(() => mounted.restore());
+  lobbyApi = mounted.api;
+
+  // Wrap renderRoomChoices to observe what is rendered into #lobby-rooms.
+  const origRender = lobbyApi.renderRoomChoices;
+  mounted.deps.renderRoomChoices = (rooms, container) => {
+    if (container === doc.getElementById('lobby-rooms')) {
+      rendered.push(rooms.map(r => r.id));
+    }
+    return origRender(rooms, container);
+  };
+  layoutApi = layoutMod.mount(doc, mounted.deps);
+
+  // Start inside 'room-old' with lobby hidden.
+  assert.equal(doc.getElementById('room-lobby').hidden, true);
+
+  // Server sends updated room list without 'room-old'.
+  lobbyApi.applyRooms([{ id: 'room-new', name: 'Fresh Room', viewers: 3 }]);
+
+  assert.equal(doc.getElementById('room-lobby').hidden, false, 'lobby opened when current room became unavailable');
+  assert.ok(rendered.length >= 1, 'lobby room list rendered immediately');
+  assert.deepEqual(rendered.at(-1), ['room-new'], 'lobby displays the latest room list');
+  assert.equal(lobbyEventsRefreshed, 1, 'lobby upcoming events refreshed on lobby open');
+});

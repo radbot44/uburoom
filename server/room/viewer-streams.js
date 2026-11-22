@@ -16,7 +16,7 @@ const Engine = require('../../shared/engine.mjs');
 const { PlaybackError } = require('../errors');
 const { PlaybackTracking } = require('../playback-tracking');
 const SubtitleResources = require('../subtitle-resources');
-const { TRANSCODE_PING_MS, expired } = require('./common');
+const { TRANSCODE_PING_MS, expired, sourceMediaKey } = require('./common');
 
 /**
  * Each viewer's own stream: preparation, quality, preloads, retries and fallback delivery.
@@ -180,7 +180,7 @@ module.exports = {
     }
     const entries = [...(room.queueEntries || [])];
     const current = fromProvider(room.media) ? room.media.roomServerId : undefined;
-    if (room.media && !entries.some(item => item.mediaId === room.media.id))
+    if (room.media && !entries.some(item => (item.serverId ?? current) === current && item.mediaId === room.media.id))
       entries.unshift({ id: room.media.id, mediaId: room.media.id, title: room.media.title, serverId: current });
     // Each entry is checked by the provider it is recorded under: the room's video through
     // the scope this viewer watches it with, the rest of the queue through their own.
@@ -199,7 +199,7 @@ module.exports = {
         if (!scope.availability) continue;
         const status = await scope.availability(ids);
         availability ||= new Map();
-        for (const [id, available] of status) availability.set(id, available);
+        for (const [id, available] of status) availability.set(sourceMediaKey(serverId, id), available);
         this.providerResponded();
       } catch (error) {
         if (!this.providerFailed(error)) throw error;
@@ -209,9 +209,14 @@ module.exports = {
       if (room.mediaVersion !== version || room.viewers.get(viewerId) !== viewer) return;
       if (this.roomState.queue.room(room.roomId).queueRevision !== queueRevision) return;
       viewer.unavailableMedia = entries
-        .filter(item => availability.get(item.mediaId) === false)
-        .map(({ id, mediaId, title }) => ({ id, mediaId, title }));
-      if (room.media && availability.get(room.media.id) === false) {
+        .filter(item => availability.get(sourceMediaKey(item.serverId ?? current, item.mediaId)) === false)
+        .map(({ id, mediaId, title, serverId }) => ({
+          id,
+          mediaId,
+          title,
+          ...((serverId ?? current) ? { serverId: serverId ?? current } : {}),
+        }));
+      if (room.media && availability.get(sourceMediaKey(current, room.media.id)) === false) {
         if (!viewer.media?.unavailable) {
           this.tracking.end(viewer, 'media-unavailable');
           void this.reporting?.end(viewer, 'media-unavailable');
@@ -466,10 +471,22 @@ module.exports = {
         viewer.directFileResolved = undefined;
         adopted = true;
         if (media.unavailable) {
+          const mediaServerId = fromProvider(media) ? media.roomServerId : undefined;
           const entry = this.roomState.queue.current(room.roomId);
+          const matchingEntry =
+            entry && entry.mediaId === media.id && (entry.serverId ?? mediaServerId) === mediaServerId
+              ? entry
+              : undefined;
           viewer.unavailableMedia = [
-            ...(viewer.unavailableMedia || []).filter(item => item.mediaId !== media.id),
-            { id: entry?.id || media.id, mediaId: media.id, title: media.title },
+            ...(viewer.unavailableMedia || []).filter(
+              item => item.mediaId !== media.id || (item.serverId ?? undefined) !== mediaServerId,
+            ),
+            {
+              id: matchingEntry?.id || media.id,
+              mediaId: media.id,
+              title: media.title,
+              ...(mediaServerId ? { serverId: mediaServerId } : {}),
+            },
           ];
         }
         // A viewer with no stream can never report ready, so the room stops waiting for them
