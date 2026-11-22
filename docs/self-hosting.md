@@ -252,7 +252,7 @@ Persistent rooms reopen paused after a restart. Auto-resume requires previous pl
 
 Closed inactive rooms are cleaned up after 180 days while more than 10 rooms are retained (`inactive_days: 0` disables inactivity cleanup). Empty disposable rooms may be removed earlier; keep-when-empty, an upcoming watch night, an unfinished bookmark, queued items and auto-queueing can retain a room. Queue/history retention does not imply a Plex watched-state update.
 
-`rooms.single_room: true` uses one fixed room called **Room**, with no regular create/rename/delete/transfer flow. Its leader follows the configured Plex/Discord owner policy. Reset clears playback, queue and history but retains room/account/key identity. Admin privileges require explicit Admin mode; host permission alone is not server administration.
+`rooms.single_room: true` uses one fixed room called **Room**, with no regular create/rename/delete/transfer flow. Its leader follows the configured owner/operator policy. Reset clears playback, queue, history, invites, invite blocks, guest sessions, and scheduled watch-night events, turns guests off, rerolls the invite code, and restores configured default hosts while retaining room/account/key identity. Admin privileges require explicit Admin mode; host permission alone is not server administration.
 
 See [rooms and queues](rooms-and-queues.md) for detailed recovery, cleanup and permissions behavior.
 

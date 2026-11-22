@@ -60,6 +60,7 @@ export function beginReadiness(room, now = Date.now(), waitMs = READINESS_WAIT_M
   room.readinessSince = monoNow;
   room.readinessDeadline = room.readinessSince + waitMs;
   room.readinessTimedOut = false;
+  room.blockerRevealed = false;
   room.readinessStartAt = now + (room.viewers.size > 1 ? INITIAL_START_LEAD_MS : 0);
 }
 
@@ -101,6 +102,7 @@ function clearBufferingGate(room) {
   room.bufferingViewerId = undefined;
   room.initialGate = false;
   room.readinessTimedOut = false;
+  room.blockerRevealed = false;
   room.readinessStartAt = undefined;
 }
 
@@ -124,6 +126,17 @@ export function settle(room, now = Date.now(), monoNow = defaultMonoNow()) {
     room.changedAt = room.pauseAt;
     room.pauseAt = undefined;
     setPaused(room, true);
+    room.revision++;
+  }
+  if (
+    !room.recovery &&
+    room.initialGate &&
+    !room.manualPaused &&
+    !room.blockerRevealed &&
+    Number.isFinite(room.readinessSince) &&
+    monoNow - room.readinessSince >= READINESS_BLOCKER_REVEAL_MS
+  ) {
+    room.blockerRevealed = true;
     room.revision++;
   }
   if (
@@ -439,6 +452,7 @@ export function applyTimelineCommand(room, command, options = {}) {
   room.position = oldPosition;
   room.changedAt = now;
   if (pausePending && action.startsWith('media.seek.')) setPaused(room, true);
+  const previousStartAt = room.startAt > now ? room.startAt : 0;
   room.pauseAt = undefined;
   room.startAt = undefined;
 
@@ -458,19 +472,20 @@ export function applyTimelineCommand(room, command, options = {}) {
       setPaused(room, room.initialGate);
       if (options.autoplayVersion === room.mediaVersion && !room.initialGate) {
         room.startAt = Math.max(
+          previousStartAt,
           room.viewers.size > 1 ? room.readinessStartAt || 0 : 0,
           now + controlLead(room, monoNow),
         );
       } else if (!room.initialGate && !wasPlaying) {
-        room.startAt = now + controlLead(room, monoNow);
+        room.startAt = Math.max(previousStartAt, now + controlLead(room, monoNow));
       }
       break;
     case 'media.toggle':
-      if (room.position >= duration - 0.1) {
+      room.manualPaused = !pausePending && (!getPaused(room) || (room.initialGate && !room.manualPaused));
+      if (!room.manualPaused && room.position >= duration - 0.1) {
         room.position = 0;
         setPaused(room, true);
       }
-      room.manualPaused = !pausePending && (!getPaused(room) || (room.initialGate && !room.manualPaused));
       if (!room.manualPaused) clearHumanCheck(room);
       if (room.initialGate) {
         if (room.manualPaused) room.readinessStartAt = undefined;
@@ -549,6 +564,7 @@ export const ROOM_STATE_KEYS = Object.freeze([
   'readinessSince',
   'readinessDeadline',
   'readinessTimedOut',
+  'blockerRevealed',
   'readinessStartAt',
   'humanCheck',
   'position',
@@ -1018,6 +1034,7 @@ function join(room, event, ctx) {
     actor: { ...actor },
     ...(event.rtts ? { rtts: event.rtts.map(sample => ({ ...sample })) } : {}),
   });
+  ctx.extensions.joined?.(viewer, event, ctx);
   room.viewers.set(viewerId, viewer);
   if (saved) ctx.emit('viewer-reconnected', { viewerId, saved });
   if (!oldViewer) {
@@ -1025,6 +1042,7 @@ function join(room, event, ctx) {
     promoteGroupReadinessLead(room, now);
     if (room.initialGate && !room.bufferingViewerId) room.initialViewers.add(viewerId);
   }
+  ctx.emit('viewer-admitted', { viewerId, event });
   return viewerId;
 }
 
@@ -1260,21 +1278,36 @@ export function reduce(state, event, context) {
  * readiness deadline, a presence lapse, the end of a reconnect grace and an unused
  * room expiring. Undefined when nothing is due.
  */
-export function nextDeadline(room, now, monoNow) {
-  if (room.closed) return undefined;
+function nextTimerDeadline(room, now, monoNow) {
+  if (room.closed) return { due: undefined, exact: false };
   let due = Infinity;
-  const consider = at => {
-    if (Number.isFinite(at) && at < due) due = at;
+  let exact = false;
+  const consider = (at, isExact = false) => {
+    if (!Number.isFinite(at)) return;
+    if (at < due || (at === due && isExact)) {
+      due = at;
+      exact = isExact;
+    }
   };
-  if (room.pauseAt) consider(room.pauseAt);
-  if (!room.recovery && startPending(room) && Number.isFinite(room.readinessDeadline))
-    consider(now + (room.readinessDeadline - monoNow));
+  if (room.pauseAt) consider(room.pauseAt, true);
+  if (!room.recovery && startPending(room)) {
+    if (
+      !room.blockerRevealed &&
+      Number.isFinite(room.readinessSince) &&
+      monoNow - room.readinessSince < READINESS_BLOCKER_REVEAL_MS
+    )
+      consider(now + (room.readinessSince + READINESS_BLOCKER_REVEAL_MS - monoNow), true);
+    if (Number.isFinite(room.readinessDeadline)) consider(now + (room.readinessDeadline - monoNow));
+  }
   if (room.humanCheck && Number.isFinite(room.humanCheck.expiresAt)) consider(room.humanCheck.expiresAt);
   for (const viewer of room.viewers.values()) consider(viewer.at + PRESENCE_TIMEOUT_MS + 1);
   for (const saved of room.disconnectedViewers.values()) consider(saved.expires);
   if (!room.hadViewers) consider(room.lastActivity + IDLE_ROOM_TIMEOUT_MS + 1);
   if (room.checkpointAt !== undefined) consider(room.checkpointAt);
-  return due === Infinity ? undefined : due;
+  return { due: due === Infinity ? undefined : due, exact };
+}
+export function nextDeadline(room, now, monoNow) {
+  return nextTimerDeadline(room, now, monoNow).due;
 }
 
 // ---------------------------------------------------------------------------
@@ -1301,6 +1334,7 @@ const visibleStamp = room =>
     room.waitingForHost,
     room.initialGate,
     room.readinessTimedOut,
+    !!room.blockerRevealed,
     room.manualPaused,
     room.startAt,
     room.pauseAt,
@@ -1375,22 +1409,23 @@ export function createRoomCoordinator(options) {
   const refused = (message, status = undefined) => ({ error: failure(message, status), effects: [] });
 
   // Deadlines are acted on at the timer resolution, as one periodic sweep would.
-  function align(at, current) {
-    if (at <= current) return current + (resolution || 1000);
-    if (!resolution) return at;
+  function align(at, current, exact = false) {
+    if (at <= current) return current;
+    if (exact || !resolution) return at;
     return origin + Math.ceil((at - origin) / resolution) * resolution;
   }
   function arm(room) {
     const id = room.roomId,
       existing = timers.get(id),
       current = now();
-    const due = rooms.get(id) === room ? nextDeadline(room, current, monoNow()) : undefined;
+    const { due, exact } =
+      rooms.get(id) === room ? nextTimerDeadline(room, current, monoNow()) : { due: undefined, exact: false };
     if (due === undefined) {
       if (existing) clearTimer(existing.timer);
       timers.delete(id);
       return;
     }
-    const at = align(due, current);
+    const at = align(due, current, exact);
     // An earlier timer is kept: it finds nothing due yet and arms the next one.
     if (existing && existing.at <= at) return;
     if (existing) clearTimer(existing.timer);
@@ -1417,6 +1452,7 @@ export function createRoomCoordinator(options) {
     }
   }
   function finish(room, result, type) {
+    if (result.error) return result;
     const quiet =
       !options.onChange ||
       type === 'touch' ||
@@ -1434,6 +1470,13 @@ export function createRoomCoordinator(options) {
     if (!quiet) changed(room, type);
     return result;
   }
+  const safeResolve = (resolve, value) => {
+    try {
+      resolve(value);
+    } catch (error) {
+      report(error);
+    }
+  };
   // Reduces one event; returns its result, or a promise of it while persisting.
   function process(room, event, syncOnly) {
     if (event.type === PUBLISH) {
@@ -1487,7 +1530,7 @@ export function createRoomCoordinator(options) {
     while (!mailbox.busy && mailbox.queue.length) {
       const { event, settle: resolve, syncOnly } = mailbox.queue.shift();
       if (rooms.get(room.roomId) !== room) {
-        resolve(refused('Room unavailable'));
+        safeResolve(resolve, refused('Room unavailable'));
         continue;
       }
       mailbox.busy = true;
@@ -1496,20 +1539,23 @@ export function createRoomCoordinator(options) {
         outcome = process(room, event, syncOnly);
       } catch (error) {
         mailbox.busy = false;
-        resolve({ error, effects: [] });
+        safeResolve(resolve, { error, effects: [] });
         continue;
       }
       if (typeof outcome?.then === 'function') {
         const settle = result => {
           mailbox.busy = false;
-          resolve(result);
-          drain(room, mailbox);
+          try {
+            safeResolve(resolve, result);
+          } finally {
+            drain(room, mailbox);
+          }
         };
         outcome.then(settle, error => settle({ error, effects: [] }));
         return;
       }
       mailbox.busy = false;
-      resolve(outcome);
+      safeResolve(resolve, outcome);
     }
   }
   function submit(room, event, syncOnly = false) {

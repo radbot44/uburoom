@@ -128,14 +128,28 @@ class Accounts {
       }
   }
   transaction(action) {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const result = action();
-      this.db.exec('COMMIT');
-      return result;
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
+    const isBusy = error =>
+      Boolean(error && (error.errcode === 5 || /SQLITE_BUSY|database is locked/i.test(error.message || '')));
+    for (let attempt = 0; ; attempt++) {
+      let begun = false;
+      try {
+        this.db.exec('BEGIN IMMEDIATE');
+        begun = true;
+        const result = action();
+        this.db.exec('COMMIT');
+        return result;
+      } catch (error) {
+        if (begun) {
+          try {
+            this.db.exec('ROLLBACK');
+          } catch {}
+        }
+        if (isBusy(error) && attempt < 4) {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5 * (attempt + 1));
+          continue;
+        }
+        throw error;
+      }
     }
   }
   /**

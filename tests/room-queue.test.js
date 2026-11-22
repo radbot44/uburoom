@@ -863,3 +863,35 @@ test('summary entries name their video exactly as queue and history entries do',
   assert.deepEqual(video(summary.current), video(sampleItem(2)));
   assert.equal(summary.current.serverId, 'plex-server-1');
 });
+
+test('autoQueue.next assigns a stable UUID and preserves serverId:mediaId skipped items across manual queue edits', async t => {
+  const f = fixture(t);
+  const room = await f.store.create(f.creator);
+  const corpus = [sampleItem(1), sampleItem(2), sampleItem(3)];
+
+  await f.queue.configureAuto(room.id, f.creator, {
+    mode: 'following',
+    scope: { type: 'show', id: '100', serverId: 'plex-server-1' },
+  });
+  const firstGen = f.queue.computeAutoNext(room.id, corpus);
+  assert.match(firstGen.next.id, /^[0-9a-f]{8}-[0-9a-f]{4}-/);
+  const secondGen = f.queue.computeAutoNext(room.id, corpus);
+  assert.equal(secondGen.next.id, firstGen.next.id, 'stable UUID is preserved while same candidate stays next');
+
+  // Skipping records serverId:mediaId in autoQueue.skipped and advances to 102
+  const skipped = await f.queue.skipAuto(room.id, f.creator, corpus);
+  assert.equal(skipped.next.mediaId, '102');
+  assert.notEqual(skipped.next.id, firstGen.next.id);
+  assert.ok(f.store.get(room.id).autoQueue.skipped.includes('plex-server-1:101'));
+
+  // Manual queue.add does NOT clear skipped items or resurrect 101
+  const added = await f.queue.add(room.id, f.creator, sampleItem(9));
+  await f.queue.remove(room.id, f.creator, added.added.id);
+  assert.ok(f.store.get(room.id).autoQueue.skipped.includes('plex-server-1:101'));
+  const afterManualEdit = f.queue.computeAutoNext(room.id, corpus);
+  assert.equal(afterManualEdit.next.mediaId, '102', 'skipped item 101 is not resurrected by manual queue add/remove');
+
+  // Playhead change (playNow) resets skipped list
+  await f.queue.playNow(room.id, f.creator, sampleItem(1));
+  assert.deepEqual(f.store.get(room.id).autoQueue.skipped, []);
+});

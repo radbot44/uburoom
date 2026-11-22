@@ -201,10 +201,10 @@ class RoomQueue {
     }
   }
 
-  bumpQueueRevision(roomId, at = this.now(), { clearCursor = true } = {}) {
+  bumpQueueRevision(roomId, at = this.now(), { clearCursor = false } = {}) {
     const room = this.room(roomId);
-    if (clearCursor && room?.autoQueue?.cursor) {
-      const autoQueue = { ...room.autoQueue, cursor: null };
+    if (clearCursor && room?.autoQueue && (room.autoQueue.cursor || room.autoQueue.skipped?.length)) {
+      const autoQueue = { ...room.autoQueue, cursor: null, skipped: [] };
       repositories(this.db).rooms.updateRoomsSetAutoQueueQueueRevisionUpdatedAtLastAccessedAtById(
         JSON.stringify(autoQueue),
         at,
@@ -417,8 +417,12 @@ class RoomQueue {
         ? [...new Set(active.filter(item => item.serverId === scope.serverId).map(item => item.mediaId))]
         : [];
     const autoQueue = same
-      ? { ...room.autoQueue, next: room.autoQueue.next ?? null }
-      : { mode: config.mode, scope, includeSpecials, cycle: 0, used, next: null };
+      ? {
+          ...room.autoQueue,
+          skipped: Array.isArray(room.autoQueue.skipped) ? [...room.autoQueue.skipped] : [],
+          next: room.autoQueue.next ?? null,
+        }
+      : { mode: config.mode, scope, includeSpecials, cycle: 0, used, skipped: [], next: null };
     const at = this.now();
     this.registry.transaction(() => {
       repositories(this.db).rooms.updateRoomsSetAutoQueueQueueRevisionUpdatedAtLastAccessedAtById(
@@ -455,7 +459,24 @@ class RoomQueue {
   // and maintain the 'available' array in 'random' mode for O(N) preview selection.
   computeAutoNext(roomId, corpus, { forceAdvance = false } = {}) {
     const room = this.room(roomId);
-    const autoQueue = { ...room.autoQueue, used: [...(room.autoQueue.used || [])], next: room.autoQueue.next ?? null };
+    const autoQueue = {
+      ...room.autoQueue,
+      used: [...(room.autoQueue.used || [])],
+      skipped: [...(room.autoQueue.skipped || [])],
+      next: room.autoQueue.next ?? null,
+    };
+    const skipped = new Set(autoQueue.skipped);
+    const nextWithId = (item, provenance) => ({
+      ...item,
+      id:
+        room.autoQueue?.next?.id &&
+        room.autoQueue.next.serverId === item.serverId &&
+        room.autoQueue.next.mediaId === item.mediaId
+          ? room.autoQueue.next.id
+          : randomUUID(),
+      position: 0,
+      provenance,
+    });
     if (autoQueue.mode === 'off') {
       autoQueue.next = null;
       const changed = JSON.stringify(room.autoQueue) !== JSON.stringify(autoQueue);
@@ -496,8 +517,8 @@ class RoomQueue {
           let nextItem = null;
           for (let index = anchor + 1; index < items.length; index++) {
             const item = items[index];
-            if (!active.has(item.mediaId)) {
-              nextItem = { ...item, position: 0, provenance: 'continue' };
+            if (!active.has(item.mediaId) && !skipped.has(item.serverId + ':' + item.mediaId)) {
+              nextItem = nextWithId(item, 'continue');
               break;
             }
           }
@@ -518,8 +539,8 @@ class RoomQueue {
       let nextItem = null;
       for (let index = anchor + 1; index < items.length; index++) {
         const item = items[index];
-        if (!active.has(item.mediaId)) {
-          nextItem = { ...item, position: 0, provenance: 'following' };
+        if (!active.has(item.mediaId) && !skipped.has(item.serverId + ':' + item.mediaId)) {
+          nextItem = nextWithId(item, 'following');
           break;
         }
       }
@@ -533,10 +554,11 @@ class RoomQueue {
         !forceAdvance &&
         autoQueue.next &&
         poolIds.has(autoQueue.next.mediaId) &&
-        !active.has(autoQueue.next.mediaId)
+        !active.has(autoQueue.next.mediaId) &&
+        !skipped.has(serverId + ':' + autoQueue.next.mediaId)
       ) {
         const poolItem = items.find(item => item.mediaId === autoQueue.next.mediaId);
-        if (poolItem) autoQueue.next = { ...poolItem, position: 0, provenance: 'random' };
+        if (poolItem) autoQueue.next = nextWithId(poolItem, 'random');
         const used = new Set(autoQueue.used.filter(id => poolIds.has(id)));
         for (const id of active) if (poolIds.has(id)) used.add(id);
         used.add(autoQueue.next.mediaId);
@@ -545,16 +567,24 @@ class RoomQueue {
         let used = new Set(autoQueue.used.filter(id => poolIds.has(id)));
         for (const id of active) if (poolIds.has(id)) used.add(id);
         if (forceAdvance && autoQueue.next && poolIds.has(autoQueue.next.mediaId)) used.add(autoQueue.next.mediaId);
-        let available = items.filter(item => !used.has(item.mediaId) && !active.has(item.mediaId));
+        let available = items.filter(
+          item =>
+            !used.has(item.mediaId) && !active.has(item.mediaId) && !skipped.has(item.serverId + ':' + item.mediaId),
+        );
         if (!available.length && items.some(item => !active.has(item.mediaId)) && used.size >= poolIds.size) {
           autoQueue.cycle++;
           used = new Set([...active].filter(id => poolIds.has(id)));
-          available = items.filter(item => !active.has(item.mediaId));
+          available = items.filter(
+            item => !active.has(item.mediaId) && !skipped.has(item.serverId + ':' + item.mediaId),
+          );
+          if (!available.length) {
+            available = items.filter(item => !active.has(item.mediaId));
+          }
         }
         if (available.length) {
           const idx = this.randomIndex(available.length);
           const item = available[idx];
-          autoQueue.next = { ...item, position: 0, provenance: 'random' };
+          autoQueue.next = nextWithId(item, 'random');
           used.add(item.mediaId);
         } else {
           autoQueue.next = null;
@@ -636,10 +666,16 @@ class RoomQueue {
       at = this.now();
     let result;
     this.registry.transaction(() => {
-      if (room.autoQueue.mode === 'following' || room.autoQueue.mode === 'continue') {
-        const updated = { ...room.autoQueue, cursor: autoNext.mediaId };
-        repositories(this.db).rooms.updateRoomsSetAutoQueueById(JSON.stringify(updated), roomId);
-      }
+      const skipKey = autoNext.serverId + ':' + autoNext.mediaId;
+      const nextSkipped = [...new Set([...(room.autoQueue.skipped || []), skipKey])];
+      const updated = {
+        ...room.autoQueue,
+        skipped: nextSkipped,
+        ...(room.autoQueue.mode === 'following' || room.autoQueue.mode === 'continue'
+          ? { cursor: autoNext.mediaId }
+          : {}),
+      };
+      repositories(this.db).rooms.updateRoomsSetAutoQueueById(JSON.stringify(updated), roomId);
       result = this.computeAutoNext(roomId, corpus, { forceAdvance: true });
       this.bumpQueueRevision(roomId, at, { clearCursor: false });
     });
@@ -668,9 +704,11 @@ class RoomQueue {
     let addedId, result;
     this.registry.transaction(() => {
       [addedId] = this.insertPending(roomId, [{ ...autoNext, position: 0, provenance: 'manual' }], pending.length, at);
+      const pinKey = autoNext.serverId + ':' + autoNext.mediaId;
       const cleared = {
         ...room.autoQueue,
         next: null,
+        skipped: [...new Set([...(room.autoQueue.skipped || []), pinKey])],
         ...(room.autoQueue.mode === 'following' || room.autoQueue.mode === 'continue'
           ? { cursor: autoNext.mediaId }
           : {}),
@@ -769,6 +807,7 @@ class RoomQueue {
       const cleared = {
         ...room.autoQueue,
         next: null,
+        skipped: [],
         ...(room.autoQueue.mode === 'following' || room.autoQueue.mode === 'continue'
           ? { cursor: autoNext.mediaId }
           : {}),
@@ -923,7 +962,10 @@ class RoomQueue {
         duration: item.duration,
         position: item.position || 0,
       };
-      const autoQueue = room.autoQueue?.cursor ? { ...room.autoQueue, cursor: null } : room.autoQueue;
+      const autoQueue =
+        room.autoQueue && (room.autoQueue.cursor || room.autoQueue.skipped?.length)
+          ? { ...room.autoQueue, cursor: null, skipped: [] }
+          : room.autoQueue;
       repositories(this.db).rooms.saveQueueAndAutoBookmark(
         JSON.stringify(bookmark),
         JSON.stringify(autoQueue),
@@ -993,7 +1035,10 @@ class RoomQueue {
         duration: target.duration,
         position: target.position || 0,
       };
-      const autoQueue = room.autoQueue?.cursor ? { ...room.autoQueue, cursor: null } : room.autoQueue;
+      const autoQueue =
+        room.autoQueue && (room.autoQueue.cursor || room.autoQueue.skipped?.length)
+          ? { ...room.autoQueue, cursor: null, skipped: [] }
+          : room.autoQueue;
       repositories(this.db).rooms.saveQueueAndAutoBookmark(
         JSON.stringify(bookmark),
         JSON.stringify(autoQueue),
@@ -1081,7 +1126,9 @@ class RoomQueue {
       const validNextId = nextPending
         ? nextEntryId === nextPending.id
         : autoNext
-          ? nextEntryId === 'auto:' + autoNext.mediaId || nextEntryId === autoNext.mediaId
+          ? nextEntryId === autoNext.id ||
+            nextEntryId === 'auto:' + autoNext.mediaId ||
+            nextEntryId === autoNext.mediaId
           : nextEntryId === null;
       if (!validNextId) throw error('Queue changed; refresh before advancing', 409);
     }
@@ -1120,6 +1167,12 @@ class RoomQueue {
           duration: nextPending.duration,
           position: nextPending.position || 0,
         };
+        if (room.autoQueue && (room.autoQueue.cursor || room.autoQueue.skipped?.length)) {
+          repositories(this.db).rooms.updateRoomsSetAutoQueueById(
+            JSON.stringify({ ...room.autoQueue, cursor: null, skipped: [] }),
+            roomId,
+          );
+        }
         repositories(this.db).rooms.saveQueueBookmark(JSON.stringify(bookmark), at, roomId);
 
         if (validatedCorpus) generated = this.computeAutoNext(roomId, validatedCorpus);
@@ -1158,6 +1211,7 @@ class RoomQueue {
         const cleared = {
           ...room.autoQueue,
           next: null,
+          skipped: [],
           ...(room.autoQueue.mode === 'following' || room.autoQueue.mode === 'continue'
             ? { cursor: autoNext.mediaId }
             : {}),
@@ -1253,7 +1307,10 @@ class RoomQueue {
         duration: last.duration,
         position: 0,
       };
-      const autoQueue = room.autoQueue?.cursor ? { ...room.autoQueue, cursor: null } : room.autoQueue;
+      const autoQueue =
+        room.autoQueue && (room.autoQueue.cursor || room.autoQueue.skipped?.length)
+          ? { ...room.autoQueue, cursor: null, skipped: [] }
+          : room.autoQueue;
       repositories(this.db).rooms.saveQueueAndAutoBookmark(
         JSON.stringify(bookmark),
         JSON.stringify(autoQueue),
@@ -1374,7 +1431,10 @@ class RoomQueue {
         duration: historyEntry.duration,
         position: targetPosition,
       };
-      const autoQueue = room.autoQueue?.cursor ? { ...room.autoQueue, cursor: null } : room.autoQueue;
+      const autoQueue =
+        room.autoQueue && (room.autoQueue.cursor || room.autoQueue.skipped?.length)
+          ? { ...room.autoQueue, cursor: null, skipped: [] }
+          : room.autoQueue;
       repositories(this.db).rooms.saveQueueAndAutoBookmark(
         JSON.stringify(bookmark),
         JSON.stringify(autoQueue),
@@ -1504,7 +1564,16 @@ class RoomQueue {
     this.healthy();
     if (!UUID.test(roomId || '') || typeof mediaId !== 'string' || !mediaId) return;
     if (!Number.isFinite(duration) || duration <= 0 || duration > 1e9) return;
-    repositories(this.db).queue.updateCurrentDuration(duration, this.now(), roomId, mediaId);
+    const at = this.now();
+    return this.registry.transaction(() => {
+      const repos = repositories(this.db);
+      repos.queue.updateCurrentDuration(duration, at, roomId, mediaId);
+      const row = this.room(roomId);
+      if (row?.bookmark?.mediaId === mediaId) {
+        repos.rooms.savePositionBookmark(JSON.stringify({ ...row.bookmark, duration }), at, roomId);
+      }
+      return this.store ? this.store.get(roomId) : undefined;
+    });
   }
 }
 

@@ -488,6 +488,11 @@ class DiscordPublications {
       this.sent.delete(id);
     }
   }
+  notify(id) {
+    if (this.stopped || !id || !this.records.has(id) || !this.hub.discord.client?.isReady()) return;
+    if (Date.now() < (this.retries.get(id) || 0)) return;
+    void this.lane(id, () => this.update(id)).catch(error => this.recordError(id, error));
+  }
   async reconcile() {
     if (this.stopped || !this.hub.discord.client?.isReady()) return;
     await Promise.allSettled(

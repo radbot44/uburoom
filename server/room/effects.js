@@ -314,6 +314,14 @@ module.exports = {
         return void this.hub.rooms.set(room.roomId, room);
       case 'remove':
         return void this.removeRoom(room, effect.save).catch(() => {});
+      case 'viewer-admitted': {
+        const viewer = room.viewers.get(effect.viewerId);
+        if (viewer) {
+          if (effect.event?.alive) viewer.alive = effect.event.alive;
+          effect.event?.onAdmitted?.(room, viewer);
+        }
+        return;
+      }
       case 'viewer-joined': {
         const viewer = room.viewers.get(effect.viewerId);
         this.hub.logger.info(

@@ -237,3 +237,47 @@ test('a member rule asks each named source about each verified identity, whateve
     registry.close();
   }
 });
+
+test('Admission.fresh() stays true across confirmed window after allowed expires and revokes live Discord removals while tolerating outages', async () => {
+  const registry = new Accounts(undefined, credentialVault());
+  try {
+    const memberAccount = registry.resolve('discord', '100000000000000008', 'Discord Member');
+    let available = true;
+    let member = true;
+    const admission = new Admission(
+      { ownerId: '', accessPolicy: accessPolicy({ discordServer: true }) },
+      registry,
+      { list: [] },
+      () => ({
+        isMember: () => member,
+        refresh: async () => (available ? member : undefined),
+        options: () => ({ available }),
+      }),
+    );
+    assert.equal(await admission.admit(memberAccount.id, {}), true);
+    // Simulate short `allowed` cache expiry while `confirmed.recheck` is still valid.
+    admission.allowed.set(memberAccount.id, Date.now() - 10);
+    assert.equal(admission.fresh(memberAccount.id, {}), true);
+
+    // Outage (bot unavailable): stays admitted on `fresh()` and `admit()`.
+    available = false;
+    member = false;
+    assert.equal(admission.fresh(memberAccount.id, {}), true);
+    admission.confirmed.get(memberAccount.id).recheck = 0;
+    assert.equal(await admission.admit(memberAccount.id, {}), true);
+    assert.equal(admission.fresh(memberAccount.id, {}), true);
+
+    // Restore membership confirmation cleanly.
+    available = true;
+    member = true;
+    admission.confirmed.get(memberAccount.id).recheck = 0;
+    assert.equal(await admission.admit(memberAccount.id, {}), true);
+
+    // Live Discord removal while gateway available immediately revokes `fresh()` and `admit()`.
+    member = false;
+    assert.equal(admission.fresh(memberAccount.id, {}), false);
+    assert.equal(await admission.admit(memberAccount.id, {}), false);
+  } finally {
+    registry.close();
+  }
+});

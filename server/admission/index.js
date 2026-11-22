@@ -73,6 +73,13 @@ class Admission {
     const room = this.guestRoom(context);
     return room ? 'guest:' + room + ':' + id : context?.activity === true ? 'activity:' + id : id;
   }
+  discordDropped(identities, held) {
+    if (held?.via !== 'discord' || held.unanswered) return false;
+    const discord = identities.find(identity => identity.provider === 'discord');
+    const access = discord && this.discordAccess();
+    if (!access || access.options?.()?.available === false) return false;
+    return access.isMember(discord.subject) === false;
+  }
   async admit(id, context) {
     if (!this.settings) return false;
     const account = this.registry.canonical(id);
@@ -89,21 +96,28 @@ class Admission {
       ].join();
       let held = this.confirmed.get(regularKey);
       if (held?.proof !== proof || held.expires <= now) held = undefined;
-      let regularAllowed = held?.recheck > now;
+      let regularAllowed = held?.recheck > now && !this.discordDropped(identities, held);
       if (!regularAllowed) {
         const regularContext = guestRoom ? { ...context, guestRoom: undefined, guestRoomId: undefined } : context;
-        const answer = await this.answer(account, identities, regularContext);
+        const outcome = await this.answerWithRule(account, identities, regularContext);
+        const answer = outcome.allowed;
         regularAllowed = answer === true || (answer === undefined && !!held);
         if (answer === true)
           this.confirmed.set(regularKey, {
             proof,
+            via: outcome.via,
+            unanswered: false,
             recheck: Date.now() + RECHECK_MS,
             expires: Date.now() + CONFIRMED_MS,
           });
         else if (regularAllowed) {
+          held.unanswered = true;
           held.recheck = Date.now() + UNANSWERED_RECHECK_MS;
           this.logger.warn('Access', `Keeping ${account.name || account.id} admitted: no provider answer`);
-        } else this.confirmed.delete(regularKey);
+        } else {
+          this.confirmed.delete(regularKey);
+          this.allowed.delete(regularKey);
+        }
       }
       if (regularAllowed) {
         const until = Date.now() + 1000;
@@ -111,6 +125,10 @@ class Admission {
         if (key !== regularKey) this.allowed.set(key, until);
         if (account.signedInAt === null) this.registry.seen(account.id);
         return true;
+      }
+      if (!guestRoom) {
+        this.allowed.delete(key);
+        return false;
       }
     }
     if (guestRoom) {
@@ -129,13 +147,21 @@ class Admission {
     ].join();
     let held = this.confirmed.get(key);
     if (held?.proof !== proof || held.expires <= now) held = undefined;
-    let allowed = held?.recheck > now;
+    let allowed = held?.recheck > now && !this.discordDropped(identities, held);
     if (!allowed) {
-      const answer = await this.answer(account, identities, context);
+      const outcome = await this.answerWithRule(account, identities, context);
+      const answer = outcome.allowed;
       allowed = answer === true || (answer === undefined && !!held);
       if (answer === true)
-        this.confirmed.set(key, { proof, recheck: Date.now() + RECHECK_MS, expires: Date.now() + CONFIRMED_MS });
+        this.confirmed.set(key, {
+          proof,
+          via: outcome.via,
+          unanswered: false,
+          recheck: Date.now() + RECHECK_MS,
+          expires: Date.now() + CONFIRMED_MS,
+        });
       else if (allowed) {
+        held.unanswered = true;
         held.recheck = Date.now() + UNANSWERED_RECHECK_MS;
         this.logger.warn('Access', `Keeping ${account.name || account.id} admitted: no provider answer`);
       } else this.confirmed.delete(key);
@@ -254,13 +280,12 @@ class Admission {
     throw lastError;
   }
   /**
-   * Whether any rule lets this account in. True or false is the rules' answer; undefined means
-   * none said yes and one that matters gave no answer (an outage is not a denial).
+   * Whether any rule lets this account in, and which rule matched.
    */
-  async answer(account, identities, context) {
+  async answerWithRule(account, identities, context) {
     const discord = identities.find(identity => identity.provider === 'discord');
     // The installation owner (discord.owner_id), never a blank match.
-    if (this.config.ownerId && discord?.subject === this.config.ownerId) return true;
+    if (this.config.ownerId && discord?.subject === this.config.ownerId) return { allowed: true, via: 'owner' };
     // The server password: a server-wide guest who entered the current one.
     if (
       this.settings.password &&
@@ -268,13 +293,13 @@ class Admission {
       context?.serverPassword === this.password.revision &&
       this.registry.isGuest(account.id)
     )
-      return true;
+      return { allowed: true, via: 'password' };
     // uburoom's own accounts: enabled, with a password, signed in as that account.
     if (
       this.settings.accounts &&
       (this.accounts ? this.accounts.admits(account.id) : identities.some(identity => identity.provider === 'uburoom'))
     )
-      return true;
+      return { allowed: true, via: 'accounts' };
     let unanswered = false;
     // The Activity login also checks the account's voice channel through the bot.
     if ((this.settings.discordServer || context?.activity === true) && discord) {
@@ -285,7 +310,7 @@ class Admission {
       } catch {
         member = undefined;
       }
-      if (member) return true;
+      if (member) return { allowed: true, via: 'discord' };
       if (member === undefined) unanswered = true;
     }
     // Members of a source the owner named: only that source can say, and only about identities of
@@ -296,17 +321,45 @@ class Admission {
         const kind = source.memberIdentity;
         if (kind && identity.provider !== kind && !identity.provider.startsWith(kind + ':')) continue;
         try {
-          if ((await source.members({ ...identity, userId: account.id })) === true) return true;
+          if ((await source.members({ ...identity, userId: account.id })) === true)
+            return { allowed: true, via: 'source' };
         } catch (error) {
           if (error?.noServerAccess || error?.revoked) continue;
           this.logger.warn('Access', `Source ${source.id} gave no membership answer: ${error?.message || error}`);
           unanswered = true;
         }
       }
-    return unanswered ? undefined : false;
+    return { allowed: unanswered ? undefined : false };
+  }
+  async answer(account, identities, context) {
+    return (await this.answerWithRule(account, identities, context)).allowed;
   }
   fresh(id, context) {
-    return (this.allowed.get(this.admissionKey(id, context)) || 0) > Date.now();
+    const account = this.registry.canonical(id);
+    const canonicalId = account?.id || id;
+    const now = Date.now();
+    const guestRoom = this.guestRoom(context);
+    if (guestRoom && this.viaGuest(canonicalId, context)) return true;
+    const key = this.admissionKey(canonicalId, context);
+    const identities = account ? this.registry.identities(account.id).filter(identity => identity.verified) : [];
+    const proof = [
+      ...identities.map(identity => identity.provider + ':' + identity.subject).sort(),
+      'password:' + (context?.serverPassword || ''),
+    ].join();
+    const regularKey = context?.activity === true ? 'activity:' + canonicalId : canonicalId;
+    const held = this.confirmed.get(guestRoom && (!account || this.registry.isGuest(account.id)) ? key : regularKey);
+    if (!guestRoom || (account && !this.registry.isGuest(account.id))) {
+      if (
+        held &&
+        held.recheck > now &&
+        held.expires > now &&
+        (!account || held.proof === proof) &&
+        !this.discordDropped(identities, held)
+      ) {
+        return true;
+      }
+    }
+    return (this.allowed.get(key) || 0) > now && !this.discordDropped(identities, held);
   }
   /** The rules and sign-in methods the entry page may show; never a password or a source's details. */
   public() {

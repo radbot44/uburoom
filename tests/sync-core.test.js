@@ -829,3 +829,90 @@ test('nearEndBounds and createSync clamp slight container duration shortfalls wi
     sync.close();
   }
 });
+
+test('room-authority preserves initial start countdown on media.play, skips commit/changed on reducer error, and fires 3s blocker reveal', async () => {
+  let now = 50000;
+  let monoNow = 10000;
+  const timers = [];
+  let changes = 0;
+  const coordinator = Sync.createRoomCoordinator({
+    authorize: Sync.policyAuthorize,
+    now: () => now,
+    monoNow: () => monoNow,
+    timerOrigin: now,
+    timerResolutionMs: 1000,
+    setTimer: (action, delay) => {
+      const entry = { at: now + delay, delay, action };
+      timers.push(entry);
+      return entry;
+    },
+    clearTimer: entry => {
+      const i = timers.indexOf(entry);
+      if (i !== -1) timers.splice(i, 1);
+    },
+    onChange: () => {
+      changes++;
+    },
+  });
+  const room = coordinator.add(
+    Sync.createRoomState({
+      roomId: 'r-b407',
+      creatorId: 'host',
+      now,
+      media: { id: 'm', duration: 120 },
+    }),
+  );
+  const host = { userId: 'host', name: 'Host' };
+  const guest = { userId: 'guest', name: 'Guest' };
+  coordinator.runSync(room, { type: 'join', actor: host, viewerId: 'v-host' });
+  coordinator.runSync(room, { type: 'join', actor: guest, viewerId: 'v-guest' });
+  room.initialGate = true;
+  room.initialViewers = new Set(['v-host', 'v-guest']);
+  Sync.beginReadiness(room, now, Sync.READINESS_WAIT_MS, { monoNow });
+  coordinator.schedule(room);
+
+  // 1. 3s blocker-reveal deadline is scheduled and publishes a non-quiet change when reached.
+  assert.equal(coordinator.timerAt('r-b407'), now + Sync.READINESS_BLOCKER_REVEAL_MS);
+  now += Sync.READINESS_BLOCKER_REVEAL_MS;
+  monoNow += Sync.READINESS_BLOCKER_REVEAL_MS;
+  const beforeRevealChanges = changes;
+  timers.find(t => t.at === now).action();
+  assert.equal(room.blockerRevealed, true);
+  assert.ok(changes > beforeRevealChanges, '3s blocker reveal timer triggers onChange');
+
+  // 2. When readiness releases into INITIAL_START_LEAD_MS (1750ms) countdown, media.play does not truncate it to 400ms.
+  Sync.beginReadiness(room, now, Sync.READINESS_WAIT_MS, { monoNow });
+  coordinator.runSync(room, {
+    type: 'ready',
+    actor: host,
+    viewerId: 'v-host',
+    mediaVersion: room.mediaVersion,
+    readinessVersion: room.readinessVersion,
+    ready: true,
+  });
+  coordinator.runSync(room, {
+    type: 'ready',
+    actor: guest,
+    viewerId: 'v-guest',
+    mediaVersion: room.mediaVersion,
+    readinessVersion: room.readinessVersion,
+    ready: true,
+  });
+  const initialStartAt = room.startAt;
+  assert.equal(initialStartAt, now + Sync.INITIAL_START_LEAD_MS);
+  coordinator.runSync(room, { type: 'command', actor: host, command: { action: 'media.play' } });
+  assert.equal(room.startAt, initialStartAt, 'media.play during active initial start countdown preserves startAt');
+
+  // 3. Failing reducer event does not commit draft mutations or emit onChange.
+  room.kickedViewers.set('v-kicked', now + 30000);
+  const revBeforeFail = room.revision;
+  const changesBeforeFail = changes;
+  const failedJoin = coordinator.runSync(room, {
+    type: 'join',
+    actor: { userId: 'other', name: 'Other' },
+    viewerId: 'v-host',
+  });
+  assert.ok(failedJoin.error);
+  assert.equal(room.revision, revBeforeFail);
+  assert.equal(changes, changesBeforeFail, 'failed reducer event does not trigger onChange');
+});

@@ -170,6 +170,7 @@ module.exports = {
    */
   changed(room, { lobby = false } = {}) {
     this.announce(room, room && !lobby ? { roomId: room.roomId, includeLobby: false } : { includeLobby: true });
+    if (room) this.publications?.notify(room.roomId);
   },
   // Every publication passes here: the room's version rises before its subscribers are woken.
   announce(room, change) {
@@ -228,13 +229,16 @@ module.exports = {
   // Fetches the ending card's details an empty room needs. Triggered by joins and
   // by media and queue changes (prepareStreams), never by looking at the room.
   requestEndingMeta(room) {
-    if (room.media || room.refreshingEndingMeta) return;
+    if (room.media) return;
     const queueSummary = this.roomState.queue.summary(room.roomId);
     const completed = queueSummary?.lastHistory;
     const next =
       queueSummary?.next ||
       (queueSummary?.autoQueue?.next
-        ? { ...queueSummary.autoQueue.next, id: 'auto:' + queueSummary.autoQueue.next.mediaId }
+        ? {
+            ...queueSummary.autoQueue.next,
+            id: queueSummary.autoQueue.next.id || 'auto:' + queueSummary.autoQueue.next.mediaId,
+          }
         : null);
     const endingOffer =
       room.endingOffer?.key === completed?.id + ':' + queueSummary?.queueRevision ? room.endingOffer.offer : null;
@@ -371,7 +375,11 @@ module.exports = {
         const next =
           queueSummary?.next ||
           (queueSummary?.autoQueue?.next
-            ? { ...queueSummary.autoQueue.next, id: 'auto:' + queueSummary.autoQueue.next.mediaId, source: 'auto' }
+            ? {
+                ...queueSummary.autoQueue.next,
+                id: queueSummary.autoQueue.next.id || 'auto:' + queueSummary.autoQueue.next.mediaId,
+                source: 'auto',
+              }
             : null);
         const endingOffer =
           room.endingOffer?.key === completed?.id + ':' + queueSummary?.queueRevision ? room.endingOffer.offer : null;

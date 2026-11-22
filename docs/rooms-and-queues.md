@@ -21,7 +21,9 @@ Previously open rooms reserve recovery slots, return paused and admit original p
 
 An empty room awaiting its host within reconnect grace retains its command mailbox and reservations, including in single-room mode and during lobby refresh. Playback controls require rejoining; permitted queue edits update saved state without loading streams or consuming reservations. If an edit changes the current occurrence, the saved selection survives Close or restart and replaces the retained playback snapshot when the host reconnects. Prepare and reauthorize that selection before adoption; failure preserves the reservation for retry. Adoption starts the new occurrence paused with fresh media state and clears old-media reservations and track choices. Queue edits that leave the current occurrence unchanged preserve ordinary reconnect behavior.
 
-Deletion validates permission and room revision before clearing recovery reservations, waits for live-room cleanup, then removes the durable row. It preserves separately scheduled Discord events.
+Deletion validates permission and room revision before clearing recovery reservations, waits for live-room cleanup, cancels any scheduled Discord watch-night events for that room, then removes the durable row.
+
+Single-room reset validates creator or active Admin authority and room revision, cancels any scheduled Discord events for the room, clears playback, live viewers/guest sessions, queue, history, invites, invite blocks, hosts, and pending host grants, turns guest access off, rerolls the invite code, and restores configured default hosts while keeping the fixed room UUID and operator/account/key identity.
 
 Verified natural completion belongs to the room once accepted: canceling its observation request or disconnecting that viewer does not cancel completion. The completion marker is committed with unloading the finished media, after the durable queue write. An aborted pre-commit attempt leaves the loaded media eligible for a later completion. Configured auto-queue continuation uses the continuing viewer's permitted playback authority and publishes its generated successor even when autoplay is off.
 

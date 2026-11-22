@@ -1067,3 +1067,40 @@ test('transcodesInUse tracks room.preload and room.adoptable media and viewer st
   assert.equal(afterDrop.has('adopt-v2'), false);
   assert.equal(afterDrop.has('preload-source'), true);
 });
+
+test('media.toggle while playing near EOF pauses instead of completing, and endpointSeek requires chooseMedia', async t => {
+  const f = await fixture(t);
+  await f.command('media.autoplay.set', { enabled: false });
+  f.room.position = 99.95;
+  f.room.initialGate = false;
+  f.room.state.paused = false;
+
+  // Spacebar (media.toggle) while playing near EOF pauses playback rather than advancing/finishing.
+  assert.equal((await f.command('media.toggle')).status, 'applied');
+  assert.ok(f.room.media, 'media.toggle while playing pauses instead of completing');
+  assert.ok(f.room.state.paused || f.room.pauseAt);
+
+  // Viewer with playPause & seek but WITHOUT chooseMedia cannot finish/skip via endpointSeek or unended endpointPlay.
+  const record = f.store.get(f.id);
+  f.watch.roomState.apply(
+    f.room,
+    await f.store.edit(f.id, f.creator.userId, record.revision, {
+      action: 'permissions',
+      role: 'viewer',
+      permissions: { playPause: true, seek: true, chooseMedia: false },
+    }),
+  );
+  f.watch.join(f.room, f.guest, f.guest.watchViewerId, { alive: async () => true, quality: 'direct' });
+  assert.equal((await f.command('media.seek.end', undefined, f.guest)).status, 'forbidden');
+  assert.equal((await f.command('media.seek.absolute', { seconds: 100 }, f.guest)).status, 'forbidden');
+  f.room.pauseAt = undefined;
+  f.room.state.paused = true;
+  f.room.position = 99.95;
+  assert.equal((await f.command('media.play', undefined, f.guest)).status, 'forbidden');
+
+  // Once finished (!room.media && room.endedVersion), non-endpoint seeks return truthful 'unavailable'.
+  assert.equal((await f.command('media.seek.end')).status, 'applied');
+  assert.equal(f.room.media, undefined);
+  assert.equal((await f.command('media.seek.start')).status, 'unavailable');
+  assert.equal((await f.command('media.seek.relative', { seconds: -10 })).status, 'unavailable');
+});

@@ -388,8 +388,10 @@ test('single room fixes creator, assigns configured hosts and requires explicit 
   assert.equal(result.body.creator.id, owner);
   assert.equal(result.body.id, id);
   assert.equal(result.body.permissions.viewer.seek, false, 'reset restores server permission defaults');
-  assert.equal(roomState.store.get(id).inviteCode, inviteCode, 'reset preserves the room invite code');
-  assert.deepEqual(events.get(watchNight.id), watchNight, 'reset preserves the scheduled watch night');
+  const resetRecord = roomState.store.get(id);
+  assert.notEqual(resetRecord.inviteCode, inviteCode, 'reset rerolls the room invite code');
+  assert.equal(resetRecord.allowGuests, false, 'reset turns guest access off');
+  assert.equal(events.get(watchNight.id), undefined, 'reset cancels scheduled watch nights');
   assert.equal((await browser.request('/api/watch/rooms')).body.rooms[0].id, id);
 });
 

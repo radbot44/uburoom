@@ -36,53 +36,78 @@ module.exports = {
     await this.finishQueueMedia(room, data);
   },
   async refreshEndingMeta(room) {
-    if (!room || room.media || room.refreshingEndingMeta) return;
+    if (!room || room.media) return;
+    if (room.refreshingEndingMeta) {
+      room.endingMetaDirty = true;
+      return;
+    }
     room.refreshingEndingMeta = true;
     try {
-      const record = this.roomState.store.get(room.roomId);
-      if (!record) return;
-      const summary = this.roomState.queue.summary(record.id);
-      if (!summary) return;
-      room.endingMeta ||= new Map();
-      const nextItem = summary.next || summary.autoQueue?.next;
-      const needed = [summary.lastHistory, nextItem].filter(Boolean);
-      const viewer = [...room.viewers.values()][0];
-      let changed = false;
-      for (const item of needed) {
-        if (!room.endingMeta.has(item.mediaId)) {
-          try {
-            const provider = await this.catalogScope(viewer?.actor, item.serverId);
-            if (!provider?.details) throw new Error('This provider has no item details');
-            const details = await provider.details(item.mediaId, item.type);
-            room.endingMeta.set(item.mediaId, {
-              summary: details?.summary || '',
-              subtitle: details?.subtitle || item.subtitle || '',
-              hasLandscape: Boolean(details?.hasLandscape || item.hasLandscape),
-              hasPoster: Boolean(details?.hasPoster || item.hasPoster),
-            });
-            while (room.endingMeta.size > 8) room.endingMeta.delete(room.endingMeta.keys().next().value);
-            changed = true;
-          } catch {
-            room.endingMeta.set(item.mediaId, {
-              summary: '',
-              subtitle: item.subtitle || '',
-              hasLandscape: Boolean(item.hasLandscape),
-              hasPoster: Boolean(item.hasPoster),
-            });
+      do {
+        room.endingMetaDirty = false;
+        const record = this.roomState.store.get(room.roomId);
+        if (!record) return;
+        const summary = this.roomState.queue.summary(record.id);
+        if (!summary) return;
+        room.endingMeta ||= new Map();
+        const nextItem = summary.next || summary.autoQueue?.next;
+        const needed = [summary.lastHistory, nextItem].filter(Boolean);
+        const viewer = [...room.viewers.values()][0];
+        let changed = false;
+        for (const item of needed) {
+          if (!room.endingMeta.has(item.mediaId)) {
+            let meta;
+            try {
+              const provider = await this.catalogScope(viewer?.actor, item.serverId);
+              if (!provider?.details) throw new Error('This provider has no item details');
+              const details = await provider.details(item.mediaId, item.type);
+              meta = {
+                summary: details?.summary || '',
+                subtitle: details?.subtitle || item.subtitle || '',
+                hasLandscape: Boolean(details?.hasLandscape || item.hasLandscape),
+                hasPoster: Boolean(details?.hasPoster || item.hasPoster),
+              };
+            } catch {
+              meta = {
+                summary: '',
+                subtitle: item.subtitle || '',
+                hasLandscape: Boolean(item.hasLandscape),
+                hasPoster: Boolean(item.hasPoster),
+              };
+            }
+            const applied = await this.inRoom(
+              room,
+              () => {
+                if (room.media) return false;
+                room.endingMeta ||= new Map();
+                room.endingMeta.set(item.mediaId, meta);
+                while (room.endingMeta.size > 8) room.endingMeta.delete(room.endingMeta.keys().next().value);
+                return true;
+              },
+              false,
+            );
+            if (applied) changed = true;
           }
         }
-      }
-      if (changed) {
-        room.revision++;
-        this.changed(room);
-        this.review(room);
-      }
-      if (!nextItem && summary.lastHistory?.type === 'episode' && record.autoQueue?.mode === 'off') {
-        const offerKey = summary.lastHistory.id + ':' + record.queueRevision;
-        if (!room.endingOffer || room.endingOffer.key !== offerKey) {
-          await this.resolveEndingOffer(room, summary.lastHistory);
+        if (changed) {
+          await this.inRoom(
+            room,
+            () => {
+              if (room.media) return;
+              room.revision++;
+              this.changed(room);
+              this.review(room);
+            },
+            undefined,
+          );
         }
-      }
+        if (!nextItem && summary.lastHistory?.type === 'episode' && record.autoQueue?.mode === 'off') {
+          const offerKey = summary.lastHistory.id + ':' + record.queueRevision;
+          if (!room.endingOffer || room.endingOffer.key !== offerKey) {
+            await this.resolveEndingOffer(room, summary.lastHistory);
+          }
+        }
+      } while (room.endingMetaDirty && !room.media && !room.closed);
     } finally {
       room.refreshingEndingMeta = false;
     }
@@ -97,28 +122,48 @@ module.exports = {
     const viewer = [...room.viewers.values()][0];
     const provider = await this.catalogScope(viewer?.actor, completed.serverId);
     if (!provider || typeof provider.nextEpisodeOffer !== 'function') {
-      room.endingOffer = { key, offer: null };
+      await this.inRoom(
+        room,
+        () => {
+          if (room.epoch === epoch && this.roomState.store.get(record.id)?.queueRevision === revision) {
+            room.endingOffer = { key, offer: null };
+          }
+        },
+        undefined,
+      );
       return;
     }
     try {
       const offer = await provider.nextEpisodeOffer(completed.mediaId);
-      if (room.epoch !== epoch || this.roomState.store.get(record.id)?.queueRevision !== revision) return;
-      room.endingOffer = { key, offer: offer || null };
-      if (offer) {
-        room.endingMeta ||= new Map();
-        room.endingMeta.set(offer.mediaId, {
-          summary: offer.summary || '',
-          subtitle: offer.subtitle || '',
-          hasLandscape: offer.hasLandscape,
-          hasPoster: offer.hasPoster,
-        });
-        room.revision++;
-        this.changed(room);
-      }
+      await this.inRoom(
+        room,
+        () => {
+          if (room.epoch !== epoch || this.roomState.store.get(record.id)?.queueRevision !== revision) return;
+          room.endingOffer = { key, offer: offer || null };
+          if (offer) {
+            room.endingMeta ||= new Map();
+            room.endingMeta.set(offer.mediaId, {
+              summary: offer.summary || '',
+              subtitle: offer.subtitle || '',
+              hasLandscape: offer.hasLandscape,
+              hasPoster: offer.hasPoster,
+            });
+            room.revision++;
+            this.changed(room);
+          }
+        },
+        undefined,
+      );
     } catch {
-      if (room.epoch === epoch && this.roomState.store.get(record.id)?.queueRevision === revision) {
-        room.endingOffer = { key, offer: null };
-      }
+      await this.inRoom(
+        room,
+        () => {
+          if (room.epoch === epoch && this.roomState.store.get(record.id)?.queueRevision === revision) {
+            room.endingOffer = { key, offer: null };
+          }
+        },
+        undefined,
+      );
     }
   },
   /**
@@ -235,7 +280,10 @@ module.exports = {
     this.changed(room);
     const record = this.roomState.store.get(room.roomId),
       current = this.roomState.queue.current(record.id);
-    room.transition = { kind: 'media' };
+    const token = { kind: 'media', id: randomUUID() };
+    room.transition = token;
+    let latestRecord;
+    let next;
     try {
       // The durable write runs outside the mailbox; the room unloads the video back inside.
       const completing = (async () => {
@@ -249,12 +297,12 @@ module.exports = {
             this.unloadQueueMedia(room);
             room.endedVersion = endedVersion;
             room.manualPaused = false;
-            delete room.transition?.commit;
+            delete token.commit;
           },
           undefined,
         );
       })();
-      room.transition.commit = completing;
+      token.commit = completing;
       await completing;
       await this.roomState.save(room);
       await this.inRoom(
@@ -268,44 +316,44 @@ module.exports = {
         },
         undefined,
       );
-    } finally {
-      delete room.transition?.commit;
-      if (room.transition?.kind === 'media') room.transition = undefined;
-    }
-    await this.refreshEndingMeta(room);
-    let latestRecord = this.roomState.store.get(record.id);
-    let next = this.nextCandidate(record.id);
-    if (!next && latestRecord.autoQueue.mode !== 'off') {
-      try {
-        const actor = room.viewers.get(room.hostViewerId)?.actor || [...room.viewers.values()][0]?.actor;
-        if (actor) {
-          const corpus = await this.autoCorpus(record.id, actor);
-          if (corpus) {
-            await this.roomState.queue.generate(record.id, actor.userId, corpus, {
-              expectedRevision: latestRecord.queueRevision,
-              continuation: true,
-            });
-            await this.verifyAutoNext(record.id, actor, corpus);
-            latestRecord = this.roomState.store.get(record.id);
-            await this.inRoom(
-              room,
-              () => {
-                this.roomState.apply(room, latestRecord);
-                if (!latestRecord.autoplay) {
-                  room.revision++;
-                  this.changed(room);
-                }
-              },
-              undefined,
-            );
-            next = this.nextCandidate(record.id);
+      await this.refreshEndingMeta(room);
+      latestRecord = this.roomState.store.get(record.id);
+      next = this.nextCandidate(record.id);
+      if (!next && latestRecord.autoQueue.mode !== 'off') {
+        try {
+          const actor = room.viewers.get(room.hostViewerId)?.actor || [...room.viewers.values()][0]?.actor;
+          if (actor) {
+            const corpus = await this.autoCorpus(record.id, actor);
+            if (corpus) {
+              await this.roomState.queue.generate(record.id, actor.userId, corpus, {
+                expectedRevision: latestRecord.queueRevision,
+                continuation: true,
+              });
+              await this.verifyAutoNext(record.id, actor, corpus);
+              latestRecord = this.roomState.store.get(record.id);
+              await this.inRoom(
+                room,
+                () => {
+                  this.roomState.apply(room, latestRecord);
+                  if (!latestRecord.autoplay) {
+                    room.revision++;
+                    this.changed(room);
+                  }
+                },
+                undefined,
+              );
+              next = this.nextCandidate(record.id);
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      }
+    } finally {
+      delete token.commit;
+      if (room.transition === token) room.transition = undefined;
     }
-    if (next && latestRecord.autoplay) {
+    if (next && latestRecord?.autoplay) {
       await this.startAutoplayCountdown(room, { intent: room.playbackIntent || 0, data });
-    } else if (!next && current?.type === 'episode' && latestRecord.autoQueue.mode === 'off') {
+    } else if (!next && current?.type === 'episode' && latestRecord?.autoQueue.mode === 'off') {
       await this.resolveEndingOffer(room, current);
     }
   },
@@ -422,83 +470,88 @@ module.exports = {
     room.lastActivity = this.clock.now();
     delete room.transition?.commit;
   },
-  async changeQueueMediaOwned(room, command, actor, ticket, { initialAdd = false, forcePlay = false } = {}, work) {
-    if (room.transition) return { status: 'unavailable', message: 'Wait for the current queue operation.' };
-    if (
-      !room.viewers.size &&
-      command.action !== 'media.load' &&
-      !(command.action === 'queue.remove' && !command.args.advance)
-    )
-      return { status: 'unavailable', message: 'No viewer is connected.' };
-    const { action, args } = command,
-      id = room.roomId,
-      queue = this.roomState.queue,
-      countdown = actor.watchQueueAdvance;
-    const preload = countdown && room.preload?.countdown === countdown.id ? room.preload : undefined;
-    const version = room.mediaVersion,
-      epoch = room.epoch,
-      intent = room.playbackIntent || 0;
-    const record = this.roomState.store.get(id),
-      current = record && queue.current(id),
-      next = record && this.nextCandidate(id);
-    const valid = () =>
-      !this.shuttingDown &&
-      !room.closed &&
-      !work.signal.aborted &&
-      (!ticket || this.hub.current(ticket)) &&
-      this.rooms.get(id) === room &&
-      room.mediaVersion === version &&
-      room.epoch === epoch &&
-      // A play or pause cancels an automatic advance, but not a video someone chose.
-      (!countdown ||
-        ((room.playbackIntent || 0) === intent &&
-          room.autoplayCountdown === countdown &&
-          room.viewers.has(countdown.viewerId) &&
-          !room.manualPaused &&
-          this.roomState.store.get(id).autoplay &&
-          countdown.epoch === epoch &&
-          countdown.mediaVersion === version &&
-          (countdown.currentEntryId || null) === (current?.id || null) &&
-          countdown.nextEntryId === next?.id &&
-          countdown.queueRevision === record.queueRevision &&
-          this.hub.authorize(actor, room, 'autoplay').ok));
-    if (!valid()) return { status: 'unavailable', message: 'Autoplay or media selection was cancelled.' };
-    const removing = action === 'queue.remove',
-      advance = removing && args.advance;
-    if (removing && current?.id !== args.entryId)
-      return { status: 'unavailable', message: 'Current video changed; refresh before removing.' };
+  async changeQueueMediaOwned(room, command, actor, ticket, options = {}, work) {
+    const { initialAdd = false, forcePlay = false, transition: expectedToken } = options;
+    if (expectedToken ? room.transition !== expectedToken : room.transition)
+      return { status: 'unavailable', message: 'Wait for the current queue operation.' };
+    const token = expectedToken || { kind: 'media', id: randomUUID() };
+    token.kind = 'media';
+    room.transition = token;
     let target,
       prepared,
+      preload,
       adopted = false;
-    const old = room.media,
-      oldPosition = this.position(room),
-      restore = action === 'queue.history.goBack',
-      replay = action === 'queue.history.replay' || restore,
-      playEntry = action === 'queue.playEntry',
-      playAuto = action === 'queue.auto.playNow';
-    if (replay) {
-      target = queue.getEntry(args.entryId);
-      if (!target || target.roomId !== id || target.state !== 'history')
-        throw Object.assign(new Error('History entry unavailable'), { status: 404 });
-    } else if (playEntry) {
-      target = queue.getEntry(args.entryId);
-      if (!target || target.roomId !== id || target.state !== 'pending')
-        throw Object.assign(new Error('Queue entry unavailable'), { status: 404 });
-    } else if (playAuto) {
-      target = record?.autoQueue?.mode !== 'off' ? record?.autoQueue?.next : null;
-      if (!target) throw Object.assign(new Error('Auto-queue item unavailable'), { status: 404 });
-    } else if (action === 'media.next' || advance) {
-      target = record ? next : old?.nextId && { mediaId: old.nextId };
-      if (!target) return { status: 'unsupported', message: 'No next video is available.' };
-    } else if (action === 'media.previous') {
-      target =
-        oldPosition < (record ? 5 : 3) &&
-        (record ? queue.lastHistory(id) : old?.previousId && { mediaId: old.previousId });
-    } else if (!removing) target = { mediaId: args.mediaId, serverId: args.serverId };
-    room.transition = { kind: 'media' };
-    // Transfer only after admission/target checks, inside the cleanup scope.
-    if (preload) room.preload = undefined;
     try {
+      if (
+        !room.viewers.size &&
+        command.action !== 'media.load' &&
+        !(command.action === 'queue.remove' && !command.args.advance)
+      )
+        return { status: 'unavailable', message: 'No viewer is connected.' };
+      const { action, args } = command,
+        id = room.roomId,
+        queue = this.roomState.queue,
+        countdown = actor.watchQueueAdvance;
+      const version = room.mediaVersion,
+        epoch = room.epoch,
+        intent = room.playbackIntent || 0;
+      const record = this.roomState.store.get(id),
+        current = record && queue.current(id),
+        next = record && this.nextCandidate(id);
+      const valid = () =>
+        !this.shuttingDown &&
+        !room.closed &&
+        !work.signal.aborted &&
+        (!ticket || this.hub.current(ticket)) &&
+        this.rooms.get(id) === room &&
+        room.mediaVersion === version &&
+        room.epoch === epoch &&
+        // A play or pause cancels an automatic advance, but not a video someone chose.
+        (!countdown ||
+          ((room.playbackIntent || 0) === intent &&
+            room.autoplayCountdown === countdown &&
+            room.viewers.has(countdown.viewerId) &&
+            !room.manualPaused &&
+            this.roomState.store.get(id).autoplay &&
+            countdown.epoch === epoch &&
+            countdown.mediaVersion === version &&
+            (countdown.currentEntryId || null) === (current?.id || null) &&
+            countdown.nextEntryId === next?.id &&
+            countdown.queueRevision === record.queueRevision &&
+            this.hub.authorize(actor, room, 'autoplay').ok));
+      if (!valid()) return { status: 'unavailable', message: 'Autoplay or media selection was cancelled.' };
+      const removing = action === 'queue.remove',
+        advance = removing && args.advance;
+      if (removing && current?.id !== args.entryId)
+        return { status: 'unavailable', message: 'Current video changed; refresh before removing.' };
+      const old = room.media,
+        oldPosition = this.position(room),
+        restore = action === 'queue.history.goBack',
+        replay = action === 'queue.history.replay' || restore,
+        playEntry = action === 'queue.playEntry',
+        playAuto = action === 'queue.auto.playNow';
+      if (replay) {
+        target = queue.getEntry(args.entryId);
+        if (!target || target.roomId !== id || target.state !== 'history')
+          throw Object.assign(new Error('History entry unavailable'), { status: 404 });
+      } else if (playEntry) {
+        target = queue.getEntry(args.entryId);
+        if (!target || target.roomId !== id || target.state !== 'pending')
+          throw Object.assign(new Error('Queue entry unavailable'), { status: 404 });
+      } else if (playAuto) {
+        target = record?.autoQueue?.mode !== 'off' ? record?.autoQueue?.next : null;
+        if (!target) throw Object.assign(new Error('Auto-queue item unavailable'), { status: 404 });
+      } else if (action === 'media.next' || advance) {
+        target = record ? next : old?.nextId && { mediaId: old.nextId };
+        if (!target) return { status: 'unsupported', message: 'No next video is available.' };
+      } else if (action === 'media.previous') {
+        target =
+          oldPosition < (record ? 5 : 3) &&
+          (record ? queue.lastHistory(id) : old?.previousId && { mediaId: old.previousId });
+      } else if (!removing) target = { mediaId: args.mediaId, serverId: args.serverId };
+      // Transfer only after admission/target checks, inside the cleanup scope.
+      preload = countdown && room.preload?.countdown === countdown.id ? room.preload : undefined;
+      if (preload) room.preload = undefined;
       await room.saving?.catch(() => {});
       if (target) {
         const provider = await this.hub.mediaFor(actor, target.serverId);
@@ -613,7 +666,7 @@ module.exports = {
             position,
             { initialAdd },
           );
-        room.transition.commit = saving;
+        token.commit = saving;
         work.committing = true;
         await saving;
       }
@@ -680,8 +733,8 @@ module.exports = {
       this.changed(room);
       return { status: 'failed', message: room.autoplayError };
     } finally {
-      delete room.transition?.commit;
-      if (room.transition?.kind === 'media') room.transition = undefined;
+      delete token.commit;
+      if (room.transition === token) room.transition = undefined;
       if (prepared && !adopted) await this.providers.stop(prepared);
       if (preload && room.adoptable !== preload) {
         if (!adopted) preload.sourceAdopted = false;

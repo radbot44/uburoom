@@ -232,10 +232,23 @@ class Watch extends WatchParts {
         if (
           room.media?.durationUnknown !== true ||
           room.mediaVersion !== mediaVersion ||
+          viewer.mediaVersion !== mediaVersion ||
           ![...room.viewers.values()].includes(viewer)
         )
           return;
         const duration = Math.round(rawDuration * 10) / 10;
+        const isRoomHost = this.hub.authorize(viewer.actor, room, 'room.host').ok;
+        const distinctUsers = new Set([...room.viewers.values()].map(tab => tab.userId));
+        if (!isRoomHost && distinctUsers.size > 1) {
+          if (!room.pendingDurations || room.pendingDurations.version !== mediaVersion) {
+            room.pendingDurations = { version: mediaVersion, reports: new Map() };
+          }
+          room.pendingDurations.reports.set(viewer.userId, duration);
+          const agreeing = [...room.pendingDurations.reports.values()].filter(
+            value => Math.abs(value - duration) <= 1.0,
+          );
+          if (agreeing.length < 2) return;
+        }
         room.media.duration = duration;
         room.media.durationUnknown = false;
         room.state.duration = duration;
@@ -248,11 +261,19 @@ class Watch extends WatchParts {
             tab.tracking.record.duration = duration;
           }
         }
-        room.media.provider?.noteDuration?.(room.media.id, duration);
+        let updatedRecord;
         try {
-          this.roomState?.queue?.updateCurrentDuration?.(room.roomId, room.media.id, duration);
+          updatedRecord = this.roomState?.queue?.updateCurrentDuration?.(room.roomId, room.media.id, duration);
         } catch {
           /* Best-effort queue duration update. */
+        }
+        if (updatedRecord) {
+          if (room.saved) {
+            room.saved.checkpointRevision = updatedRecord.checkpointRevision;
+            room.saved.bookmark = updatedRecord.bookmark;
+          } else {
+            this.roomState.apply(room, updatedRecord);
+          }
         }
         room.revision++;
         this.changed(room);
@@ -266,12 +287,44 @@ class Watch extends WatchParts {
    * @param {any} room
    * @param {Actor} actor
    * @param {string} viewerId
-   * @param {{alive?: () => Promise<boolean>, quality?: string | null, preferences?: Object, rtts?: Array<{at: number, ms: number}>}} [options]
+   * @param {{alive?: () => Promise<boolean>, quality?: string | null, preferences?: Object, rtts?: Array<{at: number, ms: number}>, onAdmitted?: (room: any, viewer: any) => void}} [options]
    * @returns {any} The joined viewer.
    */
-  join(room, actor, viewerId, { alive, quality, preferences, rtts } = {}) {
+  join(room, actor, viewerId, { alive, quality, preferences, rtts, onAdmitted } = {}) {
     if (this.shuttingDown || room.closed || this.rooms.get(room.roomId) !== room) throw new Error('Room unavailable');
-    const result = this.coordinator.runSync(room, { type: 'join', actor, viewerId, quality, preferences, rtts });
+    const result = this.coordinator.runSync(room, {
+      type: 'join',
+      actor,
+      viewerId,
+      quality,
+      preferences,
+      rtts,
+      onAdmitted,
+    });
+    if (result.error) throw result.error;
+    const viewer = room.viewers.get(viewerId);
+    if (alive) viewer.alive = alive;
+    return viewer;
+  }
+  /**
+   * Mailbox-queued join that waits cleanly instead of rejecting 409 when the room is busy.
+   * @param {any} room
+   * @param {Actor} actor
+   * @param {string} viewerId
+   * @param {{alive?: () => Promise<boolean>, quality?: string | null, preferences?: Object, rtts?: Array<{at: number, ms: number}>, onAdmitted?: (room: any, viewer: any) => void}} [options]
+   */
+  async joinAsync(room, actor, viewerId, { alive, quality, preferences, rtts, onAdmitted } = {}) {
+    if (this.shuttingDown || room.closed || this.rooms.get(room.roomId) !== room) throw new Error('Room unavailable');
+    const result = await this.coordinator.dispatch(room, {
+      type: 'join',
+      actor,
+      viewerId,
+      quality,
+      preferences,
+      rtts,
+      alive,
+      onAdmitted,
+    });
     if (result.error) throw result.error;
     const viewer = room.viewers.get(viewerId);
     if (alive) viewer.alive = alive;

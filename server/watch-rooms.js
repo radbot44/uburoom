@@ -1,7 +1,7 @@
 // @ts-check
 'use strict';
 const { repositories } = require('./repositories');
-const { RoomStore } = require('./room-store');
+const { RoomStore, newInviteCode } = require('./room-store');
 const { RoomQueue } = require('./room-queue');
 const Policy = require('./room-policy');
 const { canWatch } = require('./core');
@@ -16,6 +16,7 @@ class WatchRooms {
     this.pending = new Set();
     this.opening = new Map();
     this.closing = new Map();
+    this.closedLocks = new Map();
     this.creating = 0;
     this.limits = require('./room-limits').limits(watch.hub.config);
     this.people = new (require('./room-presence').RoomPresence)(this.limits.maxPeople, () => watch.clock.now());
@@ -93,6 +94,7 @@ class WatchRooms {
     await this.eligible(actor, current);
     if (!this.opening.has(id)) {
       const opening = (async () => {
+        await this.closedLocks.get(id);
         let media;
         try {
           const saved = record.bookmark;
@@ -158,41 +160,67 @@ class WatchRooms {
     room.recovery = undefined;
     this.recoveries.delete(room.roomId);
   }
+  withClosedLock(id, action) {
+    const previous = this.closedLocks.get(id) || Promise.resolve();
+    const run = previous.catch(() => {}).then(action);
+    const tail = run.finally(() => {
+      if (this.closedLocks.get(id) === tail) this.closedLocks.delete(id);
+    });
+    this.closedLocks.set(id, tail);
+    return run;
+  }
   async maintain(now = this.watch.clock.now()) {
-    if (this.stopped || this.maintaining || !this.readyAt) return;
+    if (this.stopped || !this.readyAt) return;
+    this.maintainAt = now;
+    if (this.maintaining) {
+      this.maintainDirty = true;
+      return;
+    }
     this.maintaining = true;
+    this.maintainDirty = true;
     try {
-      for (const [id, recovery] of this.recoveries)
-        if (recovery.until <= now) {
-          this.recoveries.delete(id);
-          const room = this.watch.rooms.get(id);
-          if (room) {
-            room.recovery = undefined;
-            this.freeze(room);
-            if (!room.viewers.size) await this.watch.remove(id);
-            else await this.save(room);
-          } else {
-            repositories(this.store.db).rooms.clearLiveState(id);
-            await this.registry.flush();
-            await this.deleteEmpty(id);
+      while (this.maintainDirty && !this.stopped) {
+        this.maintainDirty = false;
+        const tickNow = this.maintainAt;
+        for (const [id, recovery] of this.recoveries)
+          if (recovery.until <= tickNow) {
+            this.recoveries.delete(id);
+            const room = this.watch.rooms.get(id);
+            if (room) {
+              await this.watch.inRoom(
+                room,
+                () => {
+                  room.recovery = undefined;
+                  this.freeze(room);
+                },
+                undefined,
+              );
+              if (!room.viewers.size) await this.watch.remove(id);
+              else await this.save(room);
+            } else {
+              repositories(this.store.db).rooms.clearLiveState(id);
+              await this.registry.flush();
+              await this.deleteEmpty(id);
+            }
           }
+        if (!this.limits.inactiveDays) continue;
+        const cutoff = tickNow - this.limits.inactiveDays * 86400000;
+        let count = /** @type {{n:number}} */ (repositories(this.store.db).rooms.count()).n;
+        for (const { id } of repositories(this.store.db).rooms.listRoomsByLastAccessedAt(cutoff)) {
+          if (count <= this.limits.minRetained) break;
+          if (
+            this.watch.rooms.has(id) ||
+            this.opening.has(id) ||
+            this.closing.has(id) ||
+            this.recoveries.has(id) ||
+            this.watch.events.upcoming(id) ||
+            (this.watch.hub.config.singleRoom && id === this.registry.meta('singleRoomId'))
+          )
+            continue;
+          await this.watch.events?.cancelForRoom?.(id);
+          await this.store.destroy(id);
+          count--;
         }
-      if (!this.limits.inactiveDays) return;
-      const cutoff = now - this.limits.inactiveDays * 86400000;
-      let count = /** @type {{n:number}} */ (repositories(this.store.db).rooms.count()).n;
-      for (const { id } of repositories(this.store.db).rooms.listRoomsByLastAccessedAt(cutoff)) {
-        if (count <= this.limits.minRetained) break;
-        if (
-          this.watch.rooms.has(id) ||
-          this.opening.has(id) ||
-          this.closing.has(id) ||
-          this.recoveries.has(id) ||
-          this.watch.events.upcoming(id) ||
-          (this.watch.hub.config.singleRoom && id === this.registry.meta('singleRoomId'))
-        )
-          continue;
-        await this.store.destroy(id);
-        count--;
       }
     } finally {
       this.maintaining = false;
@@ -207,7 +235,11 @@ class WatchRooms {
       if (error.status === 404) return;
       throw error;
     }
-    if (!this.reason(record)) await this.store.destroy(id);
+    if (!this.reason(record)) {
+      await this.watch.events?.cancelForRoom?.(id);
+      this.watch.publications?.roomClosed?.(id);
+      await this.store.destroy(id);
+    }
   }
   async eligible(actor, current = async () => true) {
     const hub = this.watch.hub;
@@ -222,15 +254,24 @@ class WatchRooms {
     if (this.stopped || !(await current())) throw failure('Room connection changed; retry manually', 403);
   }
   async claimHosts(userId) {
+    let lobbyChanged = false;
     for (const id of await this.store.claimHosts(userId)) {
       const room = this.watch.rooms.get(id);
       if (room) {
-        this.apply(room, this.store.get(id));
-        room.revision++;
-        this.watch.changed(room);
+        lobbyChanged = true;
+        await this.watch.inRoom(
+          room,
+          () => {
+            this.apply(room, this.store.get(id));
+            room.revision++;
+            this.watch.changed(room, { lobby: true });
+          },
+          undefined,
+        );
         void this.watch.coordinator.dispatch(room, { type: 'roles' });
       }
     }
+    if (lobbyChanged) this.watch.changed?.(undefined, { lobby: true });
   }
   apply(room, record) {
     const previous = room.saved;
@@ -351,6 +392,7 @@ class WatchRooms {
     }
     await this.eligible(actor, current);
     await this.closing.get(id);
+    await this.closedLocks.get(id);
     if (this.recoveries.has(id)) await this.recover(id, actor, current);
     this.store.restore(id, actor.userId);
     const existing = this.watch.rooms.get(id);
@@ -556,36 +598,58 @@ class WatchRooms {
       this.recoveries.delete(id);
       if (room) await this.watch.remove(id, false);
       await this.eligible(actor, current);
+      await this.watch.events?.cancelForRoom?.(id);
+      this.watch.publications?.roomClosed?.(id);
     }
-    const record = await this.store.edit(id, actor.userId, revision, change);
-    // Removing guests or revoking an invite takes effect at once, through the kick notice.
-    if (change.action === 'guests.removeAll') await this.watch.hub.endGuestSessions(id);
-    if (change.action === 'invite.revoke') await this.removeFromRoom(id, [this.store.account(change.userId)]);
-    if (change.action === 'delete') {
-      return { deleted: true };
-    }
-    if (room && change.action === 'pauseOnBuffering') {
-      await this.watch.inRoom(room, () => {
-        this.apply(room, record);
-        room.revision++;
-        if (room.bufferingViewerId && !(room.saved.pauseOnBuffering ?? this.watch.hub.config.pauseOnBuffering)) {
-          const action = room.waitingForHost ? 'media.pause' : 'media.play';
-          applyTimelineCommand(room, { action }, { now: this.watch.clock.now() });
-          this.watch.review(room);
-        }
-      });
-      return this.summary(id, actor);
-    }
-    if (room && this.watch.rooms.get(id) === room) {
-      this.apply(room, record);
-      room.revision++;
-      this.watch.changed(room);
-      if (change.action === 'autoplay') this.watch.cancelAutoplay(room);
-      else if (!['rename', 'keepEmpty', 'maxMembers', 'auto.reset'].includes(change.action)) {
-        void this.watch.coordinator.dispatch(room, { type: 'roles' });
+    const runEdit = async () => {
+      const record = await this.store.edit(id, actor.userId, revision, change);
+      // Removing guests or revoking an invite takes effect at once, through the kick notice.
+      if (change.action === 'guests.removeAll') await this.watch.hub.endGuestSessions(id);
+      if (change.action === 'invite.revoke') await this.removeFromRoom(id, [this.store.account(change.userId)]);
+      if (change.action === 'delete') {
+        return { deleted: true };
       }
-    }
-    return this.summary(id, actor);
+      if (room && change.action === 'pauseOnBuffering') {
+        await this.watch.inRoom(
+          room,
+          () => {
+            this.apply(room, record);
+            room.revision++;
+            if (room.bufferingViewerId && !(room.saved.pauseOnBuffering ?? this.watch.hub.config.pauseOnBuffering)) {
+              const action = room.waitingForHost ? 'media.pause' : 'media.play';
+              applyTimelineCommand(room, { action }, { now: this.watch.clock.now() });
+              this.watch.review(room);
+            }
+          },
+          undefined,
+        );
+        this.watch.publications?.notify?.(id);
+        return this.summary(id, actor);
+      }
+      if (room && this.watch.rooms.get(id) === room) {
+        await this.watch.inRoom(
+          room,
+          () => {
+            this.apply(room, record);
+            room.revision++;
+            this.watch.changed(room, { lobby: true });
+            if (change.action === 'autoplay') this.watch.cancelAutoplay(room);
+          },
+          undefined,
+        );
+        if (change.action === 'visibility') {
+          void this.watch.coordinator.dispatch(room, { type: 'visibility' });
+        } else if (!['autoplay', 'rename', 'keepEmpty', 'maxMembers', 'auto.reset'].includes(change.action)) {
+          void this.watch.coordinator.dispatch(room, { type: 'roles' });
+        }
+      }
+      if (['invite.reroll', 'guests.removeAll', 'guests.allow'].includes(change.action)) {
+        this.watch.events?.inviteChanged?.(id);
+      }
+      this.watch.publications?.notify?.(id);
+      return this.summary(id, actor);
+    };
+    return room ? runEdit() : this.withClosedLock(id, runEdit);
   }
   // Removes these accounts' viewers from a live room with the ordinary kick notice.
   async removeFromRoom(id, userIds) {
@@ -734,7 +798,17 @@ class WatchRooms {
               if (media && !adopted) await this.watch.providers.stop(media);
             }
           }
-        } else this.apply(this.watch.rooms.get(id), record);
+        } else {
+          const existing = this.watch.rooms.get(id);
+          await this.watch.inRoom(
+            existing,
+            () => {
+              this.apply(existing, record);
+              existing.revision++;
+            },
+            undefined,
+          );
+        }
         return id;
       })();
       this.singleOpening
@@ -764,8 +838,9 @@ class WatchRooms {
     };
     if (room && !(await this.watch.inRoom(room, reserve, false)))
       throw failure('Room changed; refresh before resetting');
-    this.watch.publications.roomClosed(id);
+    this.watch.publications?.roomClosed?.(id);
     try {
+      await this.watch.events?.cancelForRoom?.(id);
       if (room) await room.saving?.catch(() => {});
       const hosts = [
         ...new Set([
@@ -781,16 +856,21 @@ class WatchRooms {
         ]),
       ].filter(h => h !== record.creatorId);
       this.registry.transaction(() => {
-        repositories(this.store.db).queue.deleteRoomProgressByRoomId(id);
-        repositories(this.store.db).queue.deleteQueueEntriesByRoomId(id);
-        repositories(this.store.db).rooms.deleteRoomHostsByRoomId(id);
-        repositories(this.store.db).rooms.deleteRoomHostGrantsByRoomId(id);
-        for (const host of hosts) repositories(this.store.db).rooms.insertRoomHosts(id, host);
+        const repos = repositories(this.store.db);
+        repos.rooms.deleteRoomEventsByRoomId(id);
+        repos.rooms.deleteRoomInvitesByRoomId(id);
+        repos.rooms.deleteRoomInviteBlocksByRoomId(id);
+        repos.queue.deleteRoomProgressByRoomId(id);
+        repos.queue.deleteQueueEntriesByRoomId(id);
+        repos.rooms.deleteRoomHostsByRoomId(id);
+        repos.rooms.deleteRoomHostGrantsByRoomId(id);
+        for (const host of hosts) repos.rooms.insertRoomHosts(id, host);
         this.registry.meta('singleRoomDefaultHosts', JSON.stringify(hosts));
-        repositories(this.store.db).rooms.resetRoom(JSON.stringify(this.store.defaults), 'Room', id);
+        repos.rooms.resetRoom(JSON.stringify(this.store.defaults), 'Room', newInviteCode(this.store.db), id);
       });
       await this.registry.flush();
       this.recoveries.delete(id);
+      await this.watch.hub.endGuestSessions?.(id);
       if (room) await this.watch.inRoom(room, () => this.resetLive(room, id), undefined);
       return this.summary(id, actor);
     } finally {
@@ -974,10 +1054,25 @@ class WatchRooms {
           if (bookmark) this.queue.checkpoint(record.id, bookmark.position);
           return this.store.writeCheckpoint(record.id, record.checkpointRevision, bookmark);
         });
-        this.apply(room, await this.store.commit(saved));
-        if (room.saveError) {
-          room.saveError = undefined;
-          this.watch.changed(room);
+        const committed = await this.store.commit(saved);
+        if (this.watch.rooms.get(room.roomId) === room && !room.closed) {
+          await this.watch.inRoom(
+            room,
+            () => {
+              this.apply(room, committed);
+              if (room.saveError) {
+                room.saveError = undefined;
+                this.watch.changed(room);
+              }
+            },
+            undefined,
+          );
+        } else {
+          this.apply(room, committed);
+          if (room.saveError) {
+            room.saveError = undefined;
+            this.watch.changed(room);
+          }
         }
       })
       .catch(error => {

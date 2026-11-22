@@ -279,45 +279,46 @@ function watchOperations({
     }
     return settings;
   }
-  /** Admits (or renews) the tab with its preferences and connection details. Returns the joined viewer. */
-  function admit(room, auth, context, viewerId, preferences, alive, authenticated) {
+  /** Admits (or renews) the tab inside the room mailbox. Returns the joined viewer. */
+  async function admit(room, auth, context, viewerId, preferences, alive, authenticated) {
     if (preferences.delivery !== undefined && !/^(?:auto|local)$/.test(preferences.delivery))
       throw new Error('Invalid delivery mode');
-    const viewer = watch.join(room, auth.actor, viewerId, {
+    const remoteAddress = clientAddress(context, config);
+    const sessionCookie = cookies(context)[COOKIES.session];
+    const loginHash = context.headers.authorization ? undefined : sessionCookie && hash(sessionCookie);
+    return watch.joinAsync(room, auth.actor, viewerId, {
       alive,
       quality: preferences.quality,
       preferences: joinPreferences(preferences),
+      onAdmitted: (liveRoom, viewer) => {
+        // Capability is set before the first source preparation and never grants access.
+        viewer.reportingAuthorized = authenticated;
+        if (remoteAddress) viewer.remoteAddress = remoteAddress;
+        viewer.activity = !!auth.identity.activity;
+        if (viewer.activity && viewer.media?.directHls) {
+          watch.tracking.end(viewer, 'delivery-changed');
+          void watch.reporting?.end(viewer, 'delivery-changed');
+          const previous = viewer.media;
+          viewer.media = undefined;
+          viewer.mediaVersion = undefined;
+          viewer.directDelivery = undefined;
+          viewer.directFileResolved = undefined;
+          viewer.directProxyVersion = liveRoom.mediaVersion;
+          viewer.streamVersion = randomUUID();
+          viewer.ready = false;
+          void watch.providers.stop(previous);
+        }
+        if (context.controlSocket) {
+          viewer.watchSocket = context.controlSocket;
+          viewer.connected = true;
+          if (context.controlSocket.watchRtts) viewer.rtts = context.controlSocket.watchRtts;
+        }
+        if (viewer.browserSubtitles === undefined) viewer.browserSubtitles = preferences.subtitles === 'browser';
+        viewer.localCodecs = (preferences.codecs || '').split(',').filter(localFormat);
+        viewer.localDelivery = preferences.delivery === 'local';
+        viewer.browserLoginHash = loginHash;
+      },
     });
-    // Capability is set before the first source preparation and never grants access.
-    viewer.reportingAuthorized = authenticated;
-    const remoteAddress = clientAddress(context, config);
-    if (remoteAddress) viewer.remoteAddress = remoteAddress;
-    viewer.activity = !!auth.identity.activity;
-    if (viewer.activity && viewer.media?.directHls) {
-      watch.tracking.end(viewer, 'delivery-changed');
-      void watch.reporting?.end(viewer, 'delivery-changed');
-      const previous = viewer.media;
-      viewer.media = undefined;
-      viewer.mediaVersion = undefined;
-      viewer.directDelivery = undefined;
-      viewer.directFileResolved = undefined;
-      viewer.directProxyVersion = room.mediaVersion;
-      viewer.streamVersion = randomUUID();
-      viewer.ready = false;
-      void watch.providers.stop(previous);
-    }
-    if (context.controlSocket) {
-      viewer.watchSocket = context.controlSocket;
-      viewer.connected = true;
-      if (context.controlSocket.watchRtts) viewer.rtts = context.controlSocket.watchRtts;
-    }
-    if (viewer.browserSubtitles === undefined) viewer.browserSubtitles = preferences.subtitles === 'browser';
-    viewer.localCodecs = (preferences.codecs || '').split(',').filter(localFormat);
-    viewer.localDelivery = preferences.delivery === 'local';
-    viewer.browserLoginHash = context.headers.authorization
-      ? undefined
-      : cookies(context)[COOKIES.session] && hash(cookies(context)[COOKIES.session]);
-    return viewer;
   }
   const signedIn = (context, auth) => {
     const headers = { cookie: context.headers.cookie, authorization: context.headers.authorization };
@@ -467,7 +468,9 @@ function watchOperations({
         if (!UUID.test(viewerId || '')) throw new Error('Invalid viewer');
         const { authenticated, alive } = signedIn(context, auth);
         await watch.roomState.restoreSavedSelection(room, auth.actor, alive, context.signal);
-        const viewer = admit(room, auth, context, viewerId, preferences, alive, authenticated);
+        if (!(await watch.canView(room, auth.actor)) || !(await alive()))
+          return result(403, { error: 'Viewing access was revoked' });
+        const viewer = await admit(room, auth, context, viewerId, preferences, alive, authenticated);
         const attempt = {};
         joining.set(viewer, attempt);
         let joined = false;
@@ -989,28 +992,36 @@ function watchOperations({
       inRoom(context, roomId, async (auth, room) => {
         const viewer = await ownViewer(room, auth, args.viewerId);
         if (!viewer) return result(403, { error: 'Playback viewer unavailable' });
-        if (
-          room.viewers.get(args.viewerId) !== viewer ||
-          args.mediaVersion !== room.mediaVersion ||
-          args.streamVersion !== viewer.streamVersion ||
-          !viewer.directDelivery ||
-          viewer.directDelivery !== viewer.media
-        )
-          return result(409, { error: 'Playback delivery changed' });
-        // Fence pending readiness/observations from the old transport.
-        watch.tracking.end(viewer, 'delivery-changed');
-        void watch.reporting?.end(viewer, 'delivery-changed');
-        viewer.directProxyVersion = room.mediaVersion;
-        viewer.directDelivery = undefined;
-        viewer.directFileResolved = undefined;
-        if (viewer.media?.directHls) {
-          const previous = viewer.media;
-          viewer.media = undefined;
-          viewer.mediaVersion = undefined;
-          void watch.providers.stop(previous);
-        }
-        viewer.streamVersion = randomUUID();
-        viewer.ready = false;
+        const applied = await watch.inRoom(
+          room,
+          () => {
+            if (
+              room.viewers.get(args.viewerId) !== viewer ||
+              args.mediaVersion !== room.mediaVersion ||
+              args.streamVersion !== viewer.streamVersion ||
+              !viewer.directDelivery ||
+              viewer.directDelivery !== viewer.media
+            )
+              return false;
+            // Fence pending readiness/observations from the old transport.
+            watch.tracking.end(viewer, 'delivery-changed');
+            void watch.reporting?.end(viewer, 'delivery-changed');
+            viewer.directProxyVersion = room.mediaVersion;
+            viewer.directDelivery = undefined;
+            viewer.directFileResolved = undefined;
+            if (viewer.media?.directHls) {
+              const previous = viewer.media;
+              viewer.media = undefined;
+              viewer.mediaVersion = undefined;
+              void watch.providers.stop(previous);
+            }
+            viewer.streamVersion = randomUUID();
+            viewer.ready = false;
+            return true;
+          },
+          undefined,
+        );
+        if (!applied) return result(409, { error: 'Playback delivery changed' });
         // The tab's stream is prepared again for the other delivery.
         void watch.prepareStream(room, auth.actor, args.viewerId);
         return result(200, { ok: true });

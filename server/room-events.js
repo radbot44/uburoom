@@ -405,6 +405,7 @@ class RoomEvents {
       let remote = remotes.get(event.discord.eventId);
       if (this.discord.ended(remote)) {
         await this.remove(event.id);
+        this.watch.changed?.(undefined, { lobby: true });
         continue;
       }
       if (remote.entityMetadata?.location !== invite && invite.length <= 100)
@@ -414,6 +415,41 @@ class RoomEvents {
       const next = this.discord.merge(event, remote);
       if (JSON.stringify(next) !== JSON.stringify(event)) await this.save({ ...next, updatedAt: Date.now() });
     }
+  }
+  inviteChanged(id) {
+    if (this.stopped || !id || !this.discord.ready() || !this.forRoom(id).some(event => event.discord?.eventId)) return;
+    void this.lane(id, async () => {
+      const record = this.room(id);
+      if (!record) return;
+      await this.syncPosted(id, record);
+      this.errors.delete(id);
+    }).catch(error => this.errors.set(id, this.safeError(error)));
+  }
+  async cancelForRoom(id) {
+    if (!id) return;
+    for (const existing of this.forRoom(id)) clearTimeout(this.cancelTimers.get(existing.id));
+    let removed = false;
+    await this.lane(id, async () => {
+      for (const event of this.forRoom(id)) {
+        if (event.discord?.eventId && this.discord.ready()) {
+          try {
+            const guild = await this.discord.guild(event.discord.guildId);
+            await this.finishCancel(event, guild);
+            removed = true;
+            continue;
+          } catch (error) {
+            this.watch.hub?.logger?.warn?.(
+              'Events',
+              'Failed canceling Discord event on room change: ' + (error?.message || error),
+            );
+          }
+        }
+        await this.remove(event.id);
+        removed = true;
+      }
+      this.errors.delete(id);
+    });
+    if (removed) this.watch.changed?.(undefined, { lobby: true });
   }
   async syncPosted(id, record, options) {
     const ids = new Set(
@@ -454,6 +490,7 @@ class RoomEvents {
             )
         : []),
     ]);
+    if (ended.length) this.watch.changed?.(undefined, { lobby: true });
   }
   async close() {
     this.stopped = true;

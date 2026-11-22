@@ -28,6 +28,7 @@ test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the
     hostId = randomUUID(),
     guestId = randomUUID();
   const reports = [];
+  watch.reporting.reporters[0].serverId = () => 'fixture';
   watch.reporting.reporters[0].plexAuth = {
     forUser: async () => ({
       principal: 'personal',
@@ -1342,4 +1343,71 @@ test('an item-unavailable viewer releases initial and shared-seek readiness with
     assert.equal(room.readinessTimedOut, false);
     assert.equal(room.state.paused, false, 'the healthy viewer starts without waiting ten seconds');
   }
+});
+
+test('learnDuration requires host or viewer consensus, skips global provider cache mutation, and updates room bookmark', async t => {
+  const hub = new Hub({ ownerId: 'host' });
+  hub.access = { isMember: () => true, refresh: async () => true };
+  let noted = 0;
+  const provider = {
+    principal: 'host',
+    json: async () => ({ machineIdentifier: 'fixture' }),
+    stop: async () => {},
+    noteDuration: () => {
+      noted++;
+    },
+  };
+  const { watch, registry, actor, open } = liveWatch(hub, provider);
+  t.after(async () => {
+    await watch.close();
+    hub.close();
+    await registry.close();
+  });
+  const host = actor('Host'),
+    guest1 = actor('Guest 1'),
+    guest2 = actor('Guest 2'),
+    room = await open(host);
+  const h = randomUUID(),
+    g1 = randomUUID(),
+    g2 = randomUUID();
+  watch.join(room, host, h, { alive: async () => true });
+  watch.join(room, guest1, g1, { alive: async () => true });
+  watch.join(room, guest2, g2, { alive: async () => true });
+  await Promise.all([...watch.roomState.pending]);
+
+  await watch.roomState.queue.playNow(room.roomId, host.userId, {
+    serverId: 'fixture',
+    mediaId: 'yt-1',
+    type: 'movie',
+    title: 'Unknown Duration Clip',
+    duration: 3600,
+  });
+  room.saved = watch.roomState.store.get(room.roomId);
+  room.media = {
+    id: 'yt-1',
+    roomServerId: 'fixture',
+    type: 'movie',
+    title: 'Unknown Duration Clip',
+    duration: 3600,
+    durationUnknown: true,
+    provider,
+  };
+  for (const v of room.viewers.values()) {
+    v.media = { id: 'yt-1', duration: 3600, durationUnknown: true };
+    v.mediaVersion = room.mediaVersion;
+  }
+
+  // A single non-host guest in a 3-user room cannot unilaterally overwrite duration.
+  await watch.learnDuration(room, room.viewers.get(g1), room.mediaVersion, 999);
+  assert.equal(room.media.durationUnknown, true);
+  assert.equal(room.media.duration, 3600);
+
+  // Two distinct viewers agreeing within 1.0s learn the duration without mutating global provider cache.
+  await watch.learnDuration(room, room.viewers.get(g1), room.mediaVersion, 215.4);
+  await watch.learnDuration(room, room.viewers.get(g2), room.mediaVersion, 215.6);
+  assert.equal(room.media.durationUnknown, false);
+  assert.equal(room.media.duration, 215.6);
+  assert.equal(noted, 0, 'learnDuration does not mutate global provider duration cache');
+  assert.equal(watch.roomState.store.get(room.roomId).bookmark.duration, 215.6);
+  assert.equal(watch.roomState.queue.current(room.roomId).duration, 215.6);
 });

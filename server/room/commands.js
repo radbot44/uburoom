@@ -125,10 +125,20 @@ module.exports = {
       room.endedVersion = undefined;
       return { status: 'applied', message: 'Autoplay paused.' };
     }
-    if (!room.media && room.endedVersion && (action === 'media.seek.end' || action.startsWith('media.seek.'))) {
-      if (!this.hub.authorize(actor, room, 'playPause').ok)
-        return { status: 'forbidden', message: 'Seeking requires playback permission.' };
-      return { status: 'applied', message: 'Current video finished.' };
+    if (!room.media && room.endedVersion) {
+      const endpointCompleted =
+        action === 'media.seek.end' ||
+        (action === 'media.seek.absolute' && args.seconds > 0) ||
+        (action === 'media.seek.relative' && args.seconds > 0);
+      if (endpointCompleted) {
+        if (!this.hub.authorize(actor, room, 'chooseMedia').ok)
+          return {
+            status: 'forbidden',
+            message: 'Skipping or finishing the current video requires Skip / replay permission.',
+          };
+        return { status: 'applied', message: 'Current video finished.' };
+      }
+      if (action.startsWith('media.seek.')) return { status: 'unavailable', message: 'Choose a video first.' };
     }
     const endpointSeek =
       room.media &&
@@ -136,12 +146,22 @@ module.exports = {
       (action === 'media.seek.end' ||
         (action === 'media.seek.absolute' && args.seconds >= room.media.duration) ||
         (action === 'media.seek.relative' && this.position(room) + args.seconds >= room.media.duration));
+    const pausedPlayback = room.state.paused || (room.initialGate && room.manualPaused);
     const endpointPlay =
       room.media &&
       !room.media.durationUnknown &&
-      ['media.play', 'media.toggle'].includes(action) &&
+      (action === 'media.play' || (action === 'media.toggle' && pausedPlayback)) &&
       (room.endedVersion === room.mediaVersion || this.position(room) >= room.media.duration - 0.1);
     if (endpointSeek || endpointPlay) {
+      if (
+        (endpointSeek || (endpointPlay && room.endedVersion !== room.mediaVersion)) &&
+        !this.hub.authorize(actor, room, 'chooseMedia').ok
+      ) {
+        return {
+          status: 'forbidden',
+          message: 'Skipping or finishing the current video requires Skip / replay permission.',
+        };
+      }
       if (!room.viewers.size || room.transition)
         return { status: 'unavailable', message: 'Wait for an available viewing room.' };
       this.cancelAutoplay(room);

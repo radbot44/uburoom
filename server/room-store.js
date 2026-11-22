@@ -187,13 +187,24 @@ class RoomStore {
     return this.get(row.id);
   }
   async commit(result) {
-    try {
-      await this.registry.flush();
-    } catch (failure) {
-      this.failure = failure;
-      this.healthy();
+    const isBusy = err =>
+      Boolean(err && (err.errcode === 5 || /SQLITE_BUSY|database is locked/i.test(err.message || '')));
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.registry.flush();
+        return result;
+      } catch (failure) {
+        if (isBusy(failure)) {
+          if (attempt < 3) {
+            await new Promise(resolve => setTimeout(resolve, 10 * (attempt + 1)));
+            continue;
+          }
+          throw failure;
+        }
+        this.failure = failure;
+        this.healthy();
+      }
     }
-    return result;
   }
   /**
    * @param {string} userId
@@ -626,4 +637,4 @@ class RoomStore {
   }
 }
 
-module.exports = { inviteCode, RoomStore };
+module.exports = { inviteCode, newInviteCode, RoomStore };
