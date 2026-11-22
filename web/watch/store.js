@@ -22,7 +22,6 @@ export const store = {
     me: undefined,
     config: undefined,
     directRoomEntry: false,
-    directRoomFailed: false,
     pageBootstrap: undefined,
     identityExpiresAt: 0,
     identityRenewAt: 0,

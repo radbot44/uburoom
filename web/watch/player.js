@@ -378,6 +378,7 @@ export function mount(host, deps) {
     store.lobby.browseRoom = undefined;
     deps.renderBrowsing();
     deps.renderVisibility();
+    deps.placeRoomBar();
     deps.renderTransport();
     document.title = 'uburoom watch';
     deps.fail(message);

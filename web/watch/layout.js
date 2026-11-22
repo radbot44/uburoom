@@ -202,7 +202,7 @@ export function mount(host, deps) {
   }
   function placeRoomBar() {
     $('room-bar').hidden = !store.identity.me && $('auth-overlay').hidden;
-    const inRoom = Boolean(store.room.selected || (store.identity.directRoomEntry && !store.identity.directRoomFailed));
+    const inRoom = Boolean(store.room.selected || store.identity.directRoomEntry);
     const lobbyHidden = inRoom || !store.identity.me;
     // The Upcoming list refreshes whenever the lobby comes back into view.
     if (

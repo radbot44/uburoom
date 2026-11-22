@@ -886,7 +886,70 @@ async function main() {
       await shot('suggested-name');
       await run(byId('room-name') + '.value="   ";' + pressId('room-create'));
       await until(text('#options-title') + '===' + JSON.stringify(suggestion), 'Suggested name saved');
-      assert.ok(roomByName(suggestion), 'room saved under the suggested name');
+      const suggestedRoom = roomByName(suggestion);
+      assert.ok(suggestedRoom, 'room saved under the suggested name');
+      // Direct /room/<slug> entry with active media must clear bootstrap state on Leave and return to the lobby.
+      await run('queueUI.add({id:"demo",title:"uburoom synchronization test",type:"movie"},{play:true})');
+      await until(text('#title') + '==="uburoom synchronization test"', 'Direct-entry room loads media');
+      const directRoom = await openPage(
+        browser,
+        config.publicUrl + '/room/' + encodeURIComponent(suggestedRoom.slug || suggestedRoom.roomId),
+      );
+      try {
+        await browser.viewport(directRoom, 1360, 1000);
+        await browser.activate(directRoom);
+        await browser.until(
+          directRoom,
+          '!document.body.classList.contains("auth-pending") && ' +
+            '!document.body.classList.contains("outside-room") && ' +
+            '!document.body.classList.contains("idle-player") && ' +
+            text('#options-title') +
+            '===' +
+            JSON.stringify(suggestion) +
+            ' && ' +
+            shown('#current-room') +
+            ' && ' +
+            hidden('#room-lobby') +
+            ' && ' +
+            shown('#close-room'),
+          'Direct /room/<slug> entry hydrates into the active room',
+        );
+        await browser.evaluate(directRoom, pressId('close-room'));
+        await browser.until(
+          directRoom,
+          'location.pathname==="/" && ' +
+            'document.body.classList.contains("outside-room") && ' +
+            'document.body.classList.contains("idle-player") && ' +
+            shown('#room-lobby') +
+            ' && ' +
+            hidden('#current-room') +
+            ' && ' +
+            text('#options-title') +
+            '==="Room" && ' +
+            hidden('#room-share') +
+            ' && ' +
+            hidden('#room-schedule') +
+            ' && ' +
+            hidden('#close-room') +
+            ' && !' +
+            shown('.timeline-row') +
+            ' && !' +
+            shown('.playback-buttons'),
+          'Leaving a directly entered room clears room UI, video controls, and returns to the lobby',
+        );
+        await browser.evaluate(directRoom, 'transport.interrupt(100);true');
+        await browser.until(directRoom, '!transport.ready', 'Direct-entry lobby socket disconnects');
+        await browser.until(
+          directRoom,
+          'transport.ready && !selected && location.pathname==="/" && ' +
+            shown('#room-lobby') +
+            ' && ' +
+            hidden('#current-room'),
+          'Reconnecting in the lobby after leaving does not re-enter the left room',
+        );
+      } finally {
+        await browser.closePage?.(directRoom).catch(() => {});
+      }
       console.log(
         name +
           ': named create, queue add/reorder/remove/next/history/clear, bulk show/Specials, shuffle, random configuration, autoplay toggle, real natural end/countdown/cancel/advance, viewer policy, host/creator transfer, private cohosts, Admin mode, close/reopen paused at 17s, delete, queue preset without deletion and rendered desktop/phone/theater passed',

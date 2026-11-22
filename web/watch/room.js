@@ -13,12 +13,12 @@ export function mount(host, deps) {
   const hdrMode = () => store.preferences.playerPreferences?.hdrMode;
   function renderVisibility() {
     $('empty-hint').hidden = !store.identity.me;
-    const inRoom = Boolean(store.room.state || (store.identity.directRoomEntry && !store.identity.directRoomFailed));
+    const inRoom = Boolean(store.room.state || store.identity.directRoomEntry);
     document.body.classList.toggle('outside-room', !inRoom);
     document.body.classList.toggle(
       'idle-player',
       !store.room.state?.mediaId &&
-        (!store.identity.pageBootstrap?.targetRoom?.media || store.identity.directRoomFailed),
+        !(store.identity.directRoomEntry && store.identity.pageBootstrap?.targetRoom?.media),
     );
     $('current-room').hidden = !inRoom;
     $('rooms').hidden = true;
@@ -27,25 +27,28 @@ export function mount(host, deps) {
     $('switch-room').textContent = inRoom ? 'Switch room' : 'Choose room';
     $('switch-room').hidden = !!store.identity.config?.singleRoom;
     $('create').hidden = inRoom || !!store.identity.config?.singleRoom || !!store.identity.me?.guestRoomId;
+    $('close-room').hidden = !inRoom || !!store.identity.config?.singleRoom;
     if (store.identity.config?.singleRoom || store.identity.me?.guestRoomId)
       for (const id of ['lobby-create', 'lobby-reopen', 'room-chooser-new']) $(id).hidden = true;
     if (store.identity.me?.guestRoomId) $('switch-room').hidden = true;
     if ($('options-title'))
       $('options-title').textContent = store.room.state
         ? store.room.state.roomName || 'Room'
-        : store.identity.pageBootstrap?.targetRoom?.name || 'Room';
+        : store.identity.directRoomEntry && store.identity.pageBootstrap?.targetRoom?.name
+          ? store.identity.pageBootstrap.targetRoom.name
+          : 'Room';
+    $('room-share').hidden = !store.room.state?.invite;
+    deps.renderScheduleButton();
     if (store.room.state) {
       if (!$('room-share').firstChild)
         uburoomControls.content($('room-share'), { icon: 'share', label: 'Share room', iconOnly: true });
       $('room-share').setAttribute('aria-label', 'Share room');
-      $('room-share').hidden = !store.room.state.invite;
       if (!$('room-schedule').firstChild)
         uburoomControls.content($('room-schedule'), {
           icon: 'calendar-event',
           label: 'Schedule event',
           iconOnly: true,
         });
-      deps.renderScheduleButton();
       uburoomControls.content($('room-people-open'), {
         icon: 'users',
         label: store.room.state.viewers + ' / ' + (store.room.state.maxMembers || 20),

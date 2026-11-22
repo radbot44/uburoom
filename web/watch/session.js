@@ -376,57 +376,64 @@ export function mount(host, deps) {
     $('diagnostic-actions').hidden = !deps.controlProbe && !deps.soakMode;
     let bootstrap;
     async function enterDirectRoom() {
-      if (store.identity.me?.guestRoomId) {
-        try {
-          await deps.selectRoom(store.identity.me.guestRoomId);
-        } catch {
-          store.identity.directRoomFailed = true;
-          deps.guestRoomClosed();
-          void deps.waitForHost(store.identity.me.guestRoomId);
+      const targetRoom = store.identity.pageBootstrap?.targetRoom;
+      const finishDirectEntry = () => {
+        store.identity.directRoomEntry = false;
+        store.identity.pageBootstrap = undefined;
+      };
+      try {
+        if (store.identity.me?.guestRoomId) {
+          try {
+            await deps.selectRoom(store.identity.me.guestRoomId);
+          } catch {
+            finishDirectEntry();
+            deps.guestRoomClosed();
+            void deps.waitForHost(store.identity.me.guestRoomId);
+          }
+          return;
         }
-        return;
-      }
-      if (deps.activity && deps.INVITE_CODE.test(store.connection.sdk?.customId || '')) {
-        try {
-          await deps.selectRoom(
-            (await deps.api('/api/watch/invite', { action: 'join', code: store.connection.sdk.customId })).room.id,
-          );
-        } catch (error) {
-          store.identity.directRoomFailed = true;
-          deps.fail(error.message);
-          if (initialRooms) deps.applyRooms(initialRooms);
+        if (deps.activity && deps.INVITE_CODE.test(store.connection.sdk?.customId || '')) {
+          try {
+            await deps.selectRoom(
+              (await deps.api('/api/watch/invite', { action: 'join', code: store.connection.sdk.customId })).room.id,
+            );
+          } catch (error) {
+            finishDirectEntry();
+            deps.fail(error.message);
+            if (initialRooms) deps.applyRooms(initialRooms);
+          }
+          return;
         }
-        return;
-      }
-      const requestedRoom =
-        store.identity.pageBootstrap?.targetRoom?.id ||
-        deps.params.get('room') ||
-        (roomPathMatch ? roomPathMatch[1] : undefined);
-      if (!deps.activity && requestedRoom) {
-        let targetId = requestedRoom;
-        if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(targetId)) {
-          const found = store.lobby.knownRooms.find(r => r.slug === targetId || r.id === targetId);
-          if (found) targetId = found.id;
-          else if (store.identity.pageBootstrap?.targetRoom?.id) targetId = store.identity.pageBootstrap.targetRoom.id;
+        const requestedRoom =
+          targetRoom?.id || deps.params.get('room') || (roomPathMatch ? roomPathMatch[1] : undefined);
+        if (!deps.activity && requestedRoom) {
+          let targetId = requestedRoom;
+          if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(targetId)) {
+            const found = store.lobby.knownRooms.find(r => r.slug === targetId || r.id === targetId);
+            if (found) targetId = found.id;
+            else if (targetRoom?.id) targetId = targetRoom.id;
+          }
+          try {
+            await deps.selectRoom(targetId);
+          } catch {
+            finishDirectEntry();
+            deps.syncRoomUrl(null);
+            void deps.waitForHost(targetRoom?.id || requestedRoom);
+            if (!store.lobby.waitingRoom && initialRooms) deps.applyRooms(initialRooms);
+          }
+          return;
         }
-        try {
-          await deps.selectRoom(targetId);
-        } catch {
-          store.identity.directRoomFailed = true;
-          deps.syncRoomUrl(null);
-          void deps.waitForHost(store.identity.pageBootstrap?.targetRoom?.id || requestedRoom);
-          if (!store.lobby.waitingRoom && initialRooms) deps.applyRooms(initialRooms);
+        if (store.identity.config?.singleRoom && store.lobby.knownRooms[0] && !store.lobby.knownRooms[0].locked) {
+          try {
+            await deps.selectRoom(store.lobby.knownRooms[0].id);
+          } catch (error) {
+            finishDirectEntry();
+            deps.fail(error.message);
+            if (initialRooms) deps.applyRooms(initialRooms);
+          }
         }
-        return;
-      }
-      if (store.identity.config?.singleRoom && store.lobby.knownRooms[0] && !store.lobby.knownRooms[0].locked) {
-        try {
-          await deps.selectRoom(store.lobby.knownRooms[0].id);
-        } catch (error) {
-          store.identity.directRoomFailed = true;
-          deps.fail(error.message);
-          if (initialRooms) deps.applyRooms(initialRooms);
-        }
+      } finally {
+        finishDirectEntry();
       }
     }
     store.connection.transport?.close();
@@ -442,9 +449,12 @@ export function mount(host, deps) {
           });
           if (store.room.selected) {
             await deps.rejoinRoom();
-          } else if (store.identity.directRoomEntry && !store.identity.directRoomFailed) {
+          } else if (store.identity.directRoomEntry) {
             await enterDirectRoom();
+            if (!store.room.selected && !store.identity.me?.guestRoomId && !initialRooms) await deps.refreshRooms();
+            initialRooms = undefined;
           } else {
+            store.identity.pageBootstrap = undefined;
             if (initialRooms) {
               deps.applyRooms(initialRooms);
               initialRooms = undefined;
@@ -467,7 +477,7 @@ export function mount(host, deps) {
             store.connection.reconnecting = false;
             deps.fail('');
           }
-          if (!store.identity.directRoomEntry || store.room.selected || store.identity.directRoomFailed) {
+          if (!store.identity.directRoomEntry || store.room.selected) {
             $('auth-loading').hidden = $('auth-overlay').hidden = true;
             document.body.classList.remove('auth-pending');
             deps.renderBrowsing();
@@ -548,9 +558,7 @@ export function mount(host, deps) {
       },
     });
     $('create').hidden =
-      (store.identity.directRoomEntry && !store.identity.directRoomFailed) ||
-      !!store.identity.config?.singleRoom ||
-      !!store.identity.me?.guestRoomId;
+      store.identity.directRoomEntry || !!store.identity.config?.singleRoom || !!store.identity.me?.guestRoomId;
     deps.renderBrowsing();
     deps.renderVisibility();
     deps.renderTransport();
