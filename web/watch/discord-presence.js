@@ -27,22 +27,29 @@ function formatField(value, fallback = '') {
  * @param {any} room
  * @param {number} nowMs
  * @param {number} [clockOffsetMs]
+ * @param {number} [positionOverride]
  */
-export function computeTimestamps(room, nowMs, clockOffsetMs = 0) {
+export function computeTimestamps(room, nowMs, clockOffsetMs = 0, positionOverride = undefined) {
   const timeline = room?.state;
-  if (!timeline || timeline.paused || timeline.waitingForReady) return undefined;
-  if (!Number.isFinite(timeline.position) || !Number.isFinite(nowMs)) return undefined;
+  if (!timeline || timeline.paused || room?.waitingForReady || timeline.waitingForReady) return undefined;
+  if (!Number.isFinite(nowMs)) return undefined;
 
-  let elapsedMs = 0;
-  if (Number.isFinite(room.serverNow)) {
-    let targetTime = nowMs + (Number.isFinite(clockOffsetMs) ? clockOffsetMs : 0);
-    if (Number.isFinite(room.pauseAt)) targetTime = Math.min(targetTime, room.pauseAt);
-    const base = Number.isFinite(room.startAt) ? Math.max(room.serverNow, room.startAt) : room.serverNow;
-    elapsedMs = Math.max(0, targetTime - base);
+  let position;
+  if (Number.isFinite(positionOverride)) {
+    position = Math.max(0, positionOverride);
+  } else {
+    if (!Number.isFinite(timeline.position)) return undefined;
+    let elapsedMs = 0;
+    if (Number.isFinite(room.serverNow)) {
+      let targetTime = nowMs + (Number.isFinite(clockOffsetMs) ? clockOffsetMs : 0);
+      if (Number.isFinite(room.pauseAt)) targetTime = Math.min(targetTime, room.pauseAt);
+      const base = Number.isFinite(room.startAt) ? Math.max(room.serverNow, room.startAt) : room.serverNow;
+      elapsedMs = Math.max(0, targetTime - base);
+    }
+    position = Math.max(0, timeline.position + elapsedMs / 1000);
   }
 
   const duration = Number.isFinite(timeline.duration) && timeline.duration > 0 ? timeline.duration : 0;
-  let position = Math.max(0, timeline.position + elapsedMs / 1000);
   if (duration > 0) position = Math.min(duration, position);
 
   const nowSec = Math.floor(nowMs / 1000);
@@ -64,6 +71,7 @@ export function computeTimestamps(room, nowMs, clockOffsetMs = 0) {
  *   room?: any,
  *   nowMs?: number,
  *   clockOffsetMs?: number,
+ *   position?: number,
  * }} input
  */
 export function buildPresenceActivity({
@@ -73,6 +81,7 @@ export function buildPresenceActivity({
   room = undefined,
   nowMs = Date.now(),
   clockOffsetMs = 0,
+  position = undefined,
 } = {}) {
   if (enabled !== true || serverAllowed === false || !activity || !room) return null;
 
@@ -97,12 +106,12 @@ export function buildPresenceActivity({
   }
 
   const subtitle = cleanText(room.subtitle);
-  const paused = !!room.state?.paused && !room.state?.waitingForReady;
+  const paused = !!room.state?.paused && !(room.waitingForReady || room.state?.waitingForReady);
   const state = formatField(
     [paused ? 'Paused' : '', subtitle, roomName].filter(Boolean).join(' · '),
     'Watching in uburoom',
   );
-  const timestamps = computeTimestamps(room, nowMs, clockOffsetMs);
+  const timestamps = computeTimestamps(room, nowMs, clockOffsetMs, position);
 
   return {
     type: 3,
@@ -140,6 +149,7 @@ export function equivalentPresence(a, b, driftToleranceSec = TIMESTAMP_DRIFT_TOL
  *   setEnabled?: (enabled: boolean) => void,
  *   isServerAllowed: () => boolean,
  *   getRoom: () => any,
+ *   getPosition?: () => number | undefined,
  *   ensureScope: () => Promise<boolean>,
  *   now?: () => number,
  *   setTimeoutFn?: (fn: () => void, ms: number) => any,
@@ -222,6 +232,7 @@ export function createPresenceController(options) {
       activity: options.isActivity(),
       room: options.getRoom(),
       nowMs: now(),
+      position: options.getPosition?.(),
     });
 
     if (candidate === null) {
@@ -272,6 +283,7 @@ export function createPresenceController(options) {
       activity: options.isActivity(),
       room: options.getRoom(),
       nowMs: now(),
+      position: options.getPosition?.(),
     });
     if (latest === null) {
       if (sentActive) await sendActivity(null);
@@ -310,6 +322,7 @@ export function createPresenceController(options) {
       activity: options.isActivity(),
       room: options.getRoom(),
       nowMs: now(),
+      position: options.getPosition?.(),
     });
     if (
       equivalentPresence(lastSentPayload, candidate) ||

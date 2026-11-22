@@ -299,12 +299,17 @@ function watchOperations({
       viewer.media = undefined;
       viewer.mediaVersion = undefined;
       viewer.directDelivery = undefined;
+      viewer.directFileResolved = undefined;
       viewer.directProxyVersion = room.mediaVersion;
       viewer.streamVersion = randomUUID();
       viewer.ready = false;
       void watch.providers.stop(previous);
     }
-    if (context.controlSocket) viewer.watchSocket = context.controlSocket;
+    if (context.controlSocket) {
+      viewer.watchSocket = context.controlSocket;
+      viewer.connected = true;
+      if (context.controlSocket.watchRtts) viewer.rtts = context.controlSocket.watchRtts;
+    }
     if (viewer.browserSubtitles === undefined) viewer.browserSubtitles = preferences.subtitles === 'browser';
     viewer.localCodecs = (preferences.codecs || '').split(',').filter(localFormat);
     viewer.localDelivery = preferences.delivery === 'local';
@@ -369,15 +374,61 @@ function watchOperations({
             state.directDelivery = true;
             viewer.directDelivery = media;
           } else if (!media.bootstrapFallback && viewer.directProxyVersion !== room.mediaVersion) {
-            // Only a provider with direct delivery turned on is asked, so nothing else waits on it.
-            const attempt = watch.providers.directFile(media, auth, () => validGrant(grant), viewer.remoteAddress);
-            const direct = attempt && (await attempt);
-            if (attempt && !(await validGrant(grant))) return result(409, { error: 'Playback delivery changed' });
-            if (direct) {
-              state.mediaUrl = direct;
-              state.directDelivery = true;
-              viewer.directDelivery = media;
-            } else viewer.directDelivery = undefined;
+            const cached =
+              viewer.directFileResolved?.media === media &&
+              viewer.directFileResolved.remoteAddress === viewer.remoteAddress
+                ? viewer.directFileResolved
+                : undefined;
+            if (cached?.settled) {
+              if (cached.url) {
+                state.mediaUrl = cached.url;
+                state.directDelivery = true;
+                viewer.directDelivery = media;
+              } else viewer.directDelivery = undefined;
+            } else if (!renew) {
+              viewer.directDelivery = undefined;
+              if (!cached) {
+                const entry = { media, remoteAddress: viewer.remoteAddress, settled: false, url: undefined };
+                viewer.directFileResolved = entry;
+                const attempt = watch.providers.directFile(media, auth, () => validGrant(grant), viewer.remoteAddress);
+                if (attempt) {
+                  void Promise.resolve(attempt)
+                    .then(async direct => {
+                      if (viewer.directFileResolved !== entry || !(await validGrant(grant))) return;
+                      entry.settled = true;
+                      entry.url = direct || undefined;
+                      if (
+                        direct &&
+                        room.viewers.get(viewerId) === viewer &&
+                        viewer.media === media &&
+                        viewer.directProxyVersion !== room.mediaVersion
+                      )
+                        watch.changed(room);
+                    })
+                    .catch(() => {
+                      if (viewer.directFileResolved === entry) entry.settled = true;
+                    });
+                } else {
+                  entry.settled = true;
+                }
+              }
+            } else {
+              // Only a provider with direct delivery turned on is asked, so nothing else waits on it.
+              const attempt = watch.providers.directFile(media, auth, () => validGrant(grant), viewer.remoteAddress);
+              const direct = attempt && (await attempt);
+              if (attempt && !(await validGrant(grant))) return result(409, { error: 'Playback delivery changed' });
+              viewer.directFileResolved = {
+                media,
+                remoteAddress: viewer.remoteAddress,
+                settled: true,
+                url: direct || undefined,
+              };
+              if (direct) {
+                state.mediaUrl = direct;
+                state.directDelivery = true;
+                viewer.directDelivery = media;
+              } else viewer.directDelivery = undefined;
+            }
           }
           const subGrant =
             media.selection?.subtitle?.available &&
@@ -481,8 +532,8 @@ function watchOperations({
       // A tab the room let go of (privacy, presence timeout) is not let back in by looking.
       if (!viewer) return result(409, { error: REJOIN, rejoin: true });
       if (viewer.userId !== auth.actor.userId) throw new Error('Viewer identity mismatch');
-      // It only waits for this tab's own stream work, which events start.
-      await viewer.streamWork;
+      // It only waits for this tab's own stream work when projecting the viewer lane.
+      if (want.viewer !== false) await viewer.streamWork;
       if (fromProvider(room.media) && viewer.access?.media !== room.media) await watch.checkAccess(room, viewer);
       if (viewer.streamFailure) throw viewer.streamFailure;
       const { alive } = signedIn(context, auth);
@@ -935,6 +986,7 @@ function watchOperations({
         void watch.reporting?.end(viewer, 'delivery-changed');
         viewer.directProxyVersion = room.mediaVersion;
         viewer.directDelivery = undefined;
+        viewer.directFileResolved = undefined;
         if (viewer.media?.directHls) {
           const previous = viewer.media;
           viewer.media = undefined;

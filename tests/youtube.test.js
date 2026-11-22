@@ -893,7 +893,8 @@ test('auto delivery falls back to IFrame embed, learns keyless oEmbed duration o
   assert.equal(afterReadyView.durationUnknown, false);
 
   // Verify createYouTubePlayerAdapter + createSync enforces jump-only sync and pauses sync during ads.
-  const { createYouTubePlayerAdapter, createSync, presentation } = await import('../shared/sync/index.mjs');
+  const { createYouTubePlayerAdapter } = await import('../web/watch/youtube-player.js');
+  const { createSync, presentation } = await import('../shared/sync/index.mjs');
   let curTime = 10;
   let rate = 1;
   let adPlaying = false;

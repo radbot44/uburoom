@@ -123,9 +123,8 @@ export function mount(host, deps) {
       observedAt,
       position: active.currentTime(),
       rate: active.playbackRate(),
-      frames: ytActive
-        ? deps.youtube.frames()
-        : uburoomPlayback.observationFrames(deps.video, store.player.videoFrames),
+      frames:
+        active.hasFrameEvidence === false ? 0 : uburoomPlayback.observationFrames(deps.video, store.player.videoFrames),
       discontinuity: store.player.observationBreak,
       state: playerState,
       ...(playerState === 'buffering' ? { stalled: !store.stream.probing && !adPlaying } : {}),
@@ -180,7 +179,7 @@ export function mount(host, deps) {
       return;
     }
     const active = deps.activePlayer,
-      ytActive = Boolean(deps.youtube?.isActive());
+      stateBuffered = active.bufferModel === 'state';
     const id = store.room.selected,
       version = store.room.state.mediaVersion,
       readinessVersion = store.room.state.readinessVersion,
@@ -190,15 +189,17 @@ export function mount(host, deps) {
     const playerDuration = active.duration();
     const { duration, ceiling } = uburoomTiming.nearEndBounds(store.room.state.state.duration, playerDuration);
     const readyTarget = Math.max(0, Math.min(target, ceiling));
-    const alignBand = ytActive ? 0.35 : readyTarget === 0 ? 0.25 : readinessVersion ? 0.15 : 0.65;
-    const aligned = !active.seeking() && Math.abs(active.currentTime() - readyTarget) <= alignBand;
+    const alignBand = stateBuffered ? 0.35 : readyTarget === 0 ? 0.25 : readinessVersion ? 0.15 : 0.65;
+    const aligned =
+      Number.isFinite(target) && !active.seeking() && Math.abs(active.currentTime() - readyTarget) <= alignBand;
     const bufferedReady =
-      !store.room.state.state.paused ||
-      (aligned &&
-        (ytActive
+      Number.isFinite(target) &&
+      aligned &&
+      (!store.room.state.state.paused ||
+        (stateBuffered
           ? active.readyState() >= 3 || active.bufferedAhead(readyTarget) >= 0.5
           : uburoomPlayback.readinessBuffered(deps.video.buffered, readyTarget, duration)));
-    const hasFrames = active.readyState() >= 3 && deps.decodedFrames() > 0;
+    const hasFrames = active.readyState() >= 3 && (active.hasFrameEvidence === false || deps.decodedFrames() > 0);
     const ready = bufferedReady && hasFrames && store.stream.readyVersion === version && !store.player.playbackError;
     let blocker;
     if (!ready && readinessId && streamVersion && !store.player.playbackError && !store.player.autoplayBlocked) {

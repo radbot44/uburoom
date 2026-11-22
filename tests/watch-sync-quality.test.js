@@ -35,7 +35,7 @@ function measurement({
   };
 }
 function viewer(userId, quality, joinedAt = 0, readyState = 1, streamVersion = 'stream-current') {
-  return { userId, streamVersion, joinedAt, watchSocket: { readyState }, syncQuality: quality };
+  return { userId, streamVersion, joinedAt, connected: readyState === 1, syncQuality: quality };
 }
 
 test('participant aggregate selects worst active score, enforces precedence across stale/grace/provisional devices, and preserves history', () => {
@@ -263,6 +263,7 @@ test('room sync history separates viewer tabs, preserves gaps and expires with t
     name,
     userId: 'account',
     streamVersion: 'stream',
+    connected: true,
     watchSocket: { readyState: 1 },
     syncQuality: {
       mediaVersion: 'one',
@@ -287,8 +288,10 @@ test('room sync history separates viewer tabs, preserves gaps and expires with t
   };
   sampleRoomSync(room, 1000);
   sampleRoomSync(room, 2000);
+  second.connected = false;
   second.watchSocket.readyState = 3;
   sampleRoomSync(room, 6000);
+  second.connected = true;
   second.watchSocket = { readyState: 1 };
   first.syncQuality.updatedAt = 11000;
   second.syncQuality.updatedAt = 11000;

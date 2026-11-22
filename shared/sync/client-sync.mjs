@@ -31,6 +31,7 @@ import { normalizePlayerAdapter } from './player-adapter.mjs';
  * @property {boolean} probing
  * @property {string} playbackError
  * @property {boolean} playerWaiting
+ * @property {string} [streamNetworkFailure]
  * @property {string} [hlsNetworkFailure]
  * @property {boolean} autoplayBlocked
  * @property {string} [readyVersion]
@@ -154,10 +155,12 @@ export function createSync(host) {
   function holdForStart(timing, target) {
     const { state } = host.read();
     if (state.state.paused) return false;
-    if (timing.valid && timing.serverTime >= state.startAt) {
+    const compMs = startDelay.compensationMs(streamKind(host.read()));
+    const triggerAt = state.startAt - compMs;
+    if (timing.valid && timing.serverTime >= triggerAt) {
       // Measure this start only if it was prepared and the alarm was on time; late or unprepared starts say nothing
       // about the player's own delay.
-      if (preparedStartKey === startKey() && timing.serverTime - state.startAt <= 150) scheduledStartKey = startKey();
+      if (preparedStartKey === startKey() && timing.serverTime - triggerAt <= 150) scheduledStartKey = startKey();
       startAlarm.cancel();
       return false;
     }
@@ -166,25 +169,24 @@ export function createSync(host) {
     applyAudio(state.state);
     const key = startKey();
     if (preparedStartKey !== key && !player.seeking() && player.readyState() >= 2) {
-      // Readiness briefly decoded a local probe. Rewind/align once while paused,
-      // before the shared deadline, rather than correcting its residue in motion.
+      // Readiness briefly decoded a local probe. Align to the room target once while paused
+      // (skipping seeks on an already-warm aligned decoder) and fire the alarm compMs early.
       try {
-        // Seek ahead by the player's measured start delay so the first moving frame lands on the room position.
-        const ahead = startDelay.compensationMs(streamKind(host.read())) / 1000;
-        if (Math.abs(player.currentTime() - (target + ahead)) > 0.01) {
-          diagnosticSample('start-prepare', { aheadMs: ahead * 1000 });
-          player.seek(target + ahead);
+        if (!(player.readyState() >= 3 && Math.abs(player.currentTime() - target) <= 0.02)) {
+          diagnosticSample('start-prepare', { compMs });
+          player.seek(target);
         }
         preparedStartKey = key;
       } catch {}
     }
     if (timing.valid) {
-      startAlarm.arm(key, state.startAt, () => {
+      startAlarm.arm(key, triggerAt, () => {
         const snapshot = host.read();
         const { state: latestState, receivedAt } = snapshot;
+        const latestTrigger = latestState.startAt - startDelay.compensationMs(streamKind(snapshot));
         if (startKey() !== key || !hasCurrentSource(snapshot) || host.online() === false || now() - receivedAt > 3000)
           return;
-        diagnosticSample('start-timer', { delayMs: playbackClock.read().serverTime - latestState.startAt });
+        diagnosticSample('start-timer', { delayMs: playbackClock.read().serverTime - latestTrigger });
         void synchronize();
       });
     } else startAlarm.cancel();
@@ -201,11 +203,11 @@ export function createSync(host) {
       probing,
       playbackError,
       playerWaiting,
-      hlsNetworkFailure,
       autoplayBlocked,
       readyVersion,
       syncCorrectionMode,
     } = snapshot;
+    const streamNetworkFailure = snapshot.streamNetworkFailure ?? snapshot.hlsNetworkFailure;
     if (!state || !hasLoadedMedia(snapshot) || player.readyState() < 1 || probing || playbackError) return;
     if (player.isAdPlaying?.()) return;
     const supportsRate = player.supportsRateSync !== false;
@@ -214,7 +216,7 @@ export function createSync(host) {
     if (hlsTimelinePending) {
       player.pause();
       resetDriftCorrection();
-      if (hlsNetworkFailure) host.error(hlsNetworkFailure);
+      if (streamNetworkFailure) host.error(streamNetworkFailure);
       renderTransport();
       return;
     }
@@ -257,9 +259,11 @@ export function createSync(host) {
       });
     } else pauseAlarm.cancel();
     if (state.startAt > state.serverNow && holdForStart(timing, target)) return;
-    if (hlsNetworkFailure && !state.state.paused && player.bufferedAhead(target) < 0.5) {
+    const inStartLeadWindow =
+      clockValid && !state.state.paused && Number.isFinite(state.startAt) && timing.serverTime < state.startAt;
+    if (streamNetworkFailure && !state.state.paused && player.bufferedAhead(target) < 0.5) {
       player.pause();
-      host.error(hlsNetworkFailure);
+      host.error(streamNetworkFailure);
       return;
     }
     if (hlsPreparationUntil && !state.state.paused) {
@@ -286,8 +290,10 @@ export function createSync(host) {
       !playerWaiting &&
       player.readyState() >= 3 &&
       Math.abs(alignTarget - currentTime) <= settleBand
-    )
+    ) {
       syncSeekPending = false;
+      sharedSeekPending = false;
+    }
     // Let an in-flight alignment refill before chasing a moving playing target.
     // Repeated out-of-buffer seeks abort the very HLS fragments needed to recover.
     const canAlign =
@@ -301,6 +307,7 @@ export function createSync(host) {
       const destination = alignTarget;
       const automaticCorrection =
         (eventName === 'sync-seek' || eventName === 'sync-jump') &&
+        !sharedSeekPending &&
         now() >= correctionSuppressionUntil &&
         clockValid &&
         !paused &&
@@ -310,7 +317,7 @@ export function createSync(host) {
         !player.paused() &&
         !player.seeking() &&
         player.readyState() >= 3 &&
-        decodedFrames() > 0 &&
+        (player.hasFrameEvidence === false || decodedFrames() > 0) &&
         host.correctionEligible?.() !== false;
       try {
         const seekDeltaMs = (destination - player.currentTime()) * 1000;
@@ -331,6 +338,7 @@ export function createSync(host) {
     const seekThreshold =
       state.waitingForReady && state.readinessVersion ? (supportsRate ? 0.05 : 0.25) : supportsRate ? 0.65 : 0.9;
     if (
+      !inStartLeadWindow &&
       (clockValid || state.state.paused) &&
       canAlign &&
       (!player.seeking() || bufferedTarget || sharedSeekPending) &&
@@ -341,6 +349,7 @@ export function createSync(host) {
     const postAlignTime = player.currentTime();
     const difference = alignTarget - postAlignTime;
     const eligible =
+      !inStartLeadWindow &&
       clockValid &&
       host.visibility() === 'visible' &&
       !paused &&
@@ -457,6 +466,7 @@ export function createSync(host) {
     preparedStartKey = scheduledStartKey = undefined;
     syncSeekPending = false;
     sharedSeekPending = false;
+    correctionSuppressionUntil = 0;
     hlsPreparationUntil = 0;
     hlsTimelinePending = false;
     lastControl = undefined;
@@ -505,7 +515,6 @@ export function createSync(host) {
     jumpDriftCorrection.reset();
     if (embedJumpDriftCorrection !== jumpDriftCorrection) embedJumpDriftCorrection.reset();
     presentationTiming.interrupt?.('seek');
-    correctionSuppressionUntil = Math.max(correctionSuppressionUntil, now() + 5000);
     if (hlsPreparationUntil) hlsPreparationUntil = now() + 10000;
   }
 

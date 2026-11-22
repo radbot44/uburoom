@@ -83,7 +83,6 @@ export function mount(host, deps) {
         if (typeof command.args?.watchState === 'boolean') change.plexWatchState = command.args.watchState;
         deps.savePlayerPreferences(change);
       }
-      await deps.refreshState();
       if (command.action === 'room.visibility') await deps.refreshRooms();
       return result;
     } catch (error) {

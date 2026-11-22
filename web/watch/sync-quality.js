@@ -73,6 +73,7 @@ export function mount(host, deps) {
     store.room.seekPendingValue = undefined;
     store.room.seekPendingUntil = 0;
     store.room.seekPendingToken = (store.room.seekPendingToken || 0) + 1;
+    store.player.lastSyncErrorMs = undefined;
     const wasActive =
       store.player.publishedSyncQualityStatus === 'playing' || store.player.publishedSyncQualityStatus === 'buffering';
     deps.syncQuality.reset(undefined, { preserveLast: true });
@@ -172,29 +173,30 @@ export function mount(host, deps) {
       at - store.player.lastPresentationBreak >= 2000 &&
       at >= store.player.syncQualitySettleUntil &&
       !store.player.sync?.timelinePending;
+    const target = uburoomTiming.target(store.room.state, timing.serverTime);
     const presentationSample = deps.time.presentation.read?.(at, {
       context: store.player.sync?.contextKey(),
       clockRevision: timing.clockRevision,
     });
-    const presentationInterrupted = Boolean(
-      presentationSample?.interrupted ||
-      (presentationSample?.reason && !['fresh', 'stale'].includes(presentationSample.reason)),
-    );
-    const presentationFresh =
-      !presentationInterrupted &&
-      Number.isFinite(presentationSample?.errorMs) &&
-      presentationSample.ageMs !== undefined &&
-      presentationSample.ageMs <= 2500;
+    const signal = uburoomTiming.controlSignal({
+      target,
+      currentTime: deps.activePlayer.currentTime(),
+      presentation: presentationSample,
+      clockValid: syncQualityClockUsable(timing),
+      visible: document.visibilityState === 'visible',
+      eligible,
+      maxAgeMs: 2500,
+    });
     let errorMs,
       source = 'position';
-    if (presentationFresh) {
+    if (eligible && (signal.source === 'presentation' || signal.source === 'blend')) {
       errorMs = presentationSample.errorMs;
       source = 'presentation';
-    } else if (eligible) {
-      const target = uburoomTiming.target(store.room.state, timing.serverTime);
-      if (Number.isFinite(target)) errorMs = (deps.activePlayer.currentTime() - target) * 1000;
+    } else if (eligible && Number.isFinite(target)) {
+      const value = -signal.error * 1000;
+      errorMs = value === 0 ? 0 : value;
     }
-    if (Number.isFinite(errorMs)) store.player.lastSyncErrorMs = errorMs;
+    store.player.lastSyncErrorMs = eligible && Number.isFinite(errorMs) ? errorMs : undefined;
     deps.syncQuality.sample({
       at,
       errorMs,

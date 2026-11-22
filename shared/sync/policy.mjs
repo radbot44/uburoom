@@ -172,7 +172,7 @@ export function commandCapability(action) {
   )
     return 'chooseMedia';
   if (action.startsWith('queue.')) return 'editQueue';
-  if (['media.play', 'media.pause', 'media.toggle'].includes(action)) return 'playPause';
+  if (['media.play', 'media.pause', 'media.toggle', 'check.ask', 'check.clear'].includes(action)) return 'playPause';
   if (action.startsWith('media.seek.')) return 'seek';
   if (['media.load', 'media.next', 'media.previous'].includes(action) || action.startsWith('media.ready.'))
     return 'chooseMedia';

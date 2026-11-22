@@ -516,15 +516,6 @@ export function mount(host, deps) {
       }
     }
     const nextTarget = deps.expected();
-    if (
-      !changed &&
-      previousRevision !== undefined &&
-      previousRevision !== next.revision &&
-      previousTarget !== undefined &&
-      nextTarget !== undefined &&
-      Math.abs(nextTarget - previousTarget) > 0.05
-    )
-      store.player.sync.suppressCorrectionTelemetry(5000);
     const sharedSeekRequested =
       !changed &&
       !store.player.sync.timelinePending &&
@@ -532,6 +523,16 @@ export function mount(host, deps) {
         next.readinessVersion !== previousReadinessVersion &&
         !next.readiness?.buffering) ||
         (previousTarget !== undefined && Math.abs(nextTarget - previousTarget) > 1.5));
+    if (
+      !changed &&
+      !sharedSeekRequested &&
+      previousRevision !== undefined &&
+      previousRevision !== next.revision &&
+      previousTarget !== undefined &&
+      nextTarget !== undefined &&
+      Math.abs(nextTarget - previousTarget) > 0.65
+    )
+      store.player.sync.sharedSeek();
     if (sharedSeekRequested) {
       deps.choppyDetector.interrupt();
       store.player.sync.sharedSeek();

@@ -332,7 +332,6 @@ export function mount(host, deps) {
       socketWasReady: details.wasReady,
       visibility: document.visibilityState,
     });
-    if (store.connection.transport?.ready) store.connection.transport.interrupt(1000);
     if (store.connection.reconnecting) return;
     store.connection.reconnecting = true;
     store.connection.stateRequestSequence++;

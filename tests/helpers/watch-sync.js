@@ -18,6 +18,8 @@ async function install(context) {
     presentation: context.presentationTiming || timing.presentation(),
     driftCorrection: context.driftCorrection,
     jumpDriftCorrection: context.jumpDriftCorrection,
+    startDelay: context.startDelay,
+    streamKind: context.streamKind,
     startAlarm: context.startAlarm || { arm: noop, cancel: noop },
     pauseAlarm: context.pauseAlarm || { arm: noop, cancel: noop },
     expected: () => (context.expected ? context.expected() : 0),

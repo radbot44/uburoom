@@ -386,3 +386,67 @@ test('mid-playback seek triggers reportReadiness when readyVersion matches media
   assert.equal(readinessReported, 1, 'reportReadiness triggered on mid-playback seek');
   assert.equal(unlocked, 0, 'unlockLocal skipped when readyVersion already matches');
 });
+
+test('G1 start compensation arms alarm early without seeking an already-aligned warm paused decoder', async () => {
+  const { startDelay } = require('../shared/sync/timing.mjs');
+  const estimator = startDelay();
+  estimator.record('hls', 150);
+  estimator.record('hls', 150);
+  let armedAt,
+    seeks = 0,
+    plays = 0,
+    now = 0;
+  let serverTime = 1000;
+  const ctx = {
+    state: {
+      startAt: 2000,
+      serverNow: 1000,
+      format: 'hls',
+      mediaUrl: 'fixture',
+      state: { paused: false, duration: 60, volume: 50, muted: false },
+    },
+    mediaSource: 'fixture',
+    video: {
+      currentTime: 0.005,
+      readyState: 4,
+      seeking: false,
+      paused: true,
+      playbackRate: 1,
+      buffered: { length: 1, start: () => 0, end: () => 10 },
+      seek() {},
+      pause() {
+        this.paused = true;
+      },
+      async play() {
+        plays++;
+        this.paused = false;
+      },
+    },
+    startDelay: estimator,
+    streamKind: ({ state }) => state?.format || 'default',
+    startAlarm: {
+      cancel() {},
+      arm(_, at) {
+        armedAt = at;
+      },
+    },
+    expected: () => 0,
+    performance: { now: () => now },
+    receivedAt: 0,
+    playbackClock: { read: () => ({ valid: true, serverTime, clockUncertaintyMs: 5 }) },
+  };
+  Object.defineProperty(ctx.video, 'currentTime', {
+    get: () => 0.005,
+    set: () => {
+      seeks++;
+    },
+  });
+  const sync = await install(ctx);
+  await sync.synchronize();
+  assert.equal(seeks, 0, 'warm aligned decoder keeps target without forward seek');
+  assert.equal(armedAt, 1850, 'start alarm fires compMs early');
+  serverTime = 1860;
+  await sync.synchronize();
+  assert.equal(plays, 1, 'starts playback at triggerAt during pre-startAt lead window');
+  assert.equal(seeks, 0, 'pre-startAt lead window does not seek backwards against target');
+});

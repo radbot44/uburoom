@@ -43,7 +43,7 @@ export function controlLead(room, monoNow = defaultMonoNow()) {
   if (room.viewers.size <= 1) return 0;
   let lead = READY_START_MARGIN_MS;
   for (const viewer of room.viewers.values()) {
-    const rawRtts = viewer.watchSocket?.watchRtts || viewer.rtts || [];
+    const rawRtts = viewer.rtts || [];
     const samples = rawRtts
       .filter(sample => monoNow - sample.at <= 30000 && monoNow >= sample.at)
       .map(sample => sample.ms)
@@ -1011,6 +1011,7 @@ function join(room, event, ctx) {
   };
   Object.assign(viewer, {
     at: now,
+    connected: true,
     userId: actor.userId,
     viewerId,
     name: ctx.extensions.displayName ? ctx.extensions.displayName(actor) : senderName(actor.name, 'Participant'),
@@ -1142,6 +1143,7 @@ const EVENTS = {
   disconnect(room, { viewerId, planned }, ctx) {
     const viewer = room.viewers.get(viewerId);
     if (viewer) {
+      viewer.connected = false;
       viewer.at = planned ? ctx.now - PRESENCE_TIMEOUT_MS - 1 : ctx.now;
       viewer.readinessBlocker = undefined;
     }
@@ -1153,6 +1155,7 @@ const EVENTS = {
     const viewer = room.viewers.get(viewerId);
     if (!viewer) return false;
     viewer.at = ctx.now;
+    viewer.connected = true;
     if (rtts) viewer.rtts = rtts.map(sample => ({ ...sample }));
     return true;
   },

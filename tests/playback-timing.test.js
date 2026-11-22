@@ -825,3 +825,41 @@ test('pairwise report uses held presented frames, reports excluded recovery and 
   assert.ok(gapReport.excludedGridSamples['callback-gap'] > 500);
   assert.ok(gapReport.healthyCoverageFraction < 0.01);
 });
+
+test('clock tolerates one isolated outlier sample and invalidates only after consecutive suspect samples', () => {
+  const { clock } = require('../shared/sync/timing.mjs');
+  let mono = 1000,
+    wall = 1700000000000;
+  const c = clock({ monotonic: () => mono, wall: () => wall });
+  const ex = (rtt, offset) => {
+    const req = c.begin();
+    mono += rtt;
+    wall += rtt;
+    return c.add(req, {
+      serverReceivedAt: req.sent + offset + rtt / 2,
+      serverSentAt: req.sent + offset + rtt / 2,
+      serverProcessingMs: 0,
+      clockEpoch: 'e1',
+    });
+  };
+  assert.equal(ex(20, 5000), true);
+  assert.equal(c.read().valid, true);
+  mono += 500;
+  wall += 500;
+  assert.equal(ex(20, 5600), false, 'single outlier is rejected');
+  assert.equal(c.read().valid, true, 'single isolated outlier preserves clock validity');
+  mono += 500;
+  wall += 500;
+  assert.equal(ex(20, 5000), true, 'next normal sample clears suspect run');
+  mono += 500;
+  wall += 500;
+  ex(20, 5600);
+  mono += 500;
+  wall += 500;
+  ex(20, 5600);
+  assert.equal(c.read().valid, false, 'two consecutive suspect outliers mark the clock uncertain');
+  mono += 500;
+  wall += 500;
+  assert.equal(ex(20, 5600), true, 'third agreeing outlier rebases onto the new step');
+  assert.equal(c.read().valid, true);
+});

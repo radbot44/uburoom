@@ -147,3 +147,8 @@ test('participant management grants are denied even in old stored/default polici
   const configured = Policy.configuration({ viewer_permissions: 'all' }).roomPermissions;
   assert.ok(Policy.VIEWER_BLOCKED.every(key => !configured.viewer[key]));
 });
+
+test('human check commands map to playPause in Policy.commandCapability', () => {
+  assert.equal(Policy.commandCapability('check.ask'), 'playPause');
+  assert.equal(Policy.commandCapability('check.clear'), 'playPause');
+});

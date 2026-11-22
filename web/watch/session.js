@@ -20,6 +20,7 @@ export function mount(host, deps) {
     },
     isServerAllowed: () => store.identity.config?.discordRichPresence !== false,
     getRoom: () => (store.room.selected ? store.room.state : undefined),
+    getPosition: () => deps.time.target(store.room.state),
     ensureScope: () => deps.requestRichPresenceScope?.() ?? Promise.resolve(false),
     now: () => deps.time.wall(),
     setTimeoutFn: (fn, ms) => deps.time.setTimeout(fn, ms),

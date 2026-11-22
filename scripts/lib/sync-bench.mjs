@@ -253,7 +253,8 @@ export function simulateViewer(options) {
   }
 
   if (withPlayer) {
-    push(startMs, 1.5, () => {
+    const triggerMs = startDelayMs === undefined ? startMs : startMs - startAheadMs;
+    push(triggerMs, 1.5, () => {
       const reading = clock.read();
       if (startDelayMs === undefined) {
         // Fixed initial error: playing immediately, offset from the target.
@@ -268,13 +269,14 @@ export function simulateViewer(options) {
         started = false;
         return;
       }
-      // The alarm fires when the clock estimate reaches the start; clock error shifts the instant.
-      const clockError = reading.serverTime - (MONO_BASE_MS + startMs + SERVER_OFFSET_MS);
+      // The alarm fires compMs early; clock error shifts the instant while the paused decoder stays at target.
+      const clockError = reading.serverTime - (MONO_BASE_MS + triggerMs + SERVER_OFFSET_MS);
       started = true;
-      position.p = BASE_POSITION_S + startAheadMs / 1000;
-      position.stallUntil = startMs - clockError + startDelayMs;
-      startErrorMs = position.stallUntil - startMs - startAheadMs;
-      holdUntil = position.stallUntil + 1000;
+      position.p = BASE_POSITION_S;
+      position.stallUntil = triggerMs - clockError + startDelayMs;
+      position.last = Math.min(startMs, position.stallUntil);
+      startErrorMs = position.stallUntil - startMs;
+      holdUntil = Math.max(startMs, position.stallUntil) + 1000;
     });
     for (let t = startMs; t <= totalMs; t += TICK_MS) {
       push(t, 2.5, () => {
@@ -573,11 +575,11 @@ function spreadRows(seed, trials) {
 
 /**
  * Scheduled starts: each viewer's player has its own start delay (40 ms + exponential, capped at 400 ms, as in the
- * spread scenario) that varies a little from start to start (normal, sd START_JITTER_MS). The compensated runs seek
- * ahead by the running median that timing.mjs startDelay() holds, as the client does, once two starts have been
- * measured; the uncompensated runs are today's behaviour. Error is true target minus position when the first frame
- * moves, before any drift correction. Starts whose clock was invalid at the alarm are not observed. The estimator is
- * fed the exact delay; real rVFC timing adds frame quantization.
+ * spread scenario) that varies a little from start to start (normal, sd START_JITTER_MS). The compensated runs fire
+ * the start alarm early by the running median that timing.mjs startDelay() holds, keeping warm aligned decoders
+ * on target once two starts have been measured; the uncompensated runs wait until startAt. Error is true target minus
+ * position when the first frame moves, before any drift correction. Starts whose clock was invalid at the alarm are
+ * not observed. The estimator is fed the exact delay; real rVFC timing adds frame quantization.
  */
 function startRows(seed, trials) {
   const rows = [];

@@ -290,3 +290,36 @@ test('real WebSocket server integration verifies the handshake, clock exchanges,
   wss.close();
   await new Promise(resolve => server.close(resolve));
 });
+
+test('transport queues requests beyond the 8 in-flight limit FIFO without touching clock exchanges', async t => {
+  const transport = new WatchTransport({
+    url: 'wss://example.test/watch-socket',
+    WebSocket: MockSocket,
+    identity: () => ({ token: 'tok', csrf: 'csr' }),
+  });
+  t.after(() => transport.close());
+  await transport.connect();
+  const socket = transport.socket;
+
+  const initialClock = socket.sent.find(m => m.type === 'clock');
+  assert.ok(initialClock);
+  socket.receive({ type: 'clock', id: initialClock.id, serverNow: 100, timing: {} });
+
+  const calls = Array.from({ length: 10 }, (_, i) => transport.call('me', { args: { i } }));
+  const callsSent = socket.sent.filter(m => m.type === 'call');
+  assert.equal(callsSent.length, 8, 'only 8 requests are sent immediately');
+  assert.equal(transport.pending.size, 8);
+  transport.clock();
+  assert.equal(socket.sent.filter(m => m.type === 'clock').length, 2, 'clock sends even while request window is full');
+
+  for (let i = 0; i < 8; i++) socket.receive({ type: 'ack', id: callsSent[i].id, value: { i } });
+  const drained = socket.sent.filter(m => m.type === 'call').slice(8);
+  assert.equal(drained.length, 2, 'queued requests drain FIFO as replies arrive');
+  for (let i = 0; i < 2; i++) socket.receive({ type: 'ack', id: drained[i].id, value: { i: i + 8 } });
+  const results = await Promise.all(calls);
+  assert.deepEqual(
+    results.map(r => r.i),
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+  );
+  transport.close();
+});

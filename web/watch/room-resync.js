@@ -10,7 +10,7 @@ export function mount(host, deps) {
     try {
       await deps.tracked('room-poll', () => deps.connected().resync());
     } catch {
-      if (id === store.room.selected) deps.connectionLost();
+      if (id === store.room.selected && !store.connection.transport?.ready) deps.connectionLost();
     }
   }
   // Takes this tab's place in its room again on a new connection: the same viewer, joined afresh.

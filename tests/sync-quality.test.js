@@ -187,8 +187,8 @@ test('viewers start at provisional 100% and the first valid interval begins refi
   );
   assert.equal(
     refresh(tracker, 2000, { clockValid: false }).confidence,
-    'confident',
-    'brief clock loss retains recent evidence',
+    'reduced',
+    'clock loss lowers retained confidence while preserving score',
   );
   assert.equal(
     refresh(tracker, 2000, { clockUncertaintyMs: 900 }).score,
@@ -225,22 +225,22 @@ test('pause, seek, temporary clock loss and clock revision preserve the latest s
   assert.equal(paused.status, 'paused');
   assert.equal(paused.score, first.score);
   assert.equal(paused.lastLevel, level);
-  assert.equal(paused.confidence, 'confident');
+  assert.equal(paused.confidence, 'reduced');
   const seeking = refresh(tracker, 13500, { playbackStatus: 'seeking' });
   assert.equal(seeking.status, 'seeking');
   assert.equal(seeking.score, first.score);
-  assert.equal(seeking.confidence, 'confident');
+  assert.equal(seeking.confidence, 'reduced');
   tracker.breakSample(14000);
   const stale = refresh(tracker, 14000, { clockValid: false });
   assert.equal(stale.status, 'playing');
   assert.equal(stale.score, first.score);
-  assert.equal(stale.confidence, 'confident');
+  assert.equal(stale.confidence, 'reduced');
   tracker.sample({ at: 15000, errorMs: 1, eligible: true, context, clockRevision: 2 });
   const resumed = refresh(tracker, 15000);
   assert.equal(resumed.status, 'playing');
   assert.equal(resumed.lastLevel, level);
   assert.equal(resumed.score, first.score);
-  assert.equal(resumed.confidence, 'confident');
+  assert.equal(resumed.confidence, 'reduced');
   assert.equal(resumed.metrics.measuredSeconds, 0, 'clock resets invalidate the old evidence window');
 });
 
@@ -318,7 +318,7 @@ test('clock loss and prolonged pauses decay confidence to reduced without losing
     'confident',
   );
   tracker.breakSample(2000);
-  assert.equal(refresh(tracker, 9500, { clockValid: false }).confidence, 'confident');
+  assert.equal(refresh(tracker, 9500, { clockValid: false }).confidence, 'reduced');
   assert.equal(refresh(tracker, 9500, { clockValid: false }).metrics.measurementFreshnessMs, 8500);
   assert.equal(refresh(tracker, 15000, { clockValid: false }).confidence, 'reduced');
   assert.equal(refresh(tracker, 15000, { clockValid: false }).score, 1);
@@ -331,7 +331,7 @@ test('clock loss and prolonged pauses decay confidence to reduced without losing
   pauseTracker.sample({ at: 0, errorMs: 10, eligible: true, context: pContext, clockRevision: 1 });
   pauseTracker.sample({ at: 1000, errorMs: 10, eligible: true, context: pContext, clockRevision: 1 });
   refresh(pauseTracker, 1000);
-  assert.equal(refresh(pauseTracker, 50000, { playbackStatus: 'paused', clockValid: false }).confidence, 'confident');
+  assert.equal(refresh(pauseTracker, 50000, { playbackStatus: 'paused', clockValid: false }).confidence, 'reduced');
   assert.equal(refresh(pauseTracker, 122000, { playbackStatus: 'paused', clockValid: false }).confidence, 'reduced');
   pauseTracker.sample({ at: 123000, errorMs: 15, eligible: true, context: pContext, clockRevision: 1 });
   pauseTracker.sample({ at: 124000, errorMs: 15, eligible: true, context: pContext, clockRevision: 1 });
@@ -372,10 +372,11 @@ test('viewer spread compares confident players of the current video and starts a
     const now = i * 5000;
     room.viewers.set('a', report(10, now));
     room.viewers.set('b', report(i < 19 ? -20 + i : 80, now));
-    // Not counted: reduced confidence, a stale report, an old stream.
+    // Not counted: reduced confidence, non-measurement reasons, a stale report, an old stream.
     room.viewers.set('c', report(900, now, { confidence: 'reduced' }));
     room.viewers.set('d', report(900, now - 9000));
     room.viewers.set('e', { ...report(900, now), streamVersion: 's2' });
+    room.viewers.set('f', report(900, now, { reason: 'clock-unavailable' }));
     const result = quality.sampleSyncSpread(tracker, room, now);
     tracker = result.tracker;
     assert.equal(result.sampled, true);

@@ -440,13 +440,9 @@ export function createQualityApi() {
       const metrics = metricsAt(at),
         reduced = reason =>
           report(playbackStatus, reason, metrics, undefined, false, hasMeasuredScore ? 'reduced' : 'provisional');
-      const evidenceAge = lastActivityAt === undefined ? Infinity : Math.max(0, at - lastActivityAt);
-      const retained = (reason, longPause = false) =>
-        hasMeasuredScore && evidenceAge <= (longPause ? PAUSED_EVIDENCE_MS : RECENT_EVIDENCE_MS)
-          ? report(playbackStatus, reason, metrics, undefined, false, 'confident')
-          : reduced(reason);
+      const retained = reason => reduced(reason);
       if (playbackStatus === 'error') return reduced(unknownReason || 'playback-error');
-      if (playbackStatus === 'paused') return retained(unknownReason || 'paused', true);
+      if (playbackStatus === 'paused') return retained(unknownReason || 'paused');
       if (playbackStatus === 'seeking') return retained(unknownReason || 'seeking');
       if (playbackStatus === 'starting') return reduced(unknownReason || 'starting');
       if (!clockValid) return retained(unknownReason || 'clock-unavailable');
@@ -620,7 +616,7 @@ export function createQualityApi() {
         const contextMatches =
           measurement?.mediaVersion === room.mediaVersion && measurement?.streamVersion === viewer.streamVersion;
         let status = disconnected ? 'disconnected' : !measurement ? 'unknown' : measurement.status;
-        const socketClosed = viewer.watchSocket ? viewer.watchSocket.readyState !== 1 : viewer.connected === false;
+        const socketClosed = viewer.connected === false;
         if (!disconnected && socketClosed) status = 'disconnected';
         else if (!disconnected && measurement && (!contextMatches || age > STALE_AFTER_MS) && status !== 'error')
           status = 'stale';
@@ -767,11 +763,12 @@ export function createQualityApi() {
     for (const viewer of room.viewers.values()) {
       const quality = viewer.syncQuality,
         offset = quality?.health?.offsetMs;
-      const socketOpen = viewer.watchSocket ? viewer.watchSocket.readyState === 1 : viewer.connected !== false;
+      const socketOpen = viewer.connected !== false;
       if (
         socketOpen &&
         quality?.status === 'playing' &&
         quality.confidence === 'confident' &&
+        (!quality.reason || quality.reason === 'position-timing-estimate') &&
         quality.mediaVersion === room.mediaVersion &&
         quality.streamVersion === viewer.streamVersion &&
         finite(quality.updatedAt) &&

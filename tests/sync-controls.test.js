@@ -119,9 +119,9 @@ test('pause and resume share deadlines, project the pause target, and supersede 
 
 test('control lead uses fresh bounded server round trips and discards stale evidence', async t => {
   const f = await fixture(t);
-  f.room.viewers.get(f.h).watchSocket = { watchRtts: [{ at: f.mono(), ms: 550 }] };
+  f.room.viewers.get(f.h).rtts = [{ at: f.mono(), ms: 550 }];
   assert.equal(f.watch.controlLead(f.room), 650);
-  f.room.viewers.get(f.g).watchSocket = { watchRtts: [{ at: f.mono(), ms: 5000 }] };
+  f.room.viewers.get(f.g).rtts = [{ at: f.mono(), ms: 5000 }];
   assert.equal(f.watch.controlLead(f.room), 1000);
   f.advance(31000);
   assert.equal(f.watch.controlLead(f.room), 400);
@@ -131,7 +131,7 @@ test('a sole viewing tab skips startup, resume, pause and seek leads while retai
   const f = await fixture(t);
   await f.watch.leave(f.room, f.guest, f.g);
   const rtts = [{ at: f.mono(), ms: 900 }];
-  f.room.viewers.get(f.h).watchSocket = { watchRtts: rtts };
+  f.room.viewers.get(f.h).rtts = rtts;
   assert.equal(f.watch.controlLead(f.room), 0);
   await f.load();
   assert.equal(f.room.readinessStartAt, f.now());
@@ -159,7 +159,7 @@ test('a sole viewing tab skips startup, resume, pause and seek leads while retai
   await f.ready(f.h);
   assert.equal(f.room.startAt, f.now());
   assert.equal(f.watch.position(f.room), 45);
-  assert.equal(f.room.viewers.get(f.h).watchSocket.watchRtts, rtts, 'timing samples survive solo playback');
+  assert.equal(f.room.viewers.get(f.h).rtts, rtts, 'timing samples survive solo playback');
 });
 
 test('a second tab of the same account restores group readiness and delivery leads', async t => {

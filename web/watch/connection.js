@@ -98,19 +98,38 @@ export function mount(host, deps) {
           throw new TypeError('Controlled room-poll interruption');
         if (!store.connection.transport?.ready)
           throw new TypeError('Room connection unavailable; retry after reconnecting');
+        const joinSequence = (store.connection.joinSequence = (store.connection.joinSequence || 0) + 1);
         const joined = await store.connection.transport.join(
           id,
           store.identity.viewerId,
           deps.viewerPreferences(),
           options,
         );
+        const existing = store.connection.roomLanes;
+        if (joinSequence !== store.connection.joinSequence) {
+          const current =
+            existing?.roomId === id && existing.viewerId === joined.viewerId
+              ? existing
+              : { room: joined.room, viewer: joined.viewer };
+          return { ...uburoomWire.mergeView(current.room.state, current.viewer.state), timing: joined.timing };
+        }
+        const keepRoom =
+          existing?.roomId === id &&
+          existing.viewerId === joined.viewerId &&
+          existing.room.version > joined.room.version;
+        const room = keepRoom ? existing.room : joined.room;
+        const keepViewer =
+          existing?.roomId === id &&
+          existing.viewerId === joined.viewerId &&
+          existing.viewer.version > joined.viewer.version;
+        const viewer = keepViewer ? existing.viewer : joined.viewer;
         store.connection.roomLanes = {
           roomId: id,
           viewerId: joined.viewerId,
-          room: joined.room,
-          viewer: joined.viewer,
+          room,
+          viewer,
         };
-        return { ...uburoomWire.mergeView(joined.room.state, joined.viewer.state), timing: joined.timing };
+        return { ...uburoomWire.mergeView(room.state, viewer.state), timing: joined.timing };
       });
     },
     leave: (id, options) => {

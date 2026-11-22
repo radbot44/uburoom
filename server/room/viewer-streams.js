@@ -250,6 +250,7 @@ module.exports = {
         void this.reporting?.end(viewer, 'stream-changed');
         if (viewer.media) void this.providers.stop(viewer.media);
         viewer.directDelivery = undefined;
+        viewer.directFileResolved = undefined;
         viewer.media = {
           id: room.media.id,
           title: room.media.title,
@@ -458,6 +459,7 @@ module.exports = {
         viewer.mediaVersion = version;
         viewer.streamVersion = randomUUID();
         viewer.directDelivery = undefined;
+        viewer.directFileResolved = undefined;
         adopted = true;
         if (media.unavailable) {
           const entry = this.roomState.queue.current(room.roomId);

@@ -133,14 +133,13 @@ export function createTimingApi() {
       }
       delayed = [];
       if (mapping !== undefined && Math.abs(offset - mapping) > Math.max(250, rtt / 2 + (best?.rtt || 0) / 2 + 10)) {
-        uncertain = true;
-        // A server wall-clock step changes the authoritative timeline. Require
-        // three agreeing exchanges before rebasing; one outlier cannot jump it.
-        // Outliers are left to this rule and do not widen the uncertainty bound.
+        // Tolerate one isolated outlier without invalidating the clock; mark uncertain on a
+        // second consecutive suspect sample and require three agreeing samples to rebase.
         evidence.suspect = true;
         samples.push({ at: received, rtt, offset, suspect: true });
         samples = samples.slice(-32);
         const recent = samples.slice(-3);
+        if (recent.length >= 2 && recent.at(-2)?.suspect && recent.at(-1)?.suspect) uncertain = true;
         if (recent.length < 3 || !recent.every(s => s.suspect && Math.abs(s.offset - offset) < 10))
           return reject('outlier');
         samples = [];
@@ -477,7 +476,7 @@ export function createTimingApi() {
 
   /**
    * @param {{target?: number, currentTime?: number, presentation?: any, clockValid?: boolean, visible?: boolean,
-   *   eligible?: boolean}} [input]
+   *   eligible?: boolean, maxAgeMs?: number}} [input]
    */
   function controlSignal({
     target: expectedTarget,
@@ -486,15 +485,17 @@ export function createTimingApi() {
     clockValid = true,
     visible = true,
     eligible = true,
+    maxAgeMs = 1000,
   } = {}) {
     const positionError =
       Number.isFinite(expectedTarget) && Number.isFinite(currentTime) ? expectedTarget - currentTime : 0;
     const usable = !!(
       pres &&
-      pres.valid &&
+      (pres.valid || pres.reason === 'stale') &&
+      !pres.interrupted &&
       Number.isFinite(pres.smoothedErrorMs) &&
       Number.isFinite(pres.ageMs) &&
-      pres.ageMs <= 1000 &&
+      pres.ageMs <= maxAgeMs &&
       pres.ageMs >= 0 &&
       clockValid &&
       visible &&
@@ -511,7 +512,7 @@ export function createTimingApi() {
       else if (pres.reason === 'context') reason = 'context';
       else if (pres.reason === 'clock') reason = 'clock';
       else if (pres.reason === 'discontinuity') reason = 'discontinuity';
-      else if (pres.reason === 'stale' || (pres.ageMs !== undefined && pres.ageMs > 1000)) reason = 'stale';
+      else if (pres.reason === 'stale' || (pres.ageMs !== undefined && pres.ageMs > maxAgeMs)) reason = 'stale';
       else if (!clockValid) reason = 'clock-invalid';
       else if (!visible) reason = 'hidden';
       else if (!eligible) reason = 'ineligible';
@@ -851,7 +852,7 @@ export function createTimingApi() {
   }
 
   // Start delay: how long a player takes from play() to its first advancing frame, per stream kind. A scheduled
-  // start seeks that far ahead while paused so the first moving frame lands on the room position. The estimate is the
+  // start arms its alarm that much earlier while keeping an aligned paused player at target. The estimate is the
   // median of the last few samples, so a single slow start (cold cache, busy tab) does not move it. Kept in memory
   // only; with fewer than minSamples for a kind there is no estimate and the drift controller's settling handles it.
   const START_DELAY = Object.freeze({ maxSampleMs: 1500, window: 9, minSamples: 2, maxCompensationMs: 250 });

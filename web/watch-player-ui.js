@@ -41,11 +41,12 @@ function trackLabel(track) {
 }
 function mount({ getState, execute, fail, beforeSettings, afterSettings, changeTrack, captions }) {
   const stage = document.getElementById('stage'),
-    $ = id => stage.ownerDocument.getElementById(id) || document.getElementById(id),
+    ownerDoc = () => (typeof stage?.ownerDocument?.getElementById === 'function' ? stage.ownerDocument : document),
+    $ = id => ownerDoc().getElementById(id) || document.getElementById(id),
     cog = $('tracks-open'),
     dialog = $('tracks-dialog');
-  const activeElement = () => stage.ownerDocument.activeElement;
-  const mobile = () => stage.ownerDocument === document && document.body.dataset.layout === 'phone';
+  const activeElement = () => ownerDoc().activeElement;
+  const mobile = () => ownerDoc() === document && document.body.dataset.layout === 'phone';
   const menu = document.createElement('div');
   menu.id = 'player-settings-menu';
   menu.className = 'player-settings-menu';
@@ -160,7 +161,7 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
       ) + 14;
     // Position and height go to the stylesheet as --x, --y and --menu-height (tracks-menu.css).
     menu.style.setProperty('--menu-height', height + 'px');
-    const view = stage.ownerDocument.defaultView || window;
+    const view = ownerDoc().defaultView || window;
     const left = Math.max(8, Math.min(view.innerWidth - width - 8, anchor.right - width));
     menu.style.setProperty('--x', left / scale + 'px');
     menu.style.setProperty('--y', Math.max(8, anchor.top - menu.offsetHeight * scale - 8) / scale + 'px');
@@ -519,25 +520,25 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
   };
   let boundDoc, boundWin;
   function syncHostListeners() {
-    const doc = stage.ownerDocument || document;
+    const doc = ownerDoc();
     const win = doc.defaultView || window;
     if (doc === boundDoc && win === boundWin) return;
     if (boundDoc) {
-      boundDoc.removeEventListener('pointerdown', onHostPointerDown);
-      boundDoc.removeEventListener('focusin', onHostFocusIn);
-      boundDoc.removeEventListener('keydown', onHostKeyDownCapture, true);
-      boundDoc.removeEventListener('keydown', onHostKeyDownBubble);
-      boundDoc.removeEventListener('fullscreenchange', onHostFullscreenChange);
+      boundDoc.removeEventListener?.('pointerdown', onHostPointerDown);
+      boundDoc.removeEventListener?.('focusin', onHostFocusIn);
+      boundDoc.removeEventListener?.('keydown', onHostKeyDownCapture, true);
+      boundDoc.removeEventListener?.('keydown', onHostKeyDownBubble);
+      boundDoc.removeEventListener?.('fullscreenchange', onHostFullscreenChange);
     }
-    if (boundWin) boundWin.removeEventListener('resize', onHostResize);
+    if (boundWin) boundWin.removeEventListener?.('resize', onHostResize);
     boundDoc = doc;
     boundWin = win;
-    doc.addEventListener('pointerdown', onHostPointerDown);
-    doc.addEventListener('focusin', onHostFocusIn);
-    doc.addEventListener('keydown', onHostKeyDownCapture, true);
-    doc.addEventListener('keydown', onHostKeyDownBubble);
-    doc.addEventListener('fullscreenchange', onHostFullscreenChange);
-    win.addEventListener('resize', onHostResize);
+    doc.addEventListener?.('pointerdown', onHostPointerDown);
+    doc.addEventListener?.('focusin', onHostFocusIn);
+    doc.addEventListener?.('keydown', onHostKeyDownCapture, true);
+    doc.addEventListener?.('keydown', onHostKeyDownBubble);
+    doc.addEventListener?.('fullscreenchange', onHostFullscreenChange);
+    win.addEventListener?.('resize', onHostResize);
   }
   let mouseTimer;
   function showChrome() {
@@ -556,7 +557,7 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     clearTimeout(mouseTimer);
     stage.classList.remove('mouse-idle');
     layoutCaptions();
-    if ((stage.ownerDocument || document).fullscreenElement !== stage) return;
+    if (ownerDoc().fullscreenElement !== stage) return;
     mouseTimer = setTimeout(() => {
       if (opened || dialog.open || stage.querySelector('.player-chrome:hover')) return wakeMouse();
       stage.classList.add('mouse-idle');

@@ -27,6 +27,8 @@ class WatchTransport {
       options,
     );
     this.pending = new Map();
+    this.clockPending = undefined;
+    this.queue = [];
     this.sequence = 0;
     this.attempt = 0;
     this.stopped = false;
@@ -82,15 +84,23 @@ class WatchTransport {
             }
             return;
           }
-          if (message.type === 'ack' || message.type === 'clock' || (message.type === 'error' && message.id >= 0)) {
+          if (message.type === 'clock') {
+            const pending = this.clockPending?.id === message.id ? this.clockPending : undefined;
+            if (!pending) return;
+            this.clockPending = undefined;
+            clearTimeout(pending.timer);
+            this.onClock(message, pending.exchange);
+            return;
+          }
+          if (message.type === 'ack' || (message.type === 'error' && message.id >= 0)) {
             const pending = this.pending.get(message.id);
             if (!pending) return;
             this.pending.delete(message.id);
             clearTimeout(pending.timer);
             pending.cleanup?.();
-            if (message.type === 'clock') this.onClock(message, pending.exchange);
             if (message.type === 'error') pending.reject(refusal(message));
             else pending.resolve(message.value);
+            this.drainQueue();
             return;
           }
           // A server that speaks another protocol version will not change its mind:
@@ -116,12 +126,19 @@ class WatchTransport {
         const error = this.protocolError || new TypeError('Room connection lost; reconnecting');
         this.authReject?.(error);
         this.authResolve = this.authReject = undefined;
+        clearTimeout(this.clockPending?.timer);
+        this.clockPending = undefined;
         for (const pending of this.pending.values()) {
           clearTimeout(pending.timer);
           pending.cleanup?.();
           pending.reject(error);
         }
         this.pending.clear();
+        for (const queued of this.queue.splice(0)) {
+          clearTimeout(queued.timer);
+          queued.cleanup?.();
+          queued.reject(error);
+        }
         this.onClose({
           code: event?.code,
           reason: event?.reason,
@@ -182,17 +199,16 @@ class WatchTransport {
     }, delay);
   }
   clock() {
-    if (!this.ready || this.socket?.readyState !== 1 || this.pending.size >= 8) return;
-    // One outstanding sample is enough. Clock exchange expiry is bounded so
-    // dropped exchanges can recover promptly without waiting for the
-    // connection heartbeat deadline.
-    if ([...this.pending.values()].some(entry => entry.clock)) return;
+    if (!this.ready || this.socket?.readyState !== 1) return;
+    // One outstanding sample is enough. Keep clock exchange separate from
+    // request capacity so clock maintenance never stalls behind commands.
+    if (this.clockPending) return;
     const id = ++this.sequence,
       exchange = this.beginClock();
     const timer = setTimeout(() => {
-      this.pending.delete(id);
+      if (this.clockPending?.id === id) this.clockPending = undefined;
     }, this.clockTimeoutMs || CLOCK_TIMEOUT_MS);
-    this.pending.set(id, { resolve: () => {}, reject: () => {}, timer, exchange, clock: true });
+    this.clockPending = { id, timer, exchange };
     this.socket.send(JSON.stringify({ type: 'clock', id }));
   }
   /** Reports this tab's sync quality; unanswered. */
@@ -206,26 +222,43 @@ class WatchTransport {
    * @param {{type: string} & Record<string, any>} message
    * @param {WatchRequestOptions} options
    */
+  drainQueue() {
+    while (this.ready && this.socket?.readyState === 1 && this.pending.size < 8 && this.queue.length) {
+      const entry = this.queue.shift();
+      entry.send();
+    }
+  }
   request(message, { timeoutMs = 12000, signal } = {}) {
-    if (!this.ready || this.socket?.readyState !== 1 || this.pending.size >= 8)
+    if (!this.ready || this.socket?.readyState !== 1)
       return Promise.reject(new TypeError('Room connection unavailable; retry after reconnecting'));
     if (signal?.aborted) return Promise.reject(signal.reason);
     return new Promise((resolve, reject) => {
-      const id = ++this.sequence;
+      const entry = { resolve, reject, timer: undefined, cleanup: undefined, sentId: undefined, send: undefined };
       const cancel = () => {
-        const entry = this.pending.get(id);
-        if (!entry) return;
-        if (this.socket?.readyState === 1) this.socket.send(JSON.stringify({ type: 'cancel', id }));
-        this.pending.delete(id);
+        if (entry.sentId !== undefined) {
+          const id = entry.sentId;
+          if (!this.pending.delete(id)) return;
+          if (this.socket?.readyState === 1) this.socket.send(JSON.stringify({ type: 'cancel', id }));
+          this.drainQueue();
+        } else {
+          const idx = this.queue.indexOf(entry);
+          if (idx === -1) return;
+          this.queue.splice(idx, 1);
+        }
         clearTimeout(entry.timer);
         entry.cleanup?.();
         reject(signal?.reason || new DOMException('Request timed out', 'TimeoutError'));
       };
-      const timer = setTimeout(cancel, timeoutMs),
-        cleanup = () => signal?.removeEventListener('abort', cancel);
-      this.pending.set(id, { resolve, reject, timer, cleanup });
+      entry.timer = setTimeout(cancel, timeoutMs);
+      entry.cleanup = () => signal?.removeEventListener('abort', cancel);
       signal?.addEventListener('abort', cancel, { once: true });
-      this.socket.send(JSON.stringify({ ...message, id, timeoutMs }));
+      entry.send = () => {
+        const id = (entry.sentId = ++this.sequence);
+        this.pending.set(id, entry);
+        this.socket.send(JSON.stringify({ ...message, id, timeoutMs }));
+      };
+      if (this.pending.size < 8) entry.send();
+      else this.queue.push(entry);
     });
   }
   /** Joins a room as `viewerId`; resolves with both lanes of the tab's view. */

@@ -212,6 +212,7 @@ module.exports = {
       viewer.plexWatchState,
       viewer.localDelivery,
       viewer.directProxyVersion,
+      media && viewer.directFileResolved?.media === media ? viewer.directFileResolved.url || '' : '',
       JSON.stringify(viewer.trackChoice),
       (viewer.unavailableMedia || []).map(item => item.id).join(','),
       reference(media),

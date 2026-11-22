@@ -118,15 +118,16 @@ function watchSockets({
    * request has finished.
    */
   function lane(client, name, run) {
-    const state = { running: false, dirty: false, force: false, waiters: [] };
+    const state = { running: false, dirty: false, force: false, timeoutMs: publishTimeoutMs, waiters: [] };
     async function pump() {
       if (state.running) return;
       state.running = true;
       while (state.dirty && client.authenticated && client.ws.readyState === 1) {
-        const { force, waiters } = state;
+        const { force, timeoutMs, waiters } = state;
         state.dirty = state.force = false;
+        state.timeoutMs = publishTimeoutMs;
         state.waiters = [];
-        const signal = AbortSignal.any([client.lifetime.signal, AbortSignal.timeout(publishTimeoutMs)]);
+        const signal = AbortSignal.any([client.lifetime.signal, AbortSignal.timeout(timeoutMs)]);
         try {
           await run(force, signal);
         } catch {
@@ -136,6 +137,7 @@ function watchSockets({
           if (signal.aborted) {
             state.dirty = !client.lifetime.signal.aborted;
             state.force ||= force;
+            if (state.dirty) state.timeoutMs = Math.max(state.timeoutMs, timeoutMs);
           } else if (name === 'room' && !client.lifetime.signal.aborted)
             send(client, {
               type: 'error',
@@ -150,9 +152,10 @@ function watchSockets({
       for (const done of state.waiters.splice(0)) done();
     }
     return {
-      request(force) {
+      request(force = false, timeoutMs = publishTimeoutMs) {
         state.dirty = true;
         state.force ||= force;
+        state.timeoutMs = Math.max(state.timeoutMs, timeoutMs);
         const done = new Promise(resolve => state.waiters.push(resolve));
         void pump();
         return done;
@@ -195,11 +198,10 @@ function watchSockets({
     if (client.room !== subscription || client.ws.readyState !== 1) return;
     if (result.status === 401) return signedOut(client, result);
     if (result.status >= 500) return send(client, refused('unavailable', result, { roomId }));
-    // A refusal answers for both lanes as they stood when it was decided.
-    const sent = result.status === 200 ? result.value : { version, stamp };
-    if (wantRoom || result.status !== 200) subscription.sentRoom = sent.version;
-    if (wantViewer || result.status !== 200) subscription.stamp = sent.stamp;
     if (result.status !== 200) return send(client, refused('room', result, { roomId, viewerId }));
+    const sent = result.value;
+    if (wantRoom) subscription.sentRoom = sent.version;
+    if (wantViewer) subscription.stamp = sent.stamp;
     if (result.value.room)
       send(client, { type: 'room', roomId, viewerId, version: sent.version, state: result.value.room });
     if (result.value.viewer)
@@ -425,6 +427,7 @@ function watchSockets({
       );
     const controller = new AbortController();
     const timeout = Number.isFinite(message.timeoutMs) ? Math.min(120000, Math.max(1000, message.timeoutMs)) : 12000;
+    const startedAt = watch.clock.now();
     const signal = AbortSignal.any([controller.signal, client.lifetime.signal, AbortSignal.timeout(timeout)]);
     client.inflight.set(message.id, controller);
     try {
@@ -434,10 +437,20 @@ function watchSockets({
       const result = await waitFor(operation, signal);
       kind.settled?.(client, message);
       if (result.status >= 400) return send(client, refused('refused', result, { id: message.id }));
+      const value = kind.done ? kind.done(client, message, result) : result.value;
+      if (
+        client.ws.readyState === 1 &&
+        client.room?.roomId === message.roomId &&
+        ((message.type === 'command' && result.value?.status === 'applied') ||
+          (message.type === 'call' && CALLS[message.op]?.write))
+      ) {
+        const remainingMs = Math.max(publishTimeoutMs, timeout - (watch.clock.now() - startedAt));
+        await waitFor(client.lanes.room.request(false, remainingMs), signal);
+      }
       send(client, {
         type: 'ack',
         id: message.id,
-        value: kind.done ? kind.done(client, message, result) : result.value,
+        value,
       });
     } catch (error) {
       if (!signal.aborted) throw error;
@@ -451,7 +464,7 @@ function watchSockets({
           ),
         );
     } finally {
-      client.inflight.delete(message.id);
+      if (client.inflight.get(message.id) === controller) client.inflight.delete(message.id);
     }
   }
   /**
@@ -532,8 +545,13 @@ function watchSockets({
           const now = performance.now(),
             ms = now - client.pingAt;
           client.pingAt = undefined;
-          if (ms >= 0 && ms <= 10000)
+          if (ms >= 0 && ms <= 10000) {
             ws.watchRtts = [...ws.watchRtts, { at: now, ms }].filter(sample => now - sample.at <= 30000).slice(-16);
+            for (const [roomId, viewerId] of client.viewers) {
+              const viewer = watch.rooms.get(roomId)?.viewers.get(viewerId);
+              if (viewer?.watchSocket === ws) viewer.rtts = ws.watchRtts;
+            }
+          }
         }
         if (!client.authenticated) return;
         present(client);
@@ -568,8 +586,14 @@ function watchSockets({
           client.lastSeen = watch.clock.now();
           hub.directory.connected(ws, client.userId);
           switch (message.type) {
-            case 'cancel':
-              return client.inflight.get(message.id)?.abort();
+            case 'cancel': {
+              const controller = client.inflight.get(message.id);
+              if (controller) {
+                client.inflight.delete(message.id);
+                controller.abort();
+              }
+              return;
+            }
             case 'clock':
               return clock(client, message);
             case 'quality':
@@ -624,7 +648,11 @@ function watchSockets({
           (code === 1005 || code === 1006) &&
           client.terminationCause !== 'server-shutdown' &&
           client.terminationCause !== 'backpressure';
-        for (const [roomId, viewerId] of attached) watch.disconnected(ws, !unexpected, roomId, viewerId);
+        for (const [roomId, viewerId] of attached) {
+          const viewer = watch.rooms.get(roomId)?.viewers.get(viewerId);
+          if (viewer?.watchSocket === ws) viewer.connected = false;
+          watch.disconnected(ws, !unexpected, roomId, viewerId);
+        }
         client.viewers.clear();
       });
     });

@@ -287,7 +287,7 @@ async function main() {
           const before = await snapshot(host);
           await evaluate(
             host,
-            '(()=>{const original=transport.onMessage;let fail=true;transport.onMessage=message=>{if(fail&&message.type==="state"){fail=false;window.__soakControlFailed=true;unavailable("Fixture control interruption","room-poll");return;}original(message);};return true;})()',
+            '(()=>{const original=transport.onMessage;let fail=true;transport.onMessage=message=>{if(fail&&(message.type==="room"||message.type==="viewer")){fail=false;window.__soakControlFailed=true;unavailable("Fixture control interruption","room-poll");return;}original(message);};return true;})()',
           );
           await until(
             host,

@@ -1,6 +1,84 @@
-import { createYouTubePlayerAdapter } from '../../shared/sync/player-adapter.mjs';
 import { $ } from './page.js';
 import { store } from './store.js';
+
+/**
+ * Wrap a YouTube IFrame Player (or controller around YT.Player) behind PlayerAdapter.
+ * Disables rate-based drift nudges (YouTube rounds decimal rates back to 1), reports
+ * `hasFrameEvidence: false` and `bufferModel: 'state'`, and exposes optional ad-hold
+ * detection so personal viewer ads do not fight sync or pause the room.
+ * @param {any} controller
+ */
+export function createYouTubePlayerAdapter(controller) {
+  const bufferedAhead = position => {
+    const duration = Number(controller?.getDuration?.());
+    const fraction = Number(controller?.getVideoLoadedFraction?.());
+    if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(fraction) || fraction <= 0) return 0;
+    return Math.max(0, fraction * duration - (Number.isFinite(position) ? position : 0));
+  };
+  let lastVolume, lastMuted;
+  return {
+    supportsRateSync: false,
+    hasFrameEvidence: false,
+    bufferModel: 'state',
+    isAdPlaying: () => Boolean(controller?.isAdPlaying?.()),
+    readyState() {
+      if (!controller || (controller.isReady && !controller.isReady())) return 0;
+      if (controller.isAdPlaying?.()) return 2;
+      const state = controller.getPlayerState?.();
+      if (state === 1 || state === 0) return 4;
+      if (state === 2) return controller.hasUnlocked?.() === false ? 2 : 4;
+      return 2;
+    },
+    currentTime() {
+      const value = Number(controller?.getCurrentTime?.());
+      return Number.isFinite(value) && value >= 0 ? value : 0;
+    },
+    seek(seconds) {
+      if (!controller) return;
+      if (typeof controller.seek === 'function') controller.seek(seconds);
+      else controller.seekTo?.(seconds, true);
+    },
+    duration() {
+      const value = Number(controller?.getDuration?.());
+      return Number.isFinite(value) && value > 0 ? value : NaN;
+    },
+    paused() {
+      const state = controller?.getPlayerState?.();
+      return state !== 1 && state !== 3;
+    },
+    ended: () => controller?.getPlayerState?.() === 0,
+    seeking: () => Boolean(controller?.isSeeking?.()),
+    playbackRate: () => 1,
+    setPlaybackRate(_rate) {},
+    setAudio(volumeUnit, muted) {
+      if (!controller) return;
+      if (Number.isFinite(volumeUnit)) {
+        const percent = Math.max(0, Math.min(100, Math.round(volumeUnit * 100)));
+        if (percent !== lastVolume) {
+          lastVolume = percent;
+          controller.setVolume?.(percent);
+        }
+      }
+      if (typeof muted === 'boolean' && muted !== lastMuted) {
+        lastMuted = muted;
+        if (muted) controller.mute?.();
+        else controller.unMute?.();
+      }
+    },
+    play() {
+      if (!controller) return Promise.resolve();
+      if (typeof controller.play === 'function') return controller.play();
+      controller.playVideo?.();
+      return Promise.resolve();
+    },
+    pause() {
+      controller?.pauseVideo?.();
+    },
+    bufferedAhead,
+    isBufferedAt: (position, toleranceSeconds = 0.05) =>
+      bufferedAhead(Math.max(0, (Number.isFinite(position) ? position : 0) - toleranceSeconds)) > 0,
+  };
+}
 
 let apiPromise;
 
@@ -81,11 +159,7 @@ export function mount(host, deps) {
     currentVideoId = '',
     currentWatchUrl = '',
     currentMediaVersion = '';
-  let progressTicks = 0,
-    lastAdvancingTime = 0,
-    frozenPlayingMs = 0,
-    lastSampleMono = 0;
-  let seekResetTimer,
+  let seekTarget = 0,
     clickTimer,
     pendingPlay = null;
 
@@ -129,12 +203,7 @@ export function mount(host, deps) {
       if (!active || !ready || !ytPlayer) return;
       const target = Math.max(0, Number(seconds) || 0);
       seeking = true;
-      lastAdvancingTime = target;
-      frozenPlayingMs = 0;
-      deps.time.clearTimeout(seekResetTimer);
-      seekResetTimer = deps.time.setTimeout(() => {
-        seeking = false;
-      }, 1200);
+      seekTarget = target;
       try {
         ytPlayer.seekTo?.(target, true);
       } catch {
@@ -152,7 +221,7 @@ export function mount(host, deps) {
       const timer = deps.time.setTimeout(() => {
         if (pendingPlay?.promise === promise) {
           pendingPlay = null;
-          resolvePlay();
+          rejectPlay(new DOMException('Playback timed out', 'AbortError'));
         }
       }, 3000);
       pendingPlay = {
@@ -201,9 +270,6 @@ export function mount(host, deps) {
 
   function sampleTick() {
     if (!active || !ready || !ytPlayer || errorCode) return;
-    const now = deps.time.mono(),
-      dt = lastSampleMono > 0 ? Math.max(0, Math.min(1000, now - lastSampleMono)) : 250;
-    lastSampleMono = now;
 
     const state = controller.getPlayerState(),
       currentTime = controller.getCurrentTime(),
@@ -213,30 +279,23 @@ export function mount(host, deps) {
       videoDataId = ytPlayer.getVideoData?.()?.video_id || '';
     } catch {}
 
-    if (seeking && (state === 1 || state === 2 || state === 0)) {
+    if (
+      seeking &&
+      (state === 1 || state === 2 || state === 0 || state === 5) &&
+      Math.abs(currentTime - seekTarget) <= 0.5
+    ) {
       seeking = false;
-      deps.time.clearTimeout(seekResetTimer);
-    }
-
-    if (state === 1 && !seeking) {
-      if (currentTime > lastAdvancingTime + 0.01) frozenPlayingMs = 0;
-      else frozenPlayingMs += dt;
-    } else {
-      frozenPlayingMs = 0;
     }
 
     const roomDuration = Number(store.room.state?.state?.duration) || 0;
     const roomDurationUnknown = Boolean(store.room.state?.durationUnknown);
-    const roomPaused = Boolean(store.room.state?.state?.paused);
     const wrongVideoId = Boolean(videoDataId && currentVideoId && videoDataId !== currentVideoId);
     const wrongDuration =
       roomDuration > 0 &&
       !roomDurationUnknown &&
       ytDuration > 0 &&
       Math.abs(ytDuration - roomDuration) > Math.max(5, roomDuration * 0.15);
-    const frozenStart = state === 1 && !roomPaused && frozenPlayingMs > 2500;
-    const nextAdPlaying =
-      wrongVideoId || ((state === 1 || state === 3 || state === -1) && wrongDuration) || frozenStart;
+    const nextAdPlaying = wrongVideoId || ((state === 1 || state === 3 || state === -1) && wrongDuration);
 
     if (nextAdPlaying && !adPlaying) {
       adPlaying = true;
@@ -244,7 +303,7 @@ export function mount(host, deps) {
       deps.renderTransport?.();
       void deps.reportObservation?.(false);
     } else if (!nextAdPlaying && adPlaying) {
-      if ((state === 1 && currentTime > lastAdvancingTime + 0.01) || state === 2 || state === 0) {
+      if (state === 1 || state === 2 || state === 0 || state === 5) {
         adPlaying = false;
         $('youtube-stage')?.classList.remove('ad-playing');
         const target = deps.expected?.();
@@ -254,16 +313,7 @@ export function mount(host, deps) {
       }
     }
 
-    if (state === 1 && !adPlaying && !seeking) {
-      const delta = currentTime - lastAdvancingTime;
-      if (delta > 0.01 && delta < 3) {
-        progressTicks += Math.max(1, Math.round(delta * 24));
-        unlocked = true;
-      }
-      if (delta > 0.01 || delta < -0.1) lastAdvancingTime = currentTime;
-    } else {
-      lastAdvancingTime = currentTime;
-    }
+    if (state === 1 && !adPlaying && !seeking) unlocked = true;
 
     if (store.room.state?.durationUnknown && !adPlaying && ytDuration >= 1) {
       void deps.reportReadiness?.();
@@ -342,7 +392,6 @@ export function mount(host, deps) {
               if (gen !== generation || !active) return;
               configureIframe(ytPlayer);
               ready = true;
-              lastSampleMono = deps.time.mono();
               const vol = (store.room.state?.state?.volume ?? store.preferences.playerPreferences?.volume ?? 30) / 100;
               const muted = Boolean(store.room.state?.state?.muted ?? store.preferences.playerPreferences?.muted);
               adapter.setAudio(vol, muted);
@@ -354,11 +403,9 @@ export function mount(host, deps) {
               const state = event?.data;
               if (state === 1) {
                 seeking = false;
-                deps.time.clearTimeout(seekResetTimer);
                 store.player.playerWaiting = false;
                 store.player.autoplayBlocked = false;
                 unlocked = true;
-                progressTicks = Math.max(1, progressTicks);
                 pendingPlay?.resolve();
                 store.player.lastPresentationBreak = deps.time.mono();
                 store.player.sync?.event('playing');
@@ -367,7 +414,6 @@ export function mount(host, deps) {
                 void store.player.sync?.synchronize();
               } else if (state === 2) {
                 seeking = false;
-                deps.time.clearTimeout(seekResetTimer);
                 store.player.playerWaiting = false;
                 deps.syncQuality?.breakSample();
                 store.player.observationBreak++;
@@ -389,13 +435,13 @@ export function mount(host, deps) {
                 );
               } else if (state === 0) {
                 seeking = false;
-                deps.time.clearTimeout(seekResetTimer);
                 store.player.playerWaiting = false;
                 deps.syncQuality?.breakSample();
                 store.player.sync?.event('ended');
                 void deps.reportObservation?.(false);
                 void store.player.sync?.synchronize();
               } else if (state === 5) {
+                seeking = false;
                 void store.player.sync?.synchronize();
                 void deps.reportReadiness?.();
               }
@@ -457,7 +503,6 @@ export function mount(host, deps) {
       await controller.play();
       if (!active || currentMediaVersion !== version || errorCode) return false;
       unlocked = true;
-      progressTicks = Math.max(1, progressTicks);
       store.stream.readyVersion = version;
       store.player.autoplayBlocked = false;
       if (store.room.state?.state?.paused) controller.pauseVideo();
@@ -484,14 +529,10 @@ export function mount(host, deps) {
     currentVideoId = '';
     currentWatchUrl = '';
     currentMediaVersion = '';
-    progressTicks = 0;
-    lastAdvancingTime = 0;
-    frozenPlayingMs = 0;
-    lastSampleMono = 0;
-    deps.time.clearTimeout(seekResetTimer);
+    seekTarget = 0;
     deps.time.clearTimeout(clickTimer);
     if (pendingPlay) {
-      pendingPlay.resolve();
+      pendingPlay.reject(new DOMException('YouTube player destroyed', 'AbortError'));
       pendingPlay = null;
     }
     if (ytPlayer) {
@@ -558,7 +599,7 @@ export function mount(host, deps) {
     bufferedRanges,
     destroy,
     errorCode: () => (active && errorCode ? errorCode : 0),
-    frames: () => (active ? progressTicks : 0),
+    frames: () => 0,
     isActive: () => active,
     isAdPlaying: () => active && adPlaying,
     unlock,

@@ -71,6 +71,7 @@
  * @property {boolean} [activity] - Server-verified Activity identity; excludes direct Plex delivery.
  * @property {string} [directProxyVersion] - Media generation pinned to proxy recovery for this viewer.
  * @property {any} [directDelivery] - Current personal media object using direct delivery.
+ * @property {{media: any, remoteAddress?: string, settled: boolean, url?: string}} [directFileResolved] - Cached direct-file lookup for this viewer stream.
  * @property {number} subtitleOffset - User's personal subtitle timing delay in seconds.
  * @property {ViewerTrackChoice} trackChoice - User's active track selections.
  * @property {number} volume - Personal volume level (0-100).
