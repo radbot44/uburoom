@@ -50,7 +50,16 @@ function fileStream(source, { start = 0, end = Infinity, signal, onClose } = {})
           throw signal.reason;
         }
         signal?.addEventListener('abort', aborted, { once: true });
-        if (!handle) handle = await fsp.open(/** @type {string} */ (source), 'r');
+        if (!handle) {
+          try {
+            const opened = await fsp.open(/** @type {string} */ (source), 'r');
+            if (done) await opened.close();
+            else handle = opened;
+          } catch (error) {
+            await close();
+            throw error;
+          }
+        }
       },
       async pull(c) {
         const length = Math.min(PIECE, end + 1 - at);
@@ -60,12 +69,19 @@ function fileStream(source, { start = 0, end = Infinity, signal, onClose } = {})
           return;
         }
         const buffer = Buffer.allocUnsafe(length);
-        const { bytesRead } = await /** @type {import('node:fs/promises').FileHandle} */ (handle).read(
-          buffer,
-          0,
-          length,
-          at,
-        );
+        let bytesRead;
+        try {
+          ({ bytesRead } = await /** @type {import('node:fs/promises').FileHandle} */ (handle).read(
+            buffer,
+            0,
+            length,
+            at,
+          ));
+        } catch (error) {
+          if (done) return;
+          await close();
+          throw error;
+        }
         // Cancelled or aborted while reading: the stream is finished, so nothing is enqueued.
         if (done) return;
         if (!bytesRead) {

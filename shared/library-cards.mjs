@@ -5,6 +5,8 @@ export function sectionIcon(section) {
   return section.mediaType === 'show' ? 'tv' : 'film';
 }
 
+export const libraryKey = ({ id, serverId }) => JSON.stringify([serverId ?? null, id]);
+
 /** Each media server's own mark, shown beside its name on its libraries' cards. */
 const SERVER_MARKS = {
   plex: { label: 'Plex', logo: '/assets/plex-icon.png' },

@@ -3,7 +3,7 @@
 // do not fit, the button alone names it. Past ten libraries the menu starts with a filter box.
 import * as uburoomControls from './watch-controls.js';
 import * as uburoomIcons from './icons.js';
-import { sectionIcon } from '../shared/library-cards.mjs';
+import { libraryKey, sectionIcon } from '../shared/library-cards.mjs';
 
 export { sectionIcon };
 
@@ -11,7 +11,7 @@ const MENU_FILTER_AT = 10;
 
 /**
  * @param {{doc: Document, parent: Element, menuParent: Element, header?: Element|null, headerRight?: Element|null,
- *   node: Function, button: Function, onChoose: (sectionId: string) => void}} options
+ *   node: Function, button: Function, onChoose: (library: any) => void}} options
  */
 export function libraryChoices({ doc, parent, menuParent, header, headerRight, node, button, onChoose }) {
   const controls = uburoomControls;
@@ -45,11 +45,11 @@ export function libraryChoices({ doc, parent, menuParent, header, headerRight, n
       b.setAttribute('role', 'menuitem');
       controls.content(b, { label: section.title, icon: sectionIcon(section) });
       b.dataset.section = section.id;
-      if (section.id === current) b.setAttribute('aria-current', 'page');
+      if (section === current) b.setAttribute('aria-current', 'page');
       b.hidden = !!term && !section.title.toLowerCase().includes(term);
       b.onclick = () => {
         choiceMenu.hidePopover();
-        onChoose(section.id);
+        onChoose(section);
       };
     }
   }
@@ -113,7 +113,7 @@ export function libraryChoices({ doc, parent, menuParent, header, headerRight, n
         .getBoundingClientRect().right <=
       (headerRight ? headerRight.getBoundingClientRect().left - gap : header.getBoundingClientRect().right) + 0.5;
     const label = compact => {
-      const section = compact && sections.find(item => item.id === current);
+      const section = compact && current;
       const text = section ? section.title : 'More';
       controls.content(choiceMore, {
         label: text,
@@ -139,7 +139,7 @@ export function libraryChoices({ doc, parent, menuParent, header, headerRight, n
         label(true);
       }
     }
-    overflowSections = sections.filter(section => items.some(b => b.hidden && b.dataset.section === section.id));
+    overflowSections = sections.filter((section, index) => items[index]?.hidden);
     if (choiceMore.hidden && choiceMenu.matches(':popover-open')) choiceMenu.hidePopover();
   }
   let fitFrame = 0;
@@ -157,15 +157,16 @@ export function libraryChoices({ doc, parent, menuParent, header, headerRight, n
   function render(list, currentSection, show) {
     sections = list;
     current = currentSection;
-    const focusedSection = choices.contains(doc.activeElement) ? doc.activeElement.dataset.section : null;
+    const focusedSection = choices.contains(doc.activeElement) ? doc.activeElement.dataset.library : null;
     choices.replaceChildren();
     choices.hidden = !show;
     sections.forEach(section => {
       const b = button(choices, section.title, undefined, 'library-key library-choice');
       controls.content(b, { label: section.title, icon: sectionIcon(section), responsive: false });
       b.dataset.section = section.id;
-      if (section.id === current) b.setAttribute('aria-current', 'page');
-      b.onclick = () => onChoose(section.id);
+      b.dataset.library = libraryKey(section);
+      if (section === current) b.setAttribute('aria-current', 'page');
+      b.onclick = () => onChoose(section);
     });
     choiceMore = button(choices, 'More libraries', undefined, 'library-key library-choice library-more');
     choiceMore.setAttribute('aria-haspopup', 'menu');
@@ -174,7 +175,7 @@ export function libraryChoices({ doc, parent, menuParent, header, headerRight, n
     choiceMore.hidden = true;
     fit();
     if (focusedSection)
-      [...choices.querySelectorAll('button')].find(b => b.dataset.section === focusedSection)?.focus();
+      [...choices.querySelectorAll('button')].find(b => b.dataset.library === focusedSection)?.focus();
   }
   /** No libraries: a room change empties the row until the new room's libraries arrive. */
   function clear() {

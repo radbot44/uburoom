@@ -711,6 +711,92 @@ test('library.resolve, playlist bulk queue, warmQueue, streaming, and Source Set
   assert.equal(cachedBrowse.body.source, 'link');
   assert.ok(cachedBrowse.body.items.some(i => i.id === 'dQw4w9WgXcQ'));
 
+  const firstId = 'dQw4w9WgXcQ';
+  const secondId = 'jNQXAC9IVRw';
+  const coldId = 'EXTRA000001';
+  const cache = f.app.watch.providers.primary.root.cache;
+  await cache.prepare(secondId);
+  const cold = await cache.prepare(coldId);
+  cold.lastUsedMs = 1;
+  cache.maxCacheBytes = 90;
+
+  const secondRoom = await host.post('/api/watch/rooms', { name: 'Second YouTube Room' });
+  assert.equal(secondRoom.status, 201);
+  const secondRoomId = secondRoom.body.id;
+  const secondViewerId = randomUUID();
+  const snapshot = async (room, viewer) =>
+    (await host.request(`/api/watch/rooms/${room}?viewer=${viewer}&quality=direct&subtitles=browser`)).body;
+  const send = async (room, viewer, action, args) => {
+    const before = await snapshot(room, viewer);
+    const response = await host.post(`/api/watch/rooms/${room}/command`, {
+      viewerId: viewer,
+      epoch: before.epoch,
+      expiresAt: Date.now() + 2500,
+      command: { action, args: { mediaVersion: before.mediaVersion, streamVersion: before.streamVersion, ...args } },
+    });
+    assert.equal(response.body.status, 'applied', response.body.message);
+    return snapshot(room, viewer);
+  };
+  const loadSecond = mediaId =>
+    send(secondRoomId, secondViewerId, 'media.load', { mediaId, quality: 'direct', serverId: YOUTUBE_SERVER });
+  const verifyRange = async state => {
+    const got = await host.request(state.mediaUrl, undefined, { Range: 'bytes=0-7' });
+    assert.equal(got.status, 206);
+    assert.equal(got.body, '01234567');
+  };
+  const verifyCaptions = async (room, viewer) => {
+    const state = await send(room, viewer, 'media.tracks.set', { subtitleId: 'x0' });
+    assert.ok(state.subtitleUrl);
+    const captions = await host.request(state.subtitleUrl);
+    assert.equal(captions.status, 200);
+    assert.match(JSON.stringify(captions.body.cues), /Built-in yt-dlp caption/);
+  };
+
+  // Eviction selects the warmed second video before a second room starts using it.
+  const entered = Promise.withResolvers();
+  const resume = Promise.withResolvers();
+  const unlink = fsp.unlink;
+  fsp.unlink = async (file, ...args) => {
+    if (path.basename(file) === coldId + '.mp4') {
+      entered.resolve();
+      await resume.promise;
+    }
+    return unlink(file, ...args);
+  };
+  const evicting = cache.evictIfNeeded();
+  let otherMedia;
+  try {
+    await Promise.race([
+      entered.promise,
+      evicting.then(() => assert.fail('Eviction should try the oldest entry first')),
+    ]);
+    otherMedia = await loadSecond(secondId);
+  } finally {
+    resume.resolve();
+    try {
+      await evicting;
+    } finally {
+      fsp.unlink = unlink;
+    }
+  }
+  await verifyRange(loadedState);
+  await verifyRange(otherMedia);
+  await verifyCaptions(roomId, viewerId);
+  await verifyCaptions(secondRoomId, secondViewerId);
+
+  const sharedMedia = await loadSecond(firstId);
+  await f.app.watch.remove(roomId);
+  await cache.evictIfNeeded();
+  await verifyRange(sharedMedia);
+  const firstFile = path.join(cache.cacheDirectory, firstId + '.mp4');
+  const firstCaption = path.join(cache.cacheDirectory, firstId + '.en.vtt');
+  assert.ok(fs.existsSync(firstFile), 'the second room still holds the file');
+  assert.ok(fs.existsSync(firstCaption));
+  await f.app.watch.remove(secondRoomId);
+  await cache.evictIfNeeded();
+  assert.equal(fs.existsSync(firstFile), false);
+  assert.equal(fs.existsSync(firstCaption), false);
+
   // Verify doctor checks recognize configured YouTube source shape.
   const youtubeModule = require('../server/sources/youtube');
   const ytChecks = await youtubeModule.check(

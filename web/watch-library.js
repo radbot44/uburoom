@@ -4,7 +4,7 @@ import * as uburoomPopover from './watch-popover.js';
 import { mediaIdentity } from '../shared/room-protocol.mjs';
 import { pictureLoader } from './watch-library-pictures.js';
 import { libraryChoices } from './watch-library-choices.js';
-import { homeCards, SYNC_CARD } from '../shared/library-cards.mjs';
+import { homeCards, libraryKey, SYNC_CARD } from '../shared/library-cards.mjs';
 import { libraryScroll } from './watch-library-scroll.js';
 import { libraryDetails } from './watch-library-details.js';
 import { libraryShelves } from './watch-library-shelves.js';
@@ -95,7 +95,7 @@ function mount(
     headerRight,
     node,
     button,
-    onChoose: id => void chooseLibrary(id, screen?.tab),
+    onChoose: library => void chooseLibrary(library, screen?.tab),
   });
   const tools = node('div', host, undefined, 'library-tools');
   const row = node('div', tools, undefined, 'library-toolbar watch-toolbar');
@@ -232,6 +232,7 @@ function mount(
     trail = [],
     screen,
     filterSection,
+    facetRead,
     facetFailed = false,
     requestVersion = 0,
     errorAction,
@@ -254,11 +255,13 @@ function mount(
     duration: 60,
     summary: 'A short picture and sound sample for checking shared playback.',
   };
-  function context(section, tab = 'library') {
+  function context(library, tab = 'library') {
     return {
-      section,
+      library,
+      section: library?.id,
+      server: library?.serverId,
       tab,
-      title: sections.find(x => x.id === section)?.title || 'Test video',
+      title: library?.title || 'Test video',
       kind: 'library',
       q: '',
       genre: '',
@@ -314,7 +317,7 @@ function mount(
   }
   function saveHome() {
     const root = [...trail, screen].find(x => x?.kind === 'library');
-    if (root?.section) homes.set(root.section + ':' + root.tab, root);
+    if (root?.library) homes.set(JSON.stringify([libraryKey(root.library), root.tab]), root);
   }
   function prepareNavigation() {
     rememberScroll();
@@ -349,7 +352,7 @@ function mount(
     historyMoving = false;
     if (!room || !screen) return;
     restoreScreen();
-    if (screen.section && screen.section !== filterSection) void fetchFacets(screen.section);
+    if (screen.library !== filterSection) void fetchFacets(screen.library);
   });
   function goHome() {
     if (!room || screen.kind === 'home') return;
@@ -428,7 +431,7 @@ function mount(
   const roomScope = () => (room === 'lobby' ? {} : { room });
   // A page opened from outside a library (an episode from the queue, then its show) names its item's server.
   const scoped = (query = {}) => {
-    const server = sections.find(item => item.id === screen?.section)?.serverId ?? screen?.server;
+    const server = screen?.server;
     return { ...roomScope(), ...(server ? { server } : {}), ...query };
   };
   function endpoint(path, query = {}) {
@@ -857,11 +860,11 @@ function mount(
     previous.title = previous.disabled ? 'No earlier Media page.' : 'Back';
     next.title = next.disabled ? 'No later Media page.' : 'Forward';
     home.title = home.disabled ? 'Already at Libraries home.' : 'Libraries home';
-    choices.render(sections, screen.section, screen.kind !== 'home');
+    choices.render(sections, screen.library, screen.kind !== 'home');
     const details = screen.kind === 'details',
       atHome = screen.kind === 'home',
       collectionIndex = screen.kind === 'library' && screen.tab === 'collections';
-    const section = sections.find(item => item.id === screen.section);
+    const section = screen.library;
     const isLinkSection = !details && !atHome && (section?.source === 'link' || screen.source === 'link');
     scopeActions.hidden =
       isLinkSection ||
@@ -1000,17 +1003,18 @@ function mount(
     landing.replaceChildren();
     landing.append(shelfHost, librariesTitle);
     renderShelves();
-    for (const card of homeCards(sections)) {
+    for (const [index, card] of homeCards(sections).entries()) {
+      const library = sections[index];
       const { item, open } = homeCard(card);
       open.dataset.section = card.id;
       open.dataset.tab = 'library';
-      open.onclick = () => void chooseLibrary(card.id, 'library');
+      open.onclick = () => void chooseLibrary(library, 'library');
       if (card.collections) {
         const more = button(item, card.title + ' collections', 'layout-grid', 'library-home-collections');
         more.append(node('span', null, 'Collections'));
         more.dataset.section = card.id;
         more.dataset.tab = 'collections';
-        more.onclick = () => void chooseLibrary(card.id, 'collections');
+        more.onclick = () => void chooseLibrary(library, 'collections');
       }
     }
     if (testVideo && isAdmin()) {
@@ -1060,7 +1064,7 @@ function mount(
           placeholder.setAttribute('aria-hidden', 'true');
         }
       if (!screen.items.length && !screen.loading) {
-        const currentSection = sections.find(item => item.id === screen.section);
+        const currentSection = screen.library;
         const isLink = currentSection?.source === 'link' || screen.source === 'link';
         node(
           'p',
@@ -1221,11 +1225,12 @@ function mount(
   // A page opened outside any library takes on its item's library, on the same server, as the current one.
   function adoptLibrary(current, full) {
     if (current.section || !full.section) return;
-    const library = sections.find(
-      section => section.id === full.section && (!current.server || section.serverId === current.server),
-    );
+    const key = libraryKey({ id: full.section, serverId: current.server ?? full.serverId });
+    const library = sections.find(section => libraryKey(section) === key);
     if (!library) return;
     current.section = library.id;
+    current.library = library;
+    current.server = library.serverId;
     renderTools();
   }
   const details = libraryDetails({
@@ -1292,7 +1297,7 @@ function mount(
     trail.push(screen);
     const from = outside ? homeContext() : screen;
     screen = {
-      ...context(from.section, from.tab),
+      ...context(from.library, from.tab),
       title: item.title,
       kind: playable(item) ? 'details' : item.type,
       detail: item,
@@ -1354,8 +1359,9 @@ function mount(
       else if (!screen.items.length && screen.total == null) void loadPage();
     }
   }
-  async function fetchFacets(section) {
-    filterSection = section;
+  async function fetchFacets(library) {
+    const read = (facetRead = Symbol());
+    filterSection = library;
     facetFailed = false;
     filterStatus.textContent = 'Loading filters…';
     for (const [control, label] of [
@@ -1366,14 +1372,14 @@ function mount(
       option(control, '', label);
       control.disabled = true;
     }
-    if (!section) {
+    if (!library) {
       filterStatus.textContent = '';
       return;
     }
     const version = generation;
     try {
-      const value = await request('library.filters', scoped({ section }), roomController.signal);
-      if (version !== generation || section !== filterSection) return;
+      const value = await request('library.filters', scoped({ section: library.id }), roomController.signal);
+      if (version !== generation || read !== facetRead) return;
       for (const [control, values] of [
         [genre, value.genres],
         [year, value.years],
@@ -1386,19 +1392,18 @@ function mount(
       filterStatus.textContent = '';
       renderTools();
     } catch (error) {
-      if (version === generation && section === filterSection && error.name !== 'AbortError') {
+      if (version === generation && read === facetRead && error.name !== 'AbortError') {
         facetFailed = true;
         filterStatus.textContent = 'Filters unavailable. Reopen to retry.';
       }
     }
   }
-  async function chooseLibrary(id, tab = 'library') {
-    if (screen?.kind === 'library' && screen.section === id && screen.tab === tab) return;
+  async function chooseLibrary(library, tab = 'library') {
+    if (screen?.kind === 'library' && screen.library === library && screen.tab === tab) return;
     prepareNavigation();
     trail = [];
-    const section = id === 'demo' ? undefined : id;
-    const saved = homes.get(id + ':' + tab);
-    screen = saved || context(section, tab);
+    const saved = homes.get(JSON.stringify([libraryKey(library), tab]));
+    screen = saved || context(library, tab);
     pushVisit();
     if (saved) restoreScreen(true);
     else {
@@ -1406,7 +1411,7 @@ function mount(
       scroll.position();
       void loadPage();
     }
-    if (filterSection !== section) void fetchFacets(section);
+    if (filterSection !== library) void fetchFacets(library);
   }
   async function query() {
     clearTimeout(timer);
@@ -1450,7 +1455,7 @@ function mount(
     filters.hidden = !filters.hidden;
     filterButton.setAttribute('aria-expanded', String(!filters.hidden));
     filterButton.classList.toggle('filter-active', !filters.hidden || !!(screen.genre || screen.year));
-    if (!filters.hidden && facetFailed) void fetchFacets(screen.section);
+    if (!filters.hidden && (screen.library !== filterSection || facetFailed)) void fetchFacets(screen.library);
   };
   viewButtons.forEach(
     b =>
@@ -1494,7 +1499,7 @@ function mount(
         node('strong', info, plTitle);
         if (data.channelTitle) node('span', info, data.channelTitle, 'hint');
         if (data.items?.length && addBulkToQueue && canAddQueue()) {
-          const section = sections.find(item => item.id === screen?.section);
+          const section = screen?.library;
           const bulkBtn = button(bar, 'Add playlist to queue', 'queue', 'primary library-queue-add');
           bulkBtn.dataset.queue = data.id;
           bulkBtn.dataset.queueItem = 'true';

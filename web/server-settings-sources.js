@@ -14,10 +14,11 @@ const STEP_TIMEOUT = 25000;
 
 /**
  * @param {HTMLElement} panel
- * @param {{request: (path: string, data?: any, options?: any) => Promise<any>, onSaved?: () => void}} services
+ * @param {{request: (path: string, data?: any, options?: any) => Promise<any>,
+ *   onSaved?: (revision: string) => void, onWriting?: (writing: boolean) => void, canWrite?: () => boolean}} services
  * @returns {{load: () => Promise<void>, reset: () => void}}
  */
-export function mount(panel, { request, onSaved }) {
+export function mount(panel, { request, onSaved, onWriting, canWrite }) {
   const doc = panel.ownerDocument;
   const node = (tag, parent, text, style) => {
     const value = doc.createElement(tag);
@@ -64,6 +65,7 @@ export function mount(panel, { request, onSaved }) {
 
   let generation = 0,
     busy = false,
+    writeGeneration,
     revision,
     sources = [],
     removed = [],
@@ -75,8 +77,9 @@ export function mount(panel, { request, onSaved }) {
   function setBusy(value) {
     busy = value;
     for (const control of body.querySelectorAll('input,button,select')) {
-      if (control.dataset.keep === 'true') continue;
-      control.disabled = busy || control.dataset.blocked === 'true';
+      control.disabled =
+        (busy && (control.dataset.keep !== 'true' || writeGeneration !== undefined)) ||
+        control.dataset.blocked === 'true';
     }
     panel.setAttribute('aria-busy', String(busy));
   }
@@ -91,8 +94,19 @@ export function mount(panel, { request, onSaved }) {
     } catch (failure) {
       if (id === generation) error.textContent = failure.message || 'Media source request failed';
     } finally {
+      if (id === writeGeneration) {
+        writeGeneration = undefined;
+        onWriting?.(false);
+      }
       if (id === generation) setBusy(false);
     }
+  }
+  function writeSources(data) {
+    if (canWrite && !canWrite()) throw new Error('Wait for Server settings to finish saving, then try again.');
+    writeGeneration = generation;
+    setBusy(true);
+    onWriting?.(true);
+    return request('/api/operator/sources', data);
   }
   const step = (flow, name, data = {}) =>
     request('/api/operator/sources/setup/step', { flow, step: name, ...data }, { timeoutMs: STEP_TIMEOUT });
@@ -226,6 +240,7 @@ export function mount(panel, { request, onSaved }) {
   function inlineActions(parent, primary, onPrimary, style = 'primary') {
     const row = node('div', parent, null, 'server-source-actions');
     const cancel = button(row, 'Cancel', 'quiet', () => {
+      if (writeGeneration !== undefined) return;
       void closeFlow();
       show({ name: 'list' });
       checkAll();
@@ -417,7 +432,7 @@ export function mount(panel, { request, onSaved }) {
     youtubeFormFields(body, state, { editing: true, source });
     inlineActions(body, 'Save source', () =>
       act(async current => {
-        const result = await request('/api/operator/sources', {
+        const result = await writeSources({
           revision,
           action: 'update',
           id: source.id,
@@ -457,7 +472,7 @@ export function mount(panel, { request, onSaved }) {
     }
     const save = inlineActions(body, 'Save source', () =>
       act(async current => {
-        const result = await request('/api/operator/sources', {
+        const result = await writeSources({
           revision,
           action: 'update',
           id: source.id,
@@ -583,7 +598,7 @@ export function mount(panel, { request, onSaved }) {
     );
     inlineActions(body, 'Save source', () =>
       act(async current => {
-        const result = await request('/api/operator/sources', {
+        const result = await writeSources({
           revision,
           action: 'update',
           id: source.id,
@@ -628,7 +643,7 @@ export function mount(panel, { request, onSaved }) {
       'Remove',
       () =>
         act(async current => {
-          const result = await request('/api/operator/sources', { revision, action: 'remove', id: source.id });
+          const result = await writeSources({ revision, action: 'remove', id: source.id });
           if (!current()) return;
           accept(result, true);
           status.textContent = result.recoveryBackup
@@ -705,7 +720,7 @@ export function mount(panel, { request, onSaved }) {
   }
   /** Saves the ready flow as a new source, then shows the list. */
   async function add(current, name, libraries, allowMembers = false) {
-    const result = await request('/api/operator/sources', {
+    const result = await writeSources({
       revision,
       action: 'add',
       flow: view.flow,
@@ -1075,10 +1090,11 @@ export function mount(panel, { request, onSaved }) {
       if (next) revision = next;
     },
     async load() {
+      // A tab switch keeps the in-flight operation and its view. Re-entry can use its result.
+      if (busy) return;
       view = { name: 'list' };
       generation++;
       details.clear();
-      status.textContent = '';
       body.replaceChildren();
       await act(async current => {
         const result = await request('/api/operator/sources');
@@ -1092,7 +1108,7 @@ export function mount(panel, { request, onSaved }) {
     reset() {
       void closeFlow();
       generation++;
-      busy = false;
+      setBusy(false);
       view = { name: 'list' };
       sources = [];
       details.clear();

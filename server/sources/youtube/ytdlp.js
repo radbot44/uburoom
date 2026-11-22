@@ -270,6 +270,7 @@ class YouTubeCache {
     this.jobs = new Map();
     this.active = new Map();
     this.leases = new Map();
+    this.evictions = new Map();
     this.metaTimers = new Map();
     this.queue = [];
     this.initPromise = null;
@@ -366,7 +367,7 @@ class YouTubeCache {
     if (this.closed || this.metaTimers.has(record.id)) return;
     const timer = setTimeout(() => {
       this.metaTimers.delete(record.id);
-      if (this.closed || this.ready.get(record.id) !== record) return;
+      if (this.closed || this.evictions.has(record.id) || this.ready.get(record.id) !== record) return;
       void this.writeMeta(record).catch(() => {});
     }, 5000);
     timer.unref?.();
@@ -445,36 +446,40 @@ class YouTubeCache {
     if (total <= this.maxCacheBytes) return;
 
     const candidates = [...this.ready.values()]
-      .filter(
-        rec =>
-          !protect.has(rec.id) && !this.active.has(rec.id) && !this.jobs.has(rec.id) && !(this.leases.get(rec.id) > 0),
-      )
+      .filter(rec => sizes.has(rec.id) && !protect.has(rec.id))
       .sort((a, b) => Number(a.lastUsedMs || a.mtimeMs || 0) - Number(b.lastUsedMs || b.mtimeMs || 0));
 
     for (const rec of candidates) {
       if (total <= this.maxCacheBytes) break;
+      if (this.ready.get(rec.id) !== rec || this.evictions.has(rec.id)) continue;
+      // Earlier unlinks yield. Playback may have acquired this candidate since the pass began.
+      if (this.active.has(rec.id) || this.jobs.has(rec.id) || this.leases.has(rec.id)) continue;
       const primary = safeBaseName(rec.filename) ? path.join(this.cacheDirectory, rec.filename) : '';
-      if (primary) {
-        try {
-          await fsp.unlink(primary);
-        } catch (error) {
-          if (error?.code !== 'ENOENT') continue;
-        }
+      const removing = this.removeEntry(rec, primary);
+      this.evictions.set(rec.id, removing);
+      try {
+        if (await removing) total -= sizes.get(rec.id) || 0;
+      } finally {
+        this.evictions.delete(rec.id);
       }
-      const bytes = sizes.get(rec.id) || 0;
-      total -= bytes;
-      const timer = this.metaTimers.get(rec.id);
-      if (timer) {
-        clearTimeout(timer);
-        this.metaTimers.delete(rec.id);
-      }
-      this.ready.delete(rec.id);
-      const files = [
-        ...(rec.subtitles || []).map(s => (safeBaseName(s.file) ? path.join(this.cacheDirectory, s.file) : '')),
-        this.metaPath(rec.id),
-      ].filter(Boolean);
-      for (const file of files) await fsp.unlink(file).catch(() => {});
     }
+  }
+
+  async removeEntry(record, primary) {
+    if (primary) {
+      try {
+        await fsp.unlink(primary);
+      } catch (error) {
+        if (error?.code !== 'ENOENT') return false;
+      }
+    }
+    clearTimeout(this.metaTimers.get(record.id));
+    this.metaTimers.delete(record.id);
+    this.ready.delete(record.id);
+    for (const sub of record.subtitles || [])
+      if (safeBaseName(sub.file)) await fsp.unlink(path.join(this.cacheDirectory, sub.file)).catch(() => {});
+    await fsp.unlink(this.metaPath(record.id)).catch(() => {});
+    return true;
   }
 
   async checkTools({ signal } = {}) {
@@ -621,6 +626,9 @@ class YouTubeCache {
   async prepare(videoId, { signal } = {}) {
     if (!VIDEO_ID.test(videoId || '')) throw Object.assign(new Error('Invalid video ID'), { status: 400 });
     await this.ensureReady();
+    const removing = this.evictions.get(videoId);
+    if (removing) await removing;
+    signal?.throwIfAborted();
 
     const cached = this.ready.get(videoId);
     if (cached) {
@@ -903,6 +911,7 @@ class YouTubeCache {
   async resolveMediaFile(videoId) {
     if (!VIDEO_ID.test(videoId || '')) return null;
     await this.ensureReady();
+    if (this.evictions.has(videoId)) return null;
     const rec = this.ready.get(videoId);
     if (!rec) return null;
     const safe = await safeCacheFile(this.cacheDirectory, rec.filename);
@@ -924,6 +933,7 @@ class YouTubeCache {
   async resolveSubtitleFile(videoId, trackId) {
     if (!VIDEO_ID.test(videoId || '') || !SAFE_TRACK.test(trackId || '')) return null;
     await this.ensureReady();
+    if (this.evictions.has(videoId)) return null;
     const rec = this.ready.get(videoId);
     if (!rec) return null;
     const sub = (rec.subtitles || []).find(s => s.id === trackId);

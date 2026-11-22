@@ -1,6 +1,7 @@
 /* Watch-night scheduler shared by every entry point; no playback ownership. */
 import * as uburoomDialogs from './watch-dialogs.js';
 import * as uburoomPopover from './watch-popover.js';
+import { eventTime, formatter, wallTime } from '../shared/event-time.mjs';
 
 const NEW_ROOM = 'new';
 function mount({ request }) {
@@ -28,15 +29,16 @@ function mount({ request }) {
     customSelect = $('event-custom-duration');
   const discordRow = $('event-discord-row'),
     discord = $('event-discord');
-  const startHidden = $('event-start'),
-    endHidden = $('event-end'),
-    discard = $('event-discard'),
+  const discard = $('event-discard'),
     save = $('event-save');
   const fields = [roomSelect, title, description, zone, date, time, customSelect, discord];
   let generation = 0,
     busy = false,
     dirty = false,
     editing,
+    originalStart,
+    originalDuration,
+    originalTimeOption,
     getDuration,
     changed,
     opener;
@@ -75,7 +77,9 @@ function mount({ request }) {
   });
   zone.addEventListener('change', () => {
     zoneDisplay.textContent = zoneLabel(zone.value);
-    updateEnd();
+    const selected = chips.find(chip => chip.getAttribute('aria-pressed') === 'true');
+    if (selected) preset(selected.dataset.preset);
+    else updateEnd();
   });
   for (const chip of chips)
     chip.addEventListener('click', () => {
@@ -108,9 +112,6 @@ function mount({ request }) {
   }
   function clock(hours, minutes) {
     return (hours % 12 || 12) + ':' + pad(minutes) + ' ' + (hours >= 12 ? 'PM' : 'AM');
-  }
-  function day(at) {
-    return at.getFullYear() + '-' + pad(at.getMonth() + 1) + '-' + pad(at.getDate());
   }
   function zoneLabel(name) {
     try {
@@ -159,66 +160,68 @@ function mount({ request }) {
   function preset(name) {
     pressChip(name);
     const now = new Date(),
-      target = new Date(now);
+      format = formatter(zone.value);
+    let target;
     if (name === 'next30') {
-      if (now.getMinutes() < 30) target.setMinutes(30, 0, 0);
-      else target.setHours(now.getHours() + 1, 0, 0, 0);
-      if (target.getTime() <= now.getTime() + 120000) target.setMinutes(target.getMinutes() + 30);
+      // Advance real time through clock changes, then display a valid half-hour in the event zone.
+      for (let minutes = 3; minutes <= 180; minutes++) {
+        const candidate = wallTime(format, new Date(now.getTime() + minutes * 60000));
+        if (!candidate.endsWith(':00') && !candidate.endsWith(':30')) continue;
+        try {
+          eventTime(candidate, zone.value);
+          target = candidate;
+          break;
+        } catch {
+          // A repeated wall time cannot be scheduled without choosing UTC.
+        }
+      }
     } else {
-      if (name === 'tomorrow8') target.setDate(target.getDate() + 1);
-      target.setHours(20, 0, 0, 0);
-      if (target.getTime() <= now.getTime() + 120000) target.setDate(target.getDate() + 1);
+      const today = wallTime(format, now).slice(0, 10);
+      const tonight = today + 'T20:00';
+      const tomorrow = new Date(Date.parse(today + 'T00:00Z') + 86400000).toISOString().slice(0, 10);
+      target =
+        name === 'tomorrow8' || tonight <= wallTime(format, new Date(now.getTime() + 120000))
+          ? tomorrow + 'T20:00'
+          : tonight;
     }
-    date.value = day(target);
-    time.value = pad(target.getHours()) + ':' + pad(target.getMinutes());
+    if (!target) return;
+    [date.value, time.value] = target.split('T');
     updateEnd();
   }
+  const startLocal = () => date.value + 'T' + time.value;
+  const startKey = () => JSON.stringify([zone.value, startLocal()]);
+  const durationMinutes = () => (duration === 'custom' ? Number(customSelect.value) || 90 : duration);
   function updateEnd() {
+    endBadge.textContent = '';
     if (!date.value || !time.value) return;
-    const [y, mo, d] = date.value.split('-').map(Number),
-      [h, mi] = time.value.split(':').map(Number);
-    const minutes = duration === 'custom' ? Number(customSelect.value) || 90 : duration;
-    const end = new Date(new Date(y, mo - 1, d, h, mi).getTime() + minutes * 60000);
-    startHidden.value = date.value + 'T' + time.value;
-    endHidden.value = day(end) + 'T' + pad(end.getHours()) + ':' + pad(end.getMinutes());
-    const now = new Date(),
-      tomorrow = new Date(now);
-    tomorrow.setDate(now.getDate() + 1);
-    const when =
-      day(end) === day(now)
-        ? 'today'
-        : day(end) === day(tomorrow)
-          ? 'tomorrow'
-          : end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    let short = '';
+    const keepStart = editing && startKey() === originalStart;
+    let end;
     try {
-      short =
-        new Intl.DateTimeFormat('en-US', { timeZone: zone.value, timeZoneName: 'short' })
-          .formatToParts(end)
-          .find(part => part.type === 'timeZoneName')?.value || '';
-    } catch {}
-    endBadge.textContent =
-      'Ends ' + when + ' at ' + clock(end.getHours(), end.getMinutes()) + (short ? ' ' + short : '');
-  }
-  function local(at, name) {
-    const parts = Object.fromEntries(
-      new Intl.DateTimeFormat('en-CA', {
-        timeZone: name,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hourCycle: 'h23',
-      })
-        .formatToParts(new Date(at))
-        .map(part => [part.type, part.value]),
-    );
-    return {
-      date: parts.year + '-' + parts.month + '-' + parts.day,
-      hours: Number(parts.hour),
-      minutes: Number(parts.minute),
-    };
+      const start = keepStart ? editing.start : eventTime(startLocal(), zone.value);
+      end =
+        keepStart && durationMinutes() === originalDuration
+          ? new Date(editing.end)
+          : new Date(Date.parse(start) + durationMinutes() * 60000);
+    } catch (error) {
+      endBadge.textContent = error.message;
+      return;
+    }
+    const format = formatter(zone.value),
+      now = new Date(),
+      today = wallTime(format, now).slice(0, 10),
+      tomorrow = new Date(Date.parse(today + 'T00:00Z') + 86400000).toISOString().slice(0, 10),
+      [endDay, endTime] = wallTime(format, end).split('T'),
+      [hours, minutes] = endTime.split(':').map(Number);
+    const when =
+      endDay === today
+        ? 'today'
+        : endDay === tomorrow
+          ? 'tomorrow'
+          : end.toLocaleDateString('en-US', { timeZone: zone.value, month: 'short', day: 'numeric' });
+    const short = new Intl.DateTimeFormat('en-US', { timeZone: zone.value, timeZoneName: 'short' })
+      .formatToParts(end)
+      .find(part => part.type === 'timeZoneName')?.value;
+    endBadge.textContent = 'Ends ' + when + ' at ' + clock(hours, minutes) + (short ? ' ' + short : '');
   }
   function render() {
     for (const field of fields) field.disabled = busy;
@@ -236,6 +239,8 @@ function mount({ request }) {
     roomSelect.value = selected || NEW_ROOM;
   }
   function fillForm(event, suggested) {
+    originalTimeOption?.remove();
+    originalTimeOption = undefined;
     const name = event?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
     if (!zones.includes(name)) {
       zone.append(option(name, name));
@@ -249,14 +254,21 @@ function mount({ request }) {
     titleCount.textContent = title.value.length + ' / 100';
     description.value = event?.description || '';
     if (event) {
-      const start = local(event.start, name);
-      date.value = start.date;
-      time.value = pad(start.hours) + ':' + pad(Math.floor(start.minutes / 15) * 15);
+      const [startDate, startTime] = wallTime(formatter(name), new Date(event.start)).split('T');
+      const after = [...time.options].find(item => item.value >= startTime);
+      if (after?.value !== startTime) {
+        originalTimeOption = option(startTime, clock(...startTime.split(':').map(Number)));
+        time.insertBefore(originalTimeOption, after || null);
+      }
+      date.value = startDate;
+      time.value = startTime;
+      originalStart = startKey();
       pressChip(null);
-      const minutes = Math.round((Date.parse(event.end) - Date.parse(event.start)) / 60000);
+      const minutes = Math.max(1, Math.round((Date.parse(event.end) - Date.parse(event.start)) / 60000));
+      originalDuration = minutes;
       if ([60, 120, 180].includes(minutes)) setDuration(minutes);
       else {
-        customMinutes = minutes > 0 ? minutes : 90;
+        customMinutes = minutes;
         setDuration('custom');
       }
     } else {
@@ -315,11 +327,14 @@ function mount({ request }) {
     const args = {
       title: title.value,
       description: description.value,
-      startLocal: startHidden.value,
-      endLocal: endHidden.value,
-      timeZone: zone.value,
-      discord: !discordRow.hidden && discord.checked,
     };
+    if (!editing || startKey() !== originalStart) {
+      args.startLocal = startLocal();
+      args.timeZone = zone.value;
+      args.durationMinutes = durationMinutes();
+    } else if (durationMinutes() !== originalDuration) args.durationMinutes = durationMinutes();
+    if (!editing || (!discordRow.hidden && discord.checked !== !!editing.discord))
+      args.discord = !discordRow.hidden && discord.checked;
     busy = true;
     render();
     errorEl.textContent = '';

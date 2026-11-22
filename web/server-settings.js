@@ -75,6 +75,7 @@ function mount({ request, trigger }) {
     generation = 0,
     busy = false,
     saving = false,
+    sourcesWriting = false,
     section = 'rooms',
     conflicts = new Set();
   const labels = {},
@@ -104,7 +105,7 @@ function mount({ request, trigger }) {
   };
   const dirty = () => !!base && Object.keys(changes()).length > 0;
   const savedControl = control => !panels.accounts.contains(control) && !panels.sources.contains(control);
-  popups.register(dialog, { dirty, busy: () => saving });
+  popups.register(dialog, { dirty, busy: () => saving || sourcesWriting });
   dialog.addEventListener('close', () => {
     if (dialog.open) return;
     generation++;
@@ -120,8 +121,8 @@ function mount({ request, trigger }) {
   });
   function state() {
     updateAccessUi();
-    save.disabled = busy || !revision || !dirty() || conflicts.size > 0;
-    cancel.disabled = close.disabled = saving;
+    save.disabled = busy || sourcesWriting || sourcesDirty || !revision || !dirty() || conflicts.size > 0;
+    cancel.disabled = close.disabled = saving || sourcesWriting;
     save.setAttribute('aria-busy', String(saving));
     // Accounts and Sources act at once and keep their own busy state; only the saved-settings fields wait for a draft.
     for (const control of content.querySelectorAll('input,select,button'))
@@ -143,15 +144,18 @@ function mount({ request, trigger }) {
     draft[key] = value;
     state();
   }
+  function refreshAfterSourceSave() {
+    if (!sourcesDirty || busy || sourcesWriting || !dialog.open || section === 'accounts' || section === 'sources')
+      return;
+    sourcesDirty = false;
+    void load(dirty());
+  }
   function selectSection(key) {
     if (section !== key) content.scrollTop = 0;
     if (key === 'accounts' && section !== key && dialog.open) void accountsPanel.load();
     if (key === 'sources' && section !== key && dialog.open) void sourcesPanel.load();
-    if (key !== 'accounts' && key !== 'sources' && section !== key && dialog.open && sourcesDirty && !busy) {
-      sourcesDirty = false;
-      void load(dirty());
-    }
     section = key;
+    footer.hidden = key === 'sources';
     // Accounts and Sources do not depend on the saved settings, so they show even before (or without) them.
     if (key === 'accounts' || key === 'sources') content.hidden = false;
     else if (!draft) content.hidden = true;
@@ -160,6 +164,7 @@ function mount({ request, trigger }) {
       tabs[name].setAttribute('aria-selected', String(name === key));
       tabs[name].tabIndex = name === key ? 0 : -1;
     }
+    refreshAfterSourceSave();
   }
   for (const [key, label] of [
     ['rooms', 'Rooms'],
@@ -243,9 +248,14 @@ function mount({ request, trigger }) {
   });
   const sourcesPanel = uburoomServerSources.mount(panels.sources, {
     request,
-    onSaved: nextRevision => {
+    canWrite: () => !saving,
+    onWriting: writing => {
+      sourcesWriting = writing;
+      state();
+      refreshAfterSourceSave();
+    },
+    onSaved: () => {
       sourcesDirty = true;
-      if (nextRevision) revision = nextRevision;
     },
   });
   node('h3', panels.access, 'Who can sign in');
@@ -684,6 +694,7 @@ function mount({ request, trigger }) {
           (!review.hidden ? review : resolutions.querySelector('button') || (dirty() ? save : tabs[section])).focus({
             preventScroll: true,
           });
+        refreshAfterSourceSave();
       }
     }
   }

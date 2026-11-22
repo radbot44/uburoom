@@ -129,17 +129,27 @@ function event(a, action) {
       /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(a.description)
     )
       throw new Error('Use an event description of up to 1000 characters');
-    for (const field of ['startLocal', 'endLocal'])
-      if (typeof a[field] !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(a[field]))
-        throw new Error('Choose the event date and times');
-    if (typeof a.timeZone !== 'string' || a.timeZone.length > 100) throw new Error('Choose a time zone');
     Object.assign(args, {
       title: a.title.trim(),
       description: a.description,
-      startLocal: a.startLocal,
-      endLocal: a.endLocal,
-      timeZone: a.timeZone,
     });
+    const newStart = action === 'room.event.create' || a.startLocal !== undefined || a.timeZone !== undefined;
+    if (newStart) {
+      if (typeof a.startLocal !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(a.startLocal))
+        throw new Error('Choose the event date and time');
+      if (typeof a.timeZone !== 'string' || a.timeZone.length > 100) throw new Error('Choose a time zone');
+      args.startLocal = a.startLocal;
+      args.timeZone = a.timeZone;
+    }
+    if (a.durationMinutes !== undefined) {
+      if (!Number.isSafeInteger(a.durationMinutes) || a.durationMinutes <= 0 || a.endLocal !== undefined)
+        throw new Error('Choose the event duration');
+      args.durationMinutes = a.durationMinutes;
+    } else if (newStart || a.endLocal !== undefined) {
+      if (!newStart || typeof a.endLocal !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(a.endLocal))
+        throw new Error('Choose the event end time');
+      args.endLocal = a.endLocal;
+    }
     if (a.discord !== undefined) {
       if (typeof a.discord !== 'boolean') throw new Error('Choose whether to post to Discord');
       args.discord = a.discord;

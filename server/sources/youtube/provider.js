@@ -20,6 +20,7 @@ const META_CACHE_MAX = 500;
 const PLAYLIST_CACHE_MAX = 50;
 const PAGE = 30;
 const UNKNOWN_EMBED_DURATION = 3600;
+const CACHE_LEASE = Symbol('cache lease');
 
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 
@@ -569,8 +570,10 @@ class YouTubeMedia {
     if (this.delivery === 'embed') {
       return this.prepareEmbed(id, choices);
     }
-    if (this.delivery === 'auto') {
-      if (!source?.sourceStart) {
+    const release = this.cache?.acquire(id);
+    let media;
+    try {
+      if (this.delivery === 'auto' && !source?.sourceStart) {
         try {
           if (!this.cache) throw new Error('YouTube cache directory is not configured');
           const prepared = await this.cache.prepare(id, { signal: choices.signal || currentSignal() });
@@ -593,18 +596,13 @@ class YouTubeMedia {
           return this.prepareEmbed(id, choices, { fallbackFromYtdlp: true });
         }
       }
-      try {
-        return await prepareStream(this, id, quality, compatible, source, fallback, choices);
-      } catch (error) {
-        error?.media?.releaseCacheLease?.();
-        throw error;
-      }
-    }
-    try {
-      return await prepareStream(this, id, quality, compatible, source, fallback, choices);
-    } catch (error) {
-      error?.media?.releaseCacheLease?.();
-      throw error;
+      media = await prepareStream(this, id, quality, compatible, source, fallback, {
+        ...choices,
+        [CACHE_LEASE]: release,
+      });
+      return media;
+    } finally {
+      if (!media) release?.();
     }
   }
 
@@ -617,12 +615,24 @@ class YouTubeMedia {
       throw Object.assign(new PlaybackError('YouTube cache directory is not configured.'), { status: 500 });
     }
 
-    const prepared = await this.cache.prepare(id, { signal: choices.signal || currentSignal() });
+    const sharedLease = choices[CACHE_LEASE];
+    const release = sharedLease || this.cache.acquire(id);
+    try {
+      const prepared = await this.cache.prepare(id, { signal: choices.signal || currentSignal() });
+      const media = this.cachedMedia(id, prepared, choices);
+      media.releaseCacheLease = release;
+      return { media, detail: {} };
+    } catch (error) {
+      if (!sharedLease) release();
+      throw error;
+    }
+  }
+
+  cachedMedia(id, prepared, choices) {
     const cached = this.cacheVideo({ ...prepared, status: 'ready' });
     if (!(Number(prepared.duration) > 0)) {
       throw Object.assign(new PlaybackError('This YouTube video has no playable duration.'), { status: 400 });
     }
-    const releaseCacheLease = this.cache.acquire(id);
 
     const sources = [];
     if (Array.isArray(prepared.streams)) {
@@ -717,8 +727,7 @@ class YouTubeMedia {
     media.sourceKey = JSON.stringify([YOUTUBE_SERVER, id, prepared.size || 0, prepared.mtimeMs || 0]);
     media.captionVersion = randomUUID();
     media.subtitleAbort = new AbortController();
-    media.releaseCacheLease = releaseCacheLease;
-    return { media, detail: {} };
+    return media;
   }
 
   async filePath(media) {
@@ -745,68 +754,77 @@ class YouTubeMedia {
     const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
     if (parts[0] === 'file' && SAFE_ID.test(parts[1] || '')) {
       if (!this.cache) throw fail('YouTube cache is not configured', 500);
-      const hit = await this.cache.resolveMediaFile(parts[1]);
-      if (!hit) throw fail('Cached YouTube video is unavailable', 404);
-      const size = hit.stat.size;
-      const range = Object.entries(options.headers || {}).find(([k]) => k.toLowerCase() === 'range')?.[1];
-      let start = 0,
-        end = size - 1;
-      if (range) {
-        const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-        if (match && !match[1] && match[2]) start = Math.max(0, size - Number(match[2]));
-        else if (match?.[1]) {
-          start = Number(match[1]);
-          if (match[2]) end = Math.min(end, Number(match[2]));
-        }
-        if (!match || (!match[1] && !match[2]) || !Number.isSafeInteger(start) || start > end || start >= size) {
-          throw fail('Requested range is outside this file', 416);
-        }
-      }
-      const headers = {
-        'Content-Type': hit.contentType,
-        'Content-Length': String(size ? end - start + 1 : 0),
-        'Accept-Ranges': 'bytes',
-      };
-      if (range && size) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
-      if (options.method === 'HEAD' || !size) return new Response(null, { status: range && size ? 206 : 200, headers });
-      const releaseLease = this.cache.acquire(parts[1]);
+      const release = this.cache.acquire(parts[1]);
+      let streaming = false;
       try {
-        return new Response(fileStream(hit.file, { start, end, signal: options.signal, onClose: releaseLease }), {
-          status: range ? 206 : 200,
-          headers,
-        });
-      } catch (error) {
-        releaseLease();
-        throw error;
+        const hit = await this.cache.resolveMediaFile(parts[1]);
+        if (!hit) throw fail('Cached YouTube video is unavailable', 404);
+        const size = hit.stat.size;
+        const range = Object.entries(options.headers || {}).find(([k]) => k.toLowerCase() === 'range')?.[1];
+        let start = 0;
+        let end = size - 1;
+        if (range) {
+          const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+          if (match && !match[1] && match[2]) start = Math.max(0, size - Number(match[2]));
+          else if (match?.[1]) {
+            start = Number(match[1]);
+            if (match[2]) end = Math.min(end, Number(match[2]));
+          }
+          if (!match || (!match[1] && !match[2]) || !Number.isSafeInteger(start) || start > end || start >= size) {
+            throw fail('Requested range is outside this file', 416);
+          }
+        }
+        const headers = {
+          'Content-Type': hit.contentType,
+          'Content-Length': String(size ? end - start + 1 : 0),
+          'Accept-Ranges': 'bytes',
+        };
+        if (range && size) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+        if (options.method === 'HEAD' || !size)
+          return new Response(null, { status: range && size ? 206 : 200, headers });
+        const body = fileStream(hit.file, { start, end, signal: options.signal, onClose: release });
+        const response = new Response(body, { status: range ? 206 : 200, headers });
+        streaming = true;
+        return response;
+      } finally {
+        if (!streaming) release();
       }
     }
 
     if (parts[0] === 'sub' && SAFE_ID.test(parts[1] || '') && SAFE_TRACK.test(parts[2] || '')) {
       if (!this.cache) throw fail('YouTube cache is not configured', 500);
-      const subFile = await this.cache.resolveSubtitleFile(parts[1], parts[2]);
-      if (!subFile) throw fail('Subtitle track unavailable', 404);
-      const stat = await fsp.stat(subFile);
-      if (stat.size > TEXT_LIMIT) throw fail('Subtitle file exceeds the supported size', 413);
-      if (options.method === 'HEAD') {
-        return new Response(null, {
+      const release = this.cache.acquire(parts[1]);
+      try {
+        const subFile = await this.cache.resolveSubtitleFile(parts[1], parts[2]);
+        if (!subFile) throw fail('Subtitle track unavailable', 404);
+        const stat = await fsp.stat(subFile);
+        if (stat.size > TEXT_LIMIT) throw fail('Subtitle file exceeds the supported size', 413);
+        if (options.method === 'HEAD') {
+          return new Response(null, {
+            status: 200,
+            headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'Content-Length': String(stat.size) },
+          });
+        }
+        const text = await fsp.readFile(subFile, { encoding: 'utf8', signal: options.signal });
+        return new Response(text, {
           status: 200,
-          headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'Content-Length': String(stat.size) },
+          headers: { 'Content-Type': 'text/vtt; charset=utf-8' },
         });
+      } finally {
+        release();
       }
-      const text = await fsp.readFile(subFile, { encoding: 'utf8', signal: options.signal });
-      return new Response(text, {
-        status: 200,
-        headers: { 'Content-Type': 'text/vtt; charset=utf-8' },
-      });
     }
 
     throw fail('Invalid YouTube media resource', 400);
   }
 
-  stop(media) {
-    if (!media || media.format === 'youtube-embed') return Promise.resolve();
-    media.releaseCacheLease?.();
-    return runOperation(undefined, () => this.pipeline?.release?.(media));
+  async stop(media) {
+    if (!media || media.format === 'youtube-embed') return;
+    try {
+      await runOperation(undefined, () => this.pipeline?.release?.(media));
+    } finally {
+      media.releaseCacheLease?.();
+    }
   }
 
   async close() {

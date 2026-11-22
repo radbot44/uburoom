@@ -119,6 +119,45 @@ test(
     }
     assert.equal(native.status, 4);
     assert.equal(f.app.watch.events.forRoom(id).length, 0);
+    const times = {
+      startLocal: planned.startLocal.slice(0, 14) + '07',
+      endLocal: planned.endLocal.slice(0, 14) + '07',
+    };
+    assert.equal((await schedule(returning, 'room.event.create', times)).body.status, 'applied');
+    const offGrid = (await returning.call(root + '/events')).body.events[0];
+    const rename = {
+      action: 'room.event.edit',
+      eventKey: offGrid.key,
+      eventVersion: offGrid.eventVersion,
+      title: 'Rename only',
+      description: '',
+    };
+    assert.equal((await returning.call(root + '/events', rename)).body.status, 'applied');
+    const renamed = (await returning.call(root + '/events')).body.events[0];
+    assert.equal(renamed.title, 'Rename only');
+    assert.equal(renamed.start, offGrid.start);
+    assert.equal(renamed.end, offGrid.end);
+    assert.equal(renamed.eventId, offGrid.eventId);
+    const nativeOffGrid = remote.events.get(renamed.eventId);
+    assert.equal(nativeOffGrid.scheduledStartTimestamp, Date.parse(offGrid.start));
+    assert.equal(nativeOffGrid.scheduledEndTimestamp, Date.parse(offGrid.end));
+    assert.equal(
+      (
+        await returning.call(root + '/events', {
+          ...rename,
+          eventVersion: renamed.eventVersion,
+          durationMinutes: 90,
+          discord: false,
+        })
+      ).body.status,
+      'applied',
+    );
+    const unlinked = (await returning.call(root + '/events')).body.events[0];
+    assert.equal(unlinked.start, renamed.start);
+    assert.equal(Date.parse(unlinked.end) - Date.parse(unlinked.start), 90 * 60000);
+    assert.equal(unlinked.eventId, undefined);
+    assert.equal(nativeOffGrid.status, 4);
+    await returning.call(root + '/events', { action: 'room.event.cancel', eventKey: unlinked.key });
     assert.equal(
       (await schedule(returning, 'room.event.create', { title: 'First event at this time', revision: args.revision }))
         .body.status,

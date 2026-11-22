@@ -290,8 +290,7 @@ class RoomEvents {
         this.errors.delete(id);
         return applied('Event canceled.');
       }
-      const planned = eventDetails(args),
-        posting = args.discord ?? !!event.discord;
+      const posting = args.discord ?? !!event.discord;
       const guild = event.discord || posting ? await this.discord.guild(event.discord?.guildId) : undefined;
       if (event.discord) {
         const remote = await this.discord.remote(guild, event.discord);
@@ -299,6 +298,7 @@ class RoomEvents {
         if (!this.discord.scheduled(remote)) throw fail('This event has already started. Open it in Discord.', 409);
       }
       if (version(event) !== args.eventVersion) throw fail('The event changed. Refresh before editing it.', 409);
+      const planned = eventDetails(args, event);
       record = await current();
       let next = { ...event, ...planned, updatedAt: now };
       if (event.discord && posting)

@@ -27,6 +27,7 @@ async function main(name) {
     demoSubjects: fixture.subjects,
     sources: validateSources([
       { id: 'plex', type: 'plex', url: 'http://127.0.0.1:32400', token: 'synthetic-fixture-only' },
+      { id: 'cabin', type: 'plex', name: 'Cabin Plex', url: 'http://cabin.invalid:32400', token: 'fixture-cabin' },
     ]),
   };
   let failNext = false;
@@ -156,6 +157,20 @@ async function main(name) {
     const url = new URL(input),
       p = url.pathname,
       query = url.searchParams;
+    if (url.hostname === 'cabin.invalid') {
+      let data = {};
+      if (p === '/' || p === '/identity') data = { machineIdentifier: 'cabin-fixture' };
+      else if (p === '/library/sections') data = { Directory: [{ key: '1', type: 'movie', title: 'Cabin Films' }] };
+      else if (p === '/library/sections/1/genre') data = { Directory: [{ key: '8', title: 'Cabin genre' }] };
+      else if (p === '/library/sections/1/all') {
+        data = {
+          Metadata: [{ ratingKey: '1', type: 'movie', title: 'Cabin Feature', duration: 60000, librarySectionID: 1 }],
+          size: 1,
+          totalSize: 1,
+        };
+      }
+      return Response.json({ MediaContainer: data });
+    }
     // plex.tv sign-in and account checks belong to the account fixture; the library is this server.
     if (url.origin !== new URL(config.sources[0].url).origin) return fixture.fetch(input, options);
     // The server root names the machine; the server pins it as this provider's identity.
@@ -245,6 +260,7 @@ async function main(name) {
   app.watch.providers.primary.root.prepare = async id => ({
     ...app.watch.demoMedia,
     id,
+    serverId: 'library-fixture',
     title: all.find(x => x.ratingKey === id)?.title || 'Fixture',
     subtitle: all.find(x => x.ratingKey === id)?.editionTitle || '',
     kind: 'demo',
@@ -270,7 +286,7 @@ async function main(name) {
     await evaluate(context, 'document.getElementById("create").click()');
     await until(context, 'document.getElementById("room-dialog").open', 'room chooser');
     await evaluate(context, 'document.getElementById("room-create").click()');
-    await until(context, 'document.querySelectorAll(".library-home-card").length===2', 'Libraries home');
+    await until(context, 'document.querySelectorAll(".library-home-card").length===3', 'Libraries home');
     // Phone layouts show one section at a time (Room first in a saved room); these checks browse Media.
     await evaluate(context, act.selectSection('media'));
     await until(
@@ -1043,7 +1059,7 @@ async function main(name) {
     await until(activity, 'document.querySelector("#rooms button")', 'Activity rooms');
     await evaluate(activity, 'document.querySelector("#rooms button").click()');
     // Joining resets Media to the room's Libraries home, and a press during that is lost: press until it opens.
-    await until(activity, '!!selected && document.querySelectorAll(".library-home-card").length===2', 'Activity home');
+    await until(activity, '!!selected && document.querySelectorAll(".library-home-card").length===3', 'Activity home');
     await until(
       activity,
       act.pressUntil('.library-home-card[data-tab=library]', 'document.querySelectorAll(".library-tile").length===48'),
@@ -1067,7 +1083,7 @@ async function main(name) {
     await evaluate(activity, 'document.getElementById("close-room").click()');
     await until(
       activity,
-      '!selected && !document.getElementById("library-panel").hidden && document.querySelectorAll(".library-home-card").length===2',
+      '!selected && !document.getElementById("library-panel").hidden && document.querySelectorAll(".library-home-card").length===3',
       'Leave restores lobby catalog',
     );
     await evaluate(activity, 'history.back()');
@@ -1079,6 +1095,30 @@ async function main(name) {
       ),
       true,
       'Browser history cannot restore the previous room catalog',
+    );
+    const cabinCard = 'document.querySelector(\'.library-home-card[aria-label="Cabin Films"]\')';
+    const cabinCatalog = 'document.querySelector(".library-tile .library-title")?.textContent==="Cabin Feature"';
+    await until(activity, cabinCard, 'The second server has its own section-1 card');
+    await evaluate(activity, cabinCard + '.click()');
+    await until(activity, cabinCatalog, 'The second card opens its own server');
+    await until(
+      activity,
+      'document.querySelector(\'select[aria-label="Genre"] option[value="8"]\')',
+      'Facets use the second server',
+    );
+    await evaluate(activity, 'document.querySelector(\'.library-choice[aria-label="Movies"]\').click()');
+    await until(
+      activity,
+      'document.querySelector(\'select[aria-label="Genre"] option[value="5"]\') && !(' + cabinCatalog + ')',
+      'The first server can also open section 1',
+    );
+    await evaluate(activity, 'document.getElementById("library-back").click()');
+    await until(activity, cabinCatalog, 'Back restores the second server catalog');
+    await evaluate(activity, 'document.getElementById("library-forward").click()');
+    await until(
+      activity,
+      'document.querySelector(\'select[aria-label="Genre"] option[value="5"]\') && !(' + cabinCatalog + ')',
+      'Forward restores the first server catalog',
     );
     console.log(
       '[Plex library ' +
