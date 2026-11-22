@@ -180,7 +180,10 @@ module.exports = {
     }
     const entries = [...(room.queueEntries || [])];
     const current = fromProvider(room.media) ? room.media.roomServerId : undefined;
-    if (room.media && !entries.some(item => (item.serverId ?? current) === current && item.mediaId === room.media.id))
+    if (
+      fromProvider(room.media) &&
+      !entries.some(item => (item.serverId ?? current) === current && item.mediaId === room.media.id)
+    )
       entries.unshift({ id: room.media.id, mediaId: room.media.id, title: room.media.title, serverId: current });
     // Each entry is checked by the provider it is recorded under: the room's video through
     // the scope this viewer watches it with, the rest of the queue through their own.
@@ -216,7 +219,7 @@ module.exports = {
           title,
           ...((serverId ?? current) ? { serverId: serverId ?? current } : {}),
         }));
-      if (room.media && availability.get(sourceMediaKey(current, room.media.id)) === false) {
+      if (fromProvider(room.media) && availability.get(sourceMediaKey(current, room.media.id)) === false) {
         if (!viewer.media?.unavailable) {
           this.tracking.end(viewer, 'media-unavailable');
           void this.reporting?.end(viewer, 'media-unavailable');
