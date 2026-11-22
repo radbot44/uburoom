@@ -434,9 +434,6 @@ function mount(
     const server = screen?.server;
     return { ...roomScope(), ...(server ? { server } : {}), ...query };
   };
-  function endpoint(path, query = {}) {
-    return path + '?' + new URLSearchParams(scoped(query));
-  }
   function playable(item) {
     return ['movie', 'episode', 'demo'].includes(item.type);
   }
@@ -472,7 +469,11 @@ function mount(
   }
   const pictures = pictureLoader({
     doc,
-    fetchArt: (item, kind, type, signal) => artwork(endpoint('/api/watch/library/art', { item, kind, type }), signal),
+    serverFor: item => item.serverId || screen?.server,
+    fetchArt: (server, item, kind, type, signal) => {
+      const params = new URLSearchParams({ ...roomScope(), ...(server ? { server } : {}), item, kind, type });
+      return artwork('/api/watch/library/art?' + params, signal);
+    },
   });
   const { prefetch: prefetchArt, picture } = pictures;
   function art(parent, item, landscape = false) {

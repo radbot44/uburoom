@@ -35,9 +35,11 @@ export function syncPosterFill(box, img, { enabled = true, fillClass = 'library-
 }
 
 /**
- * @param {{doc: Document, fetchArt: (item: string, kind: string, type: string, signal: AbortSignal) => Promise<Blob>}} options
+ * @param {{doc: Document,
+ *   serverFor: (item: {serverId?: string}) => string | undefined,
+ *   fetchArt: (server: string, item: string, kind: string, type: string, signal: AbortSignal) => Promise<Blob>}} options
  */
-export function pictureLoader({ doc, fetchArt }) {
+export function pictureLoader({ doc, serverFor, fetchArt }) {
   const images = new Map(),
     pending = new Map();
   /** @type {AbortController|null} */
@@ -47,6 +49,7 @@ export function pictureLoader({ doc, fetchArt }) {
   let queue = [],
     active = 0,
     reusable;
+  const keyFor = (server, item, kind, type) => JSON.stringify([server, item, kind, type]);
 
   /** Forget every picture: a new room starts with none, and loads still running for the old one are dropped. */
   function reset() {
@@ -74,12 +77,12 @@ export function pictureLoader({ doc, fetchArt }) {
    * One provider picture as an object URL, cached and fetched once however many places ask for it at a time.
    * Resolves to undefined when the room changed meanwhile.
    */
-  function load(item, kind, type) {
-    const key = item + ':' + kind;
+  function load(server, item, kind, type) {
+    const key = keyFor(server, item, kind, type);
     if (images.has(key)) return Promise.resolve(images.get(key));
     if (pending.has(key)) return pending.get(key);
     const signal = controller.signal;
-    const promise = fetchArt(item, kind, type, signal)
+    const promise = fetchArt(server, item, kind, type, signal)
       .then(blob => {
         if (signal.aborted) return undefined;
         const url = URL.createObjectURL(blob),
@@ -104,13 +107,14 @@ export function pictureLoader({ doc, fetchArt }) {
     while (active < AT_ONCE && queue.length) {
       const img = queue.shift();
       if (!img.isConnected || img.src) continue;
-      const key = img.dataset.item + ':' + img.dataset.kind;
+      const { server, item, kind, type } = img.dataset;
+      const key = keyFor(server, item, kind, type);
       if (images.has(key)) {
         img.src = images.get(key);
         continue;
       }
       active++;
-      load(img.dataset.item, img.dataset.kind, img.dataset.type)
+      load(server, item, kind, type)
         .then(url => {
           if (url && img.isConnected) img.src = url;
         })
@@ -127,17 +131,20 @@ export function pictureLoader({ doc, fetchArt }) {
   /** Start fetching an item's details pictures before its page needs them (on click, or hover on a mouse). */
   function prefetch(item) {
     if (!item || item.id === 'demo' || !controller) return;
-    if (item.hasBackdrop) load(item.id, 'backdrop', item.type).catch(() => {});
-    if (item.hasLogo) load(item.id, 'logo', item.type).catch(() => {});
+    const server = serverFor(item) || '';
+    if (item.hasBackdrop) load(server, item.id, 'backdrop', item.type).catch(() => {});
+    if (item.hasLogo) load(server, item.id, 'logo', item.type).catch(() => {});
   }
   /** One provider picture in `box`, loaded through the shared image queue; the box gets `loaded` once shown. */
   function picture(box, item, kind) {
-    const key = item.id + ':' + kind;
+    const server = serverFor(item) || '';
+    const key = keyFor(server, item.id, kind, item.type);
     const img = reusable?.get(key) || doc.createElement('img');
     reusable?.delete(key);
     box.append(img);
     img.alt = '';
     img.decoding = 'async';
+    img.dataset.server = server;
     img.dataset.item = item.id;
     img.dataset.kind = kind;
     img.dataset.type = item.type;
@@ -158,7 +165,7 @@ export function pictureLoader({ doc, fetchArt }) {
       // title first and no fade. Only one that arrives while the page is open fades in.
       if (PRIORITY_ART.includes(kind)) box.classList.add('loaded', 'instant');
     } else if (PRIORITY_ART.includes(kind))
-      load(item.id, kind, item.type)
+      load(server, item.id, kind, item.type)
         .then(url => {
           if (url && img.isConnected && !img.src) img.src = url;
         })
@@ -168,7 +175,12 @@ export function pictureLoader({ doc, fetchArt }) {
   }
   /** While a page re-renders, its pictures already on screen are moved into the new markup instead of reloaded. */
   function reuse(imgs) {
-    reusable = new Map([...imgs].map(img => [img.dataset.item + ':' + img.dataset.kind, img]));
+    reusable = new Map(
+      [...imgs].map(img => {
+        const { server, item, kind, type } = img.dataset;
+        return [keyFor(server, item, kind, type), img];
+      }),
+    );
   }
   function endReuse() {
     reusable = undefined;

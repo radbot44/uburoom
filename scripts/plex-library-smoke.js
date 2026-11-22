@@ -55,6 +55,14 @@ async function main(name) {
     Director: [{ tag: 'Sample director' }],
     Role: [{ tag: 'Sample actor' }],
   }));
+  const cabinMovie = {
+    ...movies[0],
+    title: 'Cabin Feature',
+    duration: 60000,
+    librarySectionID: 1,
+    thumb: '/library/metadata/1/thumb/456',
+    addedAt: 1700000001,
+  };
   const show = {
     ratingKey: '10000',
     type: 'show',
@@ -157,28 +165,6 @@ async function main(name) {
     const url = new URL(input),
       p = url.pathname,
       query = url.searchParams;
-    if (url.hostname === 'cabin.invalid') {
-      let data = {};
-      if (p === '/' || p === '/identity') data = { machineIdentifier: 'cabin-fixture' };
-      else if (p === '/library/sections') data = { Directory: [{ key: '1', type: 'movie', title: 'Cabin Films' }] };
-      else if (p === '/library/sections/1/genre') data = { Directory: [{ key: '8', title: 'Cabin genre' }] };
-      else if (p === '/library/sections/1/all') {
-        data = {
-          Metadata: [{ ratingKey: '1', type: 'movie', title: 'Cabin Feature', duration: 60000, librarySectionID: 1 }],
-          size: 1,
-          totalSize: 1,
-        };
-      }
-      return Response.json({ MediaContainer: data });
-    }
-    // plex.tv sign-in and account checks belong to the account fixture; the library is this server.
-    if (url.origin !== new URL(config.sources[0].url).origin) return fixture.fetch(input, options);
-    // The server root names the machine; the server pins it as this provider's identity.
-    if (p === '/') return new Response(JSON.stringify({ MediaContainer: { machineIdentifier: 'library-fixture' } }));
-    if (failNext && p.endsWith('/all')) {
-      failNext = false;
-      return new Response('fixture failure', { status: 503 });
-    }
     if (p === '/photo/:/transcode') {
       artworkReads.push(query.get('url'));
       return new Response(
@@ -188,6 +174,24 @@ async function main(name) {
         ),
         { headers: { 'Content-Type': 'image/png' } },
       );
+    }
+    if (url.hostname === 'cabin.invalid') {
+      let data = {};
+      if (p === '/' || p === '/identity') data = { machineIdentifier: 'cabin-fixture' };
+      else if (p === '/library/sections') data = { Directory: [{ key: '1', type: 'movie', title: 'Cabin Films' }] };
+      else if (p === '/library/sections/1/genre') data = { Directory: [{ key: '8', title: 'Cabin genre' }] };
+      else if (p === '/library/sections/1/all' || p === '/library/metadata/1')
+        data = { Metadata: [cabinMovie], size: 1, totalSize: 1 };
+      else if (p === '/library/recentlyAdded') data = { Metadata: newShelfItem ? [cabinMovie] : [] };
+      return Response.json({ MediaContainer: data });
+    }
+    // plex.tv sign-in and account checks belong to the account fixture; the library is this server.
+    if (url.origin !== new URL(config.sources[0].url).origin) return fixture.fetch(input, options);
+    // The server root names the machine; the server pins it as this provider's identity.
+    if (p === '/') return new Response(JSON.stringify({ MediaContainer: { machineIdentifier: 'library-fixture' } }));
+    if (failNext && p.endsWith('/all')) {
+      failNext = false;
+      return new Response('fixture failure', { status: 503 });
     }
     let data;
     if (p === '/library/sections')
@@ -247,15 +251,7 @@ async function main(name) {
   const readShelves = app.watch.providers.shelves.bind(app.watch.providers);
   app.watch.providers.shelves = async (...args) => {
     shelfReads++;
-    const data = await readShelves(...args);
-    if (newShelfItem) {
-      // Two servers can use the same local item ID; retain both as distinct titles.
-      data.recentlyAdded = [
-        { ...data.recentlyAdded[0], serverId: 'second-fixture' },
-        ...data.recentlyAdded.slice(0, 19),
-      ];
-    }
-    return data;
+    return readShelves(...args);
   };
   app.watch.providers.primary.root.prepare = async id => ({
     ...app.watch.demoMedia,
@@ -294,6 +290,12 @@ async function main(name) {
       'document.querySelectorAll(".library-shelf-row.poster .library-tile").length===20',
       'Recently added',
     );
+    await evaluate(context, 'document.querySelector(".library-shelf-row.poster").scrollIntoView({block:"center"})');
+    await until(
+      context,
+      'document.querySelector(".library-shelf-row.poster .library-tile:first-child .library-art.loaded")',
+      'Recently added loads artwork on multi-source Home',
+    );
     await evaluate(
       context,
       `(()=>{
@@ -327,6 +329,9 @@ async function main(name) {
       `window.shelfCheck.anchorLeft=window.shelfCheck.tile.getBoundingClientRect().left;Date.now=()=>window.shelfClock()+122000`,
     );
     newShelfItem = true;
+    // The browser clock advance expires its shelf data; expire the fixture's upstream response too.
+    const cabin = app.watch.providers.list.find(provider => provider.id === 'cabin');
+    cabin.root.catalogCache.delete('/library/recentlyAdded?X-Plex-Container-Start=0&X-Plex-Container-Size=20');
     app.watch.changed(undefined, { lobby: true });
     await until(
       context,
@@ -342,6 +347,15 @@ async function main(name) {
       true,
       'New arrivals preserve the visible title, unchanged focus and separate server identities',
     );
+    await evaluate(context, 'document.querySelector(".library-shelf-row.poster").scrollLeft=0');
+    await until(
+      context,
+      `(()=>{const [cabin,main]=document.querySelector('.library-shelf-row.poster').children;
+      const added=cabin.querySelector('.library-art.loaded img'), original=main.querySelector('.library-art.loaded img');
+      return added && original && added.src!==original.src;})()`,
+      'Recently added loads distinct posters for matching item IDs on different servers',
+    );
+    assert.ok(artworkReads.includes(movies[0].thumb) && artworkReads.includes(cabinMovie.thumb));
     await evaluate(
       context,
       `(()=>{
