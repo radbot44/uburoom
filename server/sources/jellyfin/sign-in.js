@@ -32,8 +32,8 @@ function jellyfinSignIn({ client, serverId, registry, now = Date.now, requireAdm
     }
     return found;
   }
-  /** Checks Jellyfin's answer to a sign-in and keeps the person's token. */
-  async function accept(result) {
+  /** Checks Jellyfin's answer to a sign-in and optionally keeps the person's token. */
+  async function accept(result, persistCredential = true) {
     const server = await serverId();
     const user = jellyfinId(result?.User?.Id);
     const token = typeof result?.AccessToken === 'string' ? result.AccessToken : '';
@@ -50,7 +50,7 @@ function jellyfinSignIn({ client, serverId, registry, now = Date.now, requireAdm
         ? result.User.Name.trim().slice(0, 80)
         : 'Jellyfin user';
     const identity = { provider: jellyfinIdentityProvider(server), subject: user, name, token };
-    if (registry) registry.credential(identity.provider, user, { token });
+    if (registry && persistCredential) registry.credential(identity.provider, user, { token });
     return identity;
   }
   /** A sign-in failure as the person should hear it; never the password or the server's words. */
@@ -110,7 +110,7 @@ function jellyfinSignIn({ client, serverId, registry, now = Date.now, requireAdm
       }
     },
     /** Exchanges an approved Quick Connect attempt for the person's identity. Works once. */
-    async finish(id) {
+    async finish(id, { persistCredential = true } = {}) {
       const { secret } = attempt(id);
       attempts.delete(id);
       let result;
@@ -124,7 +124,7 @@ function jellyfinSignIn({ client, serverId, registry, now = Date.now, requireAdm
           ? fail('Approve the code in Jellyfin first, then try again', 'JELLYFIN_NOT_APPROVED', 409)
           : signInError(error);
       }
-      return accept(result);
+      return accept(result, persistCredential);
     },
     /**
      * Signs in with a username and password, sent once to the server. Never retried: Jellyfin
@@ -132,7 +132,7 @@ function jellyfinSignIn({ client, serverId, registry, now = Date.now, requireAdm
      * @param {unknown} username
      * @param {unknown} password
      */
-    async password(username, password) {
+    async password(username, password, { persistCredential = true } = {}) {
       if (typeof username !== 'string' || !username.trim() || username.length > 200)
         throw fail('Enter your Jellyfin username', 'JELLYFIN_USERNAME');
       if (typeof password !== 'string' || password.length > 1024)
@@ -146,7 +146,7 @@ function jellyfinSignIn({ client, serverId, registry, now = Date.now, requireAdm
       } catch (error) {
         throw signInError(error);
       }
-      return accept(result);
+      return accept(result, persistCredential);
     },
     /** Ends a Quick Connect attempt; later polls and exchanges find it expired. */
     cancel(id) {

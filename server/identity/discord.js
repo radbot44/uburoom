@@ -8,7 +8,7 @@ const { hash } = require('../core');
  *   isolated demo's stand-in provider, when one is running.
  */
 function createDiscordSignIn({ config, demo = () => undefined, sessions, authorizeUrl }) {
-  const { cookie, cookies, json } = sessions;
+  const { COOKIES, cookie, cookies, json } = sessions;
   const states = new Map();
   async function start(req, res, linkLogin, ownerOnly = false, returnTo = undefined) {
     if (config.accessPolicy && !config.accessPolicy.discord && !ownerOnly)
@@ -21,7 +21,7 @@ function createDiscordSignIn({ config, demo = () => undefined, sessions, authori
       ...(linkLogin
         ? {
             linkUserId: linkLogin.userId,
-            sourceHash: hash(cookies(req).uburoom),
+            sourceHash: hash(cookies(req)[COOKIES.session] || ''),
             revision: linkLogin.accountRevision,
           }
         : {}),
@@ -33,7 +33,7 @@ function createDiscordSignIn({ config, demo = () => undefined, sessions, authori
       scope: 'identify',
       state,
     });
-    res.setHeader('Set-Cookie', cookie('uburoom_oauth', state, 300));
+    res.setHeader('Set-Cookie', cookie(COOKIES.oauth, state, 300));
     const destination =
       config.demo && demo() ? config.publicUrl + '/demo-discord?state=' + state : authorizeUrl + '?' + query;
     if (linkLogin) json(res, 200, { url: destination });

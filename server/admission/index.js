@@ -77,8 +77,43 @@ class Admission {
     if (!this.settings) return false;
     const account = this.registry.canonical(id);
     if (!account) return false;
-    if (this.guestRoom(context)) {
-      const key = this.admissionKey(account.id, context);
+    const guestRoom = this.guestRoom(context);
+    const key = this.admissionKey(account.id, context);
+    const identities = this.registry.identities(account.id).filter(identity => identity.verified);
+    if (!this.registry.isGuest(account.id)) {
+      const regularKey = context?.activity === true ? 'activity:' + account.id : account.id;
+      const now = Date.now();
+      const proof = [
+        ...identities.map(identity => identity.provider + ':' + identity.subject).sort(),
+        'password:' + (context?.serverPassword || ''),
+      ].join();
+      let held = this.confirmed.get(regularKey);
+      if (held?.proof !== proof || held.expires <= now) held = undefined;
+      let regularAllowed = held?.recheck > now;
+      if (!regularAllowed) {
+        const regularContext = guestRoom ? { ...context, guestRoom: undefined, guestRoomId: undefined } : context;
+        const answer = await this.answer(account, identities, regularContext);
+        regularAllowed = answer === true || (answer === undefined && !!held);
+        if (answer === true)
+          this.confirmed.set(regularKey, {
+            proof,
+            recheck: Date.now() + RECHECK_MS,
+            expires: Date.now() + CONFIRMED_MS,
+          });
+        else if (regularAllowed) {
+          held.recheck = Date.now() + UNANSWERED_RECHECK_MS;
+          this.logger.warn('Access', `Keeping ${account.name || account.id} admitted: no provider answer`);
+        } else this.confirmed.delete(regularKey);
+      }
+      if (regularAllowed) {
+        const until = Date.now() + 1000;
+        this.allowed.set(regularKey, until);
+        if (key !== regularKey) this.allowed.set(key, until);
+        if (account.signedInAt === null) this.registry.seen(account.id);
+        return true;
+      }
+    }
+    if (guestRoom) {
       if (!this.viaGuest(account.id, context)) {
         this.allowed.delete(key);
         return false;
@@ -86,9 +121,7 @@ class Admission {
       this.allowed.set(key, Date.now() + 1000);
       return true;
     }
-    const identities = this.registry.identities(account.id).filter(identity => identity.verified);
-    const key = this.admissionKey(account.id, context),
-      now = Date.now();
+    const now = Date.now();
     // Linking a provider, or entering with another password, changes who has to vouch for this account.
     const proof = [
       ...identities.map(identity => identity.provider + ':' + identity.subject).sort(),
@@ -107,9 +140,118 @@ class Admission {
         this.logger.warn('Access', `Keeping ${account.name || account.id} admitted: no provider answer`);
       } else this.confirmed.delete(key);
     }
-    if (allowed) this.allowed.set(key, Date.now() + 1000);
-    else this.allowed.delete(key);
+    if (allowed) {
+      this.allowed.set(key, Date.now() + 1000);
+      if (account.signedInAt === null) this.registry.seen(account.id);
+    } else this.allowed.delete(key);
     return allowed;
+  }
+  invalidate(ids) {
+    const match = new Set(ids);
+    for (const key of this.allowed.keys()) {
+      const userId = key.startsWith('activity:')
+        ? key.slice('activity:'.length)
+        : key.startsWith('guest:')
+          ? key.slice(key.indexOf(':', 6) + 1)
+          : key;
+      if (match.has(userId)) this.allowed.delete(key);
+    }
+    for (const key of this.confirmed.keys()) {
+      const userId = key.startsWith('activity:') ? key.slice('activity:'.length) : key;
+      if (match.has(userId)) this.confirmed.delete(key);
+    }
+  }
+  sourceMatchesIdentity(source, identity) {
+    const kind = source.memberIdentity;
+    if (!kind) return false;
+    if (kind === 'plex') return identity.provider === 'plex';
+    if (kind === 'jellyfin') return !!source.serverId && identity.provider === 'jellyfin:' + source.serverId;
+    return identity.provider === kind || identity.provider.startsWith(kind + ':');
+  }
+  /**
+   * Checks whether `userId` would still be admitted if `(provider, subject)` were unlinked.
+   * Synchronous/rule-level when `live` is false (for UI state); live-verifies remaining providers when `live` is true.
+   */
+  async wouldAdmitWithout(userId, provider, subject, { live = false } = {}) {
+    const account = this.registry.canonical(userId);
+    if (!account || !this.settings) return false;
+    const oauthReady = !!(this.config.clientId && this.config.clientSecret && this.config.ownerId);
+    const identities = this.registry
+      .identities(account.id)
+      .filter(i => i.verified && !(i.provider === provider && i.subject === String(subject)));
+    const usable = identities.filter(
+      i =>
+        (i.provider !== 'plex' && !i.provider.startsWith('jellyfin:')) ||
+        this.registry.hasCredential(i.provider, i.subject),
+    );
+    if (usable.some(i => i.provider.startsWith('jellyfin:'))) {
+      for (const source of this.memberSources()) {
+        if (source.memberIdentity === 'jellyfin' && !source.serverId && typeof source.identity === 'function') {
+          try {
+            await source.identity();
+          } catch {}
+        }
+      }
+    }
+    const providerEnabled = identity => {
+      if (!identity) return false;
+      if (identity.provider === 'discord') {
+        if (!oauthReady) return false;
+        return this.settings.discord !== false || identity.subject === this.config.ownerId;
+      }
+      if (identity.provider === 'uburoom') return !!this.settings.accounts;
+      return this.memberSources().some(source => this.sourceMatchesIdentity(source, identity));
+    };
+    const configuredEligible = usable.some(
+      i => providerEnabled(i) && (i.provider !== 'uburoom' || !this.accounts || this.accounts.admits(account.id)),
+    );
+    if (!live) return configuredEligible;
+    const enabled = usable.filter(providerEnabled);
+    if (!usable.length) throw new Error('Connect another sign-in method before removing this account');
+    if (!enabled.length) {
+      const remaining = usable[0];
+      const label =
+        remaining.provider === 'plex'
+          ? 'Plex'
+          : remaining.provider === 'discord'
+            ? 'Discord'
+            : remaining.provider === 'uburoom'
+              ? 'uburoom account'
+              : 'Jellyfin';
+      throw new Error(label + ' sign-in is disabled on this server; keep your connected account');
+    }
+    let lastError;
+    for (const remaining of enabled) {
+      if (remaining.provider === 'uburoom') {
+        if (!this.accounts || this.accounts.admits(account.id)) return true;
+        lastError = new Error('Set a password for your uburoom account before removing this sign-in');
+        continue;
+      }
+      if (remaining.provider === 'discord') {
+        const access = this.discordAccess();
+        if (access?.isMember(remaining.subject) || (await access?.refresh(remaining.subject))) return true;
+        lastError = new Error('Discord access is unavailable; keep your connected account');
+        continue;
+      }
+      let denied = false;
+      let answered = false;
+      for (const source of this.memberSources()) {
+        if (!this.sourceMatchesIdentity(source, remaining)) continue;
+        try {
+          if ((await source.members({ ...remaining, userId: account.id })) === true) return true;
+          denied = true;
+        } catch (error) {
+          if (error?.noServerAccess || error?.revoked) denied = true;
+          else answered = true;
+        }
+      }
+      const name = remaining.provider === 'plex' ? 'Plex' : 'Jellyfin';
+      lastError =
+        !denied && answered
+          ? new Error('Could not verify your remaining account access right now; try again')
+          : new Error(`Sign in to ${name} before removing your other sign-in`);
+    }
+    throw lastError;
   }
   /**
    * Whether any rule lets this account in. True or false is the rules' answer; undefined means

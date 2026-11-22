@@ -181,10 +181,11 @@ class Hub {
     const admin = this.isAdmin(actor);
     const roomId = room.roomId ?? room.id;
     if (action === 'room.remain')
-      return room.visibility !== 'private' ||
-        RoomPolicy.admitted(room.saved, actor.userId) ||
-        this.guestMembers(room.roomId).has(actor.userId) ||
-        admin
+      return (!actor.guestRoomId || roomId === actor.guestRoomId) &&
+        (room.visibility !== 'private' ||
+          RoomPolicy.admitted(room.saved, actor.userId) ||
+          actor.guestRoomId === roomId ||
+          admin)
         ? ALLOW
         : NO_ROOM;
     if (action === 'room.host') return !actor.guestRoomId && (isHost(room, actor) || admin) ? ALLOW : NO_PERMISSION;

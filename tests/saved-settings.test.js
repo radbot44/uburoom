@@ -320,7 +320,9 @@ test('operator settings HTTP uses verified session identities and exposes only n
   assert.equal(response.headers['cache-control'], 'no-store');
   await ordinary.discord('guest');
   await admin.discord();
+  f.config.accessPolicy.plex = true;
   await pending.plex('bob');
+  f.config.accessPolicy.plex = false;
   assert.equal((await admin.post('/api/watch/admin-mode', { enabled: true })).status, 200);
   for (const browser of [ordinary, admin, pending]) {
     response = await browser.request(endpoint + '?userId=101', undefined, { 'X-User-Id': '101' });
@@ -329,13 +331,19 @@ test('operator settings HTTP uses verified session identities and exposes only n
   }
   f.app.registry.assign(f.app.registry.preview(f.provider.subjects.guest2, '102'), 'fixture-admin');
   assert.equal((await pending.request(endpoint)).status, 401, 'assignment invalidates the previous session revision');
+  f.config.accessPolicy.plex = true;
   await pending.plex('bob');
+  f.config.accessPolicy.plex = false;
   assert.equal(
     (await pending.request(endpoint)).status,
     403,
     'a session with an unverified assigned operator identity is denied',
   );
-  await operator.plex('alice');
+  await operator.discord('guest');
+  await operator.plex('alice', true);
+  f.members.delete(f.provider.subjects.guest);
+  f.app.entryPolicy.allowed.clear();
+  f.app.entryPolicy.confirmed.clear();
   // Seed private fields at every object depth to catch accidental object spreads.
   const secret = 'settings-private-marker';
   f.config.unlistedPrivateValue = secret;
@@ -462,7 +470,7 @@ test(
     assert.equal((await browser.request('/api/watch/library')).status, 200);
     f.provider.revoked.clear();
     f.app.plexAuth.clear();
-    const staleCookie = browser.jar.get('uburoom');
+    const staleCookie = browser.jar.get('__Host-uburoom');
     const removed = await duringFlush(async () => {
       assert.equal((await browser.post('/api/account/discord/remove', { subject: account.subject })).status, 200);
     });
@@ -473,7 +481,7 @@ test(
       403,
       'remaining Plex identity is not the configured operator',
     );
-    assert.equal((await browser.request(endpoint, undefined, { Cookie: 'uburoom=' + staleCookie })).status, 401);
+    assert.equal((await browser.request(endpoint, undefined, { Cookie: '__Host-uburoom=' + staleCookie })).status, 401);
   },
 );
 

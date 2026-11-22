@@ -112,18 +112,18 @@ test('changing the server password ends every session admitted with the old one'
   const browser = f.browser();
   await browser.request('/api/watch/entry', { password: 'first-password', name: 'Returning' });
   const id = (await browser.request('/api/watch/me')).body.account.id;
-  const cookie = browser.jar.get('uburoom');
+  const cookie = browser.jar.get('__Host-uburoom');
   await f.app.close();
   // Same password after a restart: the session stays.
   f = await start('first-password');
   let again = f.browser();
-  again.jar.set('uburoom', cookie);
+  again.jar.set('__Host-uburoom', cookie);
   assert.equal((await again.request('/api/watch/me')).status, 200);
   await f.app.close();
   // A new password: the old session no longer gets in, though the browser keeps its guest name.
   f = await start('second-password');
   again = f.browser();
-  again.jar.set('uburoom', cookie);
+  again.jar.set('__Host-uburoom', cookie);
   assert.equal((await again.request('/api/watch/me')).status, 401);
   assert.equal((await again.request('/api/watch/entry', { password: 'first-password' })).status, 403);
   const entered = await again.request('/api/watch/entry', { password: 'second-password' });

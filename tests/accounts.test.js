@@ -761,7 +761,7 @@ test(
     await bob.plex('bob');
     const account = (await host.request('/api/account')).body.account,
       csrf = (await host.request('/api/watch/me')).body.csrf,
-      oldCookie = host.jar.get('uburoom');
+      oldCookie = host.jar.get('__Host-uburoom');
     await host.post('/api/watch/admin-mode', { enabled: true });
     const roomId = (await host.post('/api/watch/rooms', {})).body.id,
       first = randomUUID(),
@@ -787,7 +787,9 @@ test(
     const result = await host.request('/api/logout', {}, { 'X-CSRF-Token': csrf });
     assert.equal(result.status, 200);
     assert.ok(
-      result.headers['set-cookie'].some(cookie => cookie.startsWith('uburoom=;') && cookie.includes('Max-Age=0')),
+      result.headers['set-cookie'].some(
+        cookie => cookie.startsWith('__Host-uburoom=;') && cookie.includes('Max-Age=0'),
+      ),
     );
     assert.equal(room.viewers.has(first), false);
     assert.equal(room.viewers.has(second), true);
@@ -804,7 +806,7 @@ test(
       'another login retains its own reconnect grace',
     );
     assert.equal(
-      (await host.request('/api/watch/me', undefined, { Cookie: 'uburoom=' + oldCookie })).status,
+      (await host.request('/api/watch/me', undefined, { Cookie: '__Host-uburoom=' + oldCookie })).status,
       401,
       'the old cookie cannot be replayed',
     );
@@ -995,7 +997,7 @@ test(
     const a = (await alice.request('/api/account')).body.account;
     assert.match(a.id, /^[a-f0-9-]{36}$/);
     assert.notEqual(a.id, f.config.ownerId);
-    const oldCookie = alice.jar.get('uburoom'),
+    const oldCookie = alice.jar.get('__Host-uburoom'),
       oldActivity = (await alice.request('/api/watch/demo-login', { persona: 'host', activity: true })).body;
     const oldRoom = (await alice.post('/api/watch/rooms', {})).body.id,
       oldViewer = randomUUID();
@@ -1012,7 +1014,7 @@ test(
     assert.equal((await alice.plex('alice', true)).status, 302);
     assert.equal((await alice.request('/api/account')).body.account.id, a.id);
     assert.equal(
-      (await alice.request('/api/account', undefined, { Cookie: 'uburoom=' + oldCookie })).status,
+      (await alice.request('/api/account', undefined, { Cookie: '__Host-uburoom=' + oldCookie })).status,
       401,
       'linking revokes the previous browser session',
     );
@@ -1283,8 +1285,9 @@ test(
       'a verified Plex link without a stored credential is not a usable login',
     );
     f.app.registry.credential('plex', '101', credential);
-    const verify = f.app.plexAuth.forUser.bind(f.app.plexAuth);
-    f.app.plexAuth.forUser = async id => {
+    const plexSource = f.app.watch.providers.list.find(s => s.id === 'plex');
+    const verify = plexSource.plexAuth.forUser.bind(plexSource.plexAuth);
+    plexSource.plexAuth.forUser = async id => {
       const result = await verify(id);
       f.app.registry.db.prepare('UPDATE users SET revision=revision+1 WHERE id=?').run(id);
       return result;
@@ -1386,9 +1389,10 @@ test(
     assert.equal(assigned.status, 200);
     assert.equal(f.app.registry.credential('plex', '102'), undefined);
     const notMember = f.browser();
+    assert.equal((await notMember.discord('guest2')).status, 302);
     assert.equal(
-      (await notMember.discord('guest2')).status,
-      403,
+      (await notMember.request('/api/watch/me')).status,
+      401,
       'a preassigned match does not grant Discord-server eligibility',
     );
     const both = f.browser();
@@ -1583,3 +1587,161 @@ test('PlexAuth and administrator identity lookups ignore unverified assigned ide
   assert.ok(auth, 'verified Plex identity provides PlexAuth');
   assert.equal(auth.token, 'fixture-token');
 });
+
+test('Accounts.merge migrates owned rooms, events, host grant issuers, playback history and compresses retiredInto', async t => {
+  const { RoomStore } = require('../server/room-store');
+  const { repositories } = require('../server/repositories');
+  const registry = new Accounts(undefined, credentialVault());
+  t.after(() => registry.close());
+  const store = new RoomStore(registry);
+  const survivor = registry.resolve('discord', '100000000000000021', 'Survivor');
+  const mid = registry.resolve('plex', '201', 'Middle');
+  const retired = registry.resolve('uburoom', 'retired-sub', 'Retired');
+  const third = registry.resolve('jellyfin:' + 'a'.repeat(32), 'b'.repeat(32), 'Third');
+  registry.merge(mid.id, retired.id, mid.id);
+  const owned = await store.create(third.id, { name: 'Transferred room', keepEmpty: true });
+  await store.edit(owned.id, third.id, owned.revision, {
+    action: 'host.pending.add',
+    provider: 'plex',
+    subject: '909',
+    name: 'Pending Host',
+  });
+  repositories(registry.db).rooms.insertRoomHosts(owned.id, survivor.id);
+  const eventId = randomUUID();
+  const now = Date.now();
+  registry.db
+    .prepare(
+      'INSERT INTO watch_room_events(id,roomId,creatorId,title,description,start,end,timeZone,state,createdAt,updatedAt,discord) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)',
+    )
+    .run(
+      eventId,
+      owned.id,
+      third.id,
+      'Night',
+      'Desc',
+      '2026-12-01T00:00:00Z',
+      '2026-12-01T02:00:00Z',
+      'UTC',
+      'scheduled',
+      now,
+      now,
+    );
+  registry.db
+    .prepare('INSERT INTO playback_history(id,userId,at,record) VALUES(?,?,?,?)')
+    .run(randomUUID(), third.id, now, JSON.stringify({ title: 'Movie', endedAt: now }));
+
+  registry.merge(survivor.id, mid.id, survivor.id);
+  registry.merge(survivor.id, third.id, survivor.id);
+  assert.equal(registry.canonical(retired.id).id, survivor.id);
+  assert.equal(
+    registry.db.prepare('SELECT retiredInto FROM users WHERE id=?').get(retired.id).retiredInto,
+    survivor.id,
+    'retiredInto is path-compressed',
+  );
+  assert.equal(store.get(owned.id).creatorId, survivor.id);
+  assert.equal(store.get(owned.id).hosts.includes(survivor.id), false, 'duplicate creator host row removed');
+  assert.equal(
+    registry.db.prepare('SELECT creatorId FROM watch_room_events WHERE id=?').get(eventId).creatorId,
+    survivor.id,
+  );
+  assert.equal(
+    registry.db.prepare('SELECT issuerId FROM watch_room_host_grants WHERE roomId=?').get(owned.id).issuerId,
+    survivor.id,
+  );
+  assert.equal(registry.db.prepare('SELECT COUNT(*) AS n FROM playback_history WHERE userId=?').get(survivor.id).n, 1);
+  assert.equal(registry.db.prepare('SELECT COUNT(*) AS n FROM playback_history WHERE userId=?').get(third.id).n, 0);
+});
+
+test(
+  'session-scoped guest eviction preserves non-guest logins and guest entry replaces prior sessions cleanly',
+  tls,
+  async t => {
+    const { accessPolicy } = require('./helpers/access');
+    const { hash } = require('../server/core');
+    const f = await fixture(t, undefined, {
+      accessPolicy: { ...accessPolicy({ discordServer: true, password: true }), publicWeb: true },
+      serverPassword: 'pass',
+      guests: { enabled: true, requireSignIn: false, maxPerRoom: 5, sessionHours: 1 },
+    });
+    const host = f.browser(),
+      regular = f.browser(),
+      guestTab = f.browser();
+    await host.discord('host');
+    const roomA = (await host.post('/api/watch/rooms', { name: 'Guest Room' })).body.id;
+    const hostRecord = f.app.watch.roomState.store.get(roomA);
+    const edited = await f.app.watch.roomState.store.edit(roomA, hostRecord.creatorId, hostRecord.revision, {
+      action: 'guests.allow',
+      enabled: true,
+    });
+    const inviteCode = edited.inviteCode;
+
+    // Visitor has regular Discord session + Activity token, plus a separate browser session holding a room guest pass
+    await regular.discord('guest');
+    const regularCookie = regular.jar.get('__Host-uburoom');
+    const activity = (await regular.request('/api/watch/demo-login', { persona: 'guest', activity: true })).body;
+    const regViewer = randomUUID();
+    const roomB = (await host.post('/api/watch/rooms', { name: 'Member Room' })).body.id;
+    await regular.request(`/api/watch/rooms/${roomB}?viewer=${regViewer}`);
+
+    f.members.delete(f.provider.subjects.guest);
+    f.app.entryPolicy.allowed.clear();
+    f.app.entryPolicy.confirmed.clear();
+    await guestTab.discord('guest');
+    assert.equal((await guestTab.request('/api/watch/invite', { action: 'join', code: inviteCode })).body.guest, true);
+    const guestViewer = randomUUID();
+    await guestTab.request(`/api/watch/rooms/${roomA}?viewer=${guestViewer}`);
+    const guestHash = hash(guestTab.jar.get('__Host-uburoom'));
+
+    await f.app.hub.endGuestSessions(roomA, undefined, new Set([guestHash]));
+    assert.equal((await guestTab.request('/api/watch/me')).status, 401);
+    assert.equal(Boolean(f.app.watch.rooms.get(roomA)?.viewers.has(guestViewer)), false);
+    assert.equal(f.app.hub.guestMembers(roomA).size, 0);
+    assert.equal(f.app.watch.rooms.get(roomB).viewers.has(regViewer), true);
+    f.members.add(f.provider.subjects.guest);
+    f.app.entryPolicy.allowed.clear();
+    f.app.entryPolicy.confirmed.clear();
+    assert.equal(
+      (await regular.request('/api/watch/me', undefined, { Cookie: '__Host-uburoom=' + regularCookie })).status,
+      200,
+    );
+    assert.equal(
+      (await regular.request('/api/watch/me', undefined, { Authorization: 'Bearer ' + activity.token })).status,
+      200,
+    );
+
+    // /api/watch/entry replaces previous non-guest session cleanly
+    assert.equal((await regular.request('/api/watch/entry', { password: 'pass', name: 'New Guest' })).status, 200);
+    assert.equal(
+      (await regular.request('/api/watch/me', undefined, { Cookie: '__Host-uburoom=' + regularCookie })).status,
+      401,
+    );
+    assert.equal(Boolean(f.app.watch.rooms.get(roomB)?.viewers.has(regViewer)), false);
+  },
+);
+
+test(
+  'guest rename refuses colliding with signed-in room viewers on profile.rename and /api/watch/entry',
+  tls,
+  async t => {
+    const { accessPolicy } = require('./helpers/access');
+    const f = await fixture(t, undefined, {
+      accessPolicy: { ...accessPolicy({ discordServer: true, password: true }), publicWeb: true },
+      serverPassword: 'pass',
+    });
+    const member = f.browser(),
+      guest = f.browser();
+    await member.discord('guest');
+    const roomId = (await member.post('/api/watch/rooms', { name: 'Naming room' })).body.id;
+    await member.request(`/api/watch/rooms/${roomId}?viewer=${randomUUID()}`);
+    const memberName = (await member.request('/api/watch/me')).body.name;
+
+    assert.equal(
+      (await f.browser().request('/api/watch/entry', { password: 'pass', name: memberName.toUpperCase() })).status,
+      409,
+    );
+    await guest.request('/api/watch/entry', { password: 'pass', name: 'Guest One' });
+    assert.equal((await guest.request('/api/watch/entry', { password: 'pass', name: memberName })).status, 409);
+    await guest.request(`/api/watch/rooms/${roomId}?viewer=${randomUUID()}`);
+    assert.equal((await guest.post('/api/watch/profile', { name: memberName.toLowerCase() })).status, 409);
+  },
+);

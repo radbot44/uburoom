@@ -17,7 +17,7 @@
     "invitee": "11111111",
     "absent": "11110000",
     "guest": "11111111",
-    "otherGuest": "11110000",
+    "otherGuest": "00000000",
     "admin": "11111111",
     "adminOff": "11110000"
   },

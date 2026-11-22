@@ -12,6 +12,7 @@ function fixture(t) {
   const creator = registry.resolve('discord', '100000000000000001', 'Leader'),
     host = registry.resolve('discord', '100000000000000002', 'Host'),
     viewer = registry.resolve('plex', '101', 'Viewer');
+  for (const account of [creator, host, viewer]) registry.seen(account.id);
   const store = new RoomStore(registry, { isAdmin: id => id === 'admin' });
   return { registry, creator, host, viewer, store };
 }
@@ -37,7 +38,9 @@ test('display names survive provider refresh, link/unlink and merge while identi
   const proved = registry.resolve('discord', '100000000000000009', 'First login');
   assert.equal(proved.id, assigned.id);
   assert.equal(proved.name, 'First login');
-  assert.ok(proved.signedInAt > 0);
+  assert.equal(proved.signedInAt, null);
+  registry.seen(proved.id);
+  assert.ok(registry.canonical(proved.id).signedInAt > 0);
   registry.rename(proved.id, 'Chosen');
   registry.merge(proved.id, viewer.id, proved.id);
   assert.equal(registry.canonical(viewer.id).id, proved.id);
@@ -136,7 +139,7 @@ test('directory ranks live room/uburoom/known/new users, deduplicates verified a
   registry.rename(host.id, 'Match host');
   registry.rename(viewer.id, 'Match viewer');
   registry.link(viewer.id, 'discord', '100000000000000005', 'Match linked');
-  registry.resolve('discord', '100000000000000006', 'Match offline');
+  registry.seen(registry.resolve('discord', '100000000000000006', 'Match offline').id);
   registry.resolve('discord', '100000000000000007', 'Match assigned', false);
   let calls = 0,
     now = 1;

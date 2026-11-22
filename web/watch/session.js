@@ -9,6 +9,14 @@ import * as discordPresence from './discord-presence.js';
 import { $ } from './page.js';
 import { store } from './store.js';
 
+const RETURN_TARGETS = [
+  /^\/auth\/native#[a-f0-9]{64}$/,
+  /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/,
+  /^\/room\/[a-z0-9-]+$/,
+  /^\/(?:join\/[a-z]{6}-[a-z]{6})?$/,
+];
+const safeReturn = target => (target && RETURN_TARGETS.some(pattern => pattern.test(target)) ? target : undefined);
+
 /* Starting the page: sign-in and entry, the room connection and its messages, browser hand-off from the Discord Activity, and leaving the page. */
 export function mount(host, deps) {
   const presence = discordPresence.createPresenceController({
@@ -195,15 +203,27 @@ export function mount(host, deps) {
   // The name a password guest last used in this browser, offered again after the password.
   let passwordName = '';
   // The list of ways in, with their forms opening inline under their buttons.
+  const afterSignIn = ({ reload = false } = {}) => {
+    const returnTarget = !deps.activity ? safeReturn(deps.params.get('return')) : undefined;
+    if (returnTarget) {
+      location.replace(returnTarget);
+      return;
+    }
+    if (reload) {
+      location.reload();
+      return;
+    }
+    store.identity.pageBootstrap = undefined;
+    void start().catch(error => deps.fail(error.message));
+  };
   const ways = entryWays();
-  const showJellyfin = jellyfinEntry((...args) => deps.api(...args), ways);
+  const showJellyfin = jellyfinEntry((...args) => deps.api(...args), ways, {
+    onSignedIn: () => afterSignIn({ reload: true }),
+  });
   ways.bind($('account-sign-in-open'), $('account-sign-in'), () => {
     if (!$('account-sign-in').firstChild)
       accountSignIn.mount($('account-sign-in'), {
-        onSignedIn: () => {
-          store.identity.pageBootstrap = undefined;
-          void start().catch(error => deps.fail(error.message));
-        },
+        onSignedIn: () => afterSignIn(),
       });
     return {};
   });
@@ -240,12 +260,17 @@ export function mount(host, deps) {
       store.identity.pageBootstrap?.targetRoom?.id ||
       deps.params.get('room') ||
       (roomPathMatch ? roomPathMatch[1] : undefined);
-    if (!deps.activity && initialRoom) {
+    const returnTarget = !deps.activity ? safeReturn(deps.params.get('return')) : undefined;
+    if (returnTarget) {
+      const encoded = encodeURIComponent(returnTarget);
+      if (discordButton) discordButton.href = '/auth/discord?return=' + encoded;
+      if ($('plex-login')) $('plex-login').href = '/auth/plex?return=' + encoded;
+    } else if (!deps.activity && initialRoom) {
       const returnSlug =
         store.identity.pageBootstrap?.targetRoom?.slug || (roomPathMatch ? roomPathMatch[1] : undefined);
-      const returnTarget = encodeURIComponent(returnSlug ? '/room/' + returnSlug : '/room/' + initialRoom);
-      if (discordButton) discordButton.href = '/auth/discord?return=' + returnTarget;
-      if ($('plex-login')) $('plex-login').href = '/auth/plex?return=' + returnTarget;
+      const roomReturn = encodeURIComponent(returnSlug ? '/room/' + returnSlug : '/room/' + initialRoom);
+      if (discordButton) discordButton.href = '/auth/discord?return=' + roomReturn;
+      if ($('plex-login')) $('plex-login').href = '/auth/plex?return=' + roomReturn;
     }
     if (store.identity.config.demo && ['host', 'guest', 'guest2'].includes(deps.params.get('demo'))) {
       if (store.identity.config.accountDemo && !deps.activity)
@@ -350,6 +375,10 @@ export function mount(host, deps) {
       $('welcome').hidden = false;
       document.body.classList.remove('auth-pending');
       deps.renderVisibility();
+      return;
+    }
+    if (returnTarget) {
+      location.replace(returnTarget);
       return;
     }
     renderAccount();

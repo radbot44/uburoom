@@ -1,4 +1,5 @@
 'use strict';
+const { displayName } = require('./accounts');
 const RoomPolicy = require('./room-policy');
 const { UserDirectory } = require('./user-directory');
 
@@ -6,7 +7,8 @@ const { UserDirectory } = require('./user-directory');
  * What the hub calls out to, built from the services it needs. `hub` and `rooms` are read
  * when a port is called, because the hub and the rooms are built from these ports.
  * @param {{config: any, logger: any, registry: any, accounts: any, access: any, plexAuth: any, providers: any,
- *   guests: any, sessions: any, discord: {client: any}, hub: () => any, rooms: () => any}} services
+ *   guests: any, sessions: any, discord: {client: any}, onlineUsers?: () => string[],
+ *   hub: () => any, rooms: () => any}} services
  */
 function createHubPorts({
   config,
@@ -19,6 +21,7 @@ function createHubPorts({
   guests,
   sessions,
   discord,
+  onlineUsers,
   hub,
   rooms,
 }) {
@@ -37,6 +40,7 @@ function createHubPorts({
     config,
     discord: () => access.directory(),
     discordOnline: subject => access.discordOnline(subject),
+    onlineUsers,
   });
   const ports = {
     logger,
@@ -46,8 +50,20 @@ function createHubPorts({
     singleRoomLeader: async () => {
       if (!singleLeader) {
         singleLeader = (async () => {
+          if (config.singleRoomLeader)
+            return registry.resolve(
+              config.singleRoomLeader.provider,
+              config.singleRoomLeader.subject,
+              'Assigned account',
+              false,
+            );
+          const operators = config.serverOperator?.identities || [];
+          const verifiedOp = operators.find(op => registry.identity(op.provider, op.subject)?.verified);
+          if (verifiedOp) return registry.resolve(verifiedOp.provider, verifiedOp.subject, 'Assigned account', false);
           if (config.singleRoomLeaderPlexId)
             return registry.resolve('plex', config.singleRoomLeaderPlexId, 'Assigned account', false);
+          if (operators.length && !config.ownerId)
+            return registry.resolve(operators[0].provider, operators[0].subject, 'Assigned account', false);
           if (config.accessPolicy?.discord !== false || !config.accessPolicy?.plex)
             return registry.resolve('discord', config.ownerId, 'Assigned account', false);
           let profile;
@@ -55,11 +71,11 @@ function createHubPorts({
             profile = await plexAuth.ownerProfile();
           } catch {
             throw new Error(
-              "Cannot identify the single-room leader from the first Plex source's token; check it or set rooms.single_room_leader_plex_id",
+              "Cannot identify the single-room leader from the first Plex source's token; check it or set rooms.single_room_leader",
             );
           }
           if (!/^\d{1,20}$/.test(String(profile?.id || '')))
-            throw new Error('Plex did not identify the token account; set rooms.single_room_leader_plex_id');
+            throw new Error('Plex did not identify the token account; set rooms.single_room_leader');
           return registry.resolve('plex', String(profile.id), 'Assigned account', false);
         })();
         singleLeader.catch(() => {
@@ -120,7 +136,31 @@ function createHubPorts({
           },
     mediaFor: (actor, serverId) => providers.for(actor, serverId),
     renameAccount: async (id, name) => {
-      const account = registry.rename(id, name);
+      let nextName;
+      try {
+        nextName = displayName(name);
+      } catch (error) {
+        throw Object.assign(new Error(error.message), { status: 400 });
+      }
+      if (registry.isGuest(id)) {
+        const lower = nextName.toLocaleLowerCase();
+        const openRooms = [...(rooms()?.rooms?.values() || [])];
+        const activeRooms = openRooms.filter(
+          room => room.viewers.has(id) || [...room.viewers.values()].some(v => v.userId === id),
+        );
+        const scoped = activeRooms.length ? activeRooms : openRooms;
+        if (
+          scoped.some(room =>
+            [...room.viewers.values()].some(
+              viewer => !registry.isGuest(viewer.userId) && viewer.name?.toLocaleLowerCase() === lower,
+            ),
+          )
+        )
+          throw Object.assign(new Error('Someone in this room already uses that name. Choose another.'), {
+            status: 409,
+          });
+      }
+      const account = registry.rename(id, nextName);
       await registry.flush();
       if (
         registry.identities(id).some(identity => identity.provider === 'discord' && identity.subject === config.ownerId)

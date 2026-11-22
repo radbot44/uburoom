@@ -22,7 +22,7 @@
         $('native-message').textContent = 'You must be signed in to authorize a companion client.';
         const loginLink = $('native-login');
         if (loginLink) {
-          loginLink.href = '/auth/discord?return=' + encodeURIComponent('/auth/native#' + code);
+          loginLink.href = '/?return=' + encodeURIComponent('/auth/native#' + code);
           loginLink.hidden = false;
         }
         return;

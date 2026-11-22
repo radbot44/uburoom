@@ -11,6 +11,7 @@
  */
 const path = require('node:path');
 const { hash } = require('./core');
+const { COOKIES } = require('./http/sessions');
 const { isServerOperator } = require('./operator-policy');
 const { sourceType } = require('./sources');
 const flowsCore = require('./source-flows');
@@ -87,7 +88,7 @@ function sourceSettings({
     const login = req.method === 'GET' ? await user(req) : await protectedPost(req);
     const current = () =>
       !!login &&
-      logins.get(hash(cookies(req).uburoom || '')) === login &&
+      logins.get(hash(cookies(req)[COOKIES.session] || '')) === login &&
       validIdentity(login) &&
       (login.expires === null || login.expires > Date.now());
     const still = () => current() && isServerOperator(registry, config, login.userId);

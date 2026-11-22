@@ -37,7 +37,7 @@ function jellyfinMembers({ client, apiKey, serverId, knownServerId = () => undef
     }
     if (jellyfinId(profile?.Id) !== user) throw fail('Jellyfin answered for another user', { status: 503 });
     if (profile?.Policy?.IsDisabled === true) throw fail('This Jellyfin user is disabled', { noServerAccess: true });
-    const credential = registry?.credential(identity.provider, user);
+    const credential = identity?.token ? { token: identity.token } : registry?.credential(identity.provider, user);
     if (credential?.token) {
       try {
         const me = await client.request('Users/Me', { token: credential.token });

@@ -32,6 +32,8 @@ const { setupHandoff } = require('./http/setup-handoff');
 const DEMO_MEDIA = path.join(__dirname, '../assets/demo/sync-test.mp4');
 
 /** Opens the account database and its credential vault, refusing to start from a state that could lose accounts. */
+const DEFAULT_POLICY = Symbol('defaultAccessPolicy');
+
 function openAccounts(config) {
   if (config.accountFile && !config.credentialKeyFile)
     throw new Error('Configure a private uburoom credential key file outside the project');
@@ -50,7 +52,8 @@ function openAccounts(config) {
   // Persist policy identity without leaving an offline verifier of the shared password in SQLite.
   // Password grants are process-local and reset on restart.
   // The entry rules hold no secret; the server password's own revision ends its sessions (server/admission/).
-  const policy = config.accessPolicy ? [hash(JSON.stringify(config.accessPolicy))] : [];
+  const policy =
+    config.accessPolicy && !config.accessPolicy[DEFAULT_POLICY] ? [hash(JSON.stringify(config.accessPolicy))] : [];
   const identity = [config.publicUrl, config.ownerId, config.clientId, ...policy];
   try {
     return { registry, accounts: loginStore(JSON.stringify(identity), vault, registry) };
@@ -92,6 +95,20 @@ function createApp(config, options = {}) {
     jellyfinDiscover,
     plexDemo,
   } = options;
+  if (!config.accessPolicy) {
+    const sourceMembers = (config.sources || []).filter(s => s.type === 'plex' && s.id).map(s => s.id);
+    config.accessPolicy = {
+      discordServer: true,
+      sourceMembers,
+      password: false,
+      accounts: false,
+      publicWeb: true,
+      discord: true,
+      plex: sourceMembers.length > 0,
+      jellyfin: false,
+    };
+    Object.defineProperty(config.accessPolicy, DEFAULT_POLICY, { value: true });
+  }
   const logger = options.logger || silentLogger;
   const oauthFetch = resilientFetch(options.oauthFetch || fetch, { timeoutMs: 10000 });
   const tls = options.tls || { cert: config.cert, key: config.key };
@@ -124,7 +141,7 @@ function createApp(config, options = {}) {
     // uburoom accounts: operator-made username/password identities (provider 'uburoom').
     const uburoomAccounts = createUburoomAccounts({ registry });
     // Who may enter. The rooms and routes are built last, so earlier services find them when called.
-    let hub, watch, watchRoutes, accountRoutes;
+    let hub, watch, watchRoutes, accountRoutes, sockets;
     const rooms = () => watch;
     const guests = createGuests({
       config,
@@ -133,6 +150,7 @@ function createApp(config, options = {}) {
       accounts,
       logins: accounts.logins,
       rooms,
+      endedHash: hashValue => watchRoutes.logout(hashValue),
       endedFor: ids => watchRoutes.invalidate(ids),
     });
     const entryPolicy = new Admission(config, registry, providers, () => access.raw(), {
@@ -140,12 +158,43 @@ function createApp(config, options = {}) {
       guests,
       accounts: uburoomAccounts,
     });
+    const clearPlex = plexAuth.clear.bind(plexAuth);
+    plexAuth.clear = () => {
+      clearPlex();
+      entryPolicy.allowed.clear();
+      entryPolicy.confirmed.clear();
+    };
     const access = createAccess({ registry, config, plexAuth, entryPolicy });
-    const sessions = createSessions({ config, logger, registry, accounts, access, oauthFetch });
+    const sessions = createSessions({
+      config,
+      logger,
+      registry,
+      accounts,
+      access,
+      oauthFetch,
+      onReplace: prevHash => watchRoutes?.logout(prevHash),
+    });
+    async function revokeAccountSessions(ids, { ownerChanged = false } = {}) {
+      for (const id of ids) if (hub.adminUsers?.delete(id)) hub.adminEpoch++;
+      if (ownerChanged || ids.includes(registry.identity('discord', config.ownerId)?.userId)) {
+        hub.adminMode = false;
+        hub.adminEpoch++;
+      }
+      for (const [token, login] of accounts.logins)
+        if (ids.includes(login.userId)) {
+          accounts.logins.delete(token);
+          sessions.cookieRenewedAt.delete(token);
+        }
+      accounts.save();
+      entryPolicy.invalidate(ids);
+      plexAuth.clear();
+      await watchRoutes.invalidate(ids);
+      sockets?.disconnectUsers(ids);
+    }
     // Rooms, and the hub that authorizes work in them.
     const { ports, setOwnerName } = createHubPorts({
       ...{ config, logger, registry, accounts, access, plexAuth, providers, guests, sessions },
-      ...{ discord: { client: undefined }, hub: () => hub, rooms },
+      ...{ discord: { client: undefined }, onlineUsers: () => sockets?.onlineUsers?.() || [], hub: () => hub, rooms },
     });
     ({ hub, watch } = createRooms({
       config,
@@ -165,12 +214,19 @@ function createApp(config, options = {}) {
     const web = { config, registry, plexAuth, plexIdentity, uburoomAccounts, hub, watch, ...sessions };
     watchRoutes = watchHttp({ ...web, oauthFetch, entryPolicy, diagnosticLog, accounts });
     const signIn = createDiscordSignIn({ config, demo: () => plexIdentity.demo, sessions, authorizeUrl });
-    accountRoutes = accountHttp({ ...web, entryPolicy, watchRoutes, loginStore: accounts, discordStart: signIn.start });
+    accountRoutes = accountHttp({
+      ...web,
+      entryPolicy,
+      providers,
+      watchRoutes,
+      loginStore: accounts,
+      revokeAccountSessions,
+      discordStart: signIn.start,
+    });
     const editor = config.configFile ? createConfigEditor(config.configFile) : undefined;
     const files = createStaticFiles({ config });
     const uburoomAccountsHttp = uburoomAccountRoutes({
-      ...{ config, registry, uburoomAccounts, sessions, loginStore: accounts, hub, files },
-      watchRoutes: () => watchRoutes,
+      ...{ config, registry, uburoomAccounts, sessions, loginStore: accounts, hub, revokeAccountSessions, files },
     });
     // Server settings → Sources: saved to config.yaml, applied after a restart.
     const sourceSettingsHttp = sourceSettings({
@@ -210,7 +266,7 @@ function createApp(config, options = {}) {
       setupRoutes: setupHttp.routes,
     });
     const server = createHttpServer({ config, logger, tls, json: sessions.json, route });
-    const sockets = watchSockets({
+    sockets = watchSockets({
       ...{ server, config, routes: watchRoutes, watch, hub, throttle: sessions.throttle },
       // Tests shorten the socket deadlines; production keeps the defaults.
       idleMs: options.socketTiming?.idleMs,
@@ -260,7 +316,7 @@ function createApp(config, options = {}) {
       return closing;
     }
     return {
-      ...{ server, hub, watch, access, close, registry, plexAuth, setOwnerName, uburoomAccounts },
+      ...{ server, hub, watch, access, entryPolicy, close, registry, plexAuth, setOwnerName, uburoomAccounts },
       // Before listening: creates the account first-run setup chose for the operator.
       completeSetup: setupHttp.prepare,
     };

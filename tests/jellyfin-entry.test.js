@@ -9,10 +9,10 @@ const { fixture } = require('./helpers/account-app');
 const { fakeJellyfin } = require('./helpers/fake-jellyfin');
 
 const route = '/api/account/jellyfin';
-const binding = 'uburoom_jellyfin';
+const binding = '__Host-uburoom_jellyfin';
 const tls = { skip: !fs.existsSync(path.join(__dirname, '../certs/server-cert.pem')) };
 
-async function setup(t) {
+async function setup(t, { discordServer = false } = {}) {
   const selected = fakeJellyfin({ base: 'http://jellyfin.invalid:8096/services/film' });
   const other = fakeJellyfin({ base: 'http://other.invalid:8096/jf', serverId: 'e'.repeat(32) });
   const unlisted = fakeJellyfin({ base: 'http://unlisted.invalid:8096/media', serverId: 'd'.repeat(32) });
@@ -27,7 +27,7 @@ async function setup(t) {
       api_key: fake.state.apiKey,
       user: 'Library',
     })),
-    access: { discord_server: false, source_members: ['cabin', 'other'] },
+    access: { discord_server: discordServer, source_members: ['cabin', 'other'] },
   });
   const f = await fixture(
     t,
@@ -134,6 +134,7 @@ test('Jellyfin password fallback preserves the UUID and denies unqualified or re
       : fetch(input, options);
   const refused = f.browser();
   assert.equal((await login('Lost viewer', 'lost-secret', refused)).status, 403);
+  assert.equal(f.app.registry.identity(provider, lost), undefined, 'unadmitted Jellyfin user creates no account row');
   assert.equal((await refused.request('/api/watch/me')).status, 401);
   await f.app.watch.providers.list.find(source => source.id === 'other').identity();
   f.other.state.down = true;
@@ -174,4 +175,93 @@ test('cancelling Quick Connect ends the attempt: an approval afterwards signs no
       .status,
     403,
   );
+});
+
+test('Account dialog links, merges and safely unlinks Jellyfin identities alongside other sign-ins', tls, async t => {
+  const f = await setup(t, { discordServer: true });
+  const alice = f.selected.addUser('Alice', 'alice-secret');
+  const uAlice = f.unlisted.addUser('AliceUnlisted', 'unlisted-secret');
+  const browser = f.browser();
+  await browser.discord('guest');
+  const initialAccount = await browser.request('/api/account');
+  assert.equal(initialAccount.status, 200);
+  assert.deepEqual(
+    initialAccount.body.jellyfin.map(entry => ({
+      id: entry.id,
+      memberRule: entry.memberRule,
+      watchState: entry.watchState,
+    })),
+    [
+      { id: 'cabin', memberRule: true, watchState: true },
+      { id: 'other', memberRule: true, watchState: true },
+      { id: 'unlisted', memberRule: false, watchState: true },
+    ],
+  );
+  assert.equal(initialAccount.body.account.identities[0].canUnlink, false);
+
+  // Unauthenticated /api/account/jellyfin refuses CSRF bypass when linking
+  assert.equal((await browser.request(route, { source: 'cabin', action: 'start', link: true })).status, 403);
+
+  // Link unlisted (watch-state-only) via password with CSRF
+  f.unlisted.state.quickConnect = false;
+  assert.equal(
+    (
+      await browser.post(route, {
+        source: 'unlisted',
+        action: 'password',
+        username: 'AliceUnlisted',
+        password: 'unlisted-secret',
+        link: true,
+      })
+    ).status,
+    200,
+  );
+  // Only Discord qualifies for admission (unlisted is not in source_members), so Discord still cannot be unlinked.
+  let summary = (await browser.request('/api/account')).body;
+  assert.equal(summary.account.identities.find(i => i.provider === 'discord').canUnlink, false);
+  assert.equal((await browser.post('/api/account/discord/remove', { subject: f.provider.subjects.guest })).status, 400);
+
+  // Link cabin via Quick Connect while signed in
+  const started = await browser.post(route, { source: 'cabin', action: 'start', link: true });
+  assert.equal(started.status, 200);
+  f.selected.approve(started.body.code, alice);
+  assert.equal((await browser.post(route, { source: 'cabin', action: 'poll', link: true })).status, 200);
+  summary = (await browser.request('/api/account')).body;
+  const cabinProvider = 'jellyfin:' + f.selected.state.serverId;
+  const unlistedProvider = 'jellyfin:' + f.unlisted.state.serverId;
+  assert.equal(summary.account.identities.find(i => i.provider === 'discord').canUnlink, true);
+  assert.equal(summary.account.identities.find(i => i.provider === cabinProvider).credentialStored, true);
+
+  // Can now remove watch-state-only unlisted Jellyfin identity and still keep Discord + cabin
+  assert.equal(
+    (
+      await browser.post('/api/account/jellyfin/remove', {
+        provider: unlistedProvider,
+        subject: uAlice,
+      })
+    ).status,
+    200,
+  );
+  // And can now remove Discord because cabin admits the user
+  assert.equal((await browser.post('/api/account/discord/remove', { subject: f.provider.subjects.guest })).status, 200);
+  summary = (await browser.request('/api/account')).body;
+  assert.deepEqual(
+    summary.account.identities.map(i => ({ provider: i.provider, canUnlink: i.canUnlink })),
+    [{ provider: cabinProvider, canUnlink: false }],
+  );
+
+  // Reverse conflict on Jellyfin link triggers explicit pendingMerge
+  const bob = f.selected.addUser('Bob', 'bob-secret');
+  const otherBrowser = f.browser();
+  const s2 = await otherBrowser.request(route, { source: 'cabin', action: 'start' });
+  f.selected.approve(s2.body.code, bob);
+  await otherBrowser.request(route, { source: 'cabin', action: 'poll' });
+  const thirdBrowser = f.browser();
+  await thirdBrowser.discord('guest2');
+  const s3 = await thirdBrowser.post(route, { source: 'cabin', action: 'start', link: true });
+  f.selected.approve(s3.body.code, bob);
+  const conflict = await thirdBrowser.post(route, { source: 'cabin', action: 'poll', link: true });
+  assert.equal(conflict.body.pendingMerge, true);
+  const mergeId = (await thirdBrowser.request('/api/account')).body.merge.id;
+  assert.equal((await thirdBrowser.post('/api/account/merge', { id: mergeId })).status, 200);
 });

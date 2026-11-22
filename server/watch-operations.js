@@ -12,6 +12,7 @@ const { PlaybackError } = require('./errors');
 const { localFormat } = require('../shared/playback-policy.mjs');
 const { ObservationError } = require('./playback-tracking');
 const { clientAddress } = require('./client-address');
+const { COOKIES } = require('./http/sessions');
 const { REJOIN } = require('./watch');
 const { waitFor } = require('./operation');
 const { CALLS, splitView } = require('../shared/wire-protocol.mjs');
@@ -289,7 +290,7 @@ function watchOperations({
     });
     // Capability is set before the first source preparation and never grants access.
     viewer.reportingAuthorized = authenticated;
-    const remoteAddress = clientAddress(context);
+    const remoteAddress = clientAddress(context, config);
     if (remoteAddress) viewer.remoteAddress = remoteAddress;
     viewer.activity = !!auth.identity.activity;
     if (viewer.activity && viewer.media?.directHls) {
@@ -315,7 +316,7 @@ function watchOperations({
     viewer.localDelivery = preferences.delivery === 'local';
     viewer.browserLoginHash = context.headers.authorization
       ? undefined
-      : cookies(context).uburoom && hash(cookies(context).uburoom);
+      : cookies(context)[COOKIES.session] && hash(cookies(context)[COOKIES.session]);
     return viewer;
   }
   const signedIn = (context, auth) => {

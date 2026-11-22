@@ -137,6 +137,8 @@ async function fixture(t, extraConfig = {}) {
     redeem,
     setMember: value => {
       member = value;
+      app.entryPolicy.allowed.clear();
+      app.entryPolicy.confirmed.clear();
     },
   };
 }
@@ -214,7 +216,7 @@ test(
     assert.equal((await f.redeem(claimed, {}, { Origin: 'https://evil.example' })).status, 403);
     assert.equal((await f.redeem(claimed, {}, { Authorization: source.Authorization })).status, 403);
     assert.equal((await f.redeem({ ...claimed, proof: secret() })).status, 410);
-    assert.equal((await f.redeem({ ...claimed, cookie: 'uburoom_handoff=' + secret() })).status, 410);
+    assert.equal((await f.redeem({ ...claimed, cookie: '__Host-uburoom_handoff=' + secret() })).status, 410);
     const guest = await f.source('guest'),
       guestClaim = await f.claim(await f.issue(guest));
     await f.approve(guest, guestClaim);
@@ -233,7 +235,7 @@ test(
     const preserved = await f.redeem(again);
     assert.equal(preserved.status, 200);
     assert.equal(
-      preserved.headers['set-cookie'].some(value => value.startsWith('uburoom=')),
+      preserved.headers['set-cookie'].some(value => value.startsWith('__Host-uburoom=')),
       false,
       'same-account browser login is preserved',
     );
@@ -262,8 +264,8 @@ test(
     const cancelled = await f.claim(await f.issue(host));
     await f.request('/api/watch/handoff/action', { id: cancelled.id, action: 'cancel' }, host);
     assert.equal((await f.redeem(cancelled)).status, 410);
-    const revoked = await f.claim(await f.issue(host));
-    await f.approve(host, revoked);
+    const revoked = await f.claim(await f.issue(guest));
+    await f.approve(guest, revoked);
     f.setMember(false);
     assert.equal((await f.redeem(revoked)).status, 403);
     f.setMember(true);
@@ -397,4 +399,54 @@ test('browser handoff accepts current local destinations and rejects external or
       assert.equal(node('error').textContent, 'Invalid sign-in destination');
     } else assert.equal(replaced, destination);
   }
+});
+
+test('bearer tokens never exceed maxExpires and __Host- cookie parsing splits on first =', async t => {
+  const { createSessions } = require('../server/http/sessions');
+  const { watchIdentity } = require('../server/http/watch/identity');
+  const { Accounts, credentialVault } = require('../server/accounts');
+  const { Admission } = require('../server/admission');
+  const { accessPolicy } = require('./helpers/access');
+  const registry = new Accounts(undefined, credentialVault());
+  t.after(() => registry.close());
+  const alice = registry.resolve('discord', '100000000000000011', 'Alice');
+  let now = 1_000_000;
+  t.mock.method(Date, 'now', () => now);
+  const logins = new Map();
+  const sessions = createSessions({
+    config: { publicUrl: 'https://localhost', ownerId: '', clientId: '', accessPolicy: accessPolicy() },
+    logger: { warn() {} },
+    registry,
+    accounts: { logins, save() {} },
+    access: {},
+    oauthFetch: async () => new Response(),
+  });
+  assert.equal(
+    sessions.cookies({ headers: { cookie: '__Host-uburoom=tok==en=; ignored-no-eq' } })[sessions.COOKIES.session],
+    'tok==en=',
+  );
+  const service = watchIdentity({
+    config: { publicUrl: 'https://localhost', accessPolicy: { publicWeb: true } },
+    hub: { access: { raw: () => undefined } },
+    user: sessions.user,
+    webActor: v => v,
+    entryPolicy: new Admission({ ownerId: '', accessPolicy: accessPolicy() }, registry, { list: [] }, () => ({
+      isMember: () => true,
+      refresh: async () => true,
+    })),
+    validIdentity: () => true,
+  });
+  const nativeIssued = service.issue({ userId: alice.id, name: 'Alice', native: true }, 5000);
+  const record = service.identities.get(nativeIssued.token);
+  const ceiling = record.maxExpires;
+  now += 4000;
+  assert.ok(await service.rawLogin({ headers: { authorization: 'Bearer ' + nativeIssued.token } }));
+  assert.equal(record.expires, ceiling, 'native token expiry never slides past maxExpires');
+  const actIssued = service.issue({ userId: alice.id, name: 'Alice', activity: true }, 5000);
+  const actRecord = service.identities.get(actIssued.token);
+  now += 2000;
+  assert.ok(await service.rawLogin({ headers: { authorization: 'Bearer ' + actIssued.token } }));
+  assert.equal(actRecord.expires, actRecord.maxExpires, 'sliding window caps at maxExpires');
+  now = actRecord.maxExpires + 1;
+  assert.equal(await service.rawLogin({ headers: { authorization: 'Bearer ' + actIssued.token } }), undefined);
 });

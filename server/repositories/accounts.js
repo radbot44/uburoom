@@ -31,7 +31,8 @@ class AccountsRepo {
     this.statements.insertGuest = db.prepare('INSERT INTO users(id,name,guest,signedInAt) VALUES(?,?,1,?)');
     this.statements.listUnusedGuests = db.prepare(`SELECT id FROM users u WHERE guest=1 AND retiredInto IS NULL
       AND NOT EXISTS(SELECT 1 FROM identities WHERE userId=u.id) AND NOT EXISTS(SELECT 1 FROM watch_rooms WHERE creatorId=u.id)
-      AND NOT EXISTS(SELECT 1 FROM watch_room_hosts WHERE userId=u.id) AND NOT EXISTS(SELECT 1 FROM watch_room_host_grants WHERE issuerId=u.id)`);
+      AND NOT EXISTS(SELECT 1 FROM watch_room_hosts WHERE userId=u.id) AND NOT EXISTS(SELECT 1 FROM watch_room_host_grants WHERE issuerId=u.id)
+      AND NOT EXISTS(SELECT 1 FROM watch_room_events WHERE creatorId=u.id)`);
     this.statements.deleteUsersById = db.prepare('DELETE FROM users WHERE id=?');
     this.statements.updateUsersSetNameById = db.prepare('UPDATE users SET name=? WHERE id=?');
     this.statements.updateUsersSetSignedInAtById = db.prepare(
@@ -63,6 +64,9 @@ class AccountsRepo {
     );
     this.statements.updateUsersSetRetiredIntoRevisionById = db.prepare(
       'UPDATE users SET retiredInto=?,revision=revision+1 WHERE id=?',
+    );
+    this.statements.updateUsersRetiredIntoPathCompression = db.prepare(
+      'UPDATE users SET retiredInto=? WHERE retiredInto=?',
     );
     this.statements.updateUsersSetRevisionSignedInAtById = db.prepare(
       'UPDATE users SET revision=revision+1,signedInAt=COALESCE(signedInAt,(SELECT signedInAt FROM users WHERE id=?)) WHERE id=?',
@@ -153,6 +157,9 @@ class AccountsRepo {
   }
   updateUsersSetRetiredIntoRevisionById(...values) {
     return this.statements.updateUsersSetRetiredIntoRevisionById.run(...values);
+  }
+  updateUsersRetiredIntoPathCompression(...values) {
+    return this.statements.updateUsersRetiredIntoPathCompression.run(...values);
   }
   updateUsersSetRevisionSignedInAtById(...values) {
     return this.statements.updateUsersSetRevisionSignedInAtById.run(...values);

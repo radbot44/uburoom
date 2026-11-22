@@ -48,6 +48,10 @@ class HistoryRepo {
     this.statements.save = db.prepare(
       'INSERT INTO playback_history VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET at=excluded.at,record=excluded.record',
     );
+    this.statements.updateUserIdOnMerge = db.prepare('UPDATE playback_history SET userId=? WHERE userId=?');
+  }
+  updateUserIdOnMerge(...values) {
+    return this.statements.updateUserIdOnMerge.run(...values);
   }
   deleteForUser(...values) {
     return this.statements.deleteForUser.run(...values);

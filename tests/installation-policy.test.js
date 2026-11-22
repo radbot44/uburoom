@@ -73,8 +73,12 @@ async function fixture(t, changes = {}) {
           { method: data === undefined ? 'GET' : 'POST', ca: cert, headers },
           res => {
             for (const cookie of res.headers['set-cookie'] || []) {
-              const [key, value] = cookie.split(';')[0].split('=');
-              jar.set(key, value);
+              const pair = cookie.split(';')[0],
+                idx = pair.indexOf('=');
+              if (idx <= 0) continue;
+              const key = pair.slice(0, idx);
+              if (/;\s*Max-Age=0\b/i.test(cookie)) jar.delete(key);
+              else jar.set(key, pair.slice(idx + 1));
             }
             let raw = '';
             res.on('data', bytes => (raw += bytes));
@@ -1024,7 +1028,7 @@ test('same-account Activity handoff replaces a browser room-pass cookie with ful
   );
   const redeemed = await visitor.request('/api/watch/handoff/redeem', { id: handoff.id, proof });
   assert.equal(redeemed.status, 200);
-  assert.ok(redeemed.headers['set-cookie'].some(value => value.startsWith('uburoom=')));
+  assert.ok(redeemed.headers['set-cookie'].some(value => value.startsWith('__Host-uburoom=')));
   const me = await visitor.request('/api/watch/me');
   assert.equal(me.status, 200);
   assert.equal(me.body.guestRoomId, undefined);
@@ -1089,4 +1093,40 @@ test('SSR and canonical redirects reveal private room metadata only to authorize
   } finally {
     room.media = undefined;
   }
+});
+
+test('single-room leadership resolves single_room_leader and serverOperator.identities and seeds admin_identities', async t => {
+  const Policy = require('../server/room-policy');
+  const f = await fixture(t, {
+    singleRoom: true,
+    ownerId: '',
+    accessPolicy: { ...accessPolicy({ accounts: true }), plex: true },
+    serverOperator: { identities: [{ provider: 'uburoom', subject: 'op-sub' }] },
+    roomAdministrators: Policy.configuration({ admin_identities: ['uburoom:admin-sub', 'plex:102'] })
+      .roomAdministrators,
+  });
+  const op = f.app.registry.resolve('uburoom', 'op-sub', 'Operator');
+  const adminUser = f.app.registry.resolve('uburoom', 'admin-sub', 'AdminUser');
+  const plexAdmin = f.app.registry.resolve('plex', '102', 'PlexAdmin');
+  const caller = f.app.registry.resolve('discord', f.provider.subjects.guest, 'Caller');
+  const roomId = await f.app.watch.roomState.ensureSingle({ userId: caller.id });
+  const ensured = f.app.watch.roomState.store.get(roomId);
+  assert.equal(ensured.creatorId, op.id, 'serverOperator.identities[0] leads when singleRoomLeader and ownerId unset');
+  assert.ok(ensured.hosts.includes(adminUser.id));
+  assert.ok(ensured.hosts.includes(plexAdmin.id));
+
+  const f2 = await fixture(t, {
+    singleRoom: true,
+    singleRoomLeader: { provider: 'uburoom', subject: 'explicit-leader' },
+    serverOperator: { identities: [{ provider: 'uburoom', subject: 'op-sub' }] },
+  });
+  const explicit = f2.app.registry.resolve('uburoom', 'explicit-leader', 'Explicit Leader');
+  const caller2 = f2.app.registry.resolve('discord', f2.provider.subjects.guest, 'Caller');
+  const roomId2 = await f2.app.watch.roomState.ensureSingle({ userId: caller2.id });
+  const ensured2 = f2.app.watch.roomState.store.get(roomId2);
+  assert.equal(
+    ensured2.creatorId,
+    explicit.id,
+    'explicit rooms.single_room_leader outranks serverOperator and ownerId',
+  );
 });

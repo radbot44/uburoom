@@ -2,9 +2,7 @@
 // Who a request really comes from, behind the proxies this server is told to trust.
 const net = require('node:net');
 
-let activeConfig;
-let cachedKey;
-let cachedBlockList;
+const compiledProxies = new WeakMap();
 
 function normalizeAddress(raw) {
   if (typeof raw !== 'string' || !raw) return '';
@@ -15,8 +13,9 @@ function normalizeAddress(raw) {
 
 function compileTrustedProxies(trustedProxies) {
   if (!Array.isArray(trustedProxies) || !trustedProxies.length) return undefined;
+  const cached = compiledProxies.get(trustedProxies);
   const key = trustedProxies.join('\0');
-  if (cachedBlockList && key === cachedKey) return cachedBlockList;
+  if (cached && cached.key === key) return cached.blockList;
   const blockList = new net.BlockList();
   for (const entry of trustedProxies) {
     if (typeof entry !== 'string' || !entry) continue;
@@ -39,8 +38,7 @@ function compileTrustedProxies(trustedProxies) {
     if (version === 4 && prefix >= 0 && prefix <= 32) blockList.addSubnet(rawIp, prefix, 'ipv4');
     else if (version === 6 && prefix >= 0 && prefix <= 128) blockList.addSubnet(rawIp, prefix, 'ipv6');
   }
-  cachedKey = key;
-  cachedBlockList = blockList;
+  compiledProxies.set(trustedProxies, { key, blockList });
   return blockList;
 }
 
@@ -66,7 +64,7 @@ function isLocalAddress(raw) {
   return false;
 }
 
-function clientAddress(req, config = activeConfig) {
+function clientAddress(req, config) {
   const peer = normalizeAddress(req?.socket?.remoteAddress ?? req?.remoteAddress);
   const blockList = compileTrustedProxies(config?.trustedProxies);
   if (!peer || !blockList || !isTrustedAddress(blockList, peer)) return peer;
@@ -91,11 +89,6 @@ function clientAddress(req, config = activeConfig) {
   return peer;
 }
 
-/** The configuration requests are read against when a caller names none. */
-function trustProxies(config) {
-  activeConfig = config;
-}
-
 /** Whether a connection's peer is one of the configured proxies. */
 function trustedPeer(address, trustedProxies) {
   const blockList = compileTrustedProxies(trustedProxies);
@@ -109,4 +102,4 @@ function loopbackPeer(address) {
   return peer === '::1' || /^127\./.test(peer);
 }
 
-module.exports = { clientAddress, isLocalAddress, normalizeAddress, trustProxies, trustedPeer, loopbackPeer };
+module.exports = { clientAddress, isLocalAddress, normalizeAddress, trustedPeer, loopbackPeer };

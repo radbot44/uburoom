@@ -93,7 +93,8 @@ function setupHandoff({ handoff, config, registry, uburoomAccounts, accountRoute
           }
           // Single use.
           pending = undefined;
-          accountRoutes().completeSignIn(req, res, who);
+          const account = await accountRoutes().completeSignIn(req, res, who);
+          if (account) registry.seen(account.id);
           who = undefined;
           await registry.flush();
           json(res, 200, { ok: true });

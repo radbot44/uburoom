@@ -25,8 +25,8 @@ function pageBootstrap({
     demo: !!config.demo,
     // Every media source by name and type, and whether it is available; never an address or credential.
     sources: watch.providers.summary(),
-    // Plex sign-in is offered for entry only when a member rule names a Plex source.
-    plexSignIn: !!config.accessPolicy?.plex,
+    // Plex sign-in is offered for entry only when an access rule admits Plex accounts.
+    plexSignIn: !!entryPolicy?.public()?.plex,
     // Linking a Plex account (for personal watch-state sync) needs some Plex source to sync with.
     plexLink: (watch.providers.list || []).some(provider => provider.memberIdentity === 'plex'),
     testVideo: !!watch.demoMedia,
@@ -42,12 +42,12 @@ function pageBootstrap({
     copyVideo:
       config.transcoding?.policy !== 'disabled' && !!(watch.pipeline?.av1?.ffmpeg && watch.pipeline.av1.ffprobe),
   });
-  async function admissionStatus(req) {
-    const identity = await rawLogin(req);
+  async function admissionStatus(req, cachedRaw = rawLogin, cachedLogin = login) {
+    const identity = await cachedRaw(req);
     return {
       identity: !!identity,
       activityOnly: !config.accessPolicy.publicWeb && !identity?.activity,
-      admitted: !!identity && !!(await login(req)),
+      admitted: !!identity && !!(await cachedLogin(req)),
       csrf: identity?.csrf,
       pendingIdentity: identity
         ? { name: identity.name, csrf: identity.csrf, account: registry.summary(identity.userId) }
@@ -61,8 +61,16 @@ function pageBootstrap({
     if (query.has('frame_id') || (config.demo && ['host', 'guest', 'guest2'].includes(query.get('demo'))))
       return initial;
     if (/^\/join\/([^/]+)$/.test(reqUrl.pathname)) initial.inviteCode = true;
+    const rawPromise = rawLogin(req);
+    const loginPromise = login(req);
+    const cachedRaw = () => rawPromise;
+    const cachedLogin = () => loginPromise;
     try {
-      const ctx = { headers: req.headers, remoteAddress: clientAddress(req) };
+      const ctx = {
+        headers: req.headers,
+        remoteAddress: clientAddress(req, config),
+        cachedLogin: () => loginPromise,
+      };
       initial.me = await operations.call(ctx, 'me');
       if (initial.me.status === 200) {
         const [rooms, events, library] = await Promise.all([
@@ -75,20 +83,19 @@ function pageBootstrap({
         initial.rooms = rooms;
         if (events?.status === 200) initial.events = events;
         if (library?.status === 200) initial.library = library;
-        if (config.accessPolicy)
-          initial.admission = {
-            identity: true,
-            activityOnly: false,
-            admitted: true,
-            csrf: initial.me.value.csrf,
-          };
-      } else if (config.accessPolicy) {
-        initial.admission = await admissionStatus(req);
+        initial.admission = {
+          identity: true,
+          activityOnly: false,
+          admitted: true,
+          csrf: initial.me.value.csrf,
+        };
+      } else {
+        initial.admission = await admissionStatus(req, cachedRaw, cachedLogin);
       }
       const roomMatch = /^\/room\/([a-z0-9-]+)$/i.exec(reqUrl.pathname);
       const requested = roomMatch ? roomMatch[1] : reqUrl.searchParams.get('room');
       if (initial.me.status === 200 && requested) {
-        const identity = await login(req);
+        const identity = await cachedLogin(req);
         const actor = identity && webActor(identity);
         let record;
         let roomId, roomSlug, roomName;

@@ -7,7 +7,7 @@ const { requestByPath, hello } = require('./wire-paths');
 // HTTP bootstrap/media requests remain in each fixture's ordinary HTTP helper.
 function controlClient(t, config, cert) {
   const clients = new Map();
-  const handles = path => /^\/api\/(?:rooms|command|watch\/(?:rooms|admin-mode))(?:[/?]|$)/.test(path);
+  const handles = path => /^\/api\/(?:rooms|command|watch\/(?:rooms|admin-mode|profile))(?:[/?]|$)/.test(path);
   t.after(() => {
     for (const client of clients.values()) client.ws?.terminate();
   });

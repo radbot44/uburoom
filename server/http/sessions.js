@@ -2,11 +2,21 @@
 const { randomBytes } = require('node:crypto');
 const { hash } = require('../core');
 
+const COOKIES = Object.freeze({
+  session: '__Host-uburoom',
+  oauth: '__Host-uburoom_oauth',
+  plex: '__Host-uburoom_plex',
+  jellyfin: '__Host-uburoom_jellyfin',
+  handoff: '__Host-uburoom_handoff',
+  device: '__Host-uburoom_device',
+  authError: '__Host-uburoom_auth_error',
+});
+
 /**
  * Browser sign-in state: cookies, logins, renewal of Discord logins, request throttling and the JSON/body helpers
  * every route shares. `access` is the admission gate (server/access.js).
  */
-function createSessions({ config, logger, registry, accounts, access, oauthFetch }) {
+function createSessions({ config, logger, registry, accounts, oauthFetch, onReplace }) {
   // Server logins have no fixed lifetime; Discord renewal/revocation governs them.
   const loginSeconds = 365 * 24 * 60 * 60,
     renewals = new Map(),
@@ -24,24 +34,49 @@ function createSessions({ config, logger, registry, accounts, access, oauthFetch
   const oauthReady = !!(config.clientId && config.clientSecret && config.ownerId);
   const cookie = (name, value, maxAge) => `${name}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
   function cookies(req) {
-    return Object.fromEntries((req.headers.cookie || '').split(';').map(p => p.trim().split('=')));
+    const out = {};
+    for (const part of String(req?.headers?.cookie || '').split(';')) {
+      const trimmed = part.trim();
+      const eq = trimmed.indexOf('=');
+      if (eq > 0) out[trimmed.slice(0, eq)] = trimmed.slice(eq + 1);
+    }
+    return out;
   }
-  function browserLogin(res, identity) {
-    // Activity OAuth is not duplicated/rotated across browser sessions. This
-    // browser login expires with its source's one-hour identity grant.
+  async function replaceBrowserSession(req, res, loginRecord, { maxAge = loginSeconds, extraCookies = [] } = {}) {
+    const prevToken = cookies(req)[COOKIES.session];
+    const prevHash = prevToken && /^[a-f0-9]{64}$/.test(prevToken) ? hash(prevToken) : undefined;
+    if (prevHash && logins.has(prevHash)) {
+      logins.delete(prevHash);
+      cookieRenewedAt.delete(prevHash);
+      accounts.save();
+      if (onReplace) await onReplace(prevHash);
+    }
     const id = randomBytes(32).toString('hex');
-    logins.set(hash(id), {
-      userId: identity.userId,
-      name: identity.name,
-      accountRevision: identity.accountRevision,
-      csrf: randomBytes(32).toString('hex'),
-      expires: identity.expires,
-    });
+    logins.set(hash(id), loginRecord);
     accounts.save();
-    res.setHeader('Set-Cookie', [
-      cookie('uburoom', id, Math.max(1, Math.floor((identity.expires - Date.now()) / 1000))),
-      cookie('uburoom_handoff', '', 0),
-    ]);
+    const list = [cookie(COOKIES.session, id, maxAge), ...extraCookies.filter(Boolean)];
+    res.setHeader('Set-Cookie', list.length === 1 ? list[0] : list);
+    return id;
+  }
+  async function browserLogin(req, res, identity) {
+    // Activity OAuth is not duplicated/rotated across browser sessions. This
+    // browser login expires with its source's one-hour identity grant (never exceeding maxExpires).
+    const expires = identity.maxExpires != null ? Math.min(identity.expires, identity.maxExpires) : identity.expires;
+    await replaceBrowserSession(
+      req,
+      res,
+      {
+        userId: identity.userId,
+        name: identity.name,
+        accountRevision: identity.accountRevision,
+        csrf: randomBytes(32).toString('hex'),
+        expires,
+      },
+      {
+        maxAge: Math.max(1, Math.floor((expires - Date.now()) / 1000)),
+        extraCookies: [cookie(COOKIES.handoff, '', 0)],
+      },
+    );
   }
   function throttle(key, max = 60) {
     const now = Date.now();
@@ -58,21 +93,19 @@ function createSessions({ config, logger, registry, accounts, access, oauthFetch
   }
   function renewCookie(req, res, login, force = false) {
     if (!login || login.expires !== null) return;
-    const token = cookies(req).uburoom,
+    const token = cookies(req)[COOKIES.session],
       now = Date.now();
+    if (!token) return;
     if (force || now - (cookieRenewedAt.get(hash(token)) || 0) >= 86400000) {
-      res.setHeader('Set-Cookie', cookie('uburoom', token, loginSeconds));
+      res.setHeader('Set-Cookie', cookie(COOKIES.session, token, loginSeconds));
       cookieRenewedAt.set(hash(token), now);
     }
   }
   async function user(req) {
-    const token = cookies(req).uburoom;
+    const token = cookies(req)[COOKIES.session];
     const id = token && /^[a-f0-9]{64}$/.test(token) && hash(token);
     const login = id && logins.get(id);
     if (!login || !validIdentity(login) || (login.expires !== null && login.expires <= Date.now())) return;
-    // Pending identities must remain usable for account linking when admission
-    // requires Plex. Playback admission is enforced separately by watch routes.
-    if (!config.accessPolicy && !access.canWatch(login.userId) && !(await access.refreshWatch(login.userId))) return;
     if (logins.get(id) !== login || !validIdentity(login) || (login.expires !== null && login.expires <= Date.now()))
       return;
     if (login.oauth && login.oauth.expires <= Date.now()) {
@@ -182,6 +215,7 @@ function createSessions({ config, logger, registry, accounts, access, oauthFetch
     for (const [id, bucket] of limits) if (Date.now() - bucket.at > 60000) limits.delete(id);
   }
   return {
+    COOKIES,
     logins,
     oauthReady,
     loginSeconds,
@@ -190,6 +224,7 @@ function createSessions({ config, logger, registry, accounts, access, oauthFetch
     validIdentity,
     cookie,
     cookies,
+    replaceBrowserSession,
     browserLogin,
     throttle,
     json,
@@ -202,4 +237,4 @@ function createSessions({ config, logger, registry, accounts, access, oauthFetch
     sweep,
   };
 }
-module.exports = { createSessions };
+module.exports = { COOKIES, createSessions };

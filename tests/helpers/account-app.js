@@ -85,7 +85,10 @@ async function fixture(t, deliveryFetch, overrides = {}, services = {}) {
                 for (const cookie of res.headers['set-cookie'] || []) {
                   const pair = cookie.split(';')[0],
                     i = pair.indexOf('=');
-                  jar.set(pair.slice(0, i), pair.slice(i + 1));
+                  if (i <= 0) continue;
+                  const name = pair.slice(0, i);
+                  if (/;\s*Max-Age=0\b/i.test(cookie)) jar.delete(name);
+                  else jar.set(name, pair.slice(i + 1));
                 }
                 const chunks = [];
                 res.on('data', chunk => chunks.push(chunk));
@@ -111,6 +114,7 @@ async function fixture(t, deliveryFetch, overrides = {}, services = {}) {
     };
     const plex = async (persona = 'alice', link = false) => {
       const start = link ? await post('/api/account/plex/connect', {}) : await request('/auth/plex');
+      if (start.status === 302 && start.headers.location === '/auth/error') return start;
       const url = new URL(link ? start.body.url : start.headers.location, config.publicUrl);
       const selected = await request(
         '/auth/plex/demo?' + new URLSearchParams({ state: url.searchParams.get('state'), persona }),

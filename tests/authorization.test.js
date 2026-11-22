@@ -4,7 +4,8 @@
 // authorize() replaced (eligible, viewEligible, canRoom, roomCommandAllowed,
 // privateMember and the publication host check) at e2627bb, then deliberately
 // changed on 2026-11-12: next-video commands need a host present (or
-// continueWithoutHost), and capabilities require room access. Each decision is a
+// continueWithoutHost), and capabilities require room access; updated
+// 2026-11-22 so a guest session bound to another room cannot room.remain. Each decision is a
 // string of eight results, one per context in CONTEXTS order.
 const test = require('node:test');
 const assert = require('node:assert/strict');

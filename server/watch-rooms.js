@@ -527,7 +527,7 @@ class WatchRooms {
       if (change?.action === 'rename') throw failure('The shared room is always named Room', 403);
       if (change?.action === 'keepEmpty') throw failure('The shared room is always kept', 403);
       if (change?.action === 'creator.transfer')
-        throw failure('Single-room leadership is fixed by discord.owner_id', 403);
+        throw failure('Single-room leadership is fixed by server configuration', 403);
       if (change?.action === 'delete') throw failure('Use Reset room in single-room mode', 403);
       if (change?.action === 'reset') return this.resetSingle(id, actor, revision, current);
     }
@@ -671,6 +671,9 @@ class WatchRooms {
             ...(config.roomAdministrators?.plex || []).map(
               subject => this.registry.resolve('plex', subject, 'Assigned account', false).id,
             ),
+            ...(config.roomAdministrators?.identities || []).map(
+              entry => this.registry.resolve(entry.provider, entry.subject, 'Assigned account', false).id,
+            ),
           ]),
         ].filter(id => id !== owner.id);
         const previousHosts = JSON.parse(this.registry.meta('singleRoomDefaultHosts') || '[]');
@@ -771,6 +774,9 @@ class WatchRooms {
           ),
           ...(this.watch.hub.config.roomAdministrators?.plex || []).map(
             subject => this.registry.resolve('plex', subject, 'Assigned account', false).id,
+          ),
+          ...(this.watch.hub.config.roomAdministrators?.identities || []).map(
+            entry => this.registry.resolve(entry.provider, entry.subject, 'Assigned account', false).id,
           ),
         ]),
       ].filter(h => h !== record.creatorId);

@@ -47,7 +47,7 @@ function createRoutes({
           const read = ['GET', 'HEAD'].includes(ctx.req.method);
           if (read) ctx.asset = await files.lookup(ctx.route);
           if (read && files.isStatic(ctx)) return false;
-          if (!throttle(clientAddress(ctx.req) || 'local', 180))
+          if (!throttle(clientAddress(ctx.req, config) || 'local', 180))
             return json(ctx.res, 429, { error: 'Too many requests; try again shortly' });
           return false;
         },

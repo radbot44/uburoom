@@ -3,6 +3,8 @@ const { randomBytes } = require('node:crypto');
 const { hash } = require('./core');
 const { isServerOperator } = require('./operator-policy');
 const { clientAddress } = require('./client-address');
+const { COOKIES: DEFAULT_COOKIES } = require('./http/sessions');
+const { safeReturn } = require('./http/auth');
 const jellyfin = require('./http/jellyfin-sign-in');
 
 function accountHttp({
@@ -11,6 +13,7 @@ function accountHttp({
   plexAuth,
   plexIdentity,
   entryPolicy,
+  providers,
   uburoomAccounts,
   hub,
   watch,
@@ -20,8 +23,11 @@ function accountHttp({
   webActor,
   body,
   json,
+  COOKIES = DEFAULT_COOKIES,
   cookies,
   cookie,
+  replaceBrowserSession,
+  revokeAccountSessions,
   logins,
   loginStore,
   discordStart,
@@ -32,12 +38,16 @@ function accountHttp({
     merges = new Map(),
     errors = new Map();
   const secret = () => randomBytes(32).toString('hex');
-  const sourceHash = req => cookies(req).uburoom && hash(cookies(req).uburoom);
+  const sourceHash = req => cookies(req)[COOKIES.session] && hash(cookies(req)[COOKIES.session]);
   const busy = ids =>
     [...watch.rooms.values()].some(
       room => ids.includes(room.hostId) || [...room.viewers.values()].some(v => ids.includes(v.userId)),
     );
   async function invalidate(ids, ownerChanged = false) {
+    if (revokeAccountSessions) {
+      await revokeAccountSessions(ids, { ownerChanged });
+      return;
+    }
     for (const id of ids) if (hub.adminUsers.delete(id)) hub.adminEpoch++;
     if (ownerChanged || ids.includes(registry.identity('discord', config.ownerId)?.userId)) {
       hub.adminMode = false;
@@ -45,21 +55,30 @@ function accountHttp({
     }
     for (const [token, login] of logins) if (ids.includes(login.userId)) logins.delete(token);
     loginStore.save();
+    entryPolicy?.invalidate?.(ids);
     plexAuth.clear();
     await watchRoutes.invalidate(ids);
   }
-  function session(res, account, name, oauth) {
-    const token = secret();
-    logins.set(hash(token), {
+  async function session(req, res, account, name, oauth, extraCookies = []) {
+    const record = {
       userId: account.id,
       accountRevision: account.revision,
       name,
       csrf: secret(),
       expires: null,
       ...(oauth ? { oauth } : {}),
-    });
+    };
+    if (replaceBrowserSession) {
+      await replaceBrowserSession(req, res, record, { maxAge: 31536000, extraCookies });
+      return;
+    }
+    const previous = sourceHash(req);
+    if (previous) logins.delete(previous);
+    const token = secret();
+    logins.set(hash(token), record);
     loginStore.save();
-    res.setHeader('Set-Cookie', cookie('uburoom', token, 31536000));
+    const list = [cookie(COOKIES.session, token, 31536000), ...extraCookies.filter(Boolean)];
+    res.setHeader('Set-Cookie', list.length === 1 ? list[0] : list);
   }
   /**
    * Finishes a sign-in whose identity is already verified, with no account signed in to link it to:
@@ -67,9 +86,7 @@ function accountHttp({
    * Plex sign-in and the hand-off from first-run setup both end here.
    * @param {{provider: string, subject: string, name: string, credential?: any} | {userId: string}} who
    */
-  function completeSignIn(req, res, who) {
-    const previous = sourceHash(req);
-    if (previous && logins.has(previous) && registry.isGuest(logins.get(previous).userId)) logins.delete(previous);
+  async function completeSignIn(req, res, who, extraCookies = []) {
     let account;
     if ('userId' in who) account = registry.canonical(who.userId);
     else {
@@ -77,21 +94,27 @@ function accountHttp({
       if (who.credential) registry.credential(who.provider, who.subject, who.credential);
       plexAuth.clear();
     }
-    session(res, account, account.name);
+    if (account && !registry.isGuest(account.id)) registry.seen(account.id);
+    await session(req, res, account, account.name, undefined, extraCookies);
+    return account;
   }
   const jellyfinRoute = jellyfin.jellyfinSignInRoute({
     config,
     registry,
     entryPolicy,
+    providers,
     body,
+    user,
+    protectedPost,
+    COOKIES,
     cookie,
     cookies,
     json,
     throttle,
-    finishSession(req, res, account) {
-      const previous = sourceHash(req);
-      if (previous && logins.has(previous) && registry.isGuest(logins.get(previous).userId)) logins.delete(previous);
-      session(res, account, account.name);
+    verifiedLink,
+    async finishSession(req, res, account, clearCookie) {
+      if (account && !registry.isGuest(account.id)) registry.seen(account.id);
+      await session(req, res, account, account.name, undefined, clearCookie ? [clearCookie] : []);
     },
   });
   function mergePreview(req, login, incoming) {
@@ -116,7 +139,7 @@ function accountHttp({
     });
     return { pendingMerge: true };
   }
-  async function verifiedLink(req, res, login, provider, subject, name, credential, oauth) {
+  async function verifiedLink(req, res, login, provider, subject, name, credential, oauth, extraCookies = []) {
     const result = registry.link(login.userId, provider, subject, name);
     if (result.conflict)
       return mergePreview(req, login, { ...result, provider, subject, name, credential, oauth: oauth || login.oauth });
@@ -124,16 +147,12 @@ function accountHttp({
     plexAuth.clear();
     registry.audit(login.userId, 'self-link', { provider, subject });
     await invalidate([login.userId]);
-    session(res, result.user, result.user.name, oauth || login.oauth);
+    await session(req, res, result.user, result.user.name, oauth || login.oauth, extraCookies);
     return { linked: true };
   }
-  /**
-   * Plex sign-in is offered when a member rule names a Plex source, or when some Plex source is
-   * configured for linking a Plex account to (personal watch-state sync).
-   */
-  function plexOffered() {
-    return !config.accessPolicy || !!config.accessPolicy.plex || !!plexAuth?.configured;
-  }
+  const plexEntryOffered = () =>
+    !!config.accessPolicy?.plex || (!!config.guests?.enabled && !!config.guests?.requireSignIn);
+  const plexLinkOffered = () => !!plexAuth?.configured;
   async function startPlex(req, res, login, returnTo) {
     if (attempts.size >= 200) throw new Error('Plex sign-in is busy');
     const state = secret(),
@@ -144,7 +163,7 @@ function accountHttp({
       ...(login ? { sourceId: login.userId, sourceHash: sourceHash(req), revision: login.accountRevision } : {}),
       ...(returnTo ? { returnTo } : {}),
     });
-    res.setHeader('Set-Cookie', cookie('uburoom_plex', state, 300));
+    res.setHeader('Set-Cookie', cookie(COOKIES.plex, state, 300));
     return config.demo && plexIdentity.demo ? config.publicUrl + '/demo-plex?state=' + state : attempt.url;
   }
   function pending(req, login) {
@@ -153,10 +172,16 @@ function accountHttp({
       ? { id: merge.id, accounts: [registry.summary(merge.sourceId), registry.summary(merge.otherId)] }
       : undefined;
   }
+  async function refreshRooms() {
+    for (const room of watch.rooms.values()) {
+      const record = watch.roomState?.store?.get(room.roomId);
+      if (record) await watch.inRoom(room, () => watch.roomState.apply(room, record), undefined);
+    }
+  }
   async function route(req, res, url) {
     const route = url.pathname;
     if (!route.startsWith('/api/account') && !route.startsWith('/auth/plex')) return false;
-    if (!throttle('account:' + (clientAddress(req) || 'local'), 120)) {
+    if (!throttle('account:' + (clientAddress(req, config) || 'local'), 120)) {
       json(res, 429, { error: 'Too many account requests' });
       return true;
     }
@@ -166,7 +191,7 @@ function accountHttp({
     }
     try {
       if (req.method === 'GET' && route === '/api/account/auth-error') {
-        const id = cookies(req).uburoom_auth_error,
+        const id = cookies(req)[COOKIES.authError],
           record = errors.get(id);
         errors.delete(id);
         json(res, 200, {
@@ -175,23 +200,13 @@ function accountHttp({
         return true;
       }
       if (req.method === 'GET' && route === '/auth/plex') {
-        if (!plexOffered()) throw new Error('Plex sign-in is not offered on this server');
-        const returnParam = url.searchParams.get('return');
-        const returnTo =
-          returnParam &&
-          (/^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(returnParam) ||
-            /^\/room\/[a-z0-9-]+$/.test(returnParam) ||
-            /^\/(?:join\/[a-z]{6}-[a-z]{6})?$/.test(returnParam))
-            ? returnParam
-            : undefined;
         // A guest signing in starts a separate account; guests never link providers.
         const current = await user(req);
-        const destination = await startPlex(
-          req,
-          res,
-          current && !registry.isGuest(current.userId) ? current : undefined,
-          returnTo,
-        );
+        const linking = current && !registry.isGuest(current.userId) ? current : undefined;
+        if (!(linking ? plexLinkOffered() : plexEntryOffered()))
+          throw new Error('Plex sign-in is not offered on this server');
+        const returnTo = safeReturn(url.searchParams.get('return'));
+        const destination = await startPlex(req, res, linking, returnTo);
         res.writeHead(302, { Location: destination });
         res.end();
         return true;
@@ -205,7 +220,7 @@ function accountHttp({
           !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) ||
           !attempt ||
           attempt.expires <= Date.now() ||
-          cookies(req).uburoom_plex !== state
+          cookies(req)[COOKIES.plex] !== state
         )
           throw new Error('Isolated Plex demo is unavailable');
         plexIdentity.demo.choose(attempt.pinId, url.searchParams.get('persona'));
@@ -227,7 +242,8 @@ function accountHttp({
           config.demoSubjects?.[data.persona] ||
           (data.persona === 'host' ? config.ownerId : data.persona === 'guest2' ? 'demo-guest2' : 'demo-guest');
         const account = registry.resolve('discord', subject, 'Demo ' + data.persona);
-        session(res, account, account.name);
+        registry.seen(account.id);
+        await session(req, res, account, account.name);
         json(res, 200, { ok: true });
         return true;
       }
@@ -235,7 +251,7 @@ function accountHttp({
         const state = url.searchParams.get('state'),
           attempt = attempts.get(state);
         attempts.delete(state);
-        if (!state || cookies(req).uburoom_plex !== state || !attempt || attempt.expires <= Date.now())
+        if (!state || cookies(req)[COOKIES.plex] !== state || !attempt || attempt.expires <= Date.now())
           throw new Error('Plex sign-in expired; start again');
         const login = attempt.sourceId ? await user(req) : undefined;
         if (
@@ -263,7 +279,7 @@ function accountHttp({
           );
           if (linkResult?.pendingMerge) pendingMerge = true;
         } else
-          completeSignIn(req, res, {
+          await completeSignIn(req, res, {
             provider: 'plex',
             subject: identity.subject,
             name: identity.name,
@@ -272,16 +288,9 @@ function accountHttp({
         const existing = res.getHeader('Set-Cookie');
         res.setHeader('Set-Cookie', [
           ...(existing ? (Array.isArray(existing) ? existing : [existing]) : []),
-          cookie('uburoom_plex', '', 0),
+          cookie(COOKIES.plex, '', 0),
         ]);
-        const destination =
-          !pendingMerge &&
-          attempt.returnTo &&
-          (/^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(attempt.returnTo) ||
-            /^\/room\/[a-z0-9-]+$/.test(attempt.returnTo) ||
-            /^\/(?:join\/[a-z]{6}-[a-z]{6})?$/.test(attempt.returnTo))
-            ? attempt.returnTo
-            : '/?account=1';
+        const destination = (!pendingMerge && safeReturn(attempt.returnTo)) || '/?account=1';
         res.writeHead(302, { Location: destination });
         res.end();
         return true;
@@ -292,9 +301,61 @@ function accountHttp({
         return true;
       }
       if (req.method === 'GET' && route === '/api/account') {
+        const account = registry.summary(login.userId);
+        const memberIds = new Set(entryPolicy?.memberSignIns?.('jellyfin').map(source => source.id) || []);
+        const jellyfinSources = (providers?.list || []).filter(
+          source =>
+            source.kind === 'jellyfin' &&
+            source.signIn &&
+            (memberIds.has(source.id) || source.watchStateReporting === true),
+        );
+        const sourceByProvider = new Map(
+          jellyfinSources.filter(source => source.serverId).map(source => ['jellyfin:' + source.serverId, source]),
+        );
+        const labelFor = identity => {
+          if (identity.provider === 'discord') return 'Discord';
+          if (identity.provider === 'plex') return 'Plex';
+          if (identity.provider === 'uburoom') return 'uburoom account';
+          if (identity.provider.startsWith('jellyfin:')) {
+            const source = sourceByProvider.get(identity.provider);
+            return source && jellyfinSources.length > 1 ? `Jellyfin (${source.name})` : 'Jellyfin';
+          }
+          return identity.provider;
+        };
+        const identities = await Promise.all(
+          account.identities.map(async identity => ({
+            ...identity,
+            label: labelFor(identity),
+            canUnlink: entryPolicy
+              ? await entryPolicy.wouldAdmitWithout(login.userId, identity.provider, identity.subject, { live: false })
+              : false,
+          })),
+        );
+        const currentMerge = pending(req, login);
+        if (currentMerge) {
+          currentMerge.accounts = currentMerge.accounts.map(entry => ({
+            ...entry,
+            identities: entry.identities.map(identity => ({ ...identity, label: labelFor(identity) })),
+          }));
+        }
+        const jellyfinList = jellyfinSources.map(source => {
+          const provider = source.serverId ? 'jellyfin:' + source.serverId : undefined;
+          const linked = provider ? identities.find(identity => identity.provider === provider) : undefined;
+          return {
+            id: source.id,
+            name: source.name,
+            serverId: source.serverId,
+            provider,
+            memberRule: memberIds.has(source.id),
+            watchState: source.watchStateReporting === true,
+            identity: linked,
+            canUnlink: linked?.canUnlink ?? false,
+          };
+        });
         json(res, 200, {
-          account: registry.summary(login.userId),
-          merge: pending(req, login),
+          account: { ...account, identities },
+          jellyfin: jellyfinList,
+          merge: currentMerge,
           owner: hub.isOwner(webActor(login)),
           admin: hub.isOwner(webActor(login)) && hub.isAdmin(webActor(login)),
           serverOperator: isServerOperator(registry, config, login.userId),
@@ -302,7 +363,8 @@ function accountHttp({
         return true;
       }
       if (req.method === 'POST' && route === '/api/account/plex/connect') {
-        if (!plexOffered()) throw new Error('Plex sign-in is not offered on this server');
+        if (registry.isGuest(login.userId) || !plexLinkOffered())
+          throw new Error('Plex sign-in is not offered on this server');
         json(res, 200, { url: await startPlex(req, res, login) });
         return true;
       }
@@ -310,56 +372,33 @@ function accountHttp({
         await discordStart(req, res, login);
         return true;
       }
-      function providerEnabled(identity) {
-        if (!identity) return false;
-        if (identity.provider === 'plex')
-          // The only sign-in left must still be able to let this person in.
-          return !config.accessPolicy || !!config.accessPolicy.plex;
-        if (identity.provider === 'discord') {
-          const oauthReady = !!(config.clientId && config.clientSecret && config.ownerId);
-          if (!oauthReady) return false;
-          if (config.accessPolicy?.discord === false) return identity.subject === config.ownerId;
-          return true;
-        }
-        // A uburoom account is a way back in only while the accounts rule lets accounts in.
-        if (identity.provider === 'uburoom') return !!config.accessPolicy?.accounts;
-        return false;
-      }
-      const remove = /^\/api\/account\/(discord|plex)\/remove$/.exec(route);
+      const remove = /^\/api\/account\/(discord|plex|jellyfin)\/remove$/.exec(route);
       if (req.method === 'POST' && remove) {
-        const provider = remove[1],
-          data = await body(req),
-          identities = registry.identities(login.userId);
-        const usable = identities.filter(
-          i =>
-            i.provider !== provider &&
-            i.verified &&
-            (i.provider !== 'plex' || registry.hasCredential('plex', i.subject)),
-        );
-        // Prefer a way back in that the entry rules still offer.
-        const remaining = usable.find(providerEnabled) || usable[0];
-        if (!remaining) throw new Error('Connect another sign-in method before removing this account');
-        if (!providerEnabled(remaining))
-          throw new Error(
-            ({ plex: 'Plex', discord: 'Discord', uburoom: 'uburoom account' }[remaining.provider] || 'That') +
-              ' sign-in is disabled on this server; keep your connected account',
-          );
+        const kind = remove[1],
+          data = await body(req);
+        let targetProvider = kind;
+        let targetSubject = data.subject;
+        if (kind === 'jellyfin') {
+          if (
+            typeof data.provider !== 'string' ||
+            !/^jellyfin:[0-9a-f]{32}$/.test(data.provider) ||
+            typeof data.subject !== 'string' ||
+            !/^[0-9a-f]{32}$/.test(data.subject)
+          )
+            throw new Error('Invalid Jellyfin account');
+          targetProvider = data.provider;
+        } else if (targetSubject == null) {
+          targetSubject = registry.identities(login.userId).find(i => i.provider === targetProvider)?.subject;
+        }
         const ownerChanged = hub.isOwner(webActor(login));
-        if (remaining.provider === 'uburoom') {
-          if (!uburoomAccounts?.admits(login.userId))
-            throw new Error('Set a password for your uburoom account before removing this sign-in');
-        } else if (remaining.provider === 'plex') {
-          if (!(await plexAuth.forUser(login.userId))) throw new Error('Sign in to Plex before removing Discord');
-        } else if (!hub.access.isMember(login.userId) && !(await hub.access.refresh(login.userId)))
-          throw new Error('Discord access is unavailable; keep Plex connected');
+        if (!entryPolicy) throw new Error('Connect another sign-in method before removing this account');
+        await entryPolicy.wouldAdmitWithout(login.userId, targetProvider, targetSubject, { live: true });
         if ((await user(req)) !== login) throw new Error('Account sign-in changed; open Account again');
-        if (remaining.provider === 'discord' && !hub.access.isMember(login.userId))
-          throw new Error('Discord access changed; keep Plex connected');
         if (busy([login.userId])) throw new Error('Leave your watch rooms before removing a connected account');
-        const account = registry.unlink(login.userId, provider, data.subject);
+        const account = registry.unlink(login.userId, targetProvider, targetSubject);
         await invalidate([account.id], ownerChanged);
         merges.delete(sourceHash(req));
-        session(res, account, account.name, provider === 'discord' ? undefined : login.oauth);
+        await session(req, res, account, account.name, targetProvider === 'discord' ? undefined : login.oauth);
         json(res, 200, { removed: true });
         return true;
       }
@@ -385,8 +424,9 @@ function accountHttp({
         });
         if (merge.credential) registry.credential(merge.provider, merge.subject, merge.credential);
         await invalidate([a.id, b.id]);
+        await refreshRooms();
         merges.delete(sourceHash(req));
-        session(res, registry.canonical(a.id), a.name, merge.oauth || login.oauth);
+        await session(req, res, registry.canonical(a.id), a.name, merge.oauth || login.oauth);
         json(res, 200, { merged: true });
         return true;
       }
@@ -449,6 +489,7 @@ function accountHttp({
         previews.delete(data.id);
         const id = registry.assign(preview, current.userId);
         await invalidate(preview.users.map(u => u.id));
+        await refreshRooms();
         json(res, 200, { account: registry.summary(id) });
         return true;
       }
@@ -459,7 +500,7 @@ function accountHttp({
       if (req.method === 'GET' && route.startsWith('/auth/plex')) {
         const id = secret();
         errors.set(id, { message, expires: Date.now() + 60000 });
-        res.setHeader('Set-Cookie', cookie('uburoom_auth_error', id, 60));
+        res.setHeader('Set-Cookie', cookie(COOKIES.authError, id, 60));
         res.writeHead(302, { Location: '/auth/error' });
         res.end();
       } else json(res, 400, { error: message });

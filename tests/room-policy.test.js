@@ -152,3 +152,28 @@ test('human check commands map to playPause in Policy.commandCapability', () => 
   assert.equal(Policy.commandCapability('check.ask'), 'playPause');
   assert.equal(Policy.commandCapability('check.clear'), 'playPause');
 });
+
+test('admin_identities and trusted_identities match verified non-Discord identities across serverTier', () => {
+  const registry = new Accounts(undefined, credentialVault());
+  try {
+    const serverId = 'a'.repeat(32);
+    const subject = 'b'.repeat(32);
+    const alice = registry.resolve('uburoom', 'alice-sub', 'Alice');
+    const jfUser = registry.resolve('jellyfin:' + serverId, subject, 'JF');
+    const plexTrusted = registry.resolve('plex', '202', 'Plex Trusted');
+    const config = Policy.configuration({
+      admin_identities: ['uburoom:alice-sub', `jellyfin:${serverId}:${subject}`],
+      trusted_identities: ['plex:202'],
+    });
+    assert.equal(Policy.administrator(registry, config, alice.id), true);
+    assert.equal(Policy.serverTier(registry, config, alice.id), 'admins');
+    assert.equal(Policy.administrator(registry, config, jfUser.id), true);
+    assert.equal(Policy.administrator(registry, config, plexTrusted.id), false);
+    assert.equal(Policy.serverTier(registry, config, plexTrusted.id), 'trusted');
+    registry.db.prepare('UPDATE identities SET verified=0,assigned=1 WHERE userId=?').run(alice.id);
+    assert.equal(Policy.administrator(registry, config, alice.id), false);
+    assert.equal(Policy.serverTier(registry, config, alice.id), 'members');
+  } finally {
+    registry.close();
+  }
+});

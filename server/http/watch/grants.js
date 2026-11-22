@@ -1,5 +1,6 @@
 'use strict';
 const { randomBytes } = require('node:crypto');
+const { COOKIES } = require('../sessions');
 
 /** Short-lived media grants: a viewer's right to read one media selection of one room. */
 function mediaGrants({ watch, cookies, login }) {
@@ -77,7 +78,7 @@ function mediaGrants({ watch, cookies, login }) {
     if (!own.size) viewerGrants.delete(viewerId);
   }
   function issueOrReuse(match, create, auth, req, renew) {
-    const credential = req.headers.authorization || cookies(req).uburoom;
+    const credential = req.headers.authorization || cookies(req)[COOKIES.session];
     const { room, viewerId } = create;
     const own = viewerGrants.get(viewerId);
     const existing = own && [...own].find(match);

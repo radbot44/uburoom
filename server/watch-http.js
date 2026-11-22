@@ -5,7 +5,9 @@ const { PlaybackError } = require('./errors');
 const { Handoff, SECRET } = require('./handoff');
 const { watchOperations } = require('./watch-operations');
 const { CALLS } = require('../shared/wire-protocol.mjs');
-const { clientAddress, trustProxies } = require('./client-address');
+const { clientAddress } = require('./client-address');
+const { COOKIES: DEFAULT_COOKIES } = require('./http/sessions');
+const { displayName } = require('./accounts');
 const Ubumfa = require('../shared/ubumfa.mjs');
 const { watchIdentity } = require('./http/watch/identity');
 const { mediaGrants } = require('./http/watch/grants');
@@ -30,7 +32,9 @@ function watchHttp({
   registry,
   entryPolicy,
   diagnosticLog,
+  COOKIES = DEFAULT_COOKIES,
   cookie,
+  replaceBrowserSession,
   accounts,
   logins,
   loginSeconds,
@@ -59,16 +63,18 @@ function watchHttp({
     body,
     json,
     throttle,
+    COOKIES,
     cookie,
     cookies,
+    replaceBrowserSession,
     registry,
     accounts,
     logins,
     allowedOrigin,
     rawLogin,
     login,
+    entryPolicy,
   });
-  trustProxies(config);
   const clockEpoch = randomUUID();
   const handoff = new Handoff();
   // The reads a page may make by GET before it has a room connection (shared/wire-protocol.mjs).
@@ -124,7 +130,7 @@ function watchHttp({
       return true;
     }
     if (config.accessPolicy && url.pathname === '/api/watch/entry' && req.method === 'POST') {
-      if (!allowedOrigin(req) || !throttle('entry:' + (clientAddress(req) || 'local'), 10)) {
+      if (!allowedOrigin(req) || !throttle('entry:' + (clientAddress(req, config) || 'local'), 10)) {
         json(res, 429, { error: 'Entry is unavailable; wait a minute and try again' });
         return true;
       }
@@ -142,15 +148,33 @@ function watchHttp({
       }
       const typed = typeof data.name === 'string' && data.name.trim() ? data.name.trim() : '';
       // The same browser keeps its guest, and its name, across visits and password changes.
-      const token = cookies(req).uburoom,
+      const token = cookies(req)[COOKIES.session],
         previous = token && logins.get(hash(token));
       if (previous && registry.isGuest(previous.userId) && !previous.guestRoom) {
         if (typed && typed !== previous.name)
           try {
-            registry.rename(previous.userId, typed);
-            previous.name = registry.canonical(previous.userId).name;
+            if (hub.renameAccount) {
+              await hub.renameAccount(previous.userId, typed);
+              previous.name = registry.canonical(previous.userId).name;
+            } else {
+              const nextName = displayName(typed);
+              if (
+                [...watch.rooms.values()].some(room =>
+                  [...room.viewers.values()].some(
+                    viewer =>
+                      !registry.isGuest(viewer.userId) &&
+                      viewer.name?.toLocaleLowerCase() === nextName.toLocaleLowerCase(),
+                  ),
+                )
+              )
+                throw Object.assign(new Error('Someone in this room already uses that name. Choose another.'), {
+                  status: 409,
+                });
+              registry.rename(previous.userId, nextName);
+              previous.name = registry.canonical(previous.userId).name;
+            }
           } catch (error) {
-            json(res, 400, { error: error.message });
+            json(res, error.status || 400, { error: error.message });
             return true;
           }
         previous.serverPassword = entryPolicy.password.revision;
@@ -160,25 +184,43 @@ function watchHttp({
         return true;
       }
       // Entering replaces any other sign-in in this browser: a password guest is not an account.
-      if (previous) logins.delete(hash(token));
       let account;
       try {
-        account = registry.canonical(registry.createGuest(typed || Ubumfa.ubunym().fullName));
+        const name = typed ? displayName(typed) : Ubumfa.ubunym().fullName;
+        if (
+          typed &&
+          [...watch.rooms.values()].some(room =>
+            [...room.viewers.values()].some(
+              viewer =>
+                !registry.isGuest(viewer.userId) && viewer.name?.toLocaleLowerCase() === name.toLocaleLowerCase(),
+            ),
+          )
+        ) {
+          json(res, 409, { error: 'Someone in this room already uses that name. Choose another.' });
+          return true;
+        }
+        account = registry.canonical(registry.createGuest(name));
       } catch (error) {
         json(res, 400, { error: error.message });
         return true;
       }
-      const id = randomBytes(32).toString('hex');
-      logins.set(hash(id), {
+      const loginRecord = {
         userId: account.id,
         accountRevision: account.revision,
         name: account.name,
         csrf: randomBytes(32).toString('hex'),
         expires: null,
         serverPassword: entryPolicy.password.revision,
-      });
-      accounts.save();
-      res.setHeader('Set-Cookie', cookie('uburoom', id, loginSeconds));
+      };
+      if (replaceBrowserSession) {
+        await replaceBrowserSession(req, res, loginRecord, { maxAge: loginSeconds });
+      } else {
+        if (previous) logins.delete(hash(token));
+        const id = randomBytes(32).toString('hex');
+        logins.set(hash(id), loginRecord);
+        accounts.save();
+        res.setHeader('Set-Cookie', cookie(COOKIES.session, id, loginSeconds));
+      }
       json(res, 200, { ok: true, name: account.name });
       return true;
     }
@@ -202,13 +244,13 @@ function watchHttp({
       await stream(req, res, grants.get(match[1]), match[2], url);
       return true;
     }
-    if (!throttle('watch:' + (clientAddress(req) || 'local'), 600)) {
+    if (!throttle('watch:' + (clientAddress(req, config) || 'local'), 600)) {
       json(res, 429, { error: 'Too many requests' });
       return true;
     }
     try {
       if (req.method === 'POST' && url.pathname === '/api/watch/handoff/native/start') {
-        if (!throttle('handoff-native-start:' + (clientAddress(req) || 'local'), 30)) {
+        if (!throttle('handoff-native-start:' + (clientAddress(req, config) || 'local'), 30)) {
           json(res, 429, { error: 'Too many requests' });
           return true;
         }
@@ -306,7 +348,7 @@ function watchHttp({
         return true;
       }
       if (req.method === 'POST' && url.pathname === '/api/watch/handoff/native/poll') {
-        if (!throttle('handoff-native-poll:' + (clientAddress(req) || 'local'), 180)) {
+        if (!throttle('handoff-native-poll:' + (clientAddress(req, config) || 'local'), 180)) {
           json(res, 429, { error: 'Too many requests' });
           return true;
         }
@@ -331,12 +373,12 @@ function watchHttp({
       }
       if (req.method === 'POST' && ['/api/watch/handoff/claim', '/api/watch/handoff/redeem'].includes(url.pathname)) {
         // These browser endpoints never accept an Activity bearer or a cross-origin request.
-        const nonce = cookies(req).uburoom_handoff;
+        const nonce = cookies(req)[COOKIES.handoff];
         if (
           req.headers.origin !== config.publicUrl ||
           req.headers.authorization ||
           !SECRET.test(nonce || '') ||
-          !throttle('handoff-browser:' + (clientAddress(req) || 'local'), 120)
+          !throttle('handoff-browser:' + (clientAddress(req, config) || 'local'), 120)
         ) {
           json(res, 403, { error: 'Browser sign-in unavailable; open a fresh link from the Activity' });
           return true;
@@ -386,8 +428,9 @@ function watchHttp({
             json(res, 410, { error: 'Activity sign-in expired or was cancelled' });
             return true;
           }
-          if (existing?.userId !== attempt.source.userId || existing?.guestRoom) browserLogin(res, attempt.source);
-          else res.setHeader('Set-Cookie', 'uburoom_handoff=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
+          if (existing?.userId !== attempt.source.userId || existing?.guestRoom)
+            await browserLogin(req, res, attempt.source);
+          else res.setHeader('Set-Cookie', cookie(COOKIES.handoff, '', 0));
           const target = roomId ? (room?.slug ? '/room/' + room.slug : '/room/' + roomId) : '/';
           json(res, 200, {
             destination: attempt.connectPlex
@@ -499,9 +542,13 @@ function watchHttp({
       }
       const readable = req.method === 'GET' && READS[url.pathname];
       if (readable) {
-        const reply = await operations.call({ headers: req.headers, remoteAddress: clientAddress(req) }, readable, {
-          args: Object.fromEntries(url.searchParams),
-        });
+        const reply = await operations.call(
+          { headers: req.headers, remoteAddress: clientAddress(req, config) },
+          readable,
+          {
+            args: Object.fromEntries(url.searchParams),
+          },
+        );
         if (reply.resource) {
           const art = reply.resource;
           res.writeHead(reply.status, {
@@ -718,7 +765,7 @@ function watchHttp({
     },
     rewriteManifest,
     deliveryOrigins: req =>
-      watch.providers.directOrigins(typeof req === 'string' || req === undefined ? req : clientAddress(req)),
+      watch.providers.directOrigins(typeof req === 'string' || req === undefined ? req : clientAddress(req, config)),
     embedPolicy: () => watch.providers.embedPolicy(),
   };
 }

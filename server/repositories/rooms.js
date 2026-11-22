@@ -165,6 +165,16 @@ class RoomsRepo {
     this.statements.deleteRoomInviteBlocksBySubject = db.prepare(
       'DELETE FROM watch_room_invite_blocks WHERE subject=?',
     );
+    this.statements.updateRoomsCreatorIdOnMerge = db.prepare('UPDATE watch_rooms SET creatorId=? WHERE creatorId=?');
+    this.statements.deleteDuplicateCreatorHosts = db.prepare(
+      'DELETE FROM watch_room_hosts WHERE userId=? AND roomId IN (SELECT id FROM watch_rooms WHERE creatorId=?)',
+    );
+    this.statements.updateRoomEventsCreatorIdOnMerge = db.prepare(
+      'UPDATE watch_room_events SET creatorId=? WHERE creatorId=?',
+    );
+    this.statements.updateRoomHostGrantsIssuerIdOnMerge = db.prepare(
+      'UPDATE watch_room_host_grants SET issuerId=? WHERE issuerId=?',
+    );
   }
   exists(...values) {
     return this.statements.exists.get(...values);
@@ -380,6 +390,18 @@ class RoomsRepo {
   }
   deleteRoomInviteBlocksBySubject(...values) {
     return this.statements.deleteRoomInviteBlocksBySubject.run(...values);
+  }
+  updateRoomsCreatorIdOnMerge(...values) {
+    return this.statements.updateRoomsCreatorIdOnMerge.run(...values);
+  }
+  deleteDuplicateCreatorHosts(...values) {
+    return this.statements.deleteDuplicateCreatorHosts.run(...values);
+  }
+  updateRoomEventsCreatorIdOnMerge(...values) {
+    return this.statements.updateRoomEventsCreatorIdOnMerge.run(...values);
+  }
+  updateRoomHostGrantsIssuerIdOnMerge(...values) {
+    return this.statements.updateRoomHostGrantsIssuerIdOnMerge.run(...values);
   }
 }
 module.exports = { RoomsRepo };

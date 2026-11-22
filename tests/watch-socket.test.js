@@ -113,6 +113,8 @@ async function fixture(t, appOptions = {}) {
     connect,
     revoke: () => {
       allowed = false;
+      app.entryPolicy.allowed.clear();
+      app.entryPolicy.confirmed.clear();
     },
   };
 }
@@ -205,19 +207,19 @@ test(
 test('native WebSocket pongs retain room presence without JavaScript clock messages', tls, async t => {
   // A one-second idle deadline, pinged every 100 ms, stands in for the production ten seconds.
   const f = await fixture(t, { socketTiming: { idleMs: 1000, livenessMs: 100 } }),
-    host = await f.connect(await f.login('host'));
-  t.after(() => host.ws.close());
-  host.stopClock();
-  const roomId = (await host.call('/api/watch/rooms', {})).value.id,
+    guest = await f.connect(await f.login('guest'));
+  t.after(() => guest.ws.close());
+  guest.stopClock();
+  const roomId = (await guest.call('/api/watch/rooms', {})).value.id,
     viewer = randomUUID();
-  await host.call('/api/watch/rooms/' + roomId + '?viewer=' + viewer);
+  await guest.call('/api/watch/rooms/' + roomId + '?viewer=' + viewer);
   await new Promise(resolve => setTimeout(resolve, 2500));
-  assert.equal(host.ws.readyState, 1, 'a throttled tab remains connected beyond the idle deadline');
+  assert.equal(guest.ws.readyState, 1, 'a throttled tab remains connected beyond the idle deadline');
   const presence = f.app.watch.rooms.get(roomId)?.viewers.get(viewer);
   assert.ok(presence, 'same viewer survives');
   assert.ok(Date.now() - presence.at < 500, 'native pongs refresh viewer presence');
   f.revoke();
-  const closed = once(host.ws, 'close');
+  const closed = once(guest.ws, 'close');
   assert.equal((await closed)[0], 4003, 'server publication still rechecks authorization without client clocks');
 });
 
@@ -312,8 +314,8 @@ test(
     assert.deepEqual((await guest.call('/api/watch/rooms')).value.rooms, []);
     assert.equal((await guest.call(target + '?viewer=' + guestId)).status, 403);
     f.revoke();
-    const denied = once(rejoined.ws, 'close');
-    rejoined.ws.send(JSON.stringify({ type: 'clock', id: 999 }));
+    const denied = once(guest.ws, 'close');
+    guest.ws.send(JSON.stringify({ type: 'clock', id: 999 }));
     assert.equal((await denied)[0], 4003);
   },
 );
@@ -1016,12 +1018,12 @@ test('local delivery pushes a fresh viewer lane after delayed auto-queue corpus 
   );
   const boundary = client.events.length;
   const stream = Promise.withResolvers();
-  const scope = watch.streamScope.bind(watch);
+  const prepareViewer = watch.prepareViewer.bind(watch);
   let preparing = false;
-  t.mock.method(watch, 'streamScope', async (...args) => {
+  t.mock.method(watch, 'prepareViewer', async (...args) => {
     preparing = true;
     await stream.promise;
-    return scope(...args);
+    return prepareViewer(...args);
   });
   t.after(() => stream.resolve());
   corpus.resolve(undefined);

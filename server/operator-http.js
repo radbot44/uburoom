@@ -12,6 +12,7 @@ function operatorHttp({
   protectedPost,
   validIdentity,
   logins,
+  COOKIES,
   cookies,
   body,
   json,
@@ -22,7 +23,7 @@ function operatorHttp({
     const login = await user(req);
     const current = () =>
       !!login &&
-      logins.get(hash(cookies(req).uburoom || '')) === login &&
+      logins.get(hash(cookies(req)[COOKIES.session] || '')) === login &&
       validIdentity(login) &&
       (login.expires === null || login.expires > Date.now());
     if (!current()) return json(res, 401, { error: 'Sign in to read operator settings' });
@@ -48,7 +49,7 @@ function operatorHttp({
       const login = await user(req);
       current = () =>
         !!login &&
-        logins.get(hash(cookies(req).uburoom || '')) === login &&
+        logins.get(hash(cookies(req)[COOKIES.session] || '')) === login &&
         validIdentity(login) &&
         (login.expires === null || login.expires > Date.now());
       const operator = () => current() && isServerOperator(registry, config, login.userId);

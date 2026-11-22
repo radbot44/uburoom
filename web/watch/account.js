@@ -2,6 +2,7 @@ import * as uburoomDialogs from '../watch-dialogs.js';
 import * as uburoomIcons from '../icons.js';
 import * as uburoomPopover from '../watch-popover.js';
 import * as uburoomServerSettings from '../server-settings.js';
+import * as accountSignIn from '../account-sign-in.js';
 import { $ } from './page.js';
 import { store } from './store.js';
 
@@ -12,6 +13,8 @@ export function mount(host, deps) {
     accountMerge,
     accountValue,
     removeProvider,
+    removeSubject,
+    jellyfinCleanup,
     accountLoad = 0,
     accountNameDraft,
     previewLoad = 0,
@@ -27,7 +30,11 @@ export function mount(host, deps) {
     const b = $('match-preview');
     if (b) b.disabled = false;
   }
-  accountDialog.addEventListener('close', invalidatePreview);
+  accountDialog.addEventListener('close', () => {
+    invalidatePreview();
+    jellyfinCleanup?.();
+    jellyfinCleanup = undefined;
+  });
   accountPopups.register(accountDialog, {
     dirty: () =>
       !!accountValue &&
@@ -66,6 +73,14 @@ export function mount(host, deps) {
   function accountError(message = '') {
     $('account-error').textContent = message;
   }
+  function identityLabel(identity) {
+    if (identity.label) return identity.label;
+    if (identity.provider === 'plex') return 'Plex';
+    if (identity.provider === 'discord') return 'Discord';
+    if (identity.provider === 'uburoom') return 'uburoom account';
+    if (identity.provider?.startsWith('jellyfin:')) return 'Jellyfin';
+    return identity.provider || '';
+  }
   function identityRows(host, account) {
     host.replaceChildren();
     for (const identity of account.identities) {
@@ -73,12 +88,231 @@ export function mount(host, deps) {
         name = document.createElement('strong'),
         detail = document.createElement('span');
       name.textContent =
-        (identity.provider === 'plex' ? 'Plex' : 'Discord') +
-        (identity.name !== identity.subject ? ': ' + identity.name : '');
+        identityLabel(identity) + (identity.name && identity.name !== identity.subject ? ': ' + identity.name : '');
       detail.className = 'hint';
       detail.textContent = identity.assigned && !identity.authenticated ? ' · awaiting sign-in' : '';
       row.append(name, detail);
       host.append(row);
+    }
+  }
+  function renderJellyfinRows(sources, account) {
+    jellyfinCleanup?.();
+    jellyfinCleanup = undefined;
+    const container = $('account-jellyfin-identities');
+    if (!container) return;
+    container.replaceChildren();
+    if (!Array.isArray(sources) || !sources.length) {
+      container.hidden = true;
+      return;
+    }
+    container.className = 'account-identities';
+    container.hidden = false;
+    const isGuest = account.guest === 1;
+    let activeCancel;
+    jellyfinCleanup = () => {
+      activeCancel?.();
+      activeCancel = undefined;
+    };
+    for (const source of sources) {
+      const label = sources.length > 1 ? `Jellyfin (${source.name})` : 'Jellyfin';
+      const identity = source.identity;
+      const connected = !!(identity?.authenticated && identity.credentialStored);
+      const name = identity && identity.name !== identity.subject ? identity.name : '';
+      const note = !source.memberRule && source.watchState ? ' · watch-state sync' : '';
+      const row = document.createElement('div');
+      row.className = 'provider-row';
+      const details = document.createElement('div');
+      details.className = 'provider-details';
+      const heading = document.createElement('h3');
+      const symbol = document.createElement('span');
+      symbol.className = 'plex-symbol';
+      const logo = document.createElement('img');
+      Object.assign(logo, { src: '/assets/jellyfin-icon.svg', alt: '', width: 28, height: 28 });
+      symbol.append(logo);
+      heading.append(symbol, document.createTextNode(label));
+      const summary = document.createElement('p');
+      if (identity) {
+        summary.textContent = connected
+          ? (name ? 'Connected as ' + name : 'Connected') + note
+          : 'Sign-in needed' + (name ? ' · ' + name : '') + note;
+      } else if (isGuest) {
+        summary.textContent = 'Guests can’t connect accounts';
+      } else {
+        summary.textContent = 'Not connected' + note;
+      }
+      details.append(heading, summary);
+      const connectBtn = document.createElement('button');
+      connectBtn.type = 'button';
+      connectBtn.className = 'provider-connect ' + (connected ? 'quiet' : 'primary');
+      connectBtn.textContent = !identity ? 'Connect Jellyfin' : connected ? 'Reconnect' : 'Sign in to ' + label;
+      connectBtn.hidden = isGuest;
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'icon-button provider-remove';
+      removeBtn.append(uburoomIcons.icon(document, 'close'));
+      removeBtn.hidden = !identity;
+      removeBtn.disabled = !deps.activity && !source.canUnlink;
+      removeBtn.setAttribute('aria-label', 'Remove ' + label);
+      removeBtn.title = removeBtn.disabled
+        ? 'Connect another sign-in method before removing ' + label
+        : 'Remove ' + label;
+      removeBtn.addEventListener('click', () => {
+        if (deps.activity) {
+          $('account-dialog').close();
+          void deps.openInBrowser({ account: true });
+          return;
+        }
+        removeProvider = identity.provider;
+        removeSubject = identity.subject;
+        $('account-remove-title').textContent = 'Remove ' + label + '?';
+        $('account-remove-description').textContent =
+          (identity.name !== identity.subject ? identity.name + ' will be removed from uburoom. ' : '') +
+          'You can connect ' +
+          label +
+          ' again afterward. Your other browsers will be signed out.';
+        $('account-remove-confirm').textContent = 'Remove ' + label;
+        $('account-remove-error').textContent = '';
+        accountPopups.open($('account-remove-dialog'));
+      });
+      const panel = document.createElement('div');
+      panel.className = 'jellyfin-sign-in';
+      panel.hidden = true;
+      const status = document.createElement('p');
+      status.className = 'hint';
+      status.hidden = true;
+      const formHost = document.createElement('div');
+      formHost.hidden = true;
+      const quickHost = document.createElement('div');
+      quickHost.className = 'jellyfin-quick-connect';
+      quickHost.hidden = true;
+      const qcPrompt = document.createElement('p');
+      qcPrompt.textContent = 'Open Jellyfin → Quick Connect and enter this code';
+      const qcCode = document.createElement('p');
+      qcCode.className = 'handoff-code';
+      const qcExpiry = document.createElement('p');
+      qcExpiry.className = 'hint';
+      const qcCancel = document.createElement('button');
+      qcCancel.type = 'button';
+      qcCancel.className = 'quiet';
+      qcCancel.textContent = 'Cancel';
+      quickHost.append(qcPrompt, qcCode, qcExpiry, qcCancel);
+      panel.append(status, formHost, quickHost);
+
+      let pollTimer,
+        cancelPending = false,
+        panelGen = 0;
+      const stopPanel = (sendCancel = false) => {
+        panelGen++;
+        clearInterval(pollTimer);
+        pollTimer = undefined;
+        quickHost.hidden = true;
+        formHost.hidden = true;
+        formHost.replaceChildren();
+        status.hidden = true;
+        status.textContent = '';
+        panel.hidden = true;
+        if (sendCancel && cancelPending) {
+          cancelPending = false;
+          void deps.api('/api/account/jellyfin', { source: source.id, action: 'cancel', link: true }).catch(() => {});
+        }
+      };
+      qcCancel.addEventListener('click', () => {
+        stopPanel(true);
+        if (activeCancel) activeCancel = undefined;
+        connectBtn.focus();
+      });
+      connectBtn.addEventListener('click', async () => {
+        if (deps.activity) {
+          $('account-dialog').close();
+          void deps.openInBrowser({ account: true });
+          return;
+        }
+        if (!panel.hidden) {
+          stopPanel(true);
+          activeCancel = undefined;
+          return;
+        }
+        activeCancel?.();
+        const myGen = ++panelGen;
+        const alive = () => myGen === panelGen && accountDialog.open;
+        let cancelRequested = false;
+        activeCancel = () => {
+          cancelRequested = true;
+          stopPanel(true);
+        };
+        const refreshLinked = async () => {
+          activeCancel = undefined;
+          panel.hidden = true;
+          store.identity.me = await deps.call('me');
+          deps.renderAccount?.();
+          void showAccount();
+        };
+        panel.hidden = false;
+        status.textContent = 'Contacting Jellyfin…';
+        status.hidden = false;
+        accountError();
+        try {
+          const started = await deps.api('/api/account/jellyfin', { source: source.id, action: 'start', link: true });
+          if (!alive() || cancelRequested) return;
+          status.hidden = true;
+          status.textContent = '';
+          if (started.password) {
+            formHost.hidden = false;
+            accountSignIn
+              .mount(formHost, {
+                idPrefix: 'account-jellyfin-' + source.id,
+                label: connectBtn.textContent,
+                usernameMaxLength: 200,
+                authenticate: (username, password) =>
+                  deps.api('/api/account/jellyfin', {
+                    source: source.id,
+                    action: 'password',
+                    username,
+                    password,
+                    link: true,
+                  }),
+                onSignedIn: () => {
+                  void refreshLinked();
+                },
+              })
+              .focus();
+            return;
+          }
+          cancelPending = true;
+          qcCode.textContent = started.code;
+          const ends = Date.now() + (Number(started.expiresIn) || 540) * 1000;
+          const updateExpiry = () => {
+            const minutes = Math.ceil((ends - Date.now()) / 60000);
+            qcExpiry.textContent =
+              minutes > 1 ? 'Expires in ' + minutes + ' minutes' : minutes === 1 ? 'Expires in 1 minute' : 'Expired';
+          };
+          updateExpiry();
+          pollTimer = setInterval(updateExpiry, 15000);
+          quickHost.hidden = false;
+          while (alive() && !cancelRequested) {
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            if (!alive() || cancelRequested) return;
+            const polled = await deps.api('/api/account/jellyfin', { source: source.id, action: 'poll', link: true });
+            if (alive() && polled.ok) {
+              cancelPending = false;
+              clearInterval(pollTimer);
+              pollTimer = undefined;
+              await refreshLinked();
+              return;
+            }
+          }
+        } catch (error) {
+          if (!alive() || cancelRequested) return;
+          cancelPending = false;
+          clearInterval(pollTimer);
+          pollTimer = undefined;
+          quickHost.hidden = true;
+          status.textContent = error.message;
+          status.hidden = false;
+        }
+      });
+      row.append(details, connectBtn, removeBtn);
+      container.append(row, panel);
     }
   }
   async function showAccount() {
@@ -152,18 +386,12 @@ export function mount(host, deps) {
               : 'Discord sign-in is disabled on this server';
           }
         }
-        function isSurvivingProvider(i) {
-          if (!i || !i.authenticated) return false;
-          if (i.provider === 'plex') return store.identity.config.access?.plex !== false && !!i.credentialStored;
-          if (i.provider === 'discord') return store.identity.config.access?.discord !== false || isOwner;
-          return false;
-        }
-        const otherEnabled = value.account.identities.some(i => i.provider !== provider && isSurvivingProvider(i));
         const remove = $('remove-' + provider);
         remove.hidden = !identity;
-        remove.disabled = !deps.activity && !otherEnabled;
+        remove.disabled = !deps.activity && !identity?.canUnlink;
         remove.title = remove.disabled ? 'Connect another sign-in method before removing ' + label : 'Remove ' + label;
       }
+      renderJellyfinRows(value.jellyfin || [], value.account);
       $('account-browser-hint').hidden = !deps.activity;
       $('account-connect-hint').hidden = deps.activity;
       $('account-admin').hidden = deps.activity || !value.admin;
@@ -263,6 +491,7 @@ export function mount(host, deps) {
       removeProvider = provider;
       const label = provider === 'discord' ? 'Discord' : 'Plex',
         identity = accountValue.identities.find(i => i.provider === provider);
+      removeSubject = identity?.subject;
       $('account-remove-title').textContent = 'Remove ' + label + '?';
       $('account-remove-description').textContent =
         (identity.name !== identity.subject ? identity.name + ' will be removed from uburoom. ' : '') +
@@ -277,11 +506,20 @@ export function mount(host, deps) {
   $('account-remove-confirm').addEventListener('click', async () => {
     const release = accountPopups.hold($('account-remove-dialog'));
     const button = $('account-remove-confirm'),
-      identity = accountValue.identities.find(i => i.provider === removeProvider);
+      identity = accountValue.identities.find(
+        i => i.provider === removeProvider && (!removeSubject || i.subject === removeSubject),
+      );
+    const subject = removeSubject || identity?.subject;
+    const endpoint = removeProvider.startsWith('jellyfin:')
+      ? '/api/account/jellyfin/remove'
+      : '/api/account/' + removeProvider + '/remove';
     button.disabled = true;
     $('account-remove-error').textContent = '';
     try {
-      await deps.api('/api/account/' + removeProvider + '/remove', { subject: identity.subject });
+      await deps.api(endpoint, {
+        ...(removeProvider.startsWith('jellyfin:') ? { provider: removeProvider } : {}),
+        subject,
+      });
       location.replace('/?account=1');
     } catch (error) {
       $('account-remove-error').textContent = error.message;

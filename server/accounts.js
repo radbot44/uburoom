@@ -213,14 +213,12 @@ class Accounts {
         this.transaction(() => {
           repositories(this.db).accounts.updateIdentitiesSetVerifiedNameByProviderSubject(name, provider, subject);
           repositories(this.db).accounts.updateUsersSetNameByIdSignedInAt(name, old.userId);
-          this.seen(old.userId);
         });
       return this.canonical(old.userId);
     }
     return this.transaction(() => {
       const id = this.create(name);
       repositories(this.db).accounts.insertIdentities(provider, subject, id, name, Number(verified));
-      if (verified) this.seen(id);
       return this.canonical(id);
     });
   }
@@ -247,19 +245,22 @@ class Accounts {
   unlink(userId, provider, subject) {
     const user = this.canonical(userId),
       identities = this.identities(user.id);
-    if (!identities.some(i => i.provider === provider && i.subject === subject))
+    if (!identities.some(i => i.provider === provider && i.subject === String(subject)))
       throw new Error('Account connection changed; open Account again');
     const remaining = identities.find(
-      i => i.provider !== provider && i.verified && (i.provider !== 'plex' || this.hasCredential('plex', i.subject)),
+      i =>
+        !(i.provider === provider && i.subject === String(subject)) &&
+        i.verified &&
+        ((i.provider !== 'plex' && !i.provider.startsWith('jellyfin:')) || this.hasCredential(i.provider, i.subject)),
     );
     if (!remaining) throw new Error('Connect another sign-in method before removing this account');
     this.transaction(() => {
-      repositories(this.db).accounts.deleteIdentitiesByUserIdProviderSubject(user.id, provider, subject);
-      repositories(this.db).accounts.deleteCredential(provider, subject);
+      repositories(this.db).accounts.deleteIdentitiesByUserIdProviderSubject(user.id, provider, String(subject));
+      repositories(this.db).accounts.deleteCredential(provider, String(subject));
       repositories(this.db).accounts.updateUsersSetRevisionById(user.id);
       this.audit(user.id, 'self-unlink', { provider, subject });
     });
-    this.credentialCache.delete(credentialKey(provider, subject));
+    this.credentialCache.delete(credentialKey(provider, String(subject)));
     return this.canonical(user.id);
   }
   merge(survivor, retired, actor, action = 'self-merge', verifiedIdentity) {
@@ -270,23 +271,30 @@ class Accounts {
     if (new Set(all.map(i => i.provider)).size !== all.length)
       throw new Error('Accounts have conflicting login identities');
     return this.transaction(() => {
-      repositories(this.db).accounts.updateIdentitiesSetUserIdByUserId(survivor, retired);
+      const repos = repositories(this.db);
+      repos.accounts.updateIdentitiesSetUserIdByUserId(survivor, retired);
       if (verifiedIdentity?.provider && verifiedIdentity?.subject)
-        repositories(this.db).accounts.updateIdentitiesSetVerifiedNameByUserIdProviderSubject(
+        repos.accounts.updateIdentitiesSetVerifiedNameByUserIdProviderSubject(
           verifiedIdentity.name || null,
           survivor,
           verifiedIdentity.provider,
           String(verifiedIdentity.subject),
         );
-      const rooms = repositories(this.db).rooms;
+      const rooms = repos.rooms;
+      rooms.updateRoomsCreatorIdOnMerge(survivor, retired);
       rooms.copyRoomInvitesOnMerge(survivor, retired);
       rooms.deleteRoomInvitesByUserId(retired);
       rooms.copyRoomHostsOnMerge(survivor, retired, survivor);
       rooms.deleteRoomHostsByUserId(retired);
+      rooms.deleteDuplicateCreatorHosts(survivor);
+      rooms.updateRoomEventsCreatorIdOnMerge(survivor, retired);
+      rooms.updateRoomHostGrantsIssuerIdOnMerge(survivor, retired);
+      repos.history.updateUserIdOnMerge(survivor, retired);
       rooms.copyRoomInviteBlocksOnMerge('user:' + survivor, 'user:' + retired);
       rooms.deleteRoomInviteBlocksBySubject('user:' + retired);
-      repositories(this.db).accounts.updateUsersSetRetiredIntoRevisionById(survivor, retired);
-      repositories(this.db).accounts.updateUsersSetRevisionSignedInAtById(retired, survivor);
+      repos.accounts.updateUsersRetiredIntoPathCompression(survivor, retired);
+      repos.accounts.updateUsersSetRetiredIntoRevisionById(survivor, retired);
+      repos.accounts.updateUsersSetRevisionSignedInAtById(retired, survivor);
       this.audit(actor, action, { survivor, retired, identities: all });
       return survivor;
     });
@@ -339,7 +347,8 @@ class Accounts {
         identities: this.identities(user.id).map(i => ({
           ...i,
           authenticated: !!i.verified,
-          credentialStored: i.provider === 'plex' && !!this.credential('plex', i.subject),
+          credentialStored:
+            (i.provider === 'plex' || i.provider.startsWith('jellyfin:')) && this.hasCredential(i.provider, i.subject),
         })),
       }
     );

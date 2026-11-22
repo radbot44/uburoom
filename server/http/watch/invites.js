@@ -14,20 +14,23 @@ function roomInvites({
   body,
   json,
   throttle,
+  COOKIES,
   cookie,
   cookies,
+  replaceBrowserSession,
   registry,
   accounts,
   logins,
   allowedOrigin,
   rawLogin,
   login,
+  entryPolicy,
 }) {
   // Room invites. 'preview' names the room; 'join' lets the person in. Someone the
   // server already admits just goes to the room (and is remembered by a private
   // room). Anyone else enters as a guest when the room allows guests.
   async function joinInvite(req, res) {
-    if (!allowedOrigin(req) || !throttle('invite:' + (clientAddress(req) || 'local'), 20))
+    if (!allowedOrigin(req) || !throttle('invite:' + (clientAddress(req, config) || 'local'), 20))
       return json(res, 429, { error: 'Too many tries; wait a minute and try again' });
     const data = await body(req);
     if (!['preview', 'join'].includes(data.action)) return json(res, 400, { error: 'Unsupported invite action' });
@@ -37,7 +40,7 @@ function roomInvites({
     const room = { id: record.id, name: record.name, slug: record.slug };
     const identity = await rawLogin(req);
     const signedIn = !!identity && !registry.isGuest(identity.userId);
-    const device = cookies(req).uburoom_device,
+    const device = cookies(req)[COOKIES.device],
       deviceHash = /^[a-f0-9]{64}$/.test(device || '') ? hash(device) : undefined;
     const subjects = [
       ...(identity ? ['user:' + identity.userId] : []),
@@ -51,7 +54,8 @@ function roomInvites({
     const member = !!identity && !identity.guestRoom && !!(await login(req));
     const guestsAllowed = !!hub.guestsEnabled() && record.allowGuests;
     const signInRequired = !!config.guests?.requireSignIn;
-    if (data.action === 'preview')
+    if (data.action === 'preview') {
+      const publicAccess = entryPolicy?.public();
       return json(res, 200, {
         room,
         member,
@@ -59,11 +63,15 @@ function roomInvites({
         name: signedIn ? registry.canonical(identity.userId)?.name : undefined,
         guestsAllowed,
         signInRequired,
+        access: publicAccess,
         providers: {
-          discord: config.accessPolicy?.discord !== false && !!config.clientId,
-          plex: config.accessPolicy?.plex !== false,
+          discord: !!publicAccess?.discord,
+          plex: !!publicAccess?.plex,
+          accounts: !!publicAccess?.accounts,
+          ...(publicAccess?.jellyfin ? { jellyfin: publicAccess.jellyfin } : {}),
         },
       });
+    }
     if (member) {
       if (record.visibility === 'private' && !Policy.admitted(record, identity.userId)) {
         const updated = await watch.roomState.store.invite(record.id, identity.userId);
@@ -109,32 +117,36 @@ function roomInvites({
     if (!browser) {
       const token = randomBytes(32).toString('hex');
       browser = hash(token);
-      cookiesOut.push(cookie('uburoom_device', token, 31536000));
+      cookiesOut.push(cookie(COOKIES.device, token, 31536000));
     }
     if (signedIn) {
-      const login = logins.get(hash(cookies(req).uburoom || ''));
+      const login = logins.get(hash(cookies(req)[COOKIES.session] || ''));
       if (!login || login.userId !== identity.userId)
         return json(res, 409, { error: 'Your sign-in changed; open the invite again' });
       login.guestRoom = record.id;
       login.guestUntil = until;
       login.device = browser;
+      if (cookiesOut.length) res.setHeader('Set-Cookie', cookiesOut);
     } else {
-      const previous = cookies(req).uburoom;
-      if (previous && identity) logins.delete(hash(previous));
-      const id = randomBytes(32).toString('hex'),
-        account = registry.canonical(registry.createGuest(name));
-      logins.set(hash(id), {
-        userId: account.id,
-        accountRevision: account.revision,
-        name: account.name,
-        csrf: randomBytes(32).toString('hex'),
-        expires: until,
-        guestRoom: record.id,
-        device: browser,
-      });
-      cookiesOut.push(cookie('uburoom', id, config.guests.sessionHours * 3600));
+      const account = registry.canonical(registry.createGuest(name));
+      await replaceBrowserSession(
+        req,
+        res,
+        {
+          userId: account.id,
+          accountRevision: account.revision,
+          name: account.name,
+          csrf: randomBytes(32).toString('hex'),
+          expires: until,
+          guestRoom: record.id,
+          device: browser,
+        },
+        {
+          maxAge: config.guests.sessionHours * 3600,
+          extraCookies: cookiesOut,
+        },
+      );
     }
-    if (cookiesOut.length) res.setHeader('Set-Cookie', cookiesOut);
     registry.audit(identity?.userId || 'guest', 'room-guest-join', { roomId: record.id, signedIn });
     await accounts.save();
     json(res, 200, { room, guest: true });

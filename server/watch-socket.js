@@ -484,7 +484,7 @@ function watchSockets({
     if (req.url !== '/watch-socket') return socket.destroy();
     if (
       !allowed(req.headers.origin) ||
-      !throttle('watch-socket:' + (clientAddress(req) || 'local'), 30) ||
+      !throttle('watch-socket:' + (clientAddress(req, config) || 'local'), 30) ||
       clients.size >= maxConnections
     )
       return socket.destroy();
@@ -493,7 +493,7 @@ function watchSockets({
       const client = {
         ws,
         socket: req.socket,
-        remoteAddress: clientAddress(req),
+        remoteAddress: clientAddress(req, config),
         headers: /** @type {Record<string, string | undefined>} */ ({
           cookie: req.headers.cookie,
           origin: req.headers.origin,
@@ -680,6 +680,16 @@ function watchSockets({
   }, livenessMs);
   timer.unref();
   return {
+    onlineUsers() {
+      const ids = [];
+      for (const client of clients) if (client.authenticated && client.ws.readyState === 1) ids.push(client.userId);
+      return ids;
+    },
+    disconnectUsers(ids) {
+      const match = new Set(ids);
+      for (const client of clients)
+        if (client.authenticated && match.has(client.userId)) client.ws.close(4003, 'Sign in again');
+    },
     close() {
       clearInterval(timer);
       for (const client of clients) {

@@ -4,8 +4,8 @@
 // Discord is the only external member source; everyone else is a known local account.
 const SOURCES = ['discord'];
 class UserDirectory {
-  constructor({ registry, config, discord, discordOnline, now = Date.now }) {
-    Object.assign(this, { registry, config, discord, discordOnline, now });
+  constructor({ registry, config, discord, discordOnline, onlineUsers, now = Date.now }) {
+    Object.assign(this, { registry, config, discord, discordOnline, onlineUsers, now });
     this.cache = new Map();
     this.connections = new Map();
   }
@@ -16,6 +16,14 @@ class UserDirectory {
     this.connections.delete(socket);
   }
   online() {
+    if (typeof this.onlineUsers === 'function') {
+      const ids = new Set();
+      for (const userId of this.onlineUsers()) {
+        const user = this.registry.canonical(userId);
+        if (user) ids.add(user.id);
+      }
+      return ids;
+    }
     const ids = new Set();
     for (const [socket, entry] of this.connections) {
       if (socket.readyState !== 1 || this.now() - entry.at > 10000) this.connections.delete(socket);
@@ -137,7 +145,20 @@ class UserDirectory {
         base +
         (row.available ? ' · Online on Discord' : '') +
         (row.providers.length
-          ? ' · ' + row.providers.map(p => (p === 'discord' ? 'Discord' : 'Plex')).join(' / ')
+          ? ' · ' +
+            row.providers
+              .map(p =>
+                p === 'discord'
+                  ? 'Discord'
+                  : p === 'plex'
+                    ? 'Plex'
+                    : p === 'uburoom'
+                      ? 'uburoom'
+                      : p.startsWith('jellyfin:')
+                        ? 'Jellyfin'
+                        : p,
+              )
+              .join(' / ')
           : ' · Guest');
       const aliases = [...new Set(row.aliases)].filter(alias => alias && alias !== row.name);
       if (aliases.length) row.caption += ' · ' + aliases.join(' / ');

@@ -41,19 +41,8 @@ function createAccess({ registry, config, plexAuth, entryPolicy }) {
     discordOnline: subject => live?.discordOnline?.(subject),
     validVoiceChannel: id => !!live?.validVoiceChannel(id),
     options: () => live?.options() || { available: false },
-    canWatch: (id, actor) =>
-      config.accessPolicy
-        ? entryPolicy.fresh(id, actor)
-        : access.isMember(id) || (!!registry.canonical(id) && plexAuth.fresh(id)),
-    refreshWatch: async (id, actor) => {
-      if (config.accessPolicy) return entryPolicy.admit(id, actor);
-      if (access.isMember(id) || (await access.refresh(id))) return true;
-      try {
-        return !!(await plexAuth.forUser(id));
-      } catch {
-        return false;
-      }
-    },
+    canWatch: (id, actor) => entryPolicy.fresh(id, actor),
+    refreshWatch: (id, actor) => entryPolicy.admit(id, actor),
   };
   return Object.assign(access, {
     /** Receives Discord's membership view when the bot connects (or a test's stand-in). */

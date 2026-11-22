@@ -6,7 +6,7 @@ import { reveal } from './entry-ways.js';
  * placed after Plex in the list of ways in. Choosing one opens its panel under it: the Quick Connect
  * code (large, with its expiry and Cancel), or a username and password form when the server has
  * Quick Connect off. Every message is scrolled into view. */
-export function jellyfinEntry(api, ways) {
+export function jellyfinEntry(api, ways, { onSignedIn = () => location.reload() } = {}) {
   const panel = $('jellyfin-sign-in');
   const status = $('jellyfin-sign-in-status');
   const form = $('jellyfin-sign-in-form');
@@ -16,6 +16,7 @@ export function jellyfinEntry(api, ways) {
   let generation = 0;
   let timer;
   let cancelSource;
+  let cancelPromise;
 
   function message(text) {
     status.hidden = !text;
@@ -37,7 +38,11 @@ export function jellyfinEntry(api, ways) {
     if (cancelSource) {
       const source = cancelSource;
       cancelSource = undefined;
-      void api('/api/account/jellyfin', { source, action: 'cancel' }).catch(() => {});
+      cancelPromise = api('/api/account/jellyfin', { source, action: 'cancel' })
+        .catch(() => {})
+        .finally(() => {
+          cancelPromise = undefined;
+        });
     }
   }
   $('jellyfin-quick-connect-cancel').addEventListener('click', () => {
@@ -75,6 +80,10 @@ export function jellyfinEntry(api, ways) {
         const active = () => attempt === generation;
         message('Contacting Jellyfin…');
         try {
+          if (cancelPromise) {
+            await cancelPromise;
+            if (!active()) return;
+          }
           const result = await request('start');
           if (!active()) return;
           message('');
@@ -85,6 +94,7 @@ export function jellyfinEntry(api, ways) {
               label,
               usernameMaxLength: 200,
               authenticate: (username, password) => request('password', { username, password }),
+              onSignedIn,
             }).focus();
             reveal(form);
             return;
@@ -107,7 +117,7 @@ export function jellyfinEntry(api, ways) {
             const state = await request('poll');
             if (active() && state.ok) {
               cancelSource = undefined;
-              location.reload();
+              onSignedIn();
               return;
             }
           }

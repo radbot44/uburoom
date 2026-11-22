@@ -22,8 +22,17 @@ const LIMITED = 'Too many sign-in attempts; try again later';
  *   sessions: any, loginStore: any, hub: any, watchRoutes: () => any, files: any}} services
  * @returns {{routes: import('./router').Route[], sweep: () => void}}
  */
-function uburoomAccountRoutes({ config, registry, uburoomAccounts, sessions, loginStore, hub, watchRoutes, files }) {
-  const { json, body, cookie, cookies, logins, user, protectedPost, validIdentity } = sessions;
+function uburoomAccountRoutes({
+  config,
+  registry,
+  uburoomAccounts,
+  sessions,
+  loginStore,
+  hub,
+  revokeAccountSessions,
+  files,
+}) {
+  const { COOKIES, json, body, cookies, logins, replaceBrowserSession, user, protectedPost, validIdentity } = sessions;
   const failures = new Map();
 
   function limited(key, max) {
@@ -43,31 +52,23 @@ function uburoomAccountRoutes({ config, registry, uburoomAccounts, sessions, log
       return 'username:' + String(typeof value === 'string' ? value.trim().toLowerCase() : '').slice(0, 64);
     }
   };
-  const addressKey = req => 'address:' + (clientAddress(req) || 'local');
+  const addressKey = req => 'address:' + (clientAddress(req, config) || 'local');
   const sameOrigin = req => req.headers.origin === config.publicUrl;
 
   /** A new browser session for this account; signing in replaces a guest session in this browser. */
-  function signedIn(req, res, userId) {
+  async function signedIn(req, res, userId) {
     const account = registry.canonical(userId);
-    const previous = cookies(req).uburoom && hash(cookies(req).uburoom);
-    if (previous && logins.has(previous) && registry.isGuest(logins.get(previous).userId)) logins.delete(previous);
-    const token = randomBytes(32).toString('hex');
-    logins.set(hash(token), {
+    await replaceBrowserSession(req, res, {
       userId: account.id,
       accountRevision: account.revision,
       name: account.name,
       csrf: randomBytes(32).toString('hex'),
       expires: null,
     });
-    loginStore.save();
-    res.setHeader('Set-Cookie', cookie('uburoom', token, sessions.loginSeconds));
   }
   /** Ends every session of these accounts, and their room connections. */
-  async function endSessions(ids) {
-    for (const id of ids) if (hub.adminUsers?.delete(id)) hub.adminEpoch++;
-    for (const [token, login] of logins) if (ids.includes(login.userId)) logins.delete(token);
-    loginStore.save();
-    await watchRoutes().invalidate(ids);
+  function endSessions(ids) {
+    return revokeAccountSessions(ids);
   }
 
   /** The operator's request, checked now and again by `still()` after any awaited work. */
@@ -75,7 +76,7 @@ function uburoomAccountRoutes({ config, registry, uburoomAccounts, sessions, log
     const login = req.method === 'GET' ? await user(req) : await protectedPost(req);
     const current = () =>
       !!login &&
-      logins.get(hash(cookies(req).uburoom || '')) === login &&
+      logins.get(hash(cookies(req)[COOKIES.session] || '')) === login &&
       validIdentity(login) &&
       (login.expires === null || login.expires > Date.now());
     const still = () => current() && isServerOperator(registry, config, login.userId);
@@ -160,7 +161,7 @@ function uburoomAccountRoutes({ config, registry, uburoomAccounts, sessions, log
           }
           await registry.flush();
           await endSessions([userId]);
-          signedIn(req, res, userId);
+          await signedIn(req, res, userId);
           json(res, 200, { ok: true });
         } catch (error) {
           if (error.code === 'ACCOUNT_BUSY') return json(res, 429, { error: error.message });
@@ -198,7 +199,7 @@ function uburoomAccountRoutes({ config, registry, uburoomAccounts, sessions, log
         }
         failures.delete(name);
         await registry.flush();
-        signedIn(req, res, userId);
+        await signedIn(req, res, userId);
         json(res, 200, { ok: true });
       },
     },

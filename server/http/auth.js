@@ -36,12 +36,14 @@ function authRoutes({
   files,
 }) {
   const {
+    COOKIES,
     logins,
     oauthReady,
     loginSeconds,
     cookieRenewedAt,
     cookie,
     cookies,
+    replaceBrowserSession,
     json,
     renewCookie,
     user,
@@ -58,7 +60,7 @@ function authRoutes({
       path: '/auth/handoff',
       async handle({ res }) {
         const content = await files.readAsset(path.join(WEB, 'handoff.html'));
-        res.setHeader('Set-Cookie', cookie('uburoom_handoff', randomBytes(32).toString('hex'), 60));
+        res.setHeader('Set-Cookie', cookie(COOKIES.handoff, randomBytes(32).toString('hex'), 60));
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(content);
       },
@@ -125,7 +127,7 @@ function authRoutes({
         if (
           !oauthReady ||
           !state ||
-          cookies(req).uburoom_oauth !== state ||
+          cookies(req)[COOKIES.oauth] !== state ||
           !attempt ||
           attempt.expires <= Date.now() ||
           !code ||
@@ -137,7 +139,7 @@ function authRoutes({
           attempt.linkUserId &&
           (!linking ||
             linking.userId !== attempt.linkUserId ||
-            hash(cookies(req).uburoom || '') !== attempt.sourceHash ||
+            hash(cookies(req)[COOKIES.session] || '') !== attempt.sourceHash ||
             linking.accountRevision !== attempt.revision)
         )
           return json(res, 403, { error: 'Account changed during linking; start again' });
@@ -148,32 +150,29 @@ function authRoutes({
           if ((await user(req)) !== linking) return json(res, 403, { error: 'Account sign-in expired during linking' });
           await accountRoutes().verifiedLink(req, res, linking, 'discord', identity.id, name, undefined, oauth);
           const existing = res.getHeader('Set-Cookie');
+          const previousCookies = existing ? (Array.isArray(existing) ? existing : [existing]) : [];
           res.writeHead(302, {
             Location: '/?account=1',
-            'Set-Cookie': [...(existing ? [existing] : []), cookie('uburoom_oauth', '', 0)],
+            'Set-Cookie': [...previousCookies, cookie(COOKIES.oauth, '', 0)],
           });
           return res.end();
         }
-        if (!config.accessPolicy && !(await access.refresh(identity.id)))
-          return json(res, 403, {
-            error: 'Sign in as a member of a Discord server that allows entry. The bot must be connected.',
-          });
-        const id = randomBytes(32).toString('hex');
-        // Signing in replaces a guest session in this browser.
-        const previous = logins.get(hash(cookies(req).uburoom || ''));
-        if (previous && registry.isGuest(previous.userId)) logins.delete(hash(cookies(req).uburoom));
         if (identity.id === config.ownerId) setOwnerName(name);
-        logins.set(hash(id), {
-          ...discordIdentity({ userId: identity.id, name }),
-          csrf: randomBytes(32).toString('hex'),
-          expires: null,
-          ...(oauth ? { oauth } : {}),
-        });
-        accounts.save();
-        res.writeHead(302, {
-          Location: safeReturn(attempt.returnTo) || '/',
-          'Set-Cookie': [cookie('uburoom', id, loginSeconds), cookie('uburoom_oauth', '', 0)],
-        });
+        await replaceBrowserSession(
+          req,
+          res,
+          {
+            ...discordIdentity({ userId: identity.id, name }),
+            csrf: randomBytes(32).toString('hex'),
+            expires: null,
+            ...(oauth ? { oauth } : {}),
+          },
+          {
+            maxAge: loginSeconds,
+            extraCookies: [cookie(COOKIES.oauth, '', 0)],
+          },
+        );
+        res.writeHead(302, { Location: safeReturn(attempt.returnTo) || '/' });
         return res.end();
       },
     },
@@ -184,7 +183,7 @@ function authRoutes({
       async handle({ req, res }) {
         // Sign-out needs the existing cookie and CSRF proof, not current provider
         // eligibility: revocation or an upstream outage must not trap a login.
-        const token = cookies(req).uburoom,
+        const token = cookies(req)[COOKIES.session],
           id = token && hash(token),
           login = id && logins.get(id);
         if (!login || req.headers.origin !== config.publicUrl || req.headers['x-csrf-token'] !== login.csrf)
@@ -194,10 +193,10 @@ function authRoutes({
         cookieRenewedAt.delete(id);
         accounts.save();
         await watchRoutes().logout(id);
-        res.setHeader('Set-Cookie', cookie('uburoom', '', 0));
+        res.setHeader('Set-Cookie', cookie(COOKIES.session, '', 0));
         json(res, 200, { ok: true });
       },
     },
   ];
 }
-module.exports = { authRoutes };
+module.exports = { authRoutes, safeReturn };

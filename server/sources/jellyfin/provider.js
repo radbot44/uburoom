@@ -833,6 +833,7 @@ function jellyfinProvider({ source, pipeline, pin, logger, fetcher, registry }) 
     root: jellyfin,
     /** The server id, once `identity()` has answered (or as pinned before). */
     serverId: jellyfinId(pin?.get()),
+    watchStateReporting: !!source.reporting?.watchState,
     identity: serverId,
     get serverName() {
       return jellyfin.serverName || '';

@@ -1,5 +1,4 @@
 'use strict';
-const { repositories } = require('./repositories');
 
 /**
  * Guests: people a room's invite lets in who could not otherwise enter. Their browser session
@@ -7,9 +6,9 @@ const { repositories } = require('./repositories');
  * visitors' guest access ends at login.guestUntil.
  * `rooms` and `endedFor` are read when called: the rooms and the watch routes are built after this.
  * @param {{config: any, logger: any, registry: any, accounts: any, logins: Map<string, any>,
- *   rooms: () => any, endedFor: (ids: string[]) => Promise<void>}} services
+ *   rooms: () => any, endedHash?: (hash: string) => Promise<void>, endedFor?: (ids: string[]) => Promise<void>}} services
  */
-function createGuests({ config, logger, registry, accounts, logins, rooms, endedFor }) {
+function createGuests({ config, logger, registry, accounts, logins, rooms, endedHash, endedFor }) {
   const enabled = () => !!config.guests?.enabled;
   /** What the entry policy asks: may this account enter this room as a guest? */
   const admits = (roomId, userId) => {
@@ -34,13 +33,20 @@ function createGuests({ config, logger, registry, accounts, logins, rooms, ended
         held.add(login.userId);
     return held;
   };
-  // Ends guest sessions in a room (all of them, or just these accounts): their
-  // viewers get the ordinary "removed from the room" notice, then their sign-in ends.
-  async function endSessions(roomId, userIds) {
+  // Ends guest sessions in a room (all of them, or just these accounts/session hashes): their
+  // viewers get the ordinary "removed from the room" notice, then only those sessions end.
+  async function endSessions(roomId, userIds, matchKeys) {
     const ended = new Set();
+    const endedHashes = new Set();
     for (const [key, login] of logins) {
-      if (login.guestRoom !== roomId || (userIds && !userIds.includes(login.userId))) continue;
+      if (
+        login.guestRoom !== roomId ||
+        (userIds && !userIds.includes(login.userId)) ||
+        (matchKeys && !matchKeys.has(key))
+      )
+        continue;
       ended.add(login.userId);
+      endedHashes.add(key);
       if (registry.isGuest(login.userId)) logins.delete(key);
       else {
         delete login.guestRoom;
@@ -48,17 +54,22 @@ function createGuests({ config, logger, registry, accounts, logins, rooms, ended
         delete login.device;
       }
     }
-    if (!ended.size) return [];
+    if (!endedHashes.size) return [];
     await accounts.save();
     const watch = rooms();
     const room = watch.rooms.get(roomId);
     if (room)
       for (const [id, viewer] of [...room.viewers])
-        if (ended.has(viewer.userId)) {
+        if (
+          viewer.browserLoginHash
+            ? endedHashes.has(viewer.browserLoginHash)
+            : viewer.actor?.guestRoomId === roomId && ended.has(viewer.userId)
+        ) {
           viewer.watchSocket?.watchKick?.(roomId);
           await watch.leave(room, viewer.actor, id, 'kicked');
         }
-    await endedFor([...ended]);
+    if (endedHash) for (const hashKey of endedHashes) await endedHash(hashKey);
+    else if (endedFor) await endedFor([...ended]);
     return [...ended];
   }
   // Guest sessions end when guests are turned off server-wide, their room is
@@ -70,8 +81,8 @@ function createGuests({ config, logger, registry, accounts, logins, rooms, ended
     (running ||= (async () => {
       const watch = rooms();
       const now = Date.now(),
-        gone = new Set();
-      for (const login of logins.values()) {
+        gone = new Map();
+      for (const [key, login] of logins) {
         if (!login.guestRoom) continue;
         let over = !enabled() || (login.guestUntil ?? Infinity) <= now;
         if (!over)
@@ -80,20 +91,13 @@ function createGuests({ config, logger, registry, accounts, logins, rooms, ended
           } catch {
             over = true;
           }
-        if (over) gone.add(login.guestRoom);
+        if (over) {
+          let keys = gone.get(login.guestRoom);
+          if (!keys) gone.set(login.guestRoom, (keys = new Set()));
+          keys.add(key);
+        }
       }
-      for (const roomId of gone) {
-        const expired = [...logins.values()]
-          .filter(
-            login =>
-              login.guestRoom === roomId &&
-              (!enabled() ||
-                (login.guestUntil ?? Infinity) <= now ||
-                !repositories(watch.roomState.store.db).rooms.exists(roomId)),
-          )
-          .map(login => login.userId);
-        await endSessions(roomId, expired);
-      }
+      for (const [roomId, keys] of gone) await endSessions(roomId, undefined, keys);
       if (now - cleanupAt >= 60000) {
         cleanupAt = now;
         const inUse = new Set([...logins.values()].map(login => login.userId));
