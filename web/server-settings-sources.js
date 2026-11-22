@@ -14,10 +14,10 @@ const STEP_TIMEOUT = 25000;
 
 /**
  * @param {HTMLElement} panel
- * @param {{request: (path: string, data?: any, options?: any) => Promise<any>}} services
+ * @param {{request: (path: string, data?: any, options?: any) => Promise<any>, onSaved?: () => void}} services
  * @returns {{load: () => Promise<void>, reset: () => void}}
  */
-export function mount(panel, { request }) {
+export function mount(panel, { request, onSaved }) {
   const doc = panel.ownerDocument;
   const node = (tag, parent, text, style) => {
     const value = doc.createElement(tag);
@@ -96,11 +96,12 @@ export function mount(panel, { request }) {
   }
   const step = (flow, name, data = {}) =>
     request('/api/operator/sources/setup/step', { flow, step: name, ...data }, { timeoutMs: STEP_TIMEOUT });
-  function accept(result) {
+  function accept(result, saved = false) {
     revision = result.revision;
     sources = result.sources;
     removed = result.removed || [];
     types = result.types || types;
+    if (saved) onSaved?.();
   }
   function show(next) {
     generation++;
@@ -433,7 +434,7 @@ export function mount(panel, { request }) {
           },
         });
         if (!current()) return;
-        accept(result);
+        accept(result, true);
         details.clear();
         status.textContent = 'Saved. Restart uburoom to apply it.';
         show({ name: 'list' });
@@ -464,7 +465,7 @@ export function mount(panel, { request }) {
           ...(chosen ? { libraries: chosen() } : {}),
         });
         if (!current()) return;
-        accept(result);
+        accept(result, true);
         details.clear();
         status.textContent = 'Saved. Restart uburoom to apply it.';
         show({ name: 'list' });
@@ -597,7 +598,7 @@ export function mount(panel, { request }) {
           },
         });
         if (!current()) return;
-        accept(result);
+        accept(result, true);
         details.clear();
         status.textContent = 'Saved. Restart uburoom to apply it.';
         show({ name: 'list' });
@@ -629,7 +630,7 @@ export function mount(panel, { request }) {
         act(async current => {
           const result = await request('/api/operator/sources', { revision, action: 'remove', id: source.id });
           if (!current()) return;
-          accept(result);
+          accept(result, true);
           status.textContent = result.recoveryBackup
             ? 'Removed. Before restarting, verify another operator sign-in. To recover, restore the configuration from ' +
               result.recoveryBackup +
@@ -684,19 +685,36 @@ export function mount(panel, { request }) {
     const name = nameField(parent, '', view.ready.name);
     node('p', parent, view.ready.address, 'hint');
     const chosen = librariesField(parent, view.ready.libraries, () => true);
-    inlineActions(parent, label, () => act(current => add(current, name.value, chosen())));
+    let allowMembers;
+    if (view.type === 'plex' || view.type === 'jellyfin') {
+      const row = node('label', parent, null, 'form-checkbox');
+      allowMembers = node('input', row);
+      allowMembers.type = 'checkbox';
+      allowMembers.id = 'server-source-allow-members';
+      node(
+        'span',
+        row,
+        view.type === 'plex'
+          ? 'Allow people with access to this Plex server to sign in'
+          : 'Allow users of this Jellyfin server to sign in',
+      );
+    }
+    inlineActions(parent, label, () =>
+      act(current => add(current, name.value, chosen(), allowMembers ? allowMembers.checked : false)),
+    );
   }
   /** Saves the ready flow as a new source, then shows the list. */
-  async function add(current, name, libraries) {
+  async function add(current, name, libraries, allowMembers = false) {
     const result = await request('/api/operator/sources', {
       revision,
       action: 'add',
       flow: view.flow,
       name,
       libraries,
+      ...(allowMembers ? { allowMembers: true } : {}),
     });
     if (!current()) return;
-    accept(result);
+    accept(result, true);
     details.clear();
     status.textContent = 'Added. Restart uburoom to apply it.';
     void closeFlow();

@@ -68,6 +68,9 @@ function mount({ request, trigger }) {
   let base,
     draft,
     revision,
+    accessMeta,
+    serverPasswordDraft = '',
+    sourcesDirty = false,
     generation = 0,
     busy = false,
     saving = false,
@@ -77,16 +80,27 @@ function mount({ request, trigger }) {
     writers = new Map(),
     permissionControls = [];
   const same = (key, a, b) =>
-    JSON.stringify(key.endsWith('_permissions') ? [...a].sort() : a) ===
-    JSON.stringify(key.endsWith('_permissions') ? [...b].sort() : b);
-  const changes = () =>
-    base
-      ? Object.fromEntries(
-          Object.keys(base)
-            .filter(key => !same(key, base[key], draft[key]))
-            .map(key => [key, structuredClone(draft[key])]),
-        )
-      : {};
+    JSON.stringify(
+      key.endsWith('_permissions') || key === 'access.source_members' || key === 'discord.excluded_guild_ids'
+        ? [...a].sort()
+        : a,
+    ) ===
+    JSON.stringify(
+      key.endsWith('_permissions') || key === 'access.source_members' || key === 'discord.excluded_guild_ids'
+        ? [...b].sort()
+        : b,
+    );
+  const changes = () => {
+    if (!base) return {};
+    const patch = Object.fromEntries(
+      Object.keys(base)
+        .filter(key => !same(key, base[key], draft[key]))
+        .map(key => [key, structuredClone(draft[key])]),
+    );
+    if (draft?.['access.password'] && serverPasswordDraft.length > 0)
+      patch['secrets.server_password'] = serverPasswordDraft;
+    return patch;
+  };
   const dirty = () => !!base && Object.keys(changes()).length > 0;
   const savedControl = control => !panels.accounts.contains(control) && !panels.sources.contains(control);
   popups.register(dialog, { dirty, busy: () => saving });
@@ -95,12 +109,16 @@ function mount({ request, trigger }) {
     generation++;
     base = draft = undefined;
     revision = undefined;
+    accessMeta = undefined;
+    serverPasswordDraft = '';
+    sourcesDirty = false;
     conflicts.clear();
     busy = saving = false;
     accountsPanel.reset();
     sourcesPanel.reset();
   });
   function state() {
+    updateAccessUi();
     save.disabled = busy || !revision || !dirty() || conflicts.size > 0;
     cancel.disabled = close.disabled = saving;
     save.setAttribute('aria-busy', String(saving));
@@ -128,6 +146,18 @@ function mount({ request, trigger }) {
     if (section !== key) content.scrollTop = 0;
     if (key === 'accounts' && section !== key && dialog.open) void accountsPanel.load();
     if (key === 'sources' && section !== key && dialog.open) void sourcesPanel.load();
+    if (
+      key !== 'accounts' &&
+      key !== 'sources' &&
+      section !== key &&
+      dialog.open &&
+      sourcesDirty &&
+      !dirty() &&
+      !busy
+    ) {
+      sourcesDirty = false;
+      void load();
+    }
     section = key;
     // Accounts and Sources do not depend on the saved settings, so they show even before (or without) them.
     if (key === 'accounts' || key === 'sources') content.hidden = false;
@@ -214,13 +244,93 @@ function mount({ request, trigger }) {
     });
     return input;
   }
-  const accountsPanel = uburoomServerAccounts.mount(panels.accounts, { request });
-  const sourcesPanel = uburoomServerSources.mount(panels.sources, { request });
+  const accountsPanel = uburoomServerAccounts.mount(panels.accounts, {
+    request,
+    onOpenAccess: () => selectSection('access'),
+  });
+  const sourcesPanel = uburoomServerSources.mount(panels.sources, {
+    request,
+    onSaved: () => {
+      sourcesDirty = true;
+    },
+  });
+  node('h3', panels.access, 'Who can sign in');
+  node(
+    'p',
+    panels.access,
+    'Anyone matching at least one enabled method can sign in and watch every library.',
+    'hint',
+  );
+  const sourceMembersKey = 'access.source_members';
+  labels[sourceMembersKey] = 'Media server members';
+  const sourceMemberRows = node('div', panels.access);
+  sourceMemberRows.id = 'server-access-sources';
+  writers.set(sourceMembersKey, selected => {
+    sourceMemberRows.replaceChildren();
+    const sources = accessMeta?.sources || [];
+    if (!sources.length) {
+      node(
+        'p',
+        sourceMemberRows,
+        'No Plex or Jellyfin servers configured yet. Add one in Sources to let its members sign in.',
+        'hint',
+      );
+      return;
+    }
+    for (const source of sources) {
+      const label = node('label', sourceMemberRows, null, 'form-checkbox');
+      const input = node('input', label);
+      input.type = 'checkbox';
+      input.value = source.id;
+      input.id = 'server-access-source-' + source.id;
+      input.checked = selected.includes(source.id);
+      const text =
+        source.type === 'plex'
+          ? `People with access to ${source.name} (Plex)`
+          : source.type === 'jellyfin'
+            ? `People with an account on ${source.name} (Jellyfin)`
+            : `Members of ${source.name}`;
+      node('span', label, text);
+      input.addEventListener('change', () => {
+        const next = new Set(draft[sourceMembersKey]);
+        if (input.checked) next.add(source.id);
+        else next.delete(source.id);
+        set(sourceMembersKey, [...next]);
+      });
+    }
+  });
+  checkbox(panels.access, 'access.accounts', 'People with an uburoom account');
+  node('p', panels.access, 'Master switch for local username and password accounts created in Accounts.', 'hint');
+  checkbox(panels.access, 'access.password', 'Anyone with the server password');
+  node('p', panels.access, 'Lets people join as named guests using one shared password.', 'hint');
+  const serverPasswordGroup = node('div', panels.access, null, 'server-access-subgroup');
+  serverPasswordGroup.hidden = true;
+  const serverPasswordWrapper = node('label', serverPasswordGroup, null, 'server-settings-field');
+  node('span', serverPasswordWrapper, 'Server password');
+  const serverPasswordInput = node('input', serverPasswordWrapper);
+  serverPasswordInput.type = 'password';
+  serverPasswordInput.id = 'server-secrets-server_password';
+  serverPasswordInput.autocomplete = 'new-password';
+  serverPasswordInput.maxLength = 1024;
+  serverPasswordInput.addEventListener('input', () => {
+    serverPasswordDraft = serverPasswordInput.value;
+    state();
+  });
+  const serverPasswordHint = node('p', serverPasswordGroup, '', 'hint');
+  checkbox(panels.access, 'access.discord_server', 'Members of Discord servers the bot has joined');
+  const discordConfigHint = node(
+    'p',
+    panels.access,
+    'Discord bot and OAuth credentials are not configured in config.yaml.',
+    'hint',
+  );
+  discordConfigHint.hidden = true;
+  const discordServersGroup = node('div', panels.access, null, 'server-access-subgroup');
   const excludedGuilds = 'discord.excluded_guild_ids';
   labels[excludedGuilds] = 'Discord server exclusions';
-  node('h3', panels.access, 'Discord servers');
-  node('p', panels.access, 'Uncheck a server to exclude it from Discord entry after restart.', 'hint');
-  const guildRows = node('div', panels.access);
+  node('h3', discordServersGroup, 'Discord servers');
+  node('p', discordServersGroup, 'Uncheck a server to exclude it from Discord entry after restart.', 'hint');
+  const guildRows = node('div', discordServersGroup);
   let joinedGuilds;
   writers.set(excludedGuilds, excluded => {
     guildRows.replaceChildren();
@@ -257,6 +367,66 @@ function mount({ request, trigger }) {
         );
     }
   });
+  node('h3', panels.access, 'Room invites');
+  const guestsEnabledInput = checkbox(
+    panels.access,
+    'guests.enabled',
+    'Allow room hosts to let guests in with an invite link',
+  );
+  const guestsHint = node('p', panels.access, 'Guests only see the room they were invited to.', 'hint');
+  const accessEmptyWarning = node('p', panels.access, 'Turn on at least one sign-in method.', 'server-settings-error');
+  accessEmptyWarning.id = 'server-access-empty-warning';
+  accessEmptyWarning.hidden = true;
+  const operatorLockoutWarning = node(
+    'p',
+    panels.access,
+    'Warning: none of the selected sign-in methods match your server operator account. After restart, you could lose access to Server settings unless another operator identity can sign in.',
+    'server-source-problem server-access-warning',
+  );
+  operatorLockoutWarning.id = 'server-access-lockout-warning';
+  operatorLockoutWarning.hidden = true;
+  function hasEntryRule() {
+    return !!(
+      draft?.['access.discord_server'] ||
+      draft?.['access.source_members']?.length ||
+      draft?.['access.accounts'] ||
+      draft?.['access.password']
+    );
+  }
+  function isOperatorLockedOut() {
+    const op = accessMeta?.operatorSignIn;
+    if (!op || !draft) return false;
+    const hasKnownMethod = op.discord || op.plex || op.accounts || op.jellyfinSourceIds?.length > 0;
+    if (!hasKnownMethod) return false;
+    const selectedSources = draft['access.source_members'] || [];
+    const plexIds = new Set((accessMeta?.sources || []).filter(s => s.type === 'plex').map(s => s.id));
+    if (op.discord && draft['access.discord_server']) return false;
+    if (op.accounts && draft['access.accounts']) return false;
+    if (op.plex && selectedSources.some(id => plexIds.has(id))) return false;
+    if (op.jellyfinSourceIds?.some(id => selectedSources.includes(id))) return false;
+    return true;
+  }
+  function updateAccessUi() {
+    const passwordOn = !!draft?.['access.password'];
+    serverPasswordGroup.hidden = !passwordOn;
+    serverPasswordInput.placeholder = base?.['access.password'] ? 'Saved; type to change' : 'Enter a server password';
+    serverPasswordHint.textContent = base?.['access.password']
+      ? 'Leave blank to keep the current password. Changing it signs out current password guests.'
+      : 'Required to enable server password entry.';
+    discordConfigHint.hidden = accessMeta?.discordConfigured !== false;
+    discordServersGroup.hidden = !draft?.['access.discord_server'];
+    const publicWebOff = accessMeta?.publicWeb === false;
+    guestsEnabledInput.dataset.fixed = publicWebOff ? 'true' : '';
+    guestsHint.textContent = publicWebOff
+      ? 'Requires the public web app (server.public_web_app: true).'
+      : 'Guests only see the room they were invited to.';
+    const anyRule = hasEntryRule();
+    accessEmptyWarning.hidden = !draft || anyRule;
+    operatorLockoutWarning.hidden = !draft || !anyRule || !isOperatorLockedOut();
+    accountsPanel.updateAccess(
+      accessMeta ? { running: accessMeta.runningAccounts, saved: base?.['access.accounts'] } : {},
+    );
+  }
   const capacity = node('div', panels.rooms, null, 'server-settings-grid');
   for (const [name, label] of [
     ['max_saved', 'Saved rooms limit'],
@@ -436,25 +606,29 @@ function mount({ request, trigger }) {
           : Array.isArray(value)
             ? key === 'transcoding.qualities'
               ? value.map(pair => pair[0] + 'p / ' + pair[1] + ' Mbps').join(', ')
-              : value
-                  .map(
-                    name =>
-                      ({
-                        playPause: 'Play / pause',
-                        chooseMedia: 'Skip / replay',
-                        addQueue: 'Add to queue',
-                        editQueue: 'Edit queue',
-                        continueWithoutHost: 'Continue without hosts',
-                        roomSettings: 'Room settings',
-                        closeRoom: 'Close room',
-                        deleteRoom: 'Delete room',
-                        addHosts: 'Add hosts',
-                        kickParticipants: 'Kick viewers',
-                        autoplay: 'Manage auto-play',
-                        seek: 'Seek',
-                      })[name] || name.toUpperCase(),
-                  )
-                  .join(', ') || 'None'
+              : key === 'access.source_members'
+                ? value
+                    .map(id => (accessMeta?.sources || []).find(s => s.id === id)?.name || id)
+                    .join(', ') || 'None'
+                : value
+                    .map(
+                      name =>
+                        ({
+                          playPause: 'Play / pause',
+                          chooseMedia: 'Skip / replay',
+                          addQueue: 'Add to queue',
+                          editQueue: 'Edit queue',
+                          continueWithoutHost: 'Continue without hosts',
+                          roomSettings: 'Room settings',
+                          closeRoom: 'Close room',
+                          deleteRoom: 'Delete room',
+                          addHosts: 'Add hosts',
+                          kickParticipants: 'Kick viewers',
+                          autoplay: 'Manage auto-play',
+                          seek: 'Seek',
+                        })[name] || name.toUpperCase(),
+                    )
+                    .join(', ') || 'None'
             : {
                 follow_provider: 'Follow media server settings',
                 override: 'Allow conversion',
@@ -500,6 +674,10 @@ function mount({ request, trigger }) {
       ]);
       if (id !== generation || !dialog.open) return;
       joinedGuilds = guilds?.servers;
+      accessMeta = value.access;
+      sourcesDirty = false;
+      const keepPassword = rebase ? patch['secrets.server_password'] : undefined;
+      delete patch['secrets.server_password'];
       conflicts = new Set(
         Object.keys(patch).filter(
           key => !same(key, base[key], value.settings[key]) && !same(key, patch[key], value.settings[key]),
@@ -507,6 +685,8 @@ function mount({ request, trigger }) {
       );
       base = structuredClone(value.settings);
       draft = { ...structuredClone(base), ...patch };
+      serverPasswordDraft = keepPassword || '';
+      serverPasswordInput.value = serverPasswordDraft;
       revision = value.revision;
       review.hidden = true;
       showConflicts();
@@ -543,6 +723,17 @@ function mount({ request, trigger }) {
         input.reportValidity();
         return;
       }
+    if (!hasEntryRule()) {
+      selectSection('access');
+      error.textContent = 'Turn on at least one sign-in method.';
+      return;
+    }
+    if (draft['access.password'] && !base['access.password'] && !serverPasswordDraft) {
+      selectSection('access');
+      error.textContent = 'Enter a server password to enable password entry.';
+      serverPasswordInput.focus();
+      return;
+    }
     const pairs = draft['transcoding.qualities'];
     if (
       (!draft['transcoding.allow_original'] && !pairs.length) ||
@@ -571,6 +762,8 @@ function mount({ request, trigger }) {
       if (id !== generation || !dialog.open) return;
       base = structuredClone(submitted);
       draft = submitted;
+      serverPasswordDraft = '';
+      serverPasswordInput.value = '';
       revision = undefined;
       message.textContent = auditWarning
         ? 'Saved. Restart uburoom to apply changes. Audit recording could not be confirmed.'
@@ -578,6 +771,7 @@ function mount({ request, trigger }) {
       try {
         const latest = await request('/api/operator/settings/saved');
         if (id !== generation || !dialog.open) return;
+        accessMeta = latest.access;
         base = structuredClone(latest.settings);
         draft = structuredClone(base);
         revision = latest.revision;
@@ -619,6 +813,10 @@ function mount({ request, trigger }) {
       generation++;
       base = draft = undefined;
       revision = undefined;
+      accessMeta = undefined;
+      serverPasswordDraft = '';
+      serverPasswordInput.value = '';
+      sourcesDirty = false;
       conflicts.clear();
       busy = saving = false;
       resolutions.replaceChildren();

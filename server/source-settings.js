@@ -193,7 +193,11 @@ function sourceSettings({
       }
     } else if (action === 'add') {
       const { sources } = await editor.readSources();
-      request = { action, entry: flows.entry(auth.login.userId, data, sources, pinned) };
+      request = {
+        action,
+        entry: flows.entry(auth.login.userId, data, sources, pinned),
+        ...(data.allowMembers === true ? { allowMembers: true } : {}),
+      };
     } else throw fail('Choose add, update or remove');
     const result = await editor.saveSources(
       { revision, change: request },

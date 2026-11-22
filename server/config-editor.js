@@ -8,10 +8,16 @@ const { promisify } = require('node:util');
 const YAML = require('yaml');
 const { configPath, parseConfig, normalizeConfig } = require('./config');
 const { runningSettings } = require('./operator-settings');
+const { sourceType } = require('./sources');
 const execute = promisify(execFile);
 
 // Explicit YAML paths allowed in the saved operator settings dialog.
 const EDITABLE = new Set([
+  'access.discord_server',
+  'access.source_members',
+  'access.accounts',
+  'access.password',
+  'guests.enabled',
   'discord.excluded_guild_ids',
   'directory.expose_discord_members',
   'rooms.max_saved',
@@ -32,6 +38,8 @@ const EDITABLE = new Set([
   'transcoding.qualities',
   'transcoding.allow_original',
 ]);
+// Write-only secrets accepted by save() but never returned by read() or readEditable().
+const WRITE_ONLY = new Set(['secrets.server_password']);
 const messages = {
   CONFIG_INVALID: 'Invalid proposed configuration; no settings were saved',
   CONFIG_FORBIDDEN: 'Setting is not editable; no settings were saved',
@@ -67,6 +75,11 @@ const metadata = stat =>
 
 function editableSettings(config) {
   const values = {
+    'access.discord_server': !!config.accessPolicy.discordServer,
+    'access.source_members': config.accessPolicy.sourceMembers.slice(),
+    'access.accounts': !!config.accessPolicy.accounts,
+    'access.password': !!config.accessPolicy.password,
+    'guests.enabled': !!config.guests.enabled,
     'discord.excluded_guild_ids': config.discordExcludedGuildIds,
     'directory.expose_discord_members': config.directory.discord,
     'rooms.host_permissions': Object.keys(config.roomPermissions.host).filter(key => config.roomPermissions.host[key]),
@@ -92,6 +105,47 @@ function editableSettings(config) {
       key.startsWith('rooms.') && limits[key.slice(6)] ? config.roomLimits[limits[key.slice(6)]] : values[key],
     ]),
   );
+}
+
+/** Non-secret context for the Access tab: member-capable sources, Discord readiness, and operator sign-in coverage. */
+function accessContext(config, { verifiedIdentities, pinnedSourceId } = {}) {
+  const sources = (config.sources || [])
+    .filter(entry => !!sourceType(entry.type)?.memberIdentity)
+    .map(entry => ({
+      id: entry.id,
+      type: entry.type,
+      name: entry.name || entry.id,
+    }));
+  const context = {
+    discordConfigured: !!(config.botToken && config.clientId && config.clientSecret),
+    publicWeb: !!config.accessPolicy.publicWeb,
+    sources,
+  };
+  if (Array.isArray(verifiedIdentities)) {
+    const operators = config.serverOperator?.identities || [];
+    const matching = verifiedIdentities.filter(
+      identity =>
+        identity.verified === 1 &&
+        operators.some(op => op.provider === identity.provider && op.subject === identity.subject),
+    );
+    const jellyfinSources = sources.filter(s => sourceType(s.type)?.memberIdentity === 'jellyfin');
+    const jellyfinSourceIds = new Set();
+    for (const identity of matching) {
+      if (!identity.provider.startsWith('jellyfin:')) continue;
+      const serverId = identity.provider.slice('jellyfin:'.length);
+      for (const source of jellyfinSources) {
+        const pinned = pinnedSourceId?.(source.id);
+        if (!pinned || pinned === serverId) jellyfinSourceIds.add(source.id);
+      }
+    }
+    context.operatorSignIn = {
+      discord: matching.some(identity => identity.provider === 'discord'),
+      plex: matching.some(identity => identity.provider === 'plex'),
+      accounts: matching.some(identity => identity.provider === 'uburoom'),
+      jellyfinSourceIds: [...jellyfinSourceIds],
+    };
+  }
+  return context;
 }
 
 // One process-wide queue, including separate editor instances and path aliases.
@@ -199,13 +253,25 @@ function outputChanges(changes, transcoding) {
   return { ...rest, 'transcoding.outputs': [...kept, ...added] };
 }
 function proposed(original, requested, file) {
-  const changes = outputChanges(requested, validate(original, file).transcoding);
+  const current = validate(original, file);
+  const changes = outputChanges(requested, current.transcoding);
+  if (
+    changes['access.password'] === false &&
+    !Object.hasOwn(changes, 'secrets.server_password') &&
+    current.serverPassword
+  )
+    changes['secrets.server_password'] = '';
   const source = original.toString('utf8');
   const doc = YAML.parseDocument(source, { prettyErrors: false, uniqueKeys: true, version: '1.2', stringKeys: true });
   for (const [key, value] of Object.entries(changes)) {
     const parts = key.split('.'),
       old = doc.getIn(parts, true),
       node = doc.createNode(value);
+    if (key === 'secrets.server_password' && YAML.isScalar(node)) node.type = 'QUOTE_SINGLE';
+    if (key === 'access.source_members' && YAML.isSeq(node)) {
+      node.flow = true;
+      for (const item of node.items) if (YAML.isScalar(item) && typeof item.value === 'string') item.type = 'QUOTE_SINGLE';
+    }
     if (old) {
       node.commentBefore = old.commentBefore;
       node.comment = old.comment;
@@ -316,6 +382,17 @@ function proposedSources(original, change, file) {
     const offered = node.get('libraries', true);
     if (offered) offered.flow = true;
     list.items.push(node);
+    if (change.allowMembers === true && sourceType(change.entry?.type)?.memberIdentity && change.entry?.id) {
+      let members = doc.getIn(['access', 'source_members'], true);
+      if (!YAML.isSeq(members)) {
+        const seq = doc.createNode([]);
+        seq.flow = true;
+        doc.setIn(['access', 'source_members'], seq);
+        members = doc.getIn(['access', 'source_members'], true);
+      }
+      const exists = members.items.some(item => YAML.isScalar(item) && item.value === change.entry.id);
+      if (!exists) members.items.push(fresh(doc, change.entry.id));
+    }
   } else if (change.action === 'update') {
     const entry = list.items[index()];
     if (change.name !== undefined) {
@@ -472,13 +549,15 @@ function createConfigEditor(selectedPath = configPath()) {
         };
       });
     },
-    readEditable() {
+    readEditable(options) {
       return sanitized(async () => {
         const original = await snapshot(file);
+        const config = validate(original.bytes, file);
         return {
           source: 'file',
           revision: original.revision,
-          settings: editableSettings(validate(original.bytes, file)),
+          settings: editableSettings(config),
+          access: accessContext(config, options),
         };
       });
     },
@@ -493,7 +572,8 @@ function createConfigEditor(selectedPath = configPath()) {
         expected = request.revision;
         if (!changes || typeof changes !== 'object' || Array.isArray(changes) || !Object.keys(changes).length)
           throw failure('CONFIG_INVALID');
-        if (Object.keys(changes).some(key => !EDITABLE.has(key))) throw failure('CONFIG_FORBIDDEN');
+        if (Object.keys(changes).some(key => !EDITABLE.has(key) && !WRITE_ONLY.has(key)))
+          throw failure('CONFIG_FORBIDDEN');
         if (
           typeof expected !== 'string' ||
           !/^[a-f0-9]{64}$/.test(expected) ||

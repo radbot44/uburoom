@@ -277,3 +277,79 @@ test('YAML editor leaves originals usable on backup, partial-write and replaceme
     'failed writes do not poison the queue',
   );
 });
+
+test('YAML editor saves access rules, write-only server password, and source member opt-in safely', async t => {
+  const { editor, file } = await editingFixture(t);
+  let current = await editor.readEditable();
+  assert.equal(current.settings['access.discord_server'], true);
+  assert.deepEqual(current.settings['access.source_members'], []);
+  assert.equal(current.settings['access.accounts'], false);
+  assert.equal(current.settings['access.password'], false);
+  assert.equal(current.settings['guests.enabled'], false);
+  assert.equal(Object.hasOwn(current.settings, 'secrets.server_password'), false);
+  assert.deepEqual(current.access.sources, [{ id: 'plex', type: 'plex', name: 'plex' }]);
+
+  // Turning off all entry rules is rejected and leaves the file unchanged.
+  await assert.rejects(
+    editor.save({
+      revision: current.revision,
+      changes: { 'access.discord_server': false },
+    }),
+    { code: 'CONFIG_INVALID' },
+  );
+
+  // Enabling Plex members, uburoom accounts, server password and guests succeeds.
+  const secret = 'correct-horse-battery-staple';
+  let saved = await editor.save({
+    revision: current.revision,
+    changes: {
+      'access.discord_server': false,
+      'access.source_members': ['plex'],
+      'access.accounts': true,
+      'access.password': true,
+      'secrets.server_password': secret,
+      'guests.enabled': true,
+    },
+  });
+  let after = loadConfig(file);
+  assert.equal(after.accessPolicy.discordServer, false);
+  assert.deepEqual(after.accessPolicy.sourceMembers, ['plex']);
+  assert.equal(after.accessPolicy.accounts, true);
+  assert.equal(after.accessPolicy.password, true);
+  assert.equal(after.serverPassword, secret);
+  assert.equal(after.guests.enabled, true);
+
+  // readEditable() never exposes the write-only password.
+  current = await editor.readEditable();
+  assert.equal(current.revision, saved.revision);
+  assert.equal(current.settings['access.password'], true);
+  assert.equal(Object.hasOwn(current.settings, 'secrets.server_password'), false);
+  assert.equal(JSON.stringify(current).includes(secret), false);
+
+  // Disabling access.password automatically clears secrets.server_password so validation passes.
+  saved = await editor.save({
+    revision: current.revision,
+    changes: { 'access.password': false },
+  });
+  after = loadConfig(file);
+  assert.equal(after.accessPolicy.password, false);
+  assert.equal(after.serverPassword, '');
+
+  // Adding a Jellyfin source with allowMembers appends its id to access.source_members.
+  saved = await editor.saveSources({
+    revision: saved.revision,
+    change: {
+      action: 'add',
+      allowMembers: true,
+      entry: {
+        id: 'jf-home',
+        type: 'jellyfin',
+        url: 'http://127.0.0.1:8096',
+        api_key: 'jf-secret-key',
+        user: 'viewer',
+      },
+    },
+  });
+  after = loadConfig(file);
+  assert.deepEqual(after.accessPolicy.sourceMembers, ['plex', 'jf-home']);
+});

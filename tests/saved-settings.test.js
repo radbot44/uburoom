@@ -489,3 +489,43 @@ test(
     assert.equal((await browser.request(endpoint, undefined, { Cookie: 'uburoom=' + staleCookie })).status, 401);
   },
 );
+
+test('saved operator settings HTTP exposes non-secret access context and saves access rules without leaking passwords', async t => {
+  const f = await savedSettingsFixture(t),
+    endpoint = '/api/operator/settings/saved';
+  const browser = f.browser();
+  await browser.discord('guest');
+  const initial = (await browser.request(endpoint)).body;
+  assert.equal(initial.access.runningAccounts, false);
+  assert.equal(initial.access.publicWeb, true);
+  assert.equal(initial.access.operatorSignIn.discord, true);
+  assert.equal(initial.access.operatorSignIn.accounts, false);
+  assert.equal(
+    initial.access.sources.some(source => source.type === 'plex'),
+    true,
+    'lists member-capable sources for the Access tab',
+  );
+  const secret = 'super-secret-room-pass';
+  const res = await f.save(browser, {
+    revision: initial.revision,
+    changes: {
+      'access.accounts': true,
+      'access.source_members': [initial.access.sources[0].id],
+      'access.password': true,
+      'secrets.server_password': secret,
+      'guests.enabled': true,
+    },
+  });
+  assert.equal(res.status, 200);
+  const reloaded = (await browser.request(endpoint)).body;
+  assert.equal(reloaded.settings['access.accounts'], true);
+  assert.deepEqual(reloaded.settings['access.source_members'], [initial.access.sources[0].id]);
+  assert.equal(reloaded.settings['access.password'], true);
+  assert.equal(reloaded.settings['guests.enabled'], true);
+  assert.equal(JSON.stringify(reloaded).includes(secret), false, 'write-only password is never returned');
+  const auditRow = f.app.registry.db
+    .prepare("SELECT actor, detail FROM audit WHERE action='operator-settings-save' ORDER BY rowid DESC LIMIT 1")
+    .get();
+  assert.equal(auditRow.detail.includes(secret), false, 'audit log records setting names only');
+  assert.equal(auditRow.detail.includes('secrets.server_password'), true);
+});

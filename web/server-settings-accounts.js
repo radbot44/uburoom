@@ -7,10 +7,10 @@ const dateTime = value => new Date(value).toLocaleString(undefined, { dateStyle:
 
 /**
  * @param {HTMLElement} panel
- * @param {{request: (path: string, data?: any) => Promise<any>}} services
- * @returns {{load: () => Promise<void>, reset: () => void}}
+ * @param {{request: (path: string, data?: any) => Promise<any>, onOpenAccess?: () => void}} services
+ * @returns {{load: () => Promise<void>, reset: () => void, updateAccess: (state: {running?: boolean, saved?: boolean}) => void}}
  */
-export function mount(panel, { request }) {
+export function mount(panel, { request, onOpenAccess }) {
   const doc = panel.ownerDocument;
   const node = (tag, parent, text, style) => {
     const value = doc.createElement(tag);
@@ -20,6 +20,10 @@ export function mount(panel, { request }) {
     return value;
   };
   node('p', panel, 'People you add here sign in with a username and password. Changes apply at once.', 'hint');
+  const accessNotice = node('div', panel, null, 'server-account-notice');
+  accessNotice.id = 'server-accounts-access-notice';
+  accessNotice.hidden = true;
+  accessNotice.setAttribute('role', 'status');
   const form = node('form', panel, null, 'server-accounts-create');
   const grid = node('div', form, null, 'server-settings-grid');
   const field = (label, id, attributes) => {
@@ -175,11 +179,50 @@ export function mount(panel, { request }) {
         if (id === generation) setBusy(false);
       }
     },
+    /** Updates the banner explaining whether uburoom accounts can currently sign in. */
+    updateAccess({ running, saved } = {}) {
+      accessNotice.replaceChildren();
+      if (running === undefined || (running && saved !== false)) {
+        accessNotice.hidden = true;
+        return;
+      }
+      if (!running && !saved) {
+        node(
+          'p',
+          accessNotice,
+          'uburoom account sign-in is turned off. People you add here cannot sign in until you enable it in Access and restart uburoom.',
+          'server-source-problem',
+        );
+        if (onOpenAccess) {
+          const openAccess = node('button', accessNotice, 'Open Access settings', 'quiet');
+          openAccess.type = 'button';
+          openAccess.id = 'server-accounts-open-access';
+          openAccess.addEventListener('click', () => onOpenAccess());
+        }
+      } else if (!running && saved) {
+        node(
+          'p',
+          accessNotice,
+          'uburoom account sign-in is enabled in saved settings. Restart uburoom before these accounts can sign in.',
+          'server-source-problem',
+        );
+      } else if (running && saved === false) {
+        node(
+          'p',
+          accessNotice,
+          'uburoom account sign-in is turned off in saved settings and will stop working after the next restart.',
+          'hint',
+        );
+      }
+      accessNotice.hidden = false;
+    },
     /** Forgets the shown link and list when the dialog closes. */
     reset() {
       generation++;
       busy = false;
       rows = [];
+      accessNotice.hidden = true;
+      accessNotice.replaceChildren();
       linkBox.hidden = true;
       linkBox.replaceChildren();
       list.replaceChildren();

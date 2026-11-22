@@ -74,12 +74,16 @@ function operatorHttp({
         return true;
       }
       if (req.method === 'GET') {
-        const result = await editor.readEditable();
+        const result = await editor.readEditable({
+          verifiedIdentities: registry.identities(login.userId),
+          pinnedSourceId: id => registry.meta?.('source:' + id + ':identity') || undefined,
+        });
         await registry.flush();
         if (!operator()) {
           reply(current() ? 403 : 401, { error: 'Operator authorization changed' });
           return true;
         }
+        if (result.access) result.access.runningAccounts = !!config.accessPolicy?.accounts;
         reply(200, result);
       } else {
         const data = await body(req);
