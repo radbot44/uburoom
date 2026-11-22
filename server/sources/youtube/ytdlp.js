@@ -269,6 +269,8 @@ class YouTubeCache {
     this.ready = new Map();
     this.jobs = new Map();
     this.active = new Map();
+    this.leases = new Map();
+    this.metaTimers = new Map();
     this.queue = [];
     this.initPromise = null;
     this.runtimePromise = null;
@@ -349,9 +351,29 @@ class YouTubeCache {
     await fsp.rename(tmp, target);
   }
 
+  acquire(videoId) {
+    if (!videoId) return () => {};
+    this.leases.set(videoId, (this.leases.get(videoId) || 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = (this.leases.get(videoId) || 0) - 1;
+      if (next > 0) this.leases.set(videoId, next);
+      else this.leases.delete(videoId);
+    };
+  }
+
   touchRecord(record) {
     record.lastUsedMs = this.nextTick();
-    void this.writeMeta(record).catch(() => {});
+    if (this.closed || this.metaTimers.has(record.id)) return;
+    const timer = setTimeout(() => {
+      this.metaTimers.delete(record.id);
+      if (this.closed || this.ready.get(record.id) !== record) return;
+      void this.writeMeta(record).catch(() => {});
+    }, 5000);
+    timer.unref?.();
+    this.metaTimers.set(record.id, timer);
   }
 
   async ensureReady() {
@@ -426,16 +448,31 @@ class YouTubeCache {
     if (total <= this.maxCacheBytes) return;
 
     const candidates = [...this.ready.values()]
-      .filter(rec => !protect.has(rec.id) && !this.active.has(rec.id) && !this.jobs.has(rec.id))
+      .filter(
+        rec =>
+          !protect.has(rec.id) && !this.active.has(rec.id) && !this.jobs.has(rec.id) && !(this.leases.get(rec.id) > 0),
+      )
       .sort((a, b) => Number(a.lastUsedMs || a.mtimeMs || 0) - Number(b.lastUsedMs || b.mtimeMs || 0));
 
     for (const rec of candidates) {
       if (total <= this.maxCacheBytes) break;
+      const primary = safeBaseName(rec.filename) ? path.join(this.cacheDirectory, rec.filename) : '';
+      if (primary) {
+        try {
+          await fsp.unlink(primary);
+        } catch (error) {
+          if (error?.code !== 'ENOENT') continue;
+        }
+      }
       const bytes = sizes.get(rec.id) || 0;
       total -= bytes;
+      const timer = this.metaTimers.get(rec.id);
+      if (timer) {
+        clearTimeout(timer);
+        this.metaTimers.delete(rec.id);
+      }
       this.ready.delete(rec.id);
       const files = [
-        safeBaseName(rec.filename) ? path.join(this.cacheDirectory, rec.filename) : '',
         ...(rec.subtitles || []).map(s => (safeBaseName(s.file) ? path.join(this.cacheDirectory, s.file) : '')),
         this.metaPath(rec.id),
       ].filter(Boolean);
@@ -893,6 +930,8 @@ class YouTubeCache {
 
   async close() {
     this.closed = true;
+    for (const timer of this.metaTimers.values()) clearTimeout(timer);
+    this.metaTimers.clear();
     const cancelled = Object.assign(new Error('YouTube source shutting down'), { status: 503 });
     while (this.queue.length) {
       const queued = this.queue.shift();

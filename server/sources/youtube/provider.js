@@ -595,9 +595,19 @@ class YouTubeMedia {
           return this.prepareEmbed(id, choices, { fallbackFromYtdlp: true });
         }
       }
-      return prepareStream(this, id, quality, compatible, source, fallback, choices);
+      try {
+        return await prepareStream(this, id, quality, compatible, source, fallback, choices);
+      } catch (error) {
+        error?.media?.releaseCacheLease?.();
+        throw error;
+      }
     }
-    return prepareStream(this, id, quality, compatible, source, fallback, choices);
+    try {
+      return await prepareStream(this, id, quality, compatible, source, fallback, choices);
+    } catch (error) {
+      error?.media?.releaseCacheLease?.();
+      throw error;
+    }
   }
 
   async source(id, _previous, choices = {}) {
@@ -614,6 +624,7 @@ class YouTubeMedia {
     if (!(Number(prepared.duration) > 0)) {
       throw Object.assign(new PlaybackError('This YouTube video has no playable duration.'), { status: 400 });
     }
+    const releaseCacheLease = this.cache.acquire(id);
 
     const sources = [];
     if (Array.isArray(prepared.streams)) {
@@ -708,6 +719,7 @@ class YouTubeMedia {
     media.sourceKey = JSON.stringify([YOUTUBE_SERVER, id, prepared.size || 0, prepared.mtimeMs || 0]);
     media.captionVersion = randomUUID();
     media.subtitleAbort = new AbortController();
+    media.releaseCacheLease = releaseCacheLease;
     return { media, detail: {} };
   }
 
@@ -759,10 +771,16 @@ class YouTubeMedia {
       };
       if (range && size) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
       if (options.method === 'HEAD' || !size) return new Response(null, { status: range && size ? 206 : 200, headers });
-      return new Response(fileStream(hit.file, { start, end, signal: options.signal }), {
-        status: range ? 206 : 200,
-        headers,
-      });
+      const releaseLease = this.cache.acquire(parts[1]);
+      try {
+        return new Response(fileStream(hit.file, { start, end, signal: options.signal, onClose: releaseLease }), {
+          status: range ? 206 : 200,
+          headers,
+        });
+      } catch (error) {
+        releaseLease();
+        throw error;
+      }
     }
 
     if (parts[0] === 'sub' && SAFE_ID.test(parts[1] || '') && SAFE_TRACK.test(parts[2] || '')) {
@@ -789,6 +807,7 @@ class YouTubeMedia {
 
   stop(media) {
     if (!media || media.format === 'youtube-embed') return Promise.resolve();
+    media.releaseCacheLease?.();
     return runOperation(undefined, () => this.pipeline?.release?.(media));
   }
 

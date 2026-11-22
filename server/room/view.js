@@ -304,6 +304,7 @@ module.exports = {
       markers: room.media?.markers || [],
       observationEpoch: viewer.observationEpoch,
       format: viewer.media?.format,
+      container: viewer.media?.container,
       quality: room.media?.kind === 'demo' || viewer.media?.format === 'youtube-embed' ? 'direct' : viewer.quality,
       videoCodec: viewer.media?.videoCodec,
       compatible: !!viewer.media?.compatible,

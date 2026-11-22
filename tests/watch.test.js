@@ -749,7 +749,26 @@ test(
     assert.equal((await request(fallbackUrl)).status, 403, 'selection replacement revokes fallback grants too');
     assert.equal((await request(base + '0')).status, 403, 'quality replacement invalidates AV1 grants');
     const renewed = (await getState()).body;
+    // An active AV1 chunk request whose grant is revoked mid-encode returns 403 immediately instead of hanging.
+    let releaseChunk;
+    const origChunk = app.watch.pipeline.av1.chunk;
+    let chunkStarted;
+    const chunkEntered = new Promise(resolve => {
+      chunkStarted = resolve;
+    });
+    app.watch.pipeline.av1.chunk = (_lease, _index, signal) =>
+      new Promise((resolve, reject) => {
+        chunkStarted();
+        releaseChunk = () => resolve({ video: Buffer.from('late'), audio: Buffer.from('late') });
+        signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      });
+    const activeChunkReq = request(renewed.mediaUrl.replace(/\/start$/, '/chunk-video-20'));
+    await chunkEntered;
     app.watch.remove(id);
+    const activeChunkRes = await activeChunkReq;
+    releaseChunk?.();
+    app.watch.pipeline.av1.chunk = origChunk;
+    assert.equal(activeChunkRes.status, 403, 'revoked mid-encode AV1 chunk returns 403 promptly');
     assert.equal((await request(renewed.fallbackStream.mediaUrl)).status, 403, 'room removal revokes fallback grants');
     assert.equal((await request(renewed.mediaUrl)).status, 403, 'room removal revokes AV1 manifests');
     const transferId = (await request('/api/watch/rooms', 'POST', {}, host)).body.id;

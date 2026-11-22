@@ -640,15 +640,9 @@ function mount(
       b.disabled = true;
       try {
         await addToQueue(item, b);
-        const span = b.querySelector('span');
-        if (span) span.textContent = 'Added!';
-        uburoomPopover.show(b, { text: 'Added to queue', state: 'success' });
-        setTimeout(() => {
-          if (span) span.textContent = 'Add to queue';
-          b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
-        }, 1500);
       } catch (error) {
         uburoomPopover.show(b, { text: error.message, state: 'error' });
+      } finally {
         b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
       }
     });

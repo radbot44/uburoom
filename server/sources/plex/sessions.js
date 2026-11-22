@@ -90,6 +90,7 @@ class PlexSessions {
       sourceSelection: selected.identity,
       principal: this.plex.principal,
       provider: this.plex,
+      container: original.container || part.container || undefined,
       videoCodec: original.videoCodec || videoStream?.codec,
       audioCodec:
         original.audioCodec ||

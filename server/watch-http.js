@@ -38,7 +38,19 @@ function watchHttp({
 }) {
   const identity = watchIdentity({ config, hub, user, webActor, entryPolicy, validIdentity });
   const { identities, issue, rawLogin, login, authorized, allowedOrigin, activityOrigin } = identity;
-  const { grants, validGrant, validCaptionGrant, renewGrants, mediaGrant } = mediaGrants({ watch, cookies, login });
+  const {
+    grants,
+    validGrant,
+    validCaptionGrant,
+    renewGrants,
+    mediaGrant,
+    captionGrant,
+    cleanupViewerGrants,
+    revokeGrant,
+    revokeWhere,
+  } = mediaGrants({ watch, cookies, login });
+  watch.onViewerRemoved = viewerId => cleanupViewerGrants(viewerId);
+  watch.onRoomMediaDropped = room => revokeWhere(grant => grant.room === room);
   const { stream, rewriteManifest } = mediaStream({ config, watch, json, grants, validCaptionGrant, validGrant });
   const invites = roomInvites({
     config,
@@ -73,6 +85,7 @@ function watchHttp({
     authorized,
     login,
     mediaGrant,
+    captionGrant,
     cookies,
     throttle,
     registry,
@@ -623,35 +636,69 @@ function watchHttp({
   function sweep() {
     entryPolicy?.sweep();
     handoff.sweep();
-    for (const [token, value] of identities) if (value.expires <= Date.now()) identities.delete(token);
-    for (const [token, value] of grants) if (value.expires <= Date.now()) grants.delete(token);
+    const now = Date.now();
+    for (const [token, value] of identities) if (value.expires <= now) identities.delete(token);
+    for (const [id, grant] of [...grants]) {
+      const viewer = grant.room.viewers.get(grant.viewerId);
+      if (
+        grant.expires <= now ||
+        watch.rooms.get(grant.room.roomId) !== grant.room ||
+        grant.version !== grant.room.mediaVersion ||
+        !viewer ||
+        (!grant.caption && grant.streamVersion !== viewer.streamVersion)
+      ) {
+        revokeGrant(id);
+        continue;
+      }
+      if (!grant.checking) {
+        grant.checking = true;
+        void (grant.caption ? validCaptionGrant(grant, grant.captionVersion) : validGrant(grant))
+          .then(
+            ok => {
+              if (!ok) revokeGrant(id);
+            },
+            () => revokeGrant(id),
+          )
+          .finally(() => {
+            grant.checking = false;
+          });
+      }
+    }
   }
   async function logout(loginHash) {
-    for (const [id, grant] of grants)
-      if (grant.credential && !grant.credential.startsWith('Bearer ') && hash(grant.credential) === loginHash)
-        grants.delete(id);
+    revokeWhere(
+      grant => grant.credential && !grant.credential.startsWith('Bearer ') && hash(grant.credential) === loginHash,
+    );
     for (const room of [...watch.rooms.values()])
       for (const [id, viewer] of [...room.viewers])
         if (viewer.browserLoginHash === loginHash) {
+          cleanupViewerGrants(id);
           viewer.watchSocket?.close(4003, 'Sign in again');
           await watch.leave(room, viewer.actor, id, 'logout');
         }
     for (const room of [...watch.rooms.values()])
       for (const [id, viewer] of [...room.disconnectedViewers])
-        if (viewer.browserLoginHash === loginHash) await watch.leave(room, { userId: viewer.userId }, id, 'logout');
+        if (viewer.browserLoginHash === loginHash) {
+          cleanupViewerGrants(id);
+          await watch.leave(room, { userId: viewer.userId }, id, 'logout');
+        }
   }
   async function invalidate(ids) {
     for (const [token, identity] of identities) if (ids.includes(identity.userId)) identities.delete(token);
-    for (const [id, grant] of grants) if (ids.includes(grant.actor.userId)) grants.delete(id);
+    revokeWhere(grant => ids.includes(grant.actor.userId));
     for (const room of [...watch.rooms.values()])
       for (const [id, viewer] of [...room.viewers])
         if (ids.includes(viewer.userId)) {
+          cleanupViewerGrants(id);
           viewer.watchSocket?.close(4003, 'Sign in again');
           await watch.leave(room, viewer.actor, id, 'account-changed');
         }
     for (const room of [...watch.rooms.values()])
       for (const [id, viewer] of [...room.disconnectedViewers])
-        if (ids.includes(viewer.userId)) await watch.leave(room, { userId: viewer.userId }, id, 'account-changed');
+        if (ids.includes(viewer.userId)) {
+          cleanupViewerGrants(id);
+          await watch.leave(room, { userId: viewer.userId }, id, 'account-changed');
+        }
   }
   return {
     renewGrants,
@@ -665,6 +712,7 @@ function watchHttp({
     clockEpoch,
     close: () => {
       identities.clear();
+      revokeWhere(() => true);
       grants.clear();
       handoff.close();
     },

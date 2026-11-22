@@ -304,6 +304,8 @@ export function mount(host, deps) {
     store.stream.av1?.destroy();
     store.stream.av1 = undefined;
     deps.time.clearTimeout(store.stream.hlsRecoveryTimer);
+    deps.time.clearTimeout(store.stream.hlsNativeErrorTimer);
+    store.stream.hlsNativeErrorTimer = undefined;
     store.stream.hlsRecoveryCount = 0;
     $('acceleration-help').hidden = true;
     if (store.player.frameCallback !== undefined) deps.video.cancelVideoFrameCallback?.(store.player.frameCallback);
@@ -444,6 +446,10 @@ export function mount(host, deps) {
     void store.player.sync.synchronize();
     if (store.room.state?.waitingForReady || store.room.state?.readiness) void deps.reportReadiness();
   });
+  deps.video.addEventListener('playing', () => {
+    deps.time.clearTimeout(store.stream.hlsNativeErrorTimer);
+    store.stream.hlsNativeErrorTimer = undefined;
+  });
   deps.video.addEventListener('seeked', () => {
     void store.player.sync.synchronize();
     if (store.room.state?.waitingForReady || store.room.state?.readiness) void deps.reportReadiness();
@@ -473,8 +479,18 @@ export function mount(host, deps) {
       void deps.compatibleFallback('The video decoder is unsupported.');
       return;
     }
-    // HLS manages recoverable media errors through its bounded handler.
-    if (store.stream.hls && [3, 4].includes(code)) return;
+    // HLS manages recoverable media errors through its bounded handler; guard against silent stalls if hls.js never fires fatal MEDIA_ERROR.
+    if (store.stream.hls && [3, 4].includes(code)) {
+      const client = store.stream.hls;
+      deps.time.clearTimeout(store.stream.hlsNativeErrorTimer);
+      store.stream.hlsNativeErrorTimer = deps.time.setTimeout(() => {
+        store.stream.hlsNativeErrorTimer = undefined;
+        if (store.stream.hls === client && deps.video.error && !store.player.playbackError) {
+          void deps.compatibleFallback('The video decoder could not play this stream.');
+        }
+      }, 2500);
+      return;
+    }
     if (uburoomPlayback.localFormat(store.room.state.format)) {
       void deps.compatibleFallback('The converted video could not be decoded.');
       return;

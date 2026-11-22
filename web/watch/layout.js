@@ -308,31 +308,28 @@ export function mount(host, deps) {
         }
       }
       win.document.title = document.title || 'uburoom';
-      win.document.documentElement.dataset.theme = document.documentElement.dataset.theme || 'dark';
-      win.document.body.className =
-        'pip-window ' + (document.body.classList.contains('theme-light') ? 'theme-light' : 'theme-dark');
+      const syncPipTheme = event => {
+        win.document.documentElement.dataset.theme =
+          event?.detail?.theme || document.documentElement.dataset.theme || 'dark';
+      };
+      syncPipTheme();
+      window.addEventListener('uburoom-theme', syncPipTheme);
+      win.document.body.className = 'pip-window';
+      const sprite = document.getElementById('icon-sprite');
+      if (sprite && !win.document.getElementById('icon-sprite'))
+        win.document.body.append(win.document.importNode(sprite, true));
       placeholder.hidden = false;
       win.document.body.append(stage);
       store.player.pipWindow = win;
       deps.renderTransport();
 
-      win.addEventListener('keydown', event => {
-        const clone = new KeyboardEvent('keydown', {
-          code: event.code,
-          key: event.key,
-          altKey: event.altKey,
-          ctrlKey: event.ctrlKey,
-          metaKey: event.metaKey,
-          shiftKey: event.shiftKey,
-          bubbles: true,
-          cancelable: true,
-        });
-        document.dispatchEvent(clone);
-      });
+      if (deps.handleStageKeydown) win.document.addEventListener('keydown', deps.handleStageKeydown);
 
       win.addEventListener(
         'pagehide',
         () => {
+          window.removeEventListener('uburoom-theme', syncPipTheme);
+          if (deps.handleStageKeydown) win.document.removeEventListener('keydown', deps.handleStageKeydown);
           if (store.player.pipWindow === win) {
             store.player.pipWindow = null;
             viewingSection.insertBefore(stage, placeholder);
@@ -345,8 +342,11 @@ export function mount(host, deps) {
       );
     } else if (deps.supportsVideoPiP) {
       await deps.video.requestPictureInPicture();
-      const hasSubtitles = !!store.room.state?.tracks?.subtitleId;
-      const isBurned = (store.room.state?.tracks?.subtitleMode || 'auto') === 'burn';
+      const tracks = store.room.state?.tracks;
+      const hasSubtitles = !!tracks?.subtitleId;
+      const subtitleTrack = tracks?.subtitles?.find(track => track.id === tracks.subtitleId);
+      const isBurned =
+        (tracks?.subtitleDelivery || subtitleTrack?.delivery || tracks?.subtitleMode || 'auto') === 'burn';
       if (hasSubtitles && !isBurned) {
         deps.toasts.show('pip-subtitles', {
           title: 'Subtitles in Picture-in-Picture',

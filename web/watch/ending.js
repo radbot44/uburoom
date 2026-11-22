@@ -272,7 +272,7 @@ export function mount(host, deps) {
       }
     }
 
-    const ring = document.querySelector('.ending-ring');
+    const ring = $('ending-stage')?.querySelector('.ending-ring');
     if (ring) ring.hidden = ending.state !== 'countdown';
 
     const startNowBtn = $('ending-start-now');

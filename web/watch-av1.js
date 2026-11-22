@@ -80,6 +80,8 @@ class uburoomAV1 {
     if (!response.ok) {
       const value = await response.json().catch(() => ({}));
       const error = new Error(value.error || 'Converted stream could not load.');
+      error.status = response.status;
+      if ([401, 403].includes(response.status)) error.kind = 'grant-expired';
       error.retryable = response.status >= 500 || [408, 429].includes(response.status);
       throw error;
     }
@@ -405,7 +407,7 @@ class uburoomAV1 {
   fail(error) {
     if (this.abort.signal.aborted) return;
     this.destroy();
-    this.failed('Converted playback failed: ' + error.message);
+    this.failed('Converted playback failed: ' + error.message, error);
   }
   destroy() {
     clearTimeout(this.timer);

@@ -84,6 +84,7 @@ module.exports = {
           await this.stopMedia(room, media);
           return;
         }
+        preload.viewerMedia?.set(viewerId, media);
         this.warmSubtitles(media, preload.startAt);
         return { media, choices, principal: provider.principal };
       },
@@ -484,7 +485,17 @@ module.exports = {
    */
   prepareStreams(room) {
     if (this.rooms.get(room.roomId) !== room) return;
-    for (const [viewerId, viewer] of room.viewers) this.prepareStream(room, viewer.actor, viewerId);
+    const adoptable = room.adoptable;
+    const works = [...room.viewers].map(([viewerId, viewer]) => this.prepareStream(room, viewer.actor, viewerId));
+    if (adoptable) {
+      const pending = [
+        ...works,
+        ...[...room.viewers.values()].map(viewer => viewer.preparing?.promise).filter(Boolean),
+      ];
+      void Promise.allSettled(pending).then(() => {
+        if (room.adoptable === adoptable) this.dropPreload(room, adoptable);
+      });
+    }
     this.requestEndingMeta(room);
     this.reconcileFallback(room);
   },

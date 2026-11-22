@@ -71,7 +71,7 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
   if (directPlan) media.directHls = directPlan;
   if (choices.shareKey && plan.route === 'provider-hls') {
     if (choices.authorized && !(await choices.authorized()))
-      throw new PlaybackError('Viewing access or stream selection expired.');
+      throw Object.assign(new PlaybackError('Viewing access or stream selection expired.'), { media });
     const key = JSON.stringify([
       choices.shareKey,
       media.sourceKey,

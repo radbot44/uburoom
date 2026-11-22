@@ -72,7 +72,7 @@ export function mount(host, deps) {
   function resetSyncQuality() {
     store.room.seekPendingValue = undefined;
     store.room.seekPendingUntil = 0;
-    store.room.seekPendingRevision = undefined;
+    store.room.seekPendingToken = (store.room.seekPendingToken || 0) + 1;
     const wasActive =
       store.player.publishedSyncQualityStatus === 'playing' || store.player.publishedSyncQualityStatus === 'buffering';
     deps.syncQuality.reset(undefined, { preserveLast: true });

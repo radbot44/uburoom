@@ -1034,3 +1034,36 @@ test('a continuing viewer without queue-edit permission generates and publishes 
   assert.equal(ending.state, 'upNext');
   assert.equal(ending.next.mediaId, '201');
 });
+
+test('transcodesInUse tracks room.preload and room.adoptable media and viewer streams', async t => {
+  const f = await fixture(t);
+  f.room.preload = {
+    countdown: 'cd-1',
+    mediaId: '101',
+    fromMediaVersion: f.room.mediaVersion,
+    startAt: 0,
+    media: { transcodeId: 'preload-source' },
+    viewers: new Map(),
+    viewerMedia: new Map([['v1', { transcodeId: 'preload-v1' }]]),
+    source: Promise.resolve(),
+  };
+  f.room.adoptable = {
+    countdown: 'cd-0',
+    mediaId: '100',
+    mediaVersion: f.room.mediaVersion,
+    startAt: 0,
+    media: { transcodeId: 'adopt-source' },
+    viewers: new Map(),
+    viewerMedia: new Map([['v2', { transcodeId: 'adopt-v2' }]]),
+    source: Promise.resolve(),
+  };
+  const active = f.watch.transcodesInUse();
+  for (const id of ['preload-source', 'preload-v1', 'adopt-source', 'adopt-v2']) {
+    assert.equal(active.has(id), true, `expected ${id} in transcodesInUse`);
+  }
+  f.watch.dropPreload(f.room, f.room.adoptable);
+  const afterDrop = f.watch.transcodesInUse();
+  assert.equal(afterDrop.has('adopt-source'), false);
+  assert.equal(afterDrop.has('adopt-v2'), false);
+  assert.equal(afterDrop.has('preload-source'), true);
+});

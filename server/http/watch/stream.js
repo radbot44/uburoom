@@ -39,28 +39,39 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
       )
       .join('\n');
   }
+  function bindGrantAbort(res, grant) {
+    const controller = new AbortController();
+    let clientClosed = false;
+    const onClientClose = () => {
+      clientClosed = true;
+      controller.abort();
+    };
+    const onGrantAbort = () => controller.abort();
+    res.on('close', onClientClose);
+    if (grant.abort?.signal.aborted) controller.abort();
+    else grant.abort?.signal.addEventListener('abort', onGrantAbort, { once: true });
+    return {
+      signal: controller.signal,
+      clientClosed: () => clientClosed,
+      cleanup: () => {
+        res.off('close', onClientClose);
+        grant.abort?.signal.removeEventListener('abort', onGrantAbort);
+      },
+    };
+  }
   async function stream(req, res, grant, key, url) {
     if (key.startsWith('subtitle-')) {
       const match = /^subtitle-([a-f0-9-]{36})(?:\/(data|index|window|font-\d{1,2}))?$/.exec(key);
       if (!match || !(await validCaptionGrant(grant, match[1])))
         return json(res, 403, { error: 'Subtitle selection changed or access expired.' });
       const currentMedia = () => grant.room.viewers.get(grant.viewerId)?.media;
-      const controller = new AbortController(),
-        cancel = () => controller.abort();
-      res.on('close', cancel);
-      const check = setInterval(async () => {
-        try {
-          if (!(await validCaptionGrant(grant, match[1]))) controller.abort();
-        } catch {
-          controller.abort();
-        }
-      }, 1000);
+      const scope = bindGrantAbort(res, grant);
       try {
         const media = currentMedia();
         const windowed =
           ['pgs', 'cues'].includes(media?.selection?.subtitle?.delivery) && !media?.selection?.subtitle?.external;
         if (!match[2] && windowed) {
-          if (controller.signal.aborted || !(await validCaptionGrant(grant, match[1])))
+          if (scope.signal.aborted || !(await validCaptionGrant(grant, match[1])))
             return json(res, 403, { error: 'Subtitle access expired or selection changed.' });
           res.setHeader('Cache-Control', 'no-store');
           const base = `/api/watch/media/${grant.id}/subtitle-${match[1]}/`;
@@ -72,7 +83,7 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
           });
         }
         if (match[2] === 'window' && windowed) {
-          if (controller.signal.aborted || !(await validCaptionGrant(grant, match[1])))
+          if (scope.signal.aborted || !(await validCaptionGrant(grant, match[1])))
             return json(res, 403, { error: 'Subtitle access expired or selection changed.' });
           const atMs = url?.searchParams?.has('atMs') ? Number(url.searchParams.get('atMs')) : 0;
           const beforeMs = url?.searchParams?.has('beforeMs') ? Number(url.searchParams.get('beforeMs')) : 15000;
@@ -81,9 +92,9 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
             atMs,
             beforeMs,
             afterMs,
-            signal: controller.signal,
+            signal: scope.signal,
           });
-          if (controller.signal.aborted || !(await validCaptionGrant(grant, match[1])))
+          if (scope.signal.aborted || !(await validCaptionGrant(grant, match[1])))
             return json(res, 403, { error: 'Subtitle access expired or selection changed.' });
           res.writeHead(200, {
             'Content-Type': 'application/octet-stream',
@@ -100,15 +111,15 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
           media?.selection?.subtitle?.delivery === 'pgs' &&
           !media?.selection?.subtitle?.external
         ) {
-          if (controller.signal.aborted || !(await validCaptionGrant(grant, match[1])))
+          if (scope.signal.aborted || !(await validCaptionGrant(grant, match[1])))
             return json(res, 403, { error: 'Subtitle access expired or selection changed.' });
           req.setTimeout?.(0);
           res.setTimeout?.(0);
-          await SubtitleResources.pipe(watch.pipeline.av1, media, req, res, controller.signal);
+          await SubtitleResources.pipe(watch.pipeline.av1, media, req, res, scope.signal);
           return;
         }
-        const result = await SubtitleResources.load(watch.pipeline.av1, media, controller.signal);
-        if (controller.signal.aborted || !(await validCaptionGrant(grant, match[1])))
+        const result = await SubtitleResources.load(watch.pipeline.av1, media, scope.signal);
+        if (scope.signal.aborted || !(await validCaptionGrant(grant, match[1])))
           return json(res, 403, { error: 'Subtitle access expired or selection changed.' });
         res.setHeader('Cache-Control', 'no-store');
         if (!match[2]) {
@@ -126,14 +137,16 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
         res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': data.length });
         return res.end(req.method === 'HEAD' ? undefined : data);
       } catch (error) {
-        if (!res.headersSent && !res.destroyed)
-          json(res, 503, {
-            error: error instanceof PlaybackError ? error.message : 'Subtitles could not load. Try burn-in.',
-          });
-        else if (!res.destroyed) res.destroy();
+        if (!res.headersSent && !res.destroyed) {
+          if (grant.abort?.signal.aborted && !scope.clientClosed())
+            json(res, 403, { error: 'Subtitle selection changed or access expired.' });
+          else
+            json(res, 503, {
+              error: error instanceof PlaybackError ? error.message : 'Subtitles could not load. Try burn-in.',
+            });
+        } else if (!res.destroyed) res.destroy();
       } finally {
-        clearInterval(check);
-        res.off('close', cancel);
+        scope.cleanup();
       }
       return;
     }
@@ -141,28 +154,21 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
       const match = /^captions-([a-f0-9-]{36})$/.exec(key);
       if (!match || !(await validCaptionGrant(grant, match[1])))
         return json(res, 403, { error: 'Subtitle selection changed or access expired.' });
-      const abort = new AbortController(),
-        cancel = () => abort.abort();
-      res.on('close', cancel);
-      const check = setInterval(async () => {
-        try {
-          if (!(await validCaptionGrant(grant, match[1]))) abort.abort();
-        } catch {
-          abort.abort();
-        }
-      }, 2000);
+      const scope = bindGrantAbort(res, grant);
       try {
         const media = grant.room.viewers.get(grant.viewerId)?.media;
-        const cues = await Subtitles.load(media, abort.signal);
-        if (abort.signal.aborted || !(await validCaptionGrant(grant, match[1])))
+        const cues = await Subtitles.load(media, scope.signal);
+        if (scope.signal.aborted || !(await validCaptionGrant(grant, match[1])))
           return json(res, 403, { error: 'Subtitle access expired or selection changed.' });
         json(res, 200, { cues });
       } catch (error) {
-        if (!res.destroyed)
-          json(res, 503, { error: error instanceof PlaybackError ? error.message : 'Subtitles could not load.' });
+        if (!res.headersSent && !res.destroyed) {
+          if (grant.abort?.signal.aborted && !scope.clientClosed())
+            json(res, 403, { error: 'Subtitle selection changed or access expired.' });
+          else json(res, 503, { error: error instanceof PlaybackError ? error.message : 'Subtitles could not load.' });
+        } else if (!res.destroyed) res.destroy();
       } finally {
-        clearInterval(check);
-        res.off('close', cancel);
+        scope.cleanup();
       }
       return;
     }
@@ -192,34 +198,32 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
       const window = Playback.chunkWindow(watch.position(grant.room), media.duration);
       if (!match || index < window.first || index > window.last)
         return json(res, 403, { error: 'Chunk is outside the shared playback window' });
-      const abort = new AbortController();
-      const cancel = () => abort.abort();
-      res.on('close', cancel);
-      const check = setInterval(async () => {
-        try {
-          if (!(await validGrant(grant))) abort.abort();
-        } catch {
-          abort.abort();
-        }
-      }, 2000);
+      const scope = bindGrantAbort(res, grant);
       try {
         const background = req.headers['x-uburoom-prefetch'] === '1';
-        const chunk = await watch.pipeline.av1.chunk(media.av1Lease, index, abort.signal, {
+        const chunk = await watch.pipeline.av1.chunk(media.av1Lease, index, scope.signal, {
             urgent: !background && Math.abs(index - Math.floor(watch.position(grant.room) / CHUNK)) <= 1,
             background,
           }),
           bytes = chunk[match[1]];
-        if (abort.signal.aborted || !(await validGrant(grant))) return;
+        if (scope.signal.aborted || !(await validGrant(grant))) {
+          if (!scope.clientClosed() && !res.headersSent && !res.destroyed)
+            return json(res, 403, { error: 'Viewing access expired or was revoked' });
+          if (!res.destroyed) res.destroy();
+          return;
+        }
         res.writeHead(200, { 'Content-Type': 'video/webm', 'Content-Length': bytes.length });
         if (req.method === 'HEAD') res.end();
         else await pipeline(Readable.from([bytes]), res);
       } catch (error) {
-        if (!res.headersSent && !res.destroyed)
-          json(res, 503, { error: error instanceof PlaybackError ? error.message : 'Local video conversion failed' });
-        else res.destroy();
+        if (!res.headersSent && !res.destroyed) {
+          if (grant.abort?.signal.aborted && !scope.clientClosed())
+            json(res, 403, { error: 'Viewing access expired or was revoked' });
+          else
+            json(res, 503, { error: error instanceof PlaybackError ? error.message : 'Local video conversion failed' });
+        } else if (!res.destroyed) res.destroy();
       } finally {
-        clearInterval(check);
-        res.off('close', cancel);
+        scope.cleanup();
       }
       return;
     }
@@ -250,19 +254,15 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
       res.writeHead(range ? 206 : 200, headers);
       if (req.method === 'HEAD') return res.end();
       const source = fs.createReadStream(media.file, { start, end });
-      const check = setInterval(async () => {
-        try {
-          if (!(await validGrant(grant))) source.destroy();
-        } catch {
-          source.destroy();
-        }
-      }, 2000);
+      const onGrantAbort = () => source.destroy();
+      if (grant.abort?.signal.aborted) source.destroy();
+      else grant.abort?.signal.addEventListener('abort', onGrantAbort, { once: true });
       try {
         await pipeline(source, res);
       } catch {
-        res.destroy();
+        if (!res.destroyed) res.destroy();
       } finally {
-        clearInterval(check);
+        grant.abort?.signal.removeEventListener('abort', onGrantAbort);
       }
       return;
     }
@@ -286,7 +286,10 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
     const disconnect = () => {
       if (!res.writableEnded) abort.abort();
     };
+    const onGrantAbort = () => abort.abort();
     res.on('close', disconnect);
+    if (grant.abort?.signal.aborted) abort.abort();
+    else grant.abort?.signal.addEventListener('abort', onGrantAbort, { once: true });
     try {
       // The grant's own source access is checked before cached or producer bytes.
       response =
@@ -324,32 +327,28 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
         if (response.headers.has(name)) headers[name] = response.headers.get(name);
       res.writeHead(response.status, headers);
       if (req.method === 'HEAD') return res.end();
-      const check = setInterval(async () => {
-        try {
-          if (!(await validGrant(grant))) abort.abort();
-        } catch {
-          abort.abort();
-        }
-      }, 2000);
-      try {
-        await pipeline(Readable.fromWeb(response.body), res);
-      } finally {
-        clearInterval(check);
-      }
+      await pipeline(Readable.fromWeb(response.body), res, { signal: abort.signal });
     } catch (error) {
       if (!res.headersSent)
         json(
           res,
-          media.transcodeId &&
-            ([404, 410].includes(error.status) || (media.hlsLease && [401, 403].includes(error.status)))
-            ? 410
-            : 502,
-          { error: 'Playback failed; try a different quality or check server access' },
+          grant.abort?.signal.aborted
+            ? 403
+            : media.transcodeId &&
+                ([404, 410].includes(error.status) || (media.hlsLease && [401, 403].includes(error.status)))
+              ? 410
+              : 502,
+          {
+            error: grant.abort?.signal.aborted
+              ? 'Viewing access was revoked'
+              : 'Playback failed; try a different quality or check server access',
+          },
         );
-      else res.destroy();
+      else if (!res.destroyed) res.destroy();
     } finally {
       clearTimeout(timer);
       res.off('close', disconnect);
+      grant.abort?.signal.removeEventListener('abort', onGrantAbort);
     }
   }
   return { stream, rewriteManifest };

@@ -90,6 +90,7 @@ const JOIN_PREFERENCES = Object.freeze({
 const VIEWER_KEYS = Object.freeze([
   'observationEpoch',
   'format',
+  'container',
   'quality',
   'videoCodec',
   'compatible',

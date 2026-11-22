@@ -4,9 +4,36 @@ const { randomBytes } = require('node:crypto');
 /** Short-lived media grants: a viewer's right to read one media selection of one room. */
 function mediaGrants({ watch, cookies, login }) {
   const grants = new Map();
+  /** @type {Map<string, Set<any>>} */
+  const viewerGrants = new Map();
+  function revoke(grant) {
+    if (!grant) return;
+    if (grants.get(grant.id) === grant) grants.delete(grant.id);
+    const own = viewerGrants.get(grant.viewerId);
+    if (own) {
+      own.delete(grant);
+      if (!own.size) viewerGrants.delete(grant.viewerId);
+    }
+    grant.abort?.abort();
+  }
+  function revokeGrant(id) {
+    revoke(grants.get(id));
+  }
+  function revokeWhere(predicate) {
+    for (const grant of [...grants.values()]) {
+      if (predicate(grant)) revoke(grant);
+    }
+  }
+  function cleanupViewerGrants(viewerId) {
+    const own = viewerGrants.get(viewerId);
+    if (!own) return;
+    for (const grant of [...own]) revoke(grant);
+    viewerGrants.delete(viewerId);
+  }
   async function validGrant(grant) {
     return (
       grant &&
+      !grant.abort?.signal.aborted &&
       grant.expires > Date.now() &&
       (await grant.alive()) &&
       watch.rooms.get(grant.room.roomId) === grant.room &&
@@ -22,10 +49,12 @@ function mediaGrants({ watch, cookies, login }) {
     const viewer = grant && grant.room.viewers.get(grant.viewerId);
     return (
       grant &&
+      !grant.abort?.signal.aborted &&
       grant.expires > Date.now() &&
       (await grant.alive()) &&
       watch.rooms.get(grant.room.roomId) === grant.room &&
       grant.version === grant.room.mediaVersion &&
+      (!grant.captionVersion || grant.captionVersion === captionVersion) &&
       viewer?.media?.captionVersion === captionVersion &&
       (await watch.canView(grant.room, grant.actor))
     );
@@ -33,13 +62,11 @@ function mediaGrants({ watch, cookies, login }) {
   // A grant lasts 15 s. Its tab's own presence (clock exchanges, pongs) renews it;
   // a client's own request renews it too, and the server's publications only read it.
   // Grants are found by their tab, so renewal never looks at anyone else's.
-  /** @type {Map<string, Set<any>>} */
-  const viewerGrants = new Map();
   function renewGrants(socket, viewerId) {
     const own = viewerGrants.get(viewerId);
     if (!own) return;
     const expires = Date.now() + 15000;
-    for (const grant of own) {
+    for (const grant of [...own]) {
       if (grants.get(grant.id) !== grant) {
         own.delete(grant);
         continue;
@@ -49,38 +76,14 @@ function mediaGrants({ watch, cookies, login }) {
     }
     if (!own.size) viewerGrants.delete(viewerId);
   }
-  function mediaGrant(room, auth, req, viewerId, fallback = false, renew = true) {
-    const viewer = room.viewers.get(viewerId);
-    const media = fallback ? watch.fallbackFor(room, viewer || {}) : viewer?.media;
-    if (!media || media.playbackError) return;
+  function issueOrReuse(match, create, auth, req, renew) {
     const credential = req.headers.authorization || cookies(req).uburoom;
-    for (const g of grants.values()) {
-      if (
-        g.room === room &&
-        g.viewerId === viewerId &&
-        g.actor.userId === auth.actor.userId &&
-        g.version === room.mediaVersion &&
-        g.media?.captionVersion &&
-        g.media.captionVersion === viewer.media.captionVersion &&
-        (g.credential === credential || Boolean(req.headers.authorization) === Boolean(g.headers?.authorization))
-      ) {
-        g.credential = credential;
-        g.headers = { cookie: req.headers.cookie, authorization: req.headers.authorization };
-        if (renew) g.expires = Date.now() + 15000;
-      }
-    }
-    const existing = [...grants.values()].find(
-      g =>
-        g.room === room &&
-        g.viewerId === viewerId &&
-        g.actor.userId === auth.actor.userId &&
-        g.version === room.mediaVersion &&
-        g.streamVersion === viewer.streamVersion &&
-        g.media === media &&
-        !!g.fallback === fallback,
-    );
+    const { room, viewerId } = create;
+    const own = viewerGrants.get(viewerId);
+    const existing = own && [...own].find(match);
     if (
       existing &&
+      !existing.abort?.signal.aborted &&
       (existing.credential === credential ||
         Boolean(req.headers.authorization) === Boolean(existing.headers?.authorization))
     ) {
@@ -89,28 +92,89 @@ function mediaGrants({ watch, cookies, login }) {
       if (renew) existing.expires = Date.now() + 15000;
       return existing.id;
     }
-    if (existing) grants.delete(existing.id);
+    if (existing) revoke(existing);
     const id = randomBytes(24).toString('hex');
     const grant = {
+      ...create,
       id,
-      room,
-      media,
-      fallback,
-      streamVersion: viewer.streamVersion,
       actor: auth.actor,
-      viewerId,
-      version: room.mediaVersion,
       credential,
       headers: { cookie: req.headers.cookie, authorization: req.headers.authorization },
       expires: Date.now() + 15000,
-      alive: async () =>
-        (await login({ headers: req.controlSocket?.watchHeaders || grant.headers }))?.userId === auth.actor.userId,
+      abort: new AbortController(),
+      alive: async () => {
+        const liveHeaders = room.viewers.get(viewerId)?.watchSocket?.watchHeaders || grant.headers;
+        return (await login({ headers: liveHeaders }))?.userId === auth.actor.userId;
+      },
     };
     grants.set(id, grant);
     if (!viewerGrants.has(viewerId)) viewerGrants.set(viewerId, new Set());
     viewerGrants.get(viewerId).add(grant);
     return id;
   }
-  return { grants, validGrant, validCaptionGrant, renewGrants, mediaGrant };
+  function mediaGrant(room, auth, req, viewerId, fallback = false, renew = true) {
+    const viewer = room.viewers.get(viewerId);
+    const media = fallback ? watch.fallbackFor(room, viewer || {}) : viewer?.media;
+    if (!media || media.playbackError) return;
+    return issueOrReuse(
+      g =>
+        !g.caption &&
+        g.room === room &&
+        g.viewerId === viewerId &&
+        g.actor.userId === auth.actor.userId &&
+        g.version === room.mediaVersion &&
+        g.streamVersion === viewer.streamVersion &&
+        g.media === media &&
+        !!g.fallback === fallback,
+      {
+        room,
+        media,
+        fallback,
+        streamVersion: viewer.streamVersion,
+        viewerId,
+        version: room.mediaVersion,
+      },
+      auth,
+      req,
+      renew,
+    );
+  }
+  function captionGrant(room, auth, req, viewerId, renew = true) {
+    const viewer = room.viewers.get(viewerId);
+    const media = viewer?.media;
+    if (!media || media.playbackError || !media.captionVersion) return;
+    const captionVersion = media.captionVersion;
+    return issueOrReuse(
+      g =>
+        g.caption === true &&
+        g.room === room &&
+        g.viewerId === viewerId &&
+        g.actor.userId === auth.actor.userId &&
+        g.version === room.mediaVersion &&
+        g.captionVersion === captionVersion,
+      {
+        room,
+        media,
+        caption: true,
+        captionVersion,
+        viewerId,
+        version: room.mediaVersion,
+      },
+      auth,
+      req,
+      renew,
+    );
+  }
+  return {
+    grants,
+    validGrant,
+    validCaptionGrant,
+    renewGrants,
+    mediaGrant,
+    captionGrant,
+    cleanupViewerGrants,
+    revokeGrant,
+    revokeWhere,
+  };
 }
 module.exports = { mediaGrants };

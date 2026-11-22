@@ -4,6 +4,8 @@ import * as uburoomIcons from './icons.js';
 let currentPopover = null;
 let activeTimer = null;
 let activeDismissListener = null;
+let activeDoc = null;
+let activeWin = null;
 
 function dismiss() {
   if (activeTimer) {
@@ -11,16 +13,21 @@ function dismiss() {
     activeTimer = null;
   }
   if (activeDismissListener) {
-    window.removeEventListener('scroll', activeDismissListener, true);
-    document.removeEventListener('pointerdown', activeDismissListener, true);
-    window.removeEventListener('keydown', activeDismissListener, true);
+    const win = activeWin || window;
+    const doc = activeDoc || document;
+    win.removeEventListener('scroll', activeDismissListener, true);
+    doc.removeEventListener('pointerdown', activeDismissListener, true);
+    win.removeEventListener('keydown', activeDismissListener, true);
     activeDismissListener = null;
   }
+  const win = activeWin || window;
+  activeDoc = null;
+  activeWin = null;
   if (!currentPopover) return;
   const el = currentPopover;
   currentPopover = null;
   el.classList.remove('visible');
-  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const prefersReducedMotion = win.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (prefersReducedMotion) {
     el.remove();
   } else {
@@ -47,6 +54,9 @@ function show(trigger, options = {}) {
   dismiss();
 
   const doc = trigger.ownerDocument || document;
+  const win = doc.defaultView || window;
+  activeDoc = doc;
+  activeWin = win;
   const modal = trigger.closest('dialog[open]');
   const container = doc.fullscreenElement || modal || doc.body;
 
@@ -78,7 +88,7 @@ function show(trigger, options = {}) {
     }
     const triggerRect = trigger.getBoundingClientRect();
     const popoverRect = popover.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
+    const viewportWidth = win.innerWidth;
 
     let chosenPlacement = placement;
     if (chosenPlacement === 'auto') {
@@ -111,7 +121,7 @@ function show(trigger, options = {}) {
 
   position();
 
-  requestAnimationFrame(() => {
+  win.requestAnimationFrame(() => {
     if (currentPopover === popover) {
       popover.classList.add('visible');
     }
@@ -124,6 +134,16 @@ function show(trigger, options = {}) {
   }
 
   activeDismissListener = event => {
+    if (event.type === 'scroll') {
+      const target = event.target;
+      if (
+        target !== doc &&
+        target !== doc.documentElement &&
+        target !== doc.body &&
+        !(typeof target?.contains === 'function' && target.contains(trigger))
+      )
+        return;
+    }
     if (event.type === 'pointerdown' && popover.contains(event.target)) return;
     if (event.type === 'keydown') {
       if (event.key !== 'Escape') return;
@@ -132,9 +152,9 @@ function show(trigger, options = {}) {
     }
     dismiss();
   };
-  window.addEventListener('scroll', activeDismissListener, { capture: true, passive: true });
-  document.addEventListener('pointerdown', activeDismissListener, { capture: true, passive: true });
-  window.addEventListener('keydown', activeDismissListener, { capture: true, passive: true });
+  win.addEventListener('scroll', activeDismissListener, { capture: true, passive: true });
+  doc.addEventListener('pointerdown', activeDismissListener, { capture: true, passive: true });
+  win.addEventListener('keydown', activeDismissListener, { capture: true });
 
   return {
     element: popover,

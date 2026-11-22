@@ -40,11 +40,12 @@ function trackLabel(track) {
     .join(' · ');
 }
 function mount({ getState, execute, fail, beforeSettings, afterSettings, changeTrack, captions }) {
-  const $ = id => document.getElementById(id),
-    stage = $('stage'),
+  const stage = document.getElementById('stage'),
+    $ = id => stage.ownerDocument.getElementById(id) || document.getElementById(id),
     cog = $('tracks-open'),
     dialog = $('tracks-dialog');
-  const mobile = () => document.body.dataset.layout === 'phone';
+  const activeElement = () => stage.ownerDocument.activeElement;
+  const mobile = () => stage.ownerDocument === document && document.body.dataset.layout === 'phone';
   const menu = document.createElement('div');
   menu.id = 'player-settings-menu';
   menu.className = 'player-settings-menu';
@@ -159,7 +160,8 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
       ) + 14;
     // Position and height go to the stylesheet as --x, --y and --menu-height (tracks-menu.css).
     menu.style.setProperty('--menu-height', height + 'px');
-    const left = Math.max(8, Math.min(innerWidth - width - 8, anchor.right - width));
+    const view = stage.ownerDocument.defaultView || window;
+    const left = Math.max(8, Math.min(view.innerWidth - width - 8, anchor.right - width));
     menu.style.setProperty('--x', left / scale + 'px');
     menu.style.setProperty('--y', Math.max(8, anchor.top - menu.offsetHeight * scale - 8) / scale + 'px');
   }
@@ -271,8 +273,9 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     ]);
     if (signature === choiceSignature) return;
     choiceSignature = signature;
-    const focused = options.contains(document.activeElement),
-      previous = document.activeElement?.dataset.value,
+    const active = activeElement();
+    const focused = options.contains(active),
+      previous = active?.dataset.value,
       scrollTop = options.scrollTop;
     options.replaceChildren();
     const current = getState();
@@ -323,9 +326,10 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
       if (focused && option.value === previous) b.focus();
     }
     options.scrollTop = scrollTop;
-    if (focused && !options.contains(document.activeElement)) back.focus();
+    if (focused && !options.contains(activeElement())) back.focus();
   }
   function render() {
+    syncHostListeners();
     const state = getState(),
       tracks = state?.tracks;
     cog.setAttribute('aria-haspopup', mobile() ? 'dialog' : 'menu');
@@ -453,24 +457,26 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     cog.focus();
     showChrome();
   });
-  document.addEventListener('pointerdown', event => {
+  const onHostPointerDown = event => {
     if (opened && !menu.contains(event.target) && !cog.contains(event.target)) closeSettings();
-  });
+    if (volumeOpen && !volumeControl.contains(event.target)) closeVolume();
+  };
   menu.addEventListener('focusout', event => {
     if (opened && event.relatedTarget && !menu.contains(event.relatedTarget) && event.relatedTarget !== cog)
       closeSettings();
   });
-  document.addEventListener('focusin', event => {
+  const onHostFocusIn = event => {
     if (opened && !menu.contains(event.target) && event.target !== cog) closeSettings();
-  });
+  };
   menu.addEventListener('keydown', event => {
     if (event.key === 'Tab') {
       closeSettings(true);
       return;
     }
     const group = activeChoice ? submenu : mainMenu;
+    const active = activeElement();
     const buttons = [...group.querySelectorAll('button:not(:disabled)')],
-      index = buttons.indexOf(document.activeElement);
+      index = buttons.indexOf(active);
     if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
       event.preventDefault();
       const next =
@@ -485,22 +491,54 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
       backToSettings();
     } else if (event.key === 'ArrowRight' && !activeChoice) {
       event.preventDefault();
-      rows.find(r => r.row === document.activeElement)?.row.click();
+      rows.find(r => r.row === active)?.row.click();
     }
   });
-  document.addEventListener(
-    'keydown',
-    event => {
-      if (event.key === 'Escape' && opened) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        if (activeChoice) backToSettings();
-        else closeSettings(true);
-      }
-      if (event.key === 'Tab') stage.classList.remove('touch-controls');
-    },
-    true,
-  );
+  const onHostKeyDownCapture = event => {
+    if (event.key === 'Escape' && opened) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (activeChoice) backToSettings();
+      else closeSettings(true);
+    }
+    if (event.key === 'Tab') stage.classList.remove('touch-controls');
+  };
+  const onHostKeyDownBubble = event => {
+    if (event.key === 'Escape' && volumeOpen) {
+      event.preventDefault();
+      closeVolume(true);
+    }
+  };
+  const onHostFullscreenChange = () => {
+    if (opened) closeSettings();
+    wakeMouse();
+  };
+  const onHostResize = () => {
+    if (opened && mobile()) closeSettings();
+    else placeMenu();
+  };
+  let boundDoc, boundWin;
+  function syncHostListeners() {
+    const doc = stage.ownerDocument || document;
+    const win = doc.defaultView || window;
+    if (doc === boundDoc && win === boundWin) return;
+    if (boundDoc) {
+      boundDoc.removeEventListener('pointerdown', onHostPointerDown);
+      boundDoc.removeEventListener('focusin', onHostFocusIn);
+      boundDoc.removeEventListener('keydown', onHostKeyDownCapture, true);
+      boundDoc.removeEventListener('keydown', onHostKeyDownBubble);
+      boundDoc.removeEventListener('fullscreenchange', onHostFullscreenChange);
+    }
+    if (boundWin) boundWin.removeEventListener('resize', onHostResize);
+    boundDoc = doc;
+    boundWin = win;
+    doc.addEventListener('pointerdown', onHostPointerDown);
+    doc.addEventListener('focusin', onHostFocusIn);
+    doc.addEventListener('keydown', onHostKeyDownCapture, true);
+    doc.addEventListener('keydown', onHostKeyDownBubble);
+    doc.addEventListener('fullscreenchange', onHostFullscreenChange);
+    win.addEventListener('resize', onHostResize);
+  }
   let mouseTimer;
   function showChrome() {
     clearTimeout(chromeTimer);
@@ -518,7 +556,7 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     clearTimeout(mouseTimer);
     stage.classList.remove('mouse-idle');
     layoutCaptions();
-    if (document.fullscreenElement !== stage) return;
+    if ((stage.ownerDocument || document).fullscreenElement !== stage) return;
     mouseTimer = setTimeout(() => {
       if (opened || dialog.open || stage.querySelector('.player-chrome:hover')) return wakeMouse();
       stage.classList.add('mouse-idle');
@@ -529,7 +567,6 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     stage.addEventListener(event, value => {
       if (value.pointerType === 'mouse') wakeMouse();
     });
-  document.addEventListener('fullscreenchange', wakeMouse);
   function finishTaps() {
     clearTimeout(tapTimer);
     const sequence = taps;
@@ -668,7 +705,7 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
   const panelMode = () => volumeSettable && phone.matches;
   function idleVolume() {
     clearTimeout(volumeTimer);
-    if (volumePanel.contains(document.activeElement)) return;
+    if (volumePanel.contains(activeElement())) return;
     volumeTimer = setTimeout(() => closeVolume(), 3000);
   }
   function openVolume() {
@@ -712,7 +749,13 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
   volumeControl.addEventListener(
     'click',
     event => {
-      if (event.target.closest('#player-mute') !== speaker || speakerMuting || !panelMode()) return;
+      if (
+        typeof event.target?.closest !== 'function' ||
+        event.target.closest('#player-mute') !== speaker ||
+        speakerMuting ||
+        !panelMode()
+      )
+        return;
       event.stopImmediatePropagation();
       event.preventDefault();
       if (volumeOpen) closeVolume();
@@ -733,17 +776,8 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     volumePanel.addEventListener(type, () => volumeOpen && idleVolume());
   volumePanel.addEventListener('focusout', () => {
     requestAnimationFrame(() => {
-      if (volumeOpen && !volumePanel.contains(document.activeElement)) idleVolume();
+      if (volumeOpen && !volumePanel.contains(activeElement())) idleVolume();
     });
-  });
-  document.addEventListener('pointerdown', event => {
-    if (volumeOpen && !volumeControl.contains(event.target)) closeVolume();
-  });
-  document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && volumeOpen) {
-      event.preventDefault();
-      closeVolume(true);
-    }
   });
   new MutationObserver(mirrorSpeaker).observe(speaker, {
     attributes: true,
@@ -752,6 +786,7 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
   });
   phone.addEventListener('change', mirrorSpeaker);
   mirrorSpeaker();
+  syncHostListeners();
 
   const reset = () => {
     clearTimeout(tapTimer);
@@ -761,13 +796,6 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     closeVolume();
     if (dialog.open) dialog.close();
   };
-  window.addEventListener('resize', () => {
-    if (opened && mobile()) closeSettings();
-    else placeMenu();
-  });
-  document.addEventListener('fullscreenchange', () => {
-    if (opened) closeSettings();
-  });
   return { render, closeSettings, openDialog, reset, settingsOpen: () => opened || dialog.open, showChrome };
 }
 export { mount, trackLabel };

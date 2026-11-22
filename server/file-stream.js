@@ -13,10 +13,10 @@ const PIECE = 256 * 1024;
  * flight, and cancelling or aborting only closes the file.
  *
  * @param {string | import('node:fs/promises').FileHandle} source a path, or an open handle this stream then owns
- * @param {{ start?: number, end?: number, signal?: AbortSignal }} [options] end is inclusive, as in HTTP ranges
+ * @param {{ start?: number, end?: number, signal?: AbortSignal, onClose?: () => void }} [options] end is inclusive, as in HTTP ranges
  * @returns {ReadableStream<Uint8Array>}
  */
-function fileStream(source, { start = 0, end = Infinity, signal } = {}) {
+function fileStream(source, { start = 0, end = Infinity, signal, onClose } = {}) {
   /** @type {import('node:fs/promises').FileHandle | undefined} */
   let handle = typeof source === 'string' ? undefined : source;
   /** @type {ReadableStreamDefaultController<Uint8Array> | undefined} */
@@ -27,7 +27,11 @@ function fileStream(source, { start = 0, end = Infinity, signal } = {}) {
     if (done) return;
     done = true;
     signal?.removeEventListener('abort', aborted);
-    await handle?.close().catch(() => {});
+    try {
+      await handle?.close().catch(() => {});
+    } finally {
+      onClose?.();
+    }
   };
   const aborted = () => {
     try {

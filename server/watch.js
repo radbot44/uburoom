@@ -6,7 +6,7 @@
 /** @typedef {import('./types').RoomDescriptor} RoomDescriptor */
 /** @typedef {import('./types').EngineCommand} EngineCommand */
 /** @typedef {{room: Room, kind: 'preload'|'transition'|'cleanup', controller: AbortController, signal: AbortSignal, committing: boolean, promise: Promise<any>}} MediaWork */
-/** @typedef {{countdown: any, mediaId: string, startAt: number, viewers: Map<string, any>, work?: MediaWork, dropped?: boolean, media?: any, fallbackStream?: InstanceType<typeof import('./fallback-stream').FallbackStream>, source?: Promise<any>}} Preload */
+/** @typedef {{countdown: any, mediaId: string, fromMediaVersion?: string, mediaVersion?: string, startAt: number, viewers: Map<string, any>, viewerMedia?: Map<string, any>, work?: MediaWork, dropped?: boolean, media?: any, fallbackStream?: InstanceType<typeof import('./fallback-stream').FallbackStream>, source?: Promise<any>, sourceAdopted?: boolean, expiry?: any}} Preload */
 
 const { MediaChecks } = require('./media-check');
 const { waitFor, createDeadline } = require('./operation');

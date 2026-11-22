@@ -989,3 +989,26 @@ test('auto delivery falls back to IFrame embed, learns keyless oEmbed duration o
   assert.equal(rate, 1);
   assert.ok(Math.abs(curTime - 10.6) < 0.05);
 });
+
+test('YouTubeCache protects actively leased videos from LRU eviction until released', async t => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-yt-lease-'));
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+  const yt = makeYoutubeRunner({ delayMs: 10 });
+  const cache = new YouTubeCache({
+    cacheDirectory: dir,
+    maxCacheBytes: 180,
+    maxConcurrent: 2,
+    runCommand: yt.runner,
+  });
+  t.after(() => cache.close());
+
+  await cache.prepare('dQw4w9WgXcQ');
+  const release = cache.acquire('dQw4w9WgXcQ');
+  await cache.prepare('jNQXAC9IVRw');
+  assert.equal(fs.existsSync(path.join(dir, 'dQw4w9WgXcQ.mp4')), true, 'leased video survives LRU eviction');
+  assert.equal(fs.existsSync(path.join(dir, 'dQw4w9WgXcQ.meta.json')), true);
+
+  release();
+  await cache.evictIfNeeded();
+  assert.equal(fs.existsSync(path.join(dir, 'dQw4w9WgXcQ.mp4')), false, 'unleased video evicts cleanly');
+});

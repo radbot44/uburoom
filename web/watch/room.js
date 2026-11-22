@@ -329,13 +329,10 @@ export function mount(host, deps) {
       store.player.capabilityProbeVersion++;
       store.player.capabilityProbeKey = undefined;
     }
-    if (
-      store.room.seekPendingValue !== undefined &&
-      (next.revision !== store.room.seekPendingRevision || changed || next.id !== store.room.selected)
-    ) {
+    if (store.room.seekPendingValue !== undefined && (changed || next.id !== store.room.selected)) {
       store.room.seekPendingValue = undefined;
       store.room.seekPendingUntil = 0;
-      store.room.seekPendingRevision = undefined;
+      store.room.seekPendingToken = (store.room.seekPendingToken || 0) + 1;
     }
     const previousTarget = store.room.state ? deps.expected() : undefined,
       previousRevision = store.room.state?.revision,
@@ -411,7 +408,34 @@ export function mount(host, deps) {
                 deps.video,
                 next.mediaUrl,
                 deps.expected,
-                message => {
+                (message, error) => {
+                  if (error?.kind === 'grant-expired') {
+                    const key = `${next.mediaVersion}:${next.streamVersion}`;
+                    if (store.stream.av1GrantRefreshKey !== key) {
+                      store.stream.av1GrantRefreshKey = key;
+                      store.stream.av1GrantRefreshCount = 0;
+                    }
+                    if ((store.stream.av1GrantRefreshCount || 0) < 2) {
+                      store.stream.av1GrantRefreshCount = (store.stream.av1GrantRefreshCount || 0) + 1;
+                      void deps
+                        .refreshState()
+                        .then(() => {
+                          if (
+                            store.room.state?.mediaVersion === next.mediaVersion &&
+                            store.room.state?.streamVersion === next.streamVersion &&
+                            store.room.state?.mediaUrl === next.mediaUrl
+                          )
+                            return deps.execute({
+                              action: 'media.stream.refresh',
+                              args: { mediaVersion: next.mediaVersion, streamVersion: next.streamVersion },
+                            });
+                        })
+                        .catch(() => deps.fail(message));
+                      return;
+                    }
+                    deps.fail(message);
+                    return;
+                  }
                   void deps.compatibleFallback(message);
                 },
                 alternatives.length ? 3 : 8,

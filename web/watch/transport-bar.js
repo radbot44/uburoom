@@ -174,7 +174,8 @@ export function mount(host, deps) {
         deps.fail(error.message);
       });
   }
-  $('player-volume').addEventListener('pointerdown', () => {
+  $('player-volume').addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
     store.player.volumeDragging = true;
   });
   $('player-volume').addEventListener('input', () => {
@@ -190,9 +191,11 @@ export function mount(host, deps) {
     renderVolumeIcon();
     pumpVolume();
   });
-  $('player-volume').addEventListener('pointercancel', () => {
-    store.player.volumeDragging = false;
-  });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    $('player-volume').addEventListener(type, () => {
+      store.player.volumeDragging = false;
+    });
+  }
   for (const [id, command] of [
     ['previous', { action: 'media.previous' }],
     ['seek-back', { action: 'media.seek.relative', args: { seconds: -15 } }],
@@ -258,6 +261,7 @@ export function mount(host, deps) {
     tooltip.style.setProperty('--x', Math.max(24, Math.min(rowRect.width - 24, left)) + 'px');
   }
   $('timeline').addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
     store.player.seekDragging = true;
     updateTimelineTooltip(event);
   });
@@ -272,20 +276,27 @@ export function mount(host, deps) {
     const seconds = Number($('timeline').value);
     store.player.seekDragging = false;
     if ($('timeline-tooltip')) $('timeline-tooltip').hidden = true;
+    const token = (store.room.seekPendingToken = (store.room.seekPendingToken || 0) + 1);
     store.room.seekPendingValue = seconds;
     store.room.seekPendingUntil = deps.time.mono() + 1500;
-    store.room.seekPendingRevision = store.room.state?.revision;
-    deps.execute({ action: 'media.seek.absolute', args: { seconds } }).catch(error => {
-      store.room.seekPendingValue = undefined;
-      store.room.seekPendingUntil = 0;
-      store.room.seekPendingRevision = undefined;
-      deps.fail(error.message);
+    deps
+      .execute({ action: 'media.seek.absolute', args: { seconds } })
+      .catch(error => {
+        deps.fail(error.message);
+      })
+      .finally(() => {
+        if (store.room.seekPendingToken === token) {
+          store.room.seekPendingValue = undefined;
+          store.room.seekPendingUntil = 0;
+        }
+      });
+  });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    $('timeline').addEventListener(type, () => {
+      store.player.seekDragging = false;
+      if ($('timeline-tooltip')) $('timeline-tooltip').hidden = true;
     });
-  });
-  $('timeline').addEventListener('pointercancel', () => {
-    store.player.seekDragging = false;
-    if ($('timeline-tooltip')) $('timeline-tooltip').hidden = true;
-  });
+  }
   $('chapters')?.addEventListener('change', () => {
     const seconds = Number($('chapters').value);
     if (Number.isFinite(seconds)) {
@@ -301,7 +312,7 @@ export function mount(host, deps) {
         .catch(error => deps.fail(error.message));
     }
   });
-  document.addEventListener('keydown', event => {
+  function handleStageKeydown(event) {
     if (
       event.defaultPrevented ||
       document.body.classList.contains('activity-pip') ||
@@ -313,14 +324,15 @@ export function mount(host, deps) {
       $('drawer-open').focus();
       return;
     }
-    if (!deps.drawer.hidden && deps.drawer.contains(event.target)) return;
+    if (!deps.drawer.hidden && typeof event.target?.nodeType === 'number' && deps.drawer.contains(event.target)) return;
     if (
       !store.room.state ||
       event.repeat ||
       event.altKey ||
       event.ctrlKey ||
       event.metaKey ||
-      event.target.closest('button,input,select,textarea,[contenteditable=true]')
+      (typeof event.target?.closest === 'function' &&
+        event.target.closest('button,input,select,textarea,[contenteditable=true]'))
     )
       return;
     if (event.code === 'KeyF') {
@@ -392,7 +404,8 @@ export function mount(host, deps) {
       if (deps.adjustSubtitleOffset?.({ reset: true, announce: true })) event.preventDefault();
       return;
     }
-  });
+  }
+  document.addEventListener('keydown', handleStageKeydown);
   deps.every(250, () => {
     const timeline = $('timeline'),
       duration = store.room.state?.state.duration || 0;
@@ -400,15 +413,11 @@ export function mount(host, deps) {
     if (store.player.seekDragging) {
       value = Number(timeline.value);
     } else if (store.room.seekPendingValue !== undefined) {
-      if (
-        deps.time.mono() < store.room.seekPendingUntil &&
-        store.room.state?.revision === store.room.seekPendingRevision
-      ) {
+      if (deps.time.mono() < store.room.seekPendingUntil) {
         value = store.room.seekPendingValue;
       } else {
         store.room.seekPendingValue = undefined;
         store.room.seekPendingUntil = 0;
-        store.room.seekPendingRevision = undefined;
         value = store.room.state ? deps.expected() : 0;
       }
     } else {
@@ -453,5 +462,5 @@ export function mount(host, deps) {
     );
     timeline.title = loaded + ' seconds buffered ahead';
   });
-  return { clock, dropVolume, pumpVolume, renderTransport };
+  return { clock, dropVolume, handleStageKeydown, pumpVolume, renderTransport };
 }

@@ -53,7 +53,7 @@ export const store = {
     lastFeedback: undefined,
     seekPendingValue: undefined,
     seekPendingUntil: 0,
-    seekPendingRevision: undefined,
+    seekPendingToken: 0,
     voluntarilyPausedFor: null,
   },
   /** This viewer's stream: source, delivery, readiness and recovery. */

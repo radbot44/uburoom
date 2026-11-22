@@ -829,8 +829,55 @@ class AV1 {
     this.queue = [];
     this.active = 0;
     this.closed = false;
+    this.memoryWaiters = new Set();
+    this.memoryWakeScheduled = false;
     // Overridable for tests.
     this.timing = { gather: GATHER_MS, idle: RUN_IDLE_MS, stall: RUN_STALL_MS };
+  }
+  wakeMemoryWaiters() {
+    if (this.memoryWakeScheduled || !this.memoryWaiters.size) return;
+    this.memoryWakeScheduled = true;
+    queueMicrotask(() => {
+      this.memoryWakeScheduled = false;
+      for (const check of [...this.memoryWaiters]) {
+        try {
+          if (check()) this.memoryWaiters.delete(check);
+        } catch {
+          this.memoryWaiters.delete(check);
+        }
+      }
+    });
+  }
+  async waitForMemory(reserveBytes, signal) {
+    this.pruneAll(reserveBytes, undefined, true);
+    if (this.retainedBytes + this.pendingBytes + reserveBytes <= this.maxBytes) return;
+    await new Promise((resolve, reject) => {
+      if (signal?.aborted) return reject(new PlaybackError('WebM preparation cancelled.'));
+      let settled = false;
+      const check = () => {
+        if (settled) return true;
+        if (signal?.aborted || this.closed) {
+          settled = true;
+          signal?.removeEventListener('abort', onAbort);
+          reject(new PlaybackError('WebM preparation cancelled.'));
+          return true;
+        }
+        this.pruneAll(reserveBytes, undefined, true);
+        if (this.retainedBytes + this.pendingBytes + reserveBytes <= this.maxBytes) {
+          settled = true;
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+          return true;
+        }
+        return false;
+      };
+      const onAbort = () => {
+        this.memoryWaiters.delete(check);
+        check();
+      };
+      this.memoryWaiters.add(check);
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
   }
   async selectEncoder(codec = 'av1') {
     this.probePromises ||= new Map();
@@ -952,6 +999,7 @@ class AV1 {
     group.chunks.clear();
     group.bytes = 0;
     if (group.run) this.checkRun(group.run);
+    this.wakeMemoryWaiters();
   }
   bridge() {
     return runOperation(undefined, () => this.openBridge());
@@ -1158,6 +1206,7 @@ class AV1 {
     if (!background) {
       group.viewerDemandAt = performance.now();
       group.lastIndex = index;
+      this.wakeMemoryWaiters();
     }
     let entry = group.chunks.get(index);
     if (entry?.controller.signal.aborted && !entry.error) {
@@ -1185,9 +1234,13 @@ class AV1 {
         entry.promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', cancel));
       });
       entry.fetched = true;
+      this.wakeMemoryWaiters();
       return bytes;
     } finally {
-      if (--entry.users === 0 && !entry.bytes) entry.controller.abort();
+      if (--entry.users === 0 && !entry.bytes) {
+        entry.controller.abort();
+        this.wakeMemoryWaiters();
+      }
     }
   }
   alive(run) {
@@ -1309,7 +1362,7 @@ class AV1 {
   }
   // One process from this chunk on, for every member. A member whose old run was converting
   // just before this chunk starts there, so its chunk in progress is not lost.
-  startRun(members, index, priority, { level, encoder } = {}) {
+  startRun(members, index, priority, { level, encoder, waitMemory = false } = {}) {
     const first = members[0];
     let start = index;
     for (const { group } of members) {
@@ -1333,6 +1386,7 @@ class AV1 {
       pending: new Map(),
       spawned: false,
       done: false,
+      waitMemory,
     };
     this.controllers.add(run.controller);
     for (const member of members) this.join(run, member);
@@ -1350,7 +1404,10 @@ class AV1 {
     run.done = true;
     clearTimeout(run.idleTimer);
     clearTimeout(run.stallTimer);
-    clearInterval(run.memoryTimer);
+    if (run.checkMemory) {
+      this.memoryWaiters.delete(run.checkMemory);
+      run.checkMemory = undefined;
+    }
     run.gate.end();
     this.controllers.delete(run.controller);
     for (const [index, entries] of run.pending)
@@ -1382,6 +1439,11 @@ class AV1 {
       run.encoder ||= await this.selectEncoder(codec);
       const info = await this.sourceInfo(first.group, first.source, signal);
       for (const { group } of run.members) group.info ||= info;
+      if (run.waitMemory) {
+        const needed = run.members.reduce((sum, { group }) => sum + this.chunkBytes(group), 0);
+        await this.waitForMemory(needed, signal);
+        run.waitMemory = false;
+      }
       // Siblings asking for the same chunk a moment later join before the process starts.
       if (!run.priority.background && this.gathering(run)) await delay(this.timing.gather, signal);
       let restarts = 0;
@@ -1393,7 +1455,7 @@ class AV1 {
         if (signal.aborted || this.closed) break;
         if (stopped) {
           if (stopped === 'yield') this.continueRun(run);
-          else if (run.memoryWait) run.error = new PlaybackError('Encoded video memory is busy; retry shortly.');
+          else if (stopped === 'idle' && run.memoryWait) this.continueRun(run, false, { waitMemory: true });
           break;
         }
         if (!error) {
@@ -1462,7 +1524,7 @@ class AV1 {
   }
   // Continue a run's waiting chunks in a new run: queued for a slot again, or, after a
   // shared failure, one run per quality.
-  continueRun(run, split = false) {
+  continueRun(run, split = false, { waitMemory = false } = {}) {
     const live = this.members(run);
     const waiting = live.filter(({ group }) =>
       [...run.pending].some(([index, entries]) => index >= run.next && (split || entries.get(group)?.users)),
@@ -1473,8 +1535,9 @@ class AV1 {
     );
     const priority = { urgent: run.priority.urgent, background: run.priority.background };
     if (split)
-      for (const member of waiting) this.startRun([member], index, priority, { level: member.group.decodeLevel });
-    else this.startRun(waiting, index, priority, { level: run.level, encoder: run.encoder });
+      for (const member of waiting)
+        this.startRun([member], index, priority, { level: member.group.decodeLevel, waitMemory });
+    else this.startRun(waiting, index, priority, { level: run.level, encoder: run.encoder, waitMemory });
   }
   // Open the source while the chunk being converted is wanted and fits memory. A run held
   // closed for RUN_IDLE_MS stops, so a paused room keeps no slot or GPU memory.
@@ -1777,16 +1840,24 @@ class AV1 {
       });
       return true;
     };
-    clearInterval(run.memoryTimer);
+    if (run.checkMemory) {
+      this.memoryWaiters.delete(run.checkMemory);
+      run.checkMemory = undefined;
+    }
     run.memoryWait = !reserve();
     // Memory frees as viewers read and old chunks are pruned; until then the source waits.
-    if (run.memoryWait)
-      run.memoryTimer = setInterval(() => {
-        if (run.done || !run.current || !reserve()) return;
-        clearInterval(run.memoryTimer);
+    if (run.memoryWait) {
+      run.checkMemory = () => {
+        if (run.done || !run.current) return true;
+        if (!reserve()) return false;
         run.memoryWait = false;
+        run.checkMemory = undefined;
+        this.sounds(run, k);
         this.flow(run);
-      }, 250);
+        return true;
+      };
+      this.memoryWaiters.add(run.checkMemory);
+    }
     // Sound starts when the run goes ahead with this chunk; a run held here (a paused room)
     // may stop before then, and its sound would be converted again by the next run.
     if (!run.memoryWait && k <= run.target) this.sounds(run, k);
@@ -1999,6 +2070,7 @@ class AV1 {
         if (entry.reservedBytes) {
           this.pendingBytes -= entry.reservedBytes;
           entry.reservedBytes = 0;
+          this.wakeMemoryWaiters();
         }
         entry.bytes = bytes;
         entry.size = bytes.video.length + bytes.audio.length;
@@ -2039,6 +2111,7 @@ class AV1 {
         if (entry.reservedBytes) {
           this.pendingBytes -= entry.reservedBytes;
           entry.reservedBytes = 0;
+          this.wakeMemoryWaiters();
         }
         group.controllers.delete(controller);
         this.controllers.delete(controller);
@@ -2103,6 +2176,7 @@ class AV1 {
         group.bytes -= entry.size || 0;
       }
     }
+    this.wakeMemoryWaiters();
   }
   close() {
     this.closed = true;
@@ -2111,6 +2185,7 @@ class AV1 {
     for (const group of this.groups.values()) group.infoTask?.abort();
     this.groups.clear();
     this.inputs.clear();
+    this.wakeMemoryWaiters();
     this.server?.closeAllConnections();
     this.server?.close();
     return Promise.allSettled([...this.jobs]);

@@ -6,7 +6,7 @@
 /** @typedef {import('../types').RoomDescriptor} RoomDescriptor */
 /** @typedef {import('../types').EngineCommand} EngineCommand */
 /** @typedef {{room: Room, kind: 'preload'|'transition'|'cleanup', controller: AbortController, signal: AbortSignal, committing: boolean, promise: Promise<any>}} MediaWork */
-/** @typedef {{countdown: any, mediaId: string, startAt: number, viewers: Map<string, any>, work?: MediaWork, dropped?: boolean, media?: any, fallbackStream?: InstanceType<typeof import('../fallback-stream').FallbackStream>, source?: Promise<any>}} Preload */
+/** @typedef {{countdown: any, mediaId: string, fromMediaVersion?: string, mediaVersion?: string, startAt: number, viewers: Map<string, any>, viewerMedia?: Map<string, any>, work?: MediaWork, dropped?: boolean, media?: any, fallbackStream?: InstanceType<typeof import('../fallback-stream').FallbackStream>, source?: Promise<any>, sourceAdopted?: boolean, expiry?: any}} Preload */
 
 const { FallbackStream } = require('../fallback-stream');
 const { runOperation, waitFor, createDeadline } = require('../operation');
@@ -68,6 +68,8 @@ module.exports = {
     room.fallbackStream?.close();
     room.fallbackStream = undefined;
     this.cancelAutoplay(room);
+    this.dropPreload(room, room.adoptable);
+    this.onRoomMediaDropped?.(room);
     clearPlaybackEnd(room);
     RoomAuthority.clearHumanCheck(room);
     room.disconnectedViewers.clear();
@@ -196,11 +198,14 @@ module.exports = {
   preloadNext(room, countdown, next, actor) {
     this.dropPreload(room);
     if (this.shuttingDown || room.closed || !next?.mediaId || next.mediaId === 'demo') return;
+    const fromMediaVersion = room.mediaVersion;
     const preload = (room.preload = /** @type {Preload} */ ({
       countdown: countdown.id,
       mediaId: next.mediaId,
+      fromMediaVersion,
       startAt: Number(next.position) || 0,
       viewers: new Map(),
+      viewerMedia: new Map(),
     }));
     preload.work = this.startMediaWork(room, async work => {
       const provider = await this.hub.mediaFor(actor, next.serverId);
@@ -228,7 +233,7 @@ module.exports = {
     preload.source = preload.work.promise;
     void preload.source.then(
       source => {
-        if (!source || preload.dropped) return;
+        if (!source || preload.dropped || room.mediaVersion !== preload.fromMediaVersion) return;
         for (const [viewerId, viewer] of room.viewers)
           if (!viewer.localDelivery)
             preload.viewers.set(viewerId, this.preloadViewer(room, preload, source, viewerId, viewer));
@@ -239,9 +244,13 @@ module.exports = {
   /** A viewer's preloaded stream for the room's current video, if it still fits them. */
   takePreload(room, viewerId, viewer, source, provider) {
     const preload = room.adoptable,
-      task = preload?.media && preload.media === source ? preload.viewers.get(viewerId) : undefined;
+      task =
+        preload?.media && preload.media === source && preload.mediaVersion === room.mediaVersion
+          ? preload.viewers.get(viewerId)
+          : undefined;
     if (!task) return;
     preload.viewers.delete(viewerId);
+    preload.viewerMedia?.delete(viewerId);
     return task.then(
       result => {
         if (result?.principal === provider.principal && result.choices === this.streamChoices(viewer)) {
@@ -264,6 +273,7 @@ module.exports = {
     clearTimeout(preload.expiry);
     const viewers = [...preload.viewers.values()];
     preload.viewers.clear();
+    preload.viewerMedia?.clear();
     // Register cleanup before yielding, even when all preparation promises have
     // already settled, so shutdown cannot miss their deferred continuations.
     this.startMediaWork(
@@ -315,6 +325,7 @@ module.exports = {
         return this.reporting?.reconnect(room, room.viewers.get(effect.viewerId), effect.saved);
       case 'viewer-removed': {
         const viewer = removed.get(effect.viewerId);
+        this.onViewerRemoved?.(effect.viewerId);
         if (!viewer) return;
         viewer.preparing?.abort();
         clearTimeout(viewer.streamRetry);
@@ -380,9 +391,16 @@ module.exports = {
     const ids = new Set(),
       add = media => {
         if (media?.transcodeId) ids.add(media.transcodeId);
+      },
+      addPreload = preload => {
+        if (!preload || preload.dropped) return;
+        add(preload.media);
+        for (const media of preload.viewerMedia?.values() || []) add(media);
       };
     for (const room of this.rooms.values()) {
       add(room.media);
+      addPreload(room.preload);
+      addPreload(room.adoptable);
       for (const viewer of room.viewers.values()) add(viewer.media);
       for (const viewer of room.disconnectedViewers.values()) add(viewer.media);
     }

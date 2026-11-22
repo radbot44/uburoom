@@ -15,9 +15,13 @@ export function mount(host, deps) {
       store.stream.fallbackPending
     )
       return;
-    // Plex would hand a file the browser already failed on the same H.264 again.
+    // Plex would hand a file the browser already failed on only when it is standard 8-bit H.264 MP4/MOV/M4V.
     const skipPlex =
-      !preferHLS && store.room.state.format === 'file' && /^(h264|avc1)$/i.test(store.room.state.videoCodec || '');
+      !preferHLS &&
+      store.room.state.format === 'file' &&
+      /^(h264|avc1)$/i.test(store.room.state.videoCodec || '') &&
+      !/^(mkv|matroska|mpegts|ts)$/i.test(store.room.state.container || '') &&
+      Number(store.room.state.bitDepth || 8) <= 8;
     if (store.room.pending || store.stream.qualityPending) {
       if (store.stream.fallbackRetryTimer) return;
       const id = store.room.selected,

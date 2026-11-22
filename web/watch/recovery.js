@@ -48,6 +48,8 @@ export function mount(host, deps) {
     if (store.stream.hls) deps.diagnosticSample('hls-stop', { reason });
     deps.time.clearTimeout(store.stream.hls?.refreshRetryTimer);
     deps.time.clearTimeout(store.stream.hlsRecoveryTimer);
+    deps.time.clearTimeout(store.stream.hlsNativeErrorTimer);
+    store.stream.hlsNativeErrorTimer = undefined;
     store.stream.hlsNetworkRetries = 0;
     store.stream.hlsNetworkFailure = undefined;
     store.stream.hlsNetworkInterrupted = false;

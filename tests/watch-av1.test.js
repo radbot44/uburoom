@@ -329,3 +329,33 @@ test('playback progress and underrun events kick the AV1 pump when timers are th
     Date.now = origNow;
   }
 });
+
+test('uburoomAV1 marks 401/403 HTTP responses with kind="grant-expired" instead of codec failure', async t => {
+  const origFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = origFetch;
+  });
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ error: 'Stream access expired' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  const player = playerAt();
+  delete player.fetch;
+  player.video = { removeEventListener() {} };
+  let capturedError;
+  player.failed = (_msg, error) => {
+    capturedError = error;
+  };
+  await assert.rejects(
+    () => player.fetch('/api/watch/media/g/chunk-video-0'),
+    error => {
+      assert.equal(error.status, 403);
+      assert.equal(error.kind, 'grant-expired');
+      assert.equal(error.retryable, false);
+      return true;
+    },
+  );
+  player.fail(Object.assign(new Error('Stream access expired'), { status: 403, kind: 'grant-expired' }));
+  assert.equal(capturedError?.kind, 'grant-expired');
+});

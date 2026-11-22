@@ -396,6 +396,8 @@ module.exports = {
             (await this.canView(room, actor));
           room.fallbackStream.reconcile(this.position(room), false);
         }
+        this.dropPreload(room, room.adoptable);
+        preload.mediaVersion = room.mediaVersion;
         room.adoptable = preload;
         preload.expiry = setTimeout(() => this.dropPreload(room, preload), 60000);
         preload.expiry.unref?.();

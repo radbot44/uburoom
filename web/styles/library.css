@@ -1118,7 +1118,7 @@
   }
   .library-edition-row:hover {
     background: var(--hover);
-    border-color: var(--border-hover);
+    border-color: var(--border);
   }
   .library-edition-info {
     display: flex;
@@ -1195,13 +1195,12 @@
     padding: 0 var(--space-12) 0 34px;
     border: 1px solid var(--border);
     border-radius: var(--radius-10);
-    background: var(--bg);
+    background: var(--background);
     color: var(--text);
     font: inherit;
   }
   .library-link-field input[type='url']:focus {
     border-color: var(--primary);
-    outline: none;
   }
   .library-link-status:empty {
     display: none;

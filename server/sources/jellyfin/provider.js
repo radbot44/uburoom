@@ -777,6 +777,7 @@ class Jellyfin {
       id,
       principal: this.principal,
       provider: this,
+      container: String(source.Container || '').toLowerCase() || undefined,
       videoCodec: String(video.Codec || '').toLowerCase() || undefined,
       audioCodec: String((audio.find(stream => stream.IsDefault) || audio[0])?.Codec || '').toLowerCase() || undefined,
       hdr: hdr.hdr,

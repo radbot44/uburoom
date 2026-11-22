@@ -1486,3 +1486,32 @@ test('the copy start is read from the first block of each track, once the head h
   );
   assert.equal(copyStarts(head.subarray(0, head.length - 3), 2), undefined, 'a block still arriving');
 });
+
+test('idle timeout during memoryWait does not fail waiting chunks and resumes once memory frees', async () => {
+  const runs = fakeRuns({ duration: 120, chunk: () => [6 * 1024 * 1024] });
+  const manager = manage({}, fakeTools(VIDEO), runs);
+  manager.maxBytes = 10.5 * 1024 * 1024;
+  manager.timing = { gather: 5, idle: 25, stall: 5000 };
+  const source = { id: '1', partId: '5', principal: 'p', duration: 120, start: 'http://fixture' };
+  const lease = manager.acquire(source, '720p4');
+  const signal = new AbortController().signal;
+  try {
+    // Chunk 0 encodes; chunk 1 pre-encodes (6MB, !fetched ahead of lastIndex = 0) and evicts chunk 0.
+    const c0 = await manager.chunk(lease, 0, signal);
+    assert.ok(c0.video.length);
+    for (let i = 0; i < 40 && !lease.group.chunks.get(1)?.bytes; i++) await tick();
+    assert.ok(lease.group.chunks.get(1)?.bytes, 'lookahead chunk 1 pre-encoded');
+    // Request chunk 2 in background so lastIndex stays 0 and chunk 1 remains protected, tripping memoryWait.
+    const pending2 = manager.chunk(lease, 2, signal, { urgent: true, background: true });
+    // Wait longer than timing.idle (25ms) so idleTimer fires while memoryWait is closed.
+    await new Promise(resolve => setTimeout(resolve, 60));
+    // Now viewer consumes chunk 1 -> wakeMemoryWaiters() fires without waiting for any polling timer.
+    await manager.chunk(lease, 1, signal);
+    const c2 = await pending2;
+    assert.ok(c2.video.length, 'pending chunk succeeds once memory frees after idle memoryWait');
+    assert.equal(lease.group.chunks.get(2)?.error, undefined);
+  } finally {
+    manager.release(lease);
+    await manager.close();
+  }
+});

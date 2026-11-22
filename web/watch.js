@@ -151,7 +151,8 @@ deps.activePlayer = {
 store.player.subtitleLayout = () => {};
 // Button artwork first: modules append their own parts (badges, spinners) to some of these buttons.
 function glyph(id, symbol) {
-  $(id)?.replaceChildren(uburoomIcons.icon(document, symbol));
+  const target = $(id);
+  if (target) target.replaceChildren(uburoomIcons.icon(target.ownerDocument || document, symbol));
 }
 for (const pair of [
   ['refresh', 'refresh'],

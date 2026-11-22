@@ -652,6 +652,10 @@ class LocalMedia {
       id,
       principal: this.principal,
       provider: this,
+      container:
+        path.extname(entry.path).slice(1).toLowerCase() ||
+        info.format?.format_name?.split(',')[0]?.toLowerCase() ||
+        undefined,
       videoCodec: info.video.codec_name,
       audioCodec: (audio.find(stream => flag(stream, 'default')) || audio[0])?.codec_name,
       hdr: hdr.hdr,

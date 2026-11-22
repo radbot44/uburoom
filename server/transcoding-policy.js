@@ -109,7 +109,10 @@ class ConversionPolicy {
             wake = undefined;
             resolve();
           };
-          timer = setTimeout(done, Math.min(200, Math.max(0, until - Date.now())));
+          timer = setTimeout(
+            done,
+            authorized ? Math.min(200, Math.max(0, until - Date.now())) : Math.max(0, until - Date.now()),
+          );
           wake = done;
           signal?.addEventListener('abort', done, { once: true });
         });

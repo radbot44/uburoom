@@ -154,6 +154,7 @@ function watchOperations({
   authorized,
   login,
   mediaGrant,
+  captionGrant,
   cookies,
   throttle,
   registry,
@@ -378,13 +379,14 @@ function watchOperations({
               viewer.directDelivery = media;
             } else viewer.directDelivery = undefined;
           }
-          if (media.selection?.subtitle?.available && media.selection.subtitle.delivery === 'text')
-            state.subtitleUrl = `/api/watch/media/${grant}/captions-${media.captionVersion}`;
-          else if (
+          const subGrant =
             media.selection?.subtitle?.available &&
-            ['ass', 'pgs', 'vobsub', 'cues'].includes(media.selection.subtitle.delivery)
-          )
-            state.subtitleUrl = `/api/watch/media/${grant}/subtitle-${media.captionVersion}`;
+            ['text', 'ass', 'pgs', 'vobsub', 'cues'].includes(media.selection.subtitle.delivery)
+              ? (captionGrant || mediaGrant)(room, auth, context, viewerId, renew)
+              : undefined;
+          if (subGrant && media.selection.subtitle.delivery === 'text')
+            state.subtitleUrl = `/api/watch/media/${subGrant}/captions-${media.captionVersion}`;
+          else if (subGrant) state.subtitleUrl = `/api/watch/media/${subGrant}/subtitle-${media.captionVersion}`;
         }
       }
     }
