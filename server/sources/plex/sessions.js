@@ -238,10 +238,16 @@ class PlexSessions {
           }
         } finally {
           await runOperation(undefined, async () => {
+            const logWarn = message => this.plex.pipeline?.av1?.logger?.warn?.('Plex', message);
             try {
               await restoreSubtitle?.();
-            } finally {
+            } catch (error) {
+              logWarn('Could not restore Plex subtitle preference: ' + (error?.message || error));
+            }
+            try {
               await restoreAudio?.();
+            } catch (error) {
+              logWarn('Could not restore Plex audio preference: ' + (error?.message || error));
             }
           });
         }
@@ -284,18 +290,22 @@ class PlexSessions {
             'X-Plex-Session-Identifier': id,
           },
         });
-        await response.body?.cancel().catch(() => {});
-        return;
-      } catch (error) {
-        if (![404, 500].includes(error.status)) return;
-        if (attempt) {
-          this.plex.pipeline.av1.logger.warn(
-            'Plex',
-            `Plex accepted a session for "${media.title}" and then refused it (HTTP ${error.status}). Check Plex's log and its transcode drive's free space.`,
-          );
+        const body = await response.text();
+        if (response.status !== 200 || !body.startsWith('#EXTM3U')) {
           throw new PlaybackError("Plex couldn't start this video. Try a lower quality.");
         }
-        await new Promise(resolve => setTimeout(resolve, 750));
+        return;
+      } catch (error) {
+        if (!attempt && [404, 500, 502, 503].includes(error?.status)) {
+          await new Promise(resolve => setTimeout(resolve, 750));
+          continue;
+        }
+        if (error instanceof PlaybackError) throw error;
+        this.plex.pipeline?.av1?.logger?.warn?.(
+          'Plex',
+          `Plex accepted a session for "${media.title}" and then refused it (HTTP ${error?.status ?? 'error'}). Check Plex's log and its transcode drive's free space.`,
+        );
+        throw new PlaybackError("Plex couldn't start this video. Try a lower quality.");
       }
     }
   }
@@ -327,9 +337,23 @@ class PlexSessions {
         headers = { 'X-Plex-Client-Identifier': id, 'X-Plex-Session-Identifier': id };
       const entry = this.sessions.get(id);
       if (entry) entry.stoppedAt = Date.now();
-      await (media.hlsProvider || media.provider || this.plex)
-        .request('/video/:/transcode/universal/stop?' + new URLSearchParams({ session: id, ...headers }), { headers })
-        .catch(() => {});
+      const scope = media.hlsProvider || media.provider || this.plex;
+      const url = '/video/:/transcode/universal/stop?' + new URLSearchParams({ session: id, ...headers });
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await scope.request(url, { headers });
+          return;
+        } catch (error) {
+          if (attempt === 2) {
+            this.plex.pipeline?.av1?.logger?.warn?.(
+              'Plex',
+              `Could not stop Plex transcode session ${id}: ${error?.message || error}`,
+            );
+            return;
+          }
+          await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+        }
+      }
     });
   }
   /**

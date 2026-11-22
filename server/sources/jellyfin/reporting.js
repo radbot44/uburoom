@@ -43,17 +43,24 @@ class JellyfinReporting extends LinkedAccountReporting {
     const token = this.token(userId);
     return token ? { token, server: this.client.base + '#' + this.serverId?.() } : undefined;
   }
-  /** Jellyfin stores resume points from every playback report, so it reports only with the opt-in. */
+  /** Jellyfin stores resume points from every playback report, so it reports only with the opt-in or on stop. */
   wants(session, next, watchState) {
-    return (
-      watchState ||
-      (next.state === 'stopped' && !next.activityOnly && !!session.jellyfinStarted && session.consent.watchState)
-    );
+    return watchState || (next.state === 'stopped' && !!session.jellyfinStarted);
+  }
+  updateConsent(viewer, consent) {
+    if (consent.watchState === false) {
+      const session = this._findSession(viewer);
+      if (session?.jellyfinStarted) {
+        session.consent.watchState = false;
+        return this.end(viewer, 'opt-out');
+      }
+    }
+    return super.updateConsent(viewer, consent);
   }
   revoked(error) {
     return error?.status === 401;
   }
-  async send(scoped, session, next) {
+  async send(scoped, session, next, watchState) {
     const item = ITEM.exec(session.mediaId);
     if (!item) return;
     const [, itemId, mediaSourceId] = item;
@@ -70,7 +77,7 @@ class JellyfinReporting extends LinkedAccountReporting {
     if (next.state === 'stopped') {
       if (session.jellyfinStarted) await post('Sessions/Playing/Stopped', report);
       session.jellyfinStarted = false;
-      if (next.ended) await post('UserPlayedItems/' + report.ItemId);
+      if (next.ended && watchState) await post('UserPlayedItems/' + report.ItemId);
       return;
     }
     if (!session.jellyfinStarted) {

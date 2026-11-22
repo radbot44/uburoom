@@ -128,21 +128,20 @@ function accessContext(config, { verifiedIdentities, pinnedSourceId } = {}) {
         identity.verified === 1 &&
         operators.some(op => op.provider === identity.provider && op.subject === identity.subject),
     );
-    const jellyfinSources = sources.filter(s => sourceType(s.type)?.memberIdentity === 'jellyfin');
-    const jellyfinSourceIds = new Set();
+    const scopedSources = sources.filter(s => typeof sourceType(s.type)?.scopedIdentityProvider === 'function');
+    const scopedSourceIds = new Set();
     for (const identity of matching) {
-      if (!identity.provider.startsWith('jellyfin:')) continue;
-      const serverId = identity.provider.slice('jellyfin:'.length);
-      for (const source of jellyfinSources) {
+      for (const source of scopedSources) {
+        const mod = sourceType(source.type);
         const pinned = pinnedSourceId?.(source.id);
-        if (!pinned || pinned === serverId) jellyfinSourceIds.add(source.id);
+        if (mod.ownsIdentityProvider?.(identity.provider, pinned)) scopedSourceIds.add(source.id);
       }
     }
     context.operatorSignIn = {
       discord: matching.some(identity => identity.provider === 'discord'),
       plex: matching.some(identity => identity.provider === 'plex'),
       accounts: matching.some(identity => identity.provider === 'uburoom'),
-      jellyfinSourceIds: [...jellyfinSourceIds],
+      jellyfinSourceIds: [...scopedSourceIds],
     };
   }
   return context;
@@ -270,7 +269,8 @@ function proposed(original, requested, file) {
     if (key === 'secrets.server_password' && YAML.isScalar(node)) node.type = 'QUOTE_SINGLE';
     if (key === 'access.source_members' && YAML.isSeq(node)) {
       node.flow = true;
-      for (const item of node.items) if (YAML.isScalar(item) && typeof item.value === 'string') item.type = 'QUOTE_SINGLE';
+      for (const item of node.items)
+        if (YAML.isScalar(item) && typeof item.value === 'string') item.type = 'QUOTE_SINGLE';
     }
     if (old) {
       node.commentBefore = old.commentBefore;

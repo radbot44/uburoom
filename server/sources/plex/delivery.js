@@ -220,12 +220,17 @@ class PlexDelivery {
       return;
     // Optional direct negotiation must not exhaust the 15-second media grant
     // or block the room subscription through provider/endpoint timeouts.
-    const controller = new AbortController();
+    const controller = new AbortController(),
+      ref = { origin: undefined };
     let timer;
     const timeout = new Promise(resolve => {
       timer = setTimeout(() => {
         controller.abort();
-        this.files.set(media, { job: Promise.resolve(undefined), until: Date.now() + 30000 });
+        if (ref.origin) {
+          let byOrigin = this.files.get(media);
+          if (!byOrigin) this.files.set(media, (byOrigin = new Map()));
+          byOrigin.set(ref.origin, { job: Promise.resolve(undefined), until: Date.now() + 30000 });
+        }
         resolve(undefined);
       }, 5000);
     });
@@ -238,6 +243,7 @@ class PlexDelivery {
           async () => !controller.signal.aborted && (await valid()),
           controller.signal,
           remoteAddress,
+          ref,
         ),
       ]);
     } finally {
@@ -303,7 +309,7 @@ class PlexDelivery {
     });
     return job;
   }
-  async candidate(media, auth, valid, signal, remoteAddress) {
+  async candidate(media, auth, valid, signal, remoteAddress, ref) {
     try {
       const scope = await this.resolve(auth.actor);
       // The owner's configured token is never a direct-play credential; only the dedicated account is.
@@ -311,16 +317,16 @@ class PlexDelivery {
       if (!(await this.dedicatedAllowed(scope))) return;
       if (!(await valid())) return;
       const origin = await this.originFor(scope, remoteAddress);
+      if (ref) ref.origin = origin;
       if (signal?.aborted || !(await valid())) return;
-      const existing = this.files.get(media);
-      const job =
-        existing?.until > Date.now() && (!existing.origin || existing.origin === origin)
-          ? existing.job
-          : this.prepare(media, scope, valid, signal, origin);
-      if (job !== existing?.job) this.files.set(media, { job, until: Date.now() + 24 * 3600000, origin });
+      let byOrigin = this.files.get(media);
+      if (!byOrigin) this.files.set(media, (byOrigin = new Map()));
+      const existing = byOrigin.get(origin);
+      const job = existing?.until > Date.now() ? existing.job : this.prepare(media, scope, valid, signal, origin);
+      if (job !== existing?.job) byOrigin.set(origin, { job, until: Date.now() + 10 * 60_000 });
       const url = await job;
       if (!url) {
-        const current = this.files.get(media);
+        const current = byOrigin.get(origin);
         if (current?.job === job) current.until = Date.now() + 30000;
       }
       return (await valid()) && (await this.resolve(auth.actor)) === scope ? url : undefined;

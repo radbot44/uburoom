@@ -31,8 +31,8 @@ function plexProvider({ plex, source = {}, registry, plexAuth, pin = plexAuth?.p
     direct: plexAuth ? new PlexDelivery(source, plex, plexAuth, actor => provider.scopeFor(actor)) : undefined,
     /** The server's own name (Plex's friendlyName), known once `identity()` has answered. */
     serverName: '',
-    /** The machine identifier, once `identity()` has answered. */
-    serverId: undefined,
+    /** The machine identifier, seeded from configuration or saved pin, and verified on `identity()`. */
+    serverId: source.machineIdentifier || pin?.get() || undefined,
     // The machine identifier, pinned the first time it is seen so a different
     // server behind the same address is refused rather than mistaken for this one.
     identity() {

@@ -2,7 +2,9 @@
 // Folders of videos on this machine as a media source. See server/sources/index.js for the contract.
 const fs = require('node:fs');
 const path = require('node:path');
+const { promisify } = require('node:util');
 const cp = require('node:child_process');
+const execFile = promisify(cp.execFile);
 const { localProvider } = require('./provider');
 
 const LIBRARY_KEYS = ['id', 'name', 'paths', 'parse_names', 'type'];
@@ -115,11 +117,10 @@ async function check(entry, { ffmpeg, ffprobe, connectionOnly = false } = {}) {
   if (ffmpeg) {
     let missing;
     try {
-      const filters = cp.execFileSync(ffmpeg, ['-hide_banner', '-filters'], {
+      const { stdout: filters } = await execFile(ffmpeg, ['-hide_banner', '-filters'], {
         timeout: 4000,
         encoding: 'utf8',
         windowsHide: true,
-        stdio: ['ignore', 'pipe', 'ignore'],
       });
       missing = ['thumbnail', 'boxblur', 'overlay', 'zscale', 'tonemap'].filter(
         name => !new RegExp('^\\s*\\S+\\s+' + name + '\\s', 'm').test(filters),

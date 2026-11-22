@@ -31,12 +31,11 @@ class PlexReporting extends LinkedAccountReporting {
   isEligible(userId) {
     if (!userId || this.settings.enabled === false) return false;
     const identity = this.registry.identities(userId)?.find(i => i.provider === 'plex' && i.verified);
-    const cred =
-      identity &&
-      (this.registry.credential
-        ? this.registry.credential('plex', identity.subject)
-        : this.registry.hasCredential?.('plex', identity.subject));
-    return !!(cred && (typeof cred !== 'object' || cred.serverToken || cred.authType !== 'traditional'));
+    if (!identity || this.plexAuth?.hasNegativeAccess?.(identity.subject)) return false;
+    const cred = this.registry.credential
+      ? this.registry.credential('plex', identity.subject)
+      : this.registry.hasCredential?.('plex', identity.subject);
+    return !!cred;
   }
   personalScope(userId) {
     return (this.plexAuth || this.hub?.plexAuth)?.forUser(userId);

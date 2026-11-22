@@ -155,16 +155,19 @@ module.exports = {
     const viewer = room.viewers.get(viewerId),
       version = room.mediaVersion;
     if (!viewer || viewer.userId !== actor.userId) return;
+    const needsProvider = fromProvider(room.media);
     let provider;
-    try {
-      provider = await this.streamScope(actor, room.media);
-    } catch (error) {
-      // The provider cannot answer: keep what the viewer has and try again shortly.
-      if (this.providerFailed(error)) {
-        this.retryStream(room, viewerId, 1000);
-        return viewer.media;
+    if (needsProvider) {
+      try {
+        provider = await this.streamScope(actor, room.media);
+      } catch (error) {
+        // The provider cannot answer: keep what the viewer has and try again shortly.
+        if (this.providerFailed(error)) {
+          this.retryStream(room, viewerId, 1000);
+          return viewer.media;
+        }
+        throw error;
       }
-      throw error;
     }
     if (room.mediaVersion !== version || room.viewers.get(viewerId) !== viewer) return;
     const queueRevision = this.roomState.queue.room(room.roomId).queueRevision;
@@ -183,15 +186,16 @@ module.exports = {
     // the scope this viewer watches it with, the rest of the queue through their own.
     const recorded = new Map();
     for (const item of entries) {
+      if (item.mediaId === 'demo') continue;
       const serverId = item.serverId ?? current;
       if (!recorded.has(serverId)) recorded.set(serverId, []);
       recorded.get(serverId).push(item.mediaId);
     }
     // An empty queue is an answer too: nothing is unavailable any more.
-    let availability = !entries.length && provider.availability ? new Map() : undefined;
+    let availability = !entries.length && (!needsProvider || provider?.availability) ? new Map() : undefined;
     for (const [serverId, ids] of recorded) {
       try {
-        const scope = serverId === current ? provider : await this.hub.mediaFor(actor, serverId);
+        const scope = serverId === current && provider ? provider : await this.hub.mediaFor(actor, serverId);
         if (!scope.availability) continue;
         const status = await scope.availability(ids);
         availability ||= new Map();
@@ -241,7 +245,7 @@ module.exports = {
         viewer.media &&
         viewer.mediaVersion === version &&
         viewer.media.format === 'local' &&
-        (!viewer.media.principal || viewer.media.principal === provider.principal)
+        (!viewer.media.principal || !provider || viewer.media.principal === provider.principal)
       )
         return viewer.media;
       return this.inRoom(room, () => {
@@ -257,7 +261,7 @@ module.exports = {
           duration: room.media.duration,
           kind: room.media.kind,
           format: 'local',
-          principal: provider.principal,
+          ...(provider?.principal ? { principal: provider.principal } : {}),
           resources: new Map(),
           chapters: room.media.chapters || [],
           markers: room.media.markers || [],
@@ -276,7 +280,7 @@ module.exports = {
     if (
       viewer.media &&
       viewer.mediaVersion === version &&
-      (!viewer.media.principal || viewer.media.principal === provider.principal) &&
+      (!viewer.media.principal || !provider || viewer.media.principal === provider.principal) &&
       (!background || this.clock.now() < (viewer.fallbackRetryAt || 0))
     )
       return viewer.media;

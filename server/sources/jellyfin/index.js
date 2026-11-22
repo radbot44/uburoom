@@ -104,6 +104,18 @@ function libraries(entry, { jellyfinFetch = fetch } = {}) {
   return new Jellyfin({ ...entry, libraries: null }, { pipeline: {}, fetcher: jellyfinFetch }).serverLibraries();
 }
 
+function scopedIdentityProvider(serverId) {
+  return serverId ? 'jellyfin:' + serverId : undefined;
+}
+
+function ownsIdentityProvider(provider, serverId) {
+  return (
+    typeof provider === 'string' &&
+    provider.startsWith('jellyfin:') &&
+    (!serverId || provider === 'jellyfin:' + serverId)
+  );
+}
+
 module.exports = {
   validate,
   validateAll,
@@ -113,4 +125,6 @@ module.exports = {
   connect: require('./connect'),
   setup: require('./setup'),
   memberIdentity: 'jellyfin',
+  scopedIdentityProvider,
+  ownsIdentityProvider,
 };

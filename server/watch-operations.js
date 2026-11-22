@@ -696,20 +696,38 @@ function watchOperations({
       (lobbyScope || (room && watch.rooms.get(room.roomId) === room && (await watch.canView(room, auth.actor)))) &&
       (await login(context))?.userId === auth.actor.userId;
     if (!(await eligible())) return result(403, { error: 'Library access requires room access' });
-    // The library names the server it is browsing; with none named it is the first one configured.
+    // The library names the server it is browsing; with none named on single-source setups it is the first one configured.
     let server = text(args.server) ?? undefined;
     if (op === 'library.resolve' && server === undefined) {
       const resolver = watch.providers?.list?.find(p => p.root?.configured && typeof p.root?.resolveUrl === 'function');
       if (!resolver) return result(400, { error: 'No link source is configured' });
-      server = resolver === watch.providers.primary ? undefined : await watch.providers.identityOf(resolver);
+      server = await watch.providers.identityOf(resolver);
     }
-    const provider = await hub.mediaFor(auth.actor, server);
-    const scopeCurrent = async () => (await hub.mediaFor(auth.actor, server)).principal === provider.principal;
+    const query = Object.fromEntries(
+      LIBRARY_QUERY.filter(key => args[key] !== undefined && args[key] !== null).map(key => [key, String(args[key])]),
+    );
+    const browseHome =
+      ![
+        'library.art',
+        'library.availability',
+        'library.item',
+        'library.filters',
+        'library.resolve',
+        'library.shelves',
+      ].includes(op) &&
+      server === undefined &&
+      !['section', 'parent', 'collection'].some(key => query[key]);
+    const multiSource = op === 'library.shelves' || browseHome;
+    const provider = multiSource ? undefined : await hub.mediaFor(auth.actor, server);
+    const scopeCurrent = async () =>
+      multiSource ? true : (await hub.mediaFor(auth.actor, server)).principal === provider.principal;
     const itemVisible = async () =>
-      provider.principal === 'discord-shared' || (await provider.visible(text(args.item), text(args.type)));
+      multiSource
+        ? true
+        : provider.principal === 'discord-shared' || (await provider.visible(text(args.item), text(args.type)));
     // What the library shows names the server it came from, so a choice can be sent back to it.
     const stamp = async items => {
-      if (!items?.length || !provider.configured) return;
+      if (!items?.length || !provider?.configured) return;
       const serverId = await watch.providers.identify({ serverId: server, provider }).catch(() => undefined);
       if (serverId) for (const item of items) if (item) item.serverId = serverId;
     };
@@ -761,12 +779,9 @@ function watchOperations({
       }
       data.roomContinue = await roomContinue(history, serverId => hub.mediaFor(auth.actor, serverId));
     } else {
-      const query = Object.fromEntries(
-        LIBRARY_QUERY.filter(key => args[key] !== undefined && args[key] !== null).map(key => [key, String(args[key])]),
-      );
       // With no server and no location named, the front page lists every provider's libraries.
-      const home = server === undefined && !['section', 'parent', 'collection'].some(key => query[key]);
-      if (home) data = await watch.providers.libraries(auth.actor, (actor, serverId) => hub.mediaFor(actor, serverId));
+      if (browseHome)
+        data = await watch.providers.libraries(auth.actor, (actor, serverId) => hub.mediaFor(actor, serverId));
       else {
         data = provider.configured
           ? await provider.browse(query)

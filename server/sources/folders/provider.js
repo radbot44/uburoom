@@ -497,17 +497,25 @@ class LocalMedia {
     else if (type === 'season' && group && !('seasons' in group)) list = group.episodes;
     else throw failure('Select a library, show or season', 404);
     if (!includeSpecials && type !== 'season') list = list.filter(entry => !entry.episode || entry.episode.seasonIndex);
-    const items = [];
-    for (const entry of list) {
-      // A queue entry records its duration, so every queued file is read once.
-      try {
-        await this.described(entry);
-        items.push(this.item(entry));
-      } catch {
-        /* A file that cannot be read is left out of the queue. */
-      }
-    }
-    return items;
+    const results = new Array(list.length);
+    const workers = Math.min(4, list.length);
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: workers }, async () => {
+        while (next < list.length) {
+          const idx = next++;
+          const entry = list[idx];
+          // A queue entry records its duration, so every queued file is read once.
+          try {
+            await this.described(entry);
+            results[idx] = this.item(entry);
+          } catch {
+            /* A file that cannot be read is left out of the queue. */
+          }
+        }
+      }),
+    );
+    return results.filter(Boolean);
   }
   async artwork(id, kind = 'poster') {
     if (!this.art) throw failure('Artwork unavailable', 404);

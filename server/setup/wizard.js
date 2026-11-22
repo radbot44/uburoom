@@ -184,6 +184,7 @@ function createWizard({
         const transform = await update(data.settings, {
           base,
           platform,
+          current,
           existing: normalized().filter((source, i) => source.type === current.type && i !== at),
         });
         next = transform(next);

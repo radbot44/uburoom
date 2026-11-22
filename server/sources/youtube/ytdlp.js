@@ -285,11 +285,8 @@ class YouTubeCache {
     return this.tick;
   }
 
-  resolveYtDlp({ allowMockFallback = true } = {}) {
-    const found = resolveBinary(this.ytDlpPathConfig, 'yt-dlp', this.platform, this.environment);
-    if (found) return found;
-    if (allowMockFallback && this.hasCustomRunner && !this.ytDlpPathConfig) return 'yt-dlp';
-    return '';
+  resolveYtDlp() {
+    return resolveBinary(this.ytDlpPathConfig, 'yt-dlp', this.platform, this.environment);
   }
 
   resolveFfmpeg() {
@@ -813,6 +810,7 @@ class YouTubeCache {
         : ['--format', 'b[ext=mp4]/b'];
       const args = [
         ...this.baseYtDlpArgs({ includeJsRuntime: true }),
+        '--ignore-errors',
         '--no-playlist',
         '--write-info-json',
         '--write-subs',
@@ -829,17 +827,23 @@ class YouTubeCache {
       ];
       const res = await this.runCommand(ytDlp, args, { cwd: stage, timeoutMs: 110000 });
       if (this.closed) throw Object.assign(new Error('YouTube cache closed during download'), { status: 503 });
-      if (res.code !== 0) {
-        const msg = cleanYtDlpError(res.stderr) || 'yt-dlp failed to download this video';
-        this.logger?.warn?.(
-          'YouTube',
-          `Download failed for ${videoId} (exit ${res.code}, yt-dlp ${this.ytdlpVersion || 'unknown'}): ${msg}`,
-        );
-        throw Object.assign(new Error(msg), { status: 502 });
-      }
 
       const stageFiles = await fsp.readdir(stage, { withFileTypes: true });
       const mediaEntry = stageFiles.find(e => e.isFile() && MEDIA_EXTS.has(path.extname(e.name).toLowerCase()));
+      if (res.code !== 0) {
+        const msg = cleanYtDlpError(res.stderr) || 'yt-dlp failed to download this video';
+        if (!mediaEntry) {
+          this.logger?.warn?.(
+            'YouTube',
+            `Download failed for ${videoId} (exit ${res.code}, yt-dlp ${this.ytdlpVersion || 'unknown'}): ${msg}`,
+          );
+          throw Object.assign(new Error(msg), { status: 502 });
+        }
+        this.logger?.warn?.(
+          'YouTube',
+          `Subtitle or metadata warning for ${videoId} (exit ${res.code}, yt-dlp ${this.ytdlpVersion || 'unknown'}): ${msg}`,
+        );
+      }
       if (!mediaEntry) throw Object.assign(new Error('yt-dlp did not produce a video file'), { status: 502 });
 
       const infoFile = path.join(stage, `${videoId}.info.json`);

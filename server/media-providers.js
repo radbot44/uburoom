@@ -208,7 +208,12 @@ class MediaProviders {
   }
   /** The provider recorded under a server id. */
   async select(serverId) {
-    if (serverId === undefined || serverId === null || serverId === '' || serverId === DEMO_SERVER) {
+    if (serverId === DEMO_SERVER) {
+      if (!this.primary) throw new Error('No media provider is configured');
+      return this.primary;
+    }
+    if (serverId === undefined || serverId === null || serverId === '') {
+      if (this.list.length > 1) throw Object.assign(new Error('Select a media server'), { status: 400 });
       if (!this.primary) throw new Error('No media provider is configured');
       return this.primary;
     }
@@ -257,13 +262,8 @@ class MediaProviders {
     for (const provider of this.list) {
       if (!provider.root?.configured) continue;
       try {
-        // The first provider is the one a request reaches by naming no server, so its
-        // libraries stay listed even while it cannot say which server it is.
-        const first = provider === this.primary,
-          serverId = await this.identityOf(provider).catch(error => {
-            if (!first) throw error;
-          });
-        const scope = await scopeFor(actor, first ? undefined : serverId);
+        const serverId = await this.identityOf(provider);
+        const scope = await scopeFor(actor, serverId);
         // Each library names the kind and name of the source it is on, for its card on Libraries home.
         const name = provider.label || provider.serverName;
         const server = {
@@ -271,8 +271,7 @@ class MediaProviders {
           ...(provider.id ? { sourceId: provider.id } : {}),
           ...(name ? { serverName: name } : {}),
         };
-        for (const item of (await scope.browse({})).items || [])
-          items.push(serverId ? { ...item, serverId, ...server } : { ...item, ...server });
+        for (const item of (await scope.browse({})).items || []) items.push({ ...item, serverId, ...server });
       } catch (error) {
         unanswered ||= error;
       }
@@ -290,12 +289,9 @@ class MediaProviders {
     for (const provider of this.list) {
       if (!provider.root?.configured) continue;
       try {
-        const first = provider === this.primary,
-          serverId = await this.identityOf(provider).catch(error => {
-            if (!first) throw error;
-          });
-        const named = item => (serverId ? { ...item, serverId } : item);
-        const scope = await scopeFor(actor, first ? undefined : serverId);
+        const serverId = await this.identityOf(provider);
+        const named = item => ({ ...item, serverId });
+        const scope = await scopeFor(actor, serverId);
         if (provider.continueWatching) continueWatching.push(...(await provider.continueWatching(actor)).map(named));
         if (scope.recentlyAdded) recentlyAdded.push(...(await scope.recentlyAdded()).map(named));
       } catch {

@@ -26,10 +26,10 @@ function yearOf(token, latest) {
 
 /**
  * @param {string} name A file name without its extension, or a folder name.
- * @param {{latestYear?: number}} [options]
+ * @param {{latestYear?: number, stripYear?: boolean}} [options]
  * @returns {{title: string, year?: number, edition?: string}}
  */
-function parseName(name, { latestYear = new Date().getFullYear() + 1 } = {}) {
+function parseName(name, { latestYear = new Date().getFullYear() + 1, stripYear = true } = {}) {
   let stem = String(name).replace(/\(/g, ' (');
   let edition;
   // Plex's own markers: {edition-Director's Cut}, and {imdb-tt…}/{tmdb-…} ids, which are dropped.
@@ -37,15 +37,17 @@ function parseName(name, { latestYear = new Date().getFullYear() + 1 } = {}) {
     if (key.toLowerCase() === 'edition' && value.trim()) edition = value.trim().slice(0, 100);
     return ' ';
   });
-  // Square brackets hold tags ([1080p], [YTS.MX]) unless they hold just a year.
-  stem = stem.replace(/\[([^\]]*)\]/g, (whole, inside) => (/^\s*(?:19|20)\d\d\s*$/.test(inside) ? whole : ' '));
+  // Square brackets hold tags ([1080p], [YTS.MX]) unless they hold just a year (or stripYear is false).
+  stem = stem.replace(/\[([^\]]*)\]/g, (whole, inside) =>
+    stripYear && /^\s*(?:19|20)\d\d\s*$/.test(inside) ? whole : ' ',
+  );
   // Dots stand for spaces only in names with no spaces; underscores always do.
   stem = (/\s/.test(stem.trim()) ? stem : stem.replace(/\./g, ' ')).replace(/_/g, ' ');
   const tokens = stem.split(/\s+/).filter(Boolean);
   const release = tokens.findIndex((token, index) => index > 0 && RELEASE.test(token));
   const end = release < 0 ? tokens.length : release;
   let at = -1;
-  for (let index = 1; index < end; index++) if (yearOf(tokens[index], latestYear)) at = index;
+  if (stripYear) for (let index = 1; index < end; index++) if (yearOf(tokens[index], latestYear)) at = index;
   const words = tokens.slice(0, at > 0 ? at : end);
   const title = words
     .join(' ')
@@ -120,7 +122,9 @@ function episodeName(file, folders, options) {
   }
   // The episode's own title: what follows the number, up to the first release tag.
   rest = rest.replace(/^[\s._-]+/, '');
-  const title = RELEASE.test(rest.split(/[\s.]/)[0] || '') ? '' : parseName(rest, options).title;
+  const title = RELEASE.test(rest.split(/[\s.]/)[0] || '')
+    ? ''
+    : parseName(rest, { ...options, stripYear: false }).title;
   return {
     show,
     ...(shown.year ? { year: shown.year } : {}),

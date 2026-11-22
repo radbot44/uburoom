@@ -679,7 +679,7 @@ class PlexCatalog {
           return x.Media.map((m, idx) => {
             const mId = String(m.id || idx);
             const compoundId = id + ':' + mId;
-            this.artSources.set(compoundId, { poster, landscape });
+            this.artSources.set(compoundId, { poster, landscape, backdrop, logo });
             const res = m.videoResolution
               ? String(m.videoResolution).toUpperCase() + (String(m.videoResolution).match(/^\d+$/) ? 'p' : '')
               : '';
@@ -722,11 +722,65 @@ class PlexCatalog {
   /** Plex's On Deck for whoever this catalog signs in as: videos in progress and the next episode of shows
    * being watched, most recent first. */
   async continueWatching() {
+    if (this.plex.shared?.libraries) {
+      if (!this.plex.shared.libraries.size) return [];
+      const all = await Promise.all(
+        [...this.plex.shared.libraries].map(key =>
+          this.catalog(
+            `/library/sections/${encodeURIComponent(key)}/onDeck?X-Plex-Container-Start=0&X-Plex-Container-Size=${SHELF}`,
+          ).catch(error => {
+            if (error?.status === 404) return { Metadata: [] };
+            throw error;
+          }),
+        ),
+      );
+      const merged = [],
+        seen = new Set();
+      for (const data of all) {
+        for (const item of data.Metadata || []) {
+          const id = String(item.ratingKey || '');
+          if (!id || seen.has(id)) continue;
+          seen.add(id);
+          merged.push(item);
+        }
+      }
+      merged.sort(
+        (a, b) =>
+          Number(b.lastViewedAt || b.updatedAt || b.addedAt || 0) -
+          Number(a.lastViewedAt || a.updatedAt || a.addedAt || 0),
+      );
+      return this.plex.cachedAvailability(this.plex.items(merged.slice(0, SHELF)));
+    }
     const data = await this.catalog('/library/onDeck?X-Plex-Container-Start=0&X-Plex-Container-Size=' + SHELF);
     return this.plex.cachedAvailability(this.plex.items((data.Metadata || []).slice(0, SHELF)));
   }
   /** The newest additions across the libraries this catalog can see. */
   async recentlyAdded() {
+    if (this.plex.shared?.libraries) {
+      if (!this.plex.shared.libraries.size) return [];
+      const all = await Promise.all(
+        [...this.plex.shared.libraries].map(key =>
+          this.catalog(
+            `/library/sections/${encodeURIComponent(key)}/recentlyAdded?X-Plex-Container-Start=0&X-Plex-Container-Size=${SHELF}`,
+          ).catch(error => {
+            if (error?.status === 404) return { Metadata: [] };
+            throw error;
+          }),
+        ),
+      );
+      const merged = [],
+        seen = new Set();
+      for (const data of all) {
+        for (const item of data.Metadata || []) {
+          const id = String(item.ratingKey || '');
+          if (!id || seen.has(id)) continue;
+          seen.add(id);
+          merged.push(item);
+        }
+      }
+      merged.sort((a, b) => Number(b.addedAt || 0) - Number(a.addedAt || 0));
+      return this.plex.cachedAvailability(this.plex.items(merged.slice(0, SHELF)));
+    }
     const data = await this.catalog('/library/recentlyAdded?X-Plex-Container-Start=0&X-Plex-Container-Size=' + SHELF);
     return this.plex.cachedAvailability(this.plex.items((data.Metadata || []).slice(0, SHELF)));
   }

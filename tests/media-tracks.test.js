@@ -378,16 +378,18 @@ test('subtitle restoration respects an external choice and uses only the viewer 
   }
 });
 
-test('a failed subtitle restoration fails preparation but still restores audio and stops the captured session', async () => {
+test('a failed subtitle restoration logs and succeeds while still restoring audio and keeping the session alive', async () => {
   const { plex, state } = provider();
   try {
     state.failSubtitleRestore = true;
-    await assert.rejects(plex.prepare('1', 'direct', false, undefined, undefined, { audioId: '12', subtitleId: '22' }));
+    const media = await plex.prepare('1', 'direct', false, undefined, undefined, { audioId: '12', subtitleId: '22' });
+    assert.equal(media.selection.subtitle.id, '22');
     assert.equal(state.audio, '11');
     assert.equal(plex.partQueues.size, 0);
-    assert.ok(
+    assert.equal(
       state.events.some(e => e.path?.endsWith('/stop')),
-      'failed restoration releases the captured conversion',
+      false,
+      'healthy transcode session stays alive when preference restore fails',
     );
   } finally {
     await plex.close();

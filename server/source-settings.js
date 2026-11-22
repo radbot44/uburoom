@@ -62,10 +62,11 @@ function sourceSettings({
   const flows = flowsCore.createSourceFlows({ stepServices });
   const pinned = id => registry?.meta?.('source:' + id + ':identity') || undefined;
 
-  // Jellyfin sign-in is offered per source, and an identity belongs to one server. Another
-  // entry rule cannot prove that an operator has a working second sign-in.
+  // Scoped-identity sources (such as Jellyfin) tie identities to one server; another entry rule
+  // cannot prove that an operator has a working second sign-in.
   function removalAffectsOperator(entry, { sources, memberSources, operators }) {
-    if (sourceType(entry.type).memberIdentity !== 'jellyfin' || !memberSources.includes(entry.id)) return false;
+    const mod = sourceType(entry.type);
+    if (typeof mod?.scopedIdentityProvider !== 'function' || !memberSources.includes(entry.id)) return false;
     const server = pinned(entry.id);
     const remaining = new Set(
       sources
@@ -73,16 +74,12 @@ function sourceSettings({
           other =>
             other.id !== entry.id &&
             memberSources.includes(other.id) &&
-            sourceType(other.type).memberIdentity === 'jellyfin',
+            typeof sourceType(other.type)?.scopedIdentityProvider === 'function',
         )
-        .map(other => pinned(other.id))
-        .filter(Boolean)
-        .map(id => 'jellyfin:' + id),
+        .map(other => sourceType(other.type).scopedIdentityProvider(pinned(other.id)))
+        .filter(Boolean),
     );
-    return operators.some(
-      ({ provider }) =>
-        provider.startsWith('jellyfin:') && (!server || provider === 'jellyfin:' + server) && !remaining.has(provider),
-    );
+    return operators.some(({ provider }) => mod.ownsIdentityProvider(provider, server) && !remaining.has(provider));
   }
 
   /** The operator's request, checked now and again by `still()` after any awaited work. */
@@ -187,6 +184,7 @@ function sourceSettings({
           transform = await module.setup.update(data.settings, {
             base: path.dirname(config.configFile || path.resolve('config.yaml')),
             ...tools,
+            current: entry,
             existing: sources.filter(source => source.type === entry.type && source.id !== entry.id),
           });
         }

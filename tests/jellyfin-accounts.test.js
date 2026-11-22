@@ -157,7 +157,10 @@ async function reportingFixture(t, { watchState = true } = {}) {
     observationEpoch: 'e',
     plexWatchState: watchState,
   };
-  const room = { media: { kind: 'jellyfin', id: ITEM + ':source-1', duration: 120 }, mediaVersion: 'm' };
+  const room = {
+    media: { kind: 'jellyfin', id: ITEM + ':source-1', duration: 120, roomServerId: f.fake.state.serverId },
+    mediaVersion: 'm',
+  };
   const observe = (state, position) =>
     reporting.observe(room, viewer, 'viewer', { state, position }, { credit: { reason: 'credited' } });
   const settle = () => reporting.sessions.get('viewer')?.dispatched;
@@ -216,6 +219,32 @@ test('without the opt-in, or without a personal sign-in, nothing reaches Jellyfi
   await g.settle();
   await g.reporting.close();
   assert.deepEqual(g.fake.state.reports, []);
+});
+
+test('un-opting watchState stops an active Jellyfin session cleanly and suspension avoids UserPlayedItems', async t => {
+  const f = await reportingFixture(t);
+  await f.observe('playing', 5);
+  await f.settle();
+  await f.observe('paused', 15);
+  await f.settle();
+  f.viewer.plexWatchState = false;
+  await f.reporting.updateConsent(f.viewer, { watchState: false });
+  assert.equal(f.reporting.sessions.has('viewer'), false);
+  assert.deepEqual(
+    f.fake.state.reports.map(r => r.path),
+    ['Sessions/Playing', 'Sessions/Playing/Progress', 'Sessions/Playing/Stopped'],
+  );
+
+  // Suspended occurrence ends with Sessions/Playing/Stopped without marking played even on playback-ended.
+  const g = await reportingFixture(t);
+  await g.observe('playing', 5);
+  await g.settle();
+  await g.reporting.end(g.viewer, 'observation-timeout');
+  await g.reporting.end(g.viewer, 'playback-ended');
+  assert.deepEqual(
+    g.fake.state.reports.map(r => r.path),
+    ['Sessions/Playing', 'Sessions/Playing/Stopped'],
+  );
 });
 
 test('a revoked Jellyfin sign-in ends the reporting occurrence', async t => {

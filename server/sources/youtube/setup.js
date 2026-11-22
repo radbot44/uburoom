@@ -153,7 +153,10 @@ function entry(draft) {
 }
 
 /** Validates partial YouTube settings edits from Server Settings -> Sources while keeping untouched secrets. */
-async function update(settings, { youtubeFetch = fetch, youtubeRunner, ffmpeg, ffprobe, base, platform } = {}) {
+async function update(
+  settings,
+  { youtubeFetch = fetch, youtubeRunner, ffmpeg, ffprobe, base, platform, current } = {},
+) {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings))
     throw fail('Send the YouTube source settings');
 
@@ -200,11 +203,16 @@ async function update(settings, { youtubeFetch = fetch, youtubeRunner, ffmpeg, f
   const newApiKey = cleanText(settings.apiKey ?? settings.api_key, 256, 'YouTube Data API key');
   const clearApiKey = !!settings.clearApiKey;
 
-  if (delivery === 'ytdlp' || !!ytDlp) {
-    const checkDir = cacheDirectory || path.join(base || os.tmpdir(), 'data', 'youtube-cache');
+  const probeYtDlp = ytDlp !== undefined ? ytDlp : (current?.ytDlp ?? current?.yt_dlp ?? '');
+  if (delivery === 'ytdlp' || !!probeYtDlp || !!ytDlp) {
+    const checkDir =
+      cacheDirectory ||
+      current?.cacheDirectory ||
+      current?.cache_directory ||
+      path.join(base || os.tmpdir(), 'data', 'youtube-cache');
     const probe = new YouTubeCache({
       cacheDirectory: checkDir,
-      ytDlpPath: ytDlp || '',
+      ytDlpPath: probeYtDlp,
       ffmpegPath: ffmpeg,
       ffprobePath: ffprobe,
       platform: platform || process.platform,

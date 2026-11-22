@@ -123,6 +123,8 @@ test(
       assert.equal(provider.id, id);
       assert.equal(await f.app.hub.mediaFor({ userId }, serverId), await provider.scopeFor({ userId }));
     }
+    await assert.rejects(providers.select(), { status: 400 });
+    await assert.rejects(providers.select(''), { status: 400 });
     assert.notEqual(
       await providers.select('fixture-machine').then(p => p.root),
       await providers.select('machine-b').then(p => p.root),

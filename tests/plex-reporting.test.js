@@ -28,9 +28,16 @@ test('reporting coalesces queued states, applies current consent and drains reti
   const registry = new Accounts(undefined, credentialVault());
   const account = registry.resolve('plex', 'viewer-sub', 'Viewer');
   registry.credential('plex', 'viewer-sub', { token: 'viewer-token', clientId: 'fixture' });
-  const reporting = new PlexReporting({ registry, plexAuth: { forUser: async () => scope } });
+  const reporting = new PlexReporting({
+    registry,
+    plexAuth: { forUser: async () => scope },
+    serverId: () => 'fixture-plex',
+  });
   const viewer = { userId: account.id, streamVersion: 'stream', observationEpoch: 'epoch', plexWatchState: true };
-  const room = { media: { kind: 'plex', id: '123:456', duration: 120 }, mediaVersion: 'media' };
+  const room = {
+    media: { kind: 'plex', id: '123:456', duration: 120, roomServerId: 'fixture-plex' },
+    mediaVersion: 'media',
+  };
   const observe = (state, position) =>
     reporting.observe(room, viewer, 'viewer', { state, position }, { credit: { reason: 'credited' } });
   try {
@@ -95,12 +102,13 @@ function fixture({ reportingEnabled = true, watchStateEnabled = true } = {}) {
     settings: { enabled: reportingEnabled, watchState: watchStateEnabled },
     plexAuth,
     registry,
+    serverId: () => 'fixture-plex',
     now: () => now,
   });
 
   const room = {
     roomId: randomUUID(),
-    media: { kind: 'plex', id: '13159', duration: 720 },
+    media: { kind: 'plex', id: '13159', duration: 720, roomServerId: 'fixture-plex' },
     mediaVersion: randomUUID(),
     viewers: new Map(),
     disconnectedViewers: new Map(),
@@ -418,11 +426,12 @@ test('reporting fences delayed attachment work, serializes terminal replacement,
       identities: () => [{ provider: 'plex', verified: true, subject }],
       credential: () => ({ serverToken: 'fixture' }),
     },
+    serverId: () => 'fixture-plex',
     authorize: async () => permitted,
   });
   const viewer = { viewerId: 'tab', userId: 'user', streamVersion: 's1', observationEpoch: 'o1', plexWatchState: true };
   const room = {
-    media: { kind: 'plex', id: '123', duration: 120 },
+    media: { kind: 'plex', id: '123', duration: 120, roomServerId: 'fixture-plex' },
     mediaVersion: 'm1',
     viewers: new Map([['tab', viewer]]),
   };
@@ -659,6 +668,20 @@ test('observe handles ended, error, subordinate watchState, and state mapping cl
     assert.equal(f.dispatchedRequests.length, 7);
     assert.equal(f.dispatchedRequests[6].params.state, 'stopped');
     assert.equal(f.reporting.sessions.has(viewer3.viewerId), false);
+  } finally {
+    f.close();
+  }
+});
+
+test('watchStateAllowed and owns fail closed on missing/mismatched serverId or wrong media kind', async () => {
+  const f = fixture();
+  try {
+    assert.equal(f.reporting.watchStateAllowed({ kind: 'plex', id: '1', roomServerId: 'fixture-plex' }), true);
+    assert.equal(f.reporting.watchStateAllowed({ kind: 'jellyfin', id: '1', roomServerId: 'fixture-plex' }), false);
+    assert.equal(f.reporting.watchStateAllowed({ kind: 'plex', id: '1' }), false);
+    assert.equal(f.reporting.watchStateAllowed({ kind: 'plex', id: '1', roomServerId: 'other-plex' }), false);
+    const unpinned = new PlexReporting({ registry: f.reporting.registry, plexAuth: f.reporting.plexAuth });
+    assert.equal(unpinned.watchStateAllowed({ kind: 'plex', id: '1', roomServerId: 'fixture-plex' }), false);
   } finally {
     f.close();
   }

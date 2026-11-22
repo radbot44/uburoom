@@ -99,15 +99,19 @@ class PlexAuth {
       Array.isArray(resources) &&
       resources.find(r => r.clientIdentifier === machine && String(r.provides).split(',').includes('server'));
     if (!resource || typeof resource.accessToken !== 'string' || !resource.accessToken)
-      throw Object.assign(new PlexAccessError('This Plex account does not have access to this server', true), {
+      throw Object.assign(new PlexAccessError('This Plex account does not have access to this server', false), {
         noServerAccess: true,
       });
-    credential.serverToken = resource.accessToken;
+    credential.serverTokens = {
+      ...(credential.serverTokens && typeof credential.serverTokens === 'object' ? credential.serverTokens : {}),
+      [machine]: resource.accessToken,
+    };
+    delete credential.serverToken;
     const scoped = this.plex.scope(resource.accessToken, credential.clientId);
     scoped.discoveryToken = credential.token;
     let sections;
     try {
-      sections = await scoped.json('/library/sections');
+      sections = await scoped.client.rawJson('/library/sections');
     } catch (error) {
       const denied = [401, 403, 498].includes(error.status);
       throw Object.assign(
@@ -121,7 +125,9 @@ class PlexAuth {
       );
     }
     if (!Array.isArray(sections.Directory) || !sections.Directory.length)
-      throw new PlexAccessError('This Plex account has no accessible libraries on this server', true);
+      throw Object.assign(new PlexAccessError('This Plex account has no accessible libraries on this server', false), {
+        noServerAccess: true,
+      });
     // A refreshed permission scope must not reuse data gathered before revalidation.
     for (const cache of [scoped.catalogCache, scoped.artSources, scoped.imageCache, scoped.randomCache]) cache.clear();
     scoped.invalidateAccess?.();
@@ -161,12 +167,24 @@ class PlexAuth {
       if (this.dedicatedInflight?.job === job) this.dedicatedInflight = undefined;
     }
   }
+  hasNegativeAccess(subject) {
+    const until = subject && this.negativeCache?.get(subject);
+    if (!until) return false;
+    if (until > Date.now()) return true;
+    this.negativeCache.delete(subject);
+    return false;
+  }
   async forUser(userId) {
     const user = this.accounts.canonical(userId),
       identity = user && this.accounts.identities(user.id).find(i => i.provider === 'plex' && i.verified);
     if (!identity) return;
     const cached = this.cache.get(identity.subject);
     if (cached && cached.until > Date.now()) return cached.plex;
+    if (this.hasNegativeAccess(identity.subject)) {
+      throw Object.assign(new PlexAccessError('This Plex account does not have access to this server', false), {
+        noServerAccess: true,
+      });
+    }
     if (this.inflight.has(identity.subject)) return this.inflight.get(identity.subject);
     const generation = this.generation;
     const job = runOperation(undefined, async () => {
@@ -175,11 +193,15 @@ class PlexAuth {
       try {
         const scoped = await this.validate(credential, identity.subject);
         if (generation !== this.generation) throw new PlexAccessError('Plex scope changed during validation');
+        this.negativeCache?.delete(identity.subject);
         this.accounts.credential('plex', identity.subject, credential);
         this.cache.set(identity.subject, { plex: scoped, until: Date.now() + 30000 });
         return scoped;
       } catch (error) {
-        if (generation === this.generation) this.cache.delete(identity.subject);
+        if (generation === this.generation) {
+          this.cache.delete(identity.subject);
+          if (error.noServerAccess) (this.negativeCache ||= new Map()).set(identity.subject, Date.now() + 5 * 60_000);
+        }
         // Plex refused this person's own sign-in. Say so, so they can reconnect;
         // a lack of server membership stays its own answer.
         if (error.revoked && !error.noServerAccess && !error.reconnect) throw plexReconnectError();
@@ -203,6 +225,7 @@ class PlexAuth {
     for (const scope of this.plex.scopes?.values() || []) scope.invalidateAccess?.();
     this.generation++;
     this.cache.clear();
+    this.negativeCache?.clear();
     this.inflight.clear();
     this.dedicatedCache = undefined;
     this.dedicatedInflight = undefined;
@@ -234,13 +257,15 @@ class PlexMembers {
    * sign-in carries a server token; reaching none is not an error here.
    */
   async prime(credential) {
+    let validated = false;
     for (const source of this.sources)
       try {
         await source.validate(credential);
-        return;
+        validated = true;
       } catch {
         // Another source, or none: admission decides who gets in.
       }
+    return validated;
   }
   /**
    * The first source that answers yes. With none: a source that gave no answer is the answer
@@ -261,7 +286,7 @@ class PlexMembers {
     const revoked = errors.find(error => error.revoked && !error.noServerAccess);
     if (revoked) throw revoked;
     if (errors.length || !this.sources.length)
-      throw Object.assign(new PlexAccessError('This Plex account does not have access to this server', true), {
+      throw Object.assign(new PlexAccessError('This Plex account does not have access to this server', false), {
         noServerAccess: true,
       });
   }

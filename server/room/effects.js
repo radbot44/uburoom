@@ -178,8 +178,10 @@ module.exports = {
     void Promise.allSettled(
       [...byServer.entries()].map(async ([serverId, serverItems]) => {
         const entry = serverId
-          ? (await this.providers.find(serverId).catch(() => undefined)) || this.providers.primary
-          : this.providers.primary;
+          ? await this.providers.find(serverId).catch(() => undefined)
+          : this.providers.list.length <= 1
+            ? this.providers.primary
+            : undefined;
         if (!entry?.root?.warmQueue) return;
         try {
           await entry.root.warmQueue(serverItems);

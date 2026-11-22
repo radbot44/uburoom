@@ -245,7 +245,12 @@ class LocalIndex {
             .map(row => [row.name.slice(0, -path.extname(row.name).length).toLowerCase(), row.name]),
         );
         // A show's own folder is the first one inside the library: `Show/poster.jpg`, `Show/fanart.jpg`.
-        if (shows && depth === 1) showFolderArt.set(relative.toLowerCase(), artFiles(images, '', true, directory));
+        if (shows && depth === 1) {
+          const key = relative.toLowerCase();
+          const prev = showFolderArt.get(key);
+          const next = artFiles(images, '', true, directory);
+          showFolderArt.set(key, prev ? { ...next, ...prev } : next);
+        }
         for (const row of rows) {
           if (row.name.startsWith('.') || row.isSymbolicLink()) continue;
           const inside = relative ? relative + '/' + row.name : row.name;

@@ -448,8 +448,6 @@ class YouTubeMedia {
             (Number(cached.duration) > 0 || (canUseUnknown && !!cached.durationUnknown)) &&
             (this.delivery !== 'embed' || cached.embeddable !== false),
         );
-      } else {
-        map.set(id, true);
       }
     }
     return map;
@@ -683,7 +681,7 @@ class YouTubeMedia {
       title: cached?.title || prepared.title || 'YouTube video',
       subtitle: cached?.channelTitle || prepared.channelTitle || 'YouTube',
       duration: prepared.duration,
-      durationTolerance: cached?.hadUnknownDuration || this.provisionalDurations.has(id) ? Infinity : 2,
+      durationTolerance: 2,
       kind: this.kind,
       type: 'movie',
       resources: new Map(),

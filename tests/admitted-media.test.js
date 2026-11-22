@@ -123,7 +123,10 @@ test(
           assert.equal(titles(response).includes(secret), false, 'no source credential reaches a browser');
       }
       const me = (await browser.request('/api/watch/me')).body.account.id;
-      const scope = await f.app.hub.mediaFor({ userId: me, guestRoomId: browser === guest ? id : undefined });
+      const scope = await f.app.hub.mediaFor(
+        { userId: me, guestRoomId: browser === guest ? id : undefined },
+        f.servers.plex,
+      );
       assert.equal(scope.principal, 'discord-shared', `${who} watches Plex through the source credential`);
       assert.ok(await scope.allows('999'), "a viewer's own Plex restrictions play no part");
     }
@@ -136,7 +139,7 @@ test(
       epoch: initial.body.epoch,
       expiresAt: Date.now() + 2900,
       viewerId: hostViewer,
-      command: { action: 'media.load', args: { mediaId: '123', quality: 'direct' } },
+      command: { action: 'media.load', args: { mediaId: '123', serverId: f.servers.plex, quality: 'direct' } },
     });
     assert.equal(load.body.status, 'applied');
     for (const [browser, roomPath] of [

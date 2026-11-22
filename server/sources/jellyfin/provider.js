@@ -8,7 +8,7 @@ const { resilientFetch } = require('../../resilience');
 const { runOperation } = require('../../operation');
 const { serverName } = require('../../media-providers');
 const { version } = require('../../../package.json');
-const { jellyfinClient } = require('./client');
+const { jellyfinClient, jellyfinId } = require('./client');
 const { jellyfinMembers } = require('./members');
 const { jellyfinSignIn } = require('./sign-in');
 const { JellyfinReporting } = require('./reporting');
@@ -179,10 +179,9 @@ class Jellyfin {
     if (!this.identifying) {
       this.identifying = (async () => {
         const info = await this.json('System/Info/Public');
-        const id = info.Id,
-          pinned = this.pin?.get();
-        if (typeof id !== 'string' || !GUID.test(id) || (pinned && id !== pinned))
-          throw failure('The configured Jellyfin server identity changed', 503);
+        const id = jellyfinId(info.Id),
+          pinned = jellyfinId(this.pin?.get());
+        if (!id || (pinned && id !== pinned)) throw failure('The configured Jellyfin server identity changed', 503);
         if (!pinned) await this.pin?.set(id);
         this.serverName = serverName(info.ServerName);
         return id;
@@ -643,7 +642,8 @@ class Jellyfin {
     const episodes = (await this.episodes(x.SeriesId, { fields: '', enableImages: false })).filter(
       episode => GUID.test(episode?.Id || '') && Number(episode.ParentIndexNumber) !== 0,
     );
-    const index = episodes.findIndex(episode => episode.Id === x.Id);
+    const currentId = jellyfinId(x.Id);
+    const index = episodes.findIndex(episode => jellyfinId(episode.Id) === currentId);
     if (index < 0) return {};
     const brief = episode =>
       episode && {
@@ -832,7 +832,7 @@ function jellyfinProvider({ source, pipeline, pin, logger, fetcher, registry }) 
     kind: 'jellyfin',
     root: jellyfin,
     /** The server id, once `identity()` has answered (or as pinned before). */
-    serverId: pin?.get(),
+    serverId: jellyfinId(pin?.get()),
     identity: serverId,
     get serverName() {
       return jellyfin.serverName || '';

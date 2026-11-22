@@ -105,14 +105,17 @@ class LinkedAccountReporting {
 
   /** Whether this source lets viewers opt in to personal watch-state sync for this media. */
   watchStateAllowed(media) {
-    return this.settings.enabled !== false && this.settings.watchState !== false && (!media || this.owns(media));
+    return (
+      this.settings.enabled !== false &&
+      this.settings.watchState !== false &&
+      (!media || (media.kind === this.mediaKind && this.owns(media)))
+    );
   }
 
   /** Whether media was recorded under this source's own server. */
   owns(media) {
-    // A source that has not answered who it is yet cannot have prepared media under another server.
     const own = this.serverId?.();
-    return !own || !media.roomServerId || media.roomServerId === own;
+    return Boolean(own && media?.roomServerId && media.roomServerId === own);
   }
 
   subject(userId) {

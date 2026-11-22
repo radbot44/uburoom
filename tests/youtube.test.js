@@ -38,6 +38,19 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
+async function stubYtDlp(t) {
+  const binDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-ytbin-'));
+  const file = path.join(binDir, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+  await fsp.writeFile(file, process.platform === 'win32' ? '' : '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const prevPath = process.env.PATH;
+  process.env.PATH = binDir + path.delimiter + (prevPath || '');
+  t.after(async () => {
+    process.env.PATH = prevPath;
+    await fsp.rm(binDir, { recursive: true, force: true });
+  });
+  return file;
+}
+
 function makeYoutubeRunner({
   failIds = new Set(),
   durationOffset = 0,
@@ -352,6 +365,7 @@ test('YouTube Data API helper parses durations, batches video calls, and hides A
 });
 
 test('YouTubeCache coalesces downloads, probes media, evicts LRU items, and blocks traversal/symlinks', async t => {
+  await stubYtDlp(t);
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-yt-lru-'));
   const outsideDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-yt-outside-'));
   t.after(() =>
@@ -413,6 +427,7 @@ test('YouTubeCache coalesces downloads, probes media, evicts LRU items, and bloc
 });
 
 test('YouTubeMedia prepares disk downloads, serves Range & VTT subtitles, and refuses embed delivery', async t => {
+  await stubYtDlp(t);
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-yt-media-'));
   t.after(() => fsp.rm(dir, { recursive: true, force: true }));
 
@@ -583,6 +598,7 @@ test('YouTubeMedia prepares disk downloads, serves Range & VTT subtitles, and re
 });
 
 test('library.resolve, playlist bulk queue, warmQueue, streaming, and Source Settings work without leaking secrets', async t => {
+  await stubYtDlp(t);
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-yt-app-'));
   t.after(() => fsp.rm(dir, { recursive: true, force: true }));
   const configFile = path.join(dir, 'config.yaml');
@@ -992,6 +1008,7 @@ test('auto delivery falls back to IFrame embed, learns keyless oEmbed duration o
 });
 
 test('YouTubeCache protects actively leased videos from LRU eviction until released', async t => {
+  await stubYtDlp(t);
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-yt-lease-'));
   t.after(() => fsp.rm(dir, { recursive: true, force: true }));
   const yt = makeYoutubeRunner({ delayMs: 10 });
@@ -1012,4 +1029,51 @@ test('YouTubeCache protects actively leased videos from LRU eviction until relea
   release();
   await cache.evictIfNeeded();
   assert.equal(fs.existsSync(path.join(dir, 'dQw4w9WgXcQ.mp4')), false, 'unleased video evicts cleanly');
+});
+
+test('YouTubeCache omits production mock binary fallback, ignores non-fatal subtitle errors, and keyless availability omits uncached IDs', async t => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-yt-edge-'));
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+
+  // Without yt-dlp on PATH or configured ytDlpPath, custom runner alone does not synthesize a fake binary.
+  const noBin = new YouTubeCache({
+    cacheDirectory: dir,
+    environment: { PATH: '' },
+    runCommand: async () => ({ code: 0, stdout: '2026.02.01' }),
+  });
+  t.after(() => noBin.close());
+  assert.equal(noBin.resolveYtDlp(), '');
+
+  // With a binary present and --ignore-errors passed, a downloaded media file succeeds even if subtitle fetch returned exit code 1.
+  await stubYtDlp(t);
+  const subErr = new YouTubeCache({
+    cacheDirectory: dir,
+    runCommand: async (bin, args, opts = {}) => {
+      if (args.includes('--version')) return { code: 0, stdout: '2026.02.01\n', stderr: '' };
+      if (args.includes('-o')) {
+        assert.ok(args.includes('--ignore-errors'));
+        await fsp.writeFile(path.join(opts.cwd, 'SUBFAIL0001.mp4'), VIDEO_BYTES);
+        await fsp.writeFile(
+          path.join(opts.cwd, 'SUBFAIL0001.info.json'),
+          JSON.stringify({ id: 'SUBFAIL0001', duration: 30 }),
+        );
+        return { code: 1, stdout: '', stderr: 'WARNING: Unable to download video subtitles: HTTP Error 429\n' };
+      }
+      return { code: 0, stdout: JSON.stringify({ format: { duration: '30' }, streams: [] }), stderr: '' };
+    },
+  });
+  t.after(() => subErr.close());
+  const downloaded = await subErr.prepare('SUBFAIL0001');
+  assert.equal(downloaded.filename, 'SUBFAIL0001.mp4');
+
+  // Keyless availability only reports cached items and omits uncached unknown IDs instead of assuming true.
+  const provider = new YouTubeMedia({
+    delivery: 'embed',
+    pipeline: { release: async () => {} },
+    fetch: makeYoutubeFetch(),
+  });
+  await provider.resolveUrl('https://youtu.be/dQw4w9WgXcQ');
+  const avail = await provider.availability(['dQw4w9WgXcQ', 'UNKNOWN9999']);
+  assert.equal(avail.get('dQw4w9WgXcQ'), true);
+  assert.equal(avail.has('UNKNOWN9999'), false);
 });

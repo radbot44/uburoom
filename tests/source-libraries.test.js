@@ -20,20 +20,35 @@ function plexServer(extra = []) {
     ...extra,
   ];
   const items = {
-    10: { ratingKey: '10', type: 'movie', title: 'Feature', librarySectionID: 1, Media: media },
-    20: { ratingKey: '20', type: 'show', title: 'Series', librarySectionID: 2 },
-    30: { ratingKey: '30', type: 'movie', title: 'Birthday', librarySectionID: 3, Media: media },
-    40: { ratingKey: '40', type: 'movie', title: 'New Thing', librarySectionID: 4, Media: media },
+    10: { ratingKey: '10', type: 'movie', title: 'Feature', librarySectionID: 1, addedAt: 100, Media: media },
+    20: { ratingKey: '20', type: 'show', title: 'Series', librarySectionID: 2, addedAt: 90 },
+    30: { ratingKey: '30', type: 'movie', title: 'Birthday', librarySectionID: 3, addedAt: 200, Media: media },
+    40: { ratingKey: '40', type: 'movie', title: 'New Thing', librarySectionID: 4, addedAt: 300, Media: media },
   };
+  for (let i = 0; i < extra.extraSectionItems; i++) {
+    const rk = String(300 + i);
+    items[rk] = {
+      ratingKey: rk,
+      type: 'movie',
+      title: 'Off Section ' + rk,
+      librarySectionID: 3,
+      addedAt: 500 + i,
+      Media: media,
+    };
+  }
   const requests = [];
   const fetcher = async url => {
     const p = url.pathname;
     requests.push(p);
     if (p === '/library/sections') return json({ Directory: sections });
-    const section = /^\/library\/sections\/(\d+)\/(all|collections|genre|year)$/.exec(p);
+    const section = /^\/library\/sections\/(\d+)\/(all|collections|genre|year|recentlyAdded|onDeck)$/.exec(p);
     if (section) {
       const rows = Object.values(items).filter(item => String(item.librarySectionID) === section[1]);
-      return json({ Metadata: section[2] === 'all' ? rows : [], totalSize: rows.length, size: 0 });
+      return json({
+        Metadata: ['all', 'recentlyAdded', 'onDeck'].includes(section[2]) ? rows : [],
+        totalSize: rows.length,
+        size: 0,
+      });
     }
     if (p === '/library/recentlyAdded' || p === '/library/onDeck') return json({ Metadata: Object.values(items) });
     const one = /^\/library\/metadata\/([\d,]+)$/.exec(p);
@@ -108,6 +123,16 @@ test('a Plex source with a library list offers only those libraries, everywhere 
   assert.equal((await plex.browse({ parent: '20' })).items.length, 1);
   // Every scope of the source, such as the dedicated delivery account's, sees the same libraries.
   await assert.rejects(plex.scope('other-token', 'dedicated').details('30'), offOrUnavailable);
+  // Shelves query offered sections directly so >20 newer un-offered items cannot starve offered sections.
+  const crowded = plexWith(['1', '2'], Object.assign([], { extraSectionItems: 25 })).plex;
+  assert.deepEqual(
+    (await crowded.recentlyAdded()).map(item => item.id),
+    ['10', '20'],
+  );
+  assert.deepEqual(
+    (await crowded.continueWatching()).map(item => item.id),
+    ['10', '20'],
+  );
 });
 
 test('a library added to the server later is off while a list exists, and offered when there is none', async () => {
