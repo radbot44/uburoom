@@ -96,6 +96,21 @@ export function mount(host, deps) {
     }
   }
   function renderRooms(host, rooms, join = id => selectRoom(id)) {
+    const key = JSON.stringify([
+      store.room.selected,
+      rooms.map(room => [
+        room.id,
+        room.name,
+        room.hostName,
+        room.visibility,
+        room.viewers,
+        room.maxMembers,
+        room.locked,
+        room.members,
+      ]),
+    ]);
+    if (host.dataset.roomList === key) return;
+    host.dataset.roomList = key;
     host.replaceChildren();
     if (!rooms.length) {
       const empty = document.createElement('span');
@@ -146,7 +161,7 @@ export function mount(host, deps) {
     if (store.room.selected) deps.syncRoomUrl(store.room.selected);
     $('lobby-error').textContent = '';
     renderRooms($('rooms'), rooms);
-    renderRoomChoices(rooms, $('lobby-rooms'));
+    if (!$('room-lobby').hidden) renderRoomChoices(rooms, $('lobby-rooms'));
     if ($('room-dialog').open && !store.lobby.creating) {
       renderRoomChoices(rooms);
     }
@@ -249,6 +264,7 @@ export function mount(host, deps) {
         room.id,
         room.name,
         room.hostName,
+        room.visibility,
         room.title,
         room.viewers,
         room.maxMembers,
@@ -261,65 +277,100 @@ export function mount(host, deps) {
     const focusedRoom = container.contains(document.activeElement)
       ? document.activeElement.dataset.joinRoom
       : undefined;
-    container.replaceChildren();
     if (!rooms.length && container.id !== 'lobby-rooms') {
-      const empty = document.createElement('p');
-      empty.className = 'hint';
-      empty.textContent = 'No active rooms. Create a new room or reopen one of yours.';
-      container.append(empty);
+      let empty = container.querySelector(':scope > p.hint');
+      if (!empty) {
+        empty = document.createElement('p');
+        empty.className = 'hint';
+        empty.textContent = 'No active rooms. Create a new room or reopen one of yours.';
+      }
+      container.replaceChildren(empty);
+      return;
     }
+    container.querySelector(':scope > p.hint')?.remove();
+    const existingRows = new Map(
+      [...container.querySelectorAll(':scope > .saved-room')].map(el => [el.dataset.roomId, el]),
+    );
+    const wantedIds = new Set(rooms.map(r => r.id));
+    for (const [id, el] of existingRows) {
+      if (!wantedIds.has(id)) el.remove();
+    }
+    let cursor = container.firstChild;
     for (const room of rooms) {
-      const row = document.createElement('div');
-      row.className = 'saved-room';
-      const copy = document.createElement('div'),
-        name = document.createElement('strong'),
-        info = document.createElement('p');
-      name.textContent = room.name || room.hostName;
-      name.prepend(uburoomIcons.icon(document, room.visibility === 'private' ? 'lock' : 'website'));
-      info.className = 'hint';
-      info.textContent =
-        (room.recovering ? 'Recovering · ' : '') +
-        (room.title || 'No video selected') +
-        ' · ' +
-        room.viewers +
-        ' / ' +
-        (room.maxMembers || 20) +
-        ' people';
-      copy.append(name, info);
-      const actions = document.createElement('div');
-      actions.className = 'room-actions';
-      const currentRoom = container.id === 'room-choices' && room.id === store.room.selected;
-      const button = document.createElement('button');
-      button.className = 'quiet';
-      button.dataset.joinRoom = room.id;
-      button.textContent = currentRoom ? 'Cancel' : 'Join';
-      if (!currentRoom) button.prepend(uburoomIcons.icon(document, 'login'));
-      button.disabled = !currentRoom && !!room.locked;
-      button.addEventListener('click', async () => {
-        if (currentRoom) {
-          $('room-dialog').close('cancel');
-          return;
+      const rowSig = JSON.stringify([
+        room.id,
+        room.name,
+        room.hostName,
+        room.visibility,
+        room.title,
+        room.viewers,
+        room.maxMembers,
+        room.recovering,
+        room.locked,
+        container.id === 'room-choices' && room.id === store.room.selected,
+      ]);
+      let row = existingRows.get(room.id);
+      if (!row || row.dataset.signature !== rowSig) {
+        const nextRow = document.createElement('div');
+        nextRow.className = 'saved-room';
+        nextRow.dataset.roomId = room.id;
+        nextRow.dataset.signature = rowSig;
+        const copy = document.createElement('div'),
+          name = document.createElement('strong'),
+          info = document.createElement('p');
+        name.textContent = room.name || room.hostName;
+        name.prepend(uburoomIcons.icon(document, room.visibility === 'private' ? 'lock' : 'website'));
+        info.className = 'hint';
+        info.textContent =
+          (room.recovering ? 'Recovering · ' : '') +
+          (room.title || 'No video selected') +
+          ' · ' +
+          room.viewers +
+          ' / ' +
+          (room.maxMembers || 20) +
+          ' people';
+        copy.append(name, info);
+        const actions = document.createElement('div');
+        actions.className = 'room-actions';
+        const currentRoom = container.id === 'room-choices' && room.id === store.room.selected;
+        const button = document.createElement('button');
+        button.className = 'quiet';
+        button.dataset.joinRoom = room.id;
+        button.textContent = currentRoom ? 'Cancel' : 'Join';
+        if (!currentRoom) button.prepend(uburoomIcons.icon(document, 'login'));
+        button.disabled = !currentRoom && !!room.locked;
+        button.addEventListener('click', async () => {
+          if (currentRoom) {
+            $('room-dialog').close('cancel');
+            return;
+          }
+          if (store.lobby.creating) return;
+          store.lobby.creating = true;
+          button.disabled = true;
+          $('lobby-error').textContent = '';
+          try {
+            await selectRoom(room.id);
+            if (!store.room.state || store.room.selected !== room.id)
+              throw new Error('Room unavailable. Choose another room.');
+            $('room-dialog').close('joined');
+            deps.returnToVideo();
+          } catch (error) {
+            $(container.id === 'lobby-rooms' ? 'lobby-error' : 'room-dialog-error').textContent = error.message;
+          } finally {
+            store.lobby.creating = false;
+            button.disabled = !!room.locked;
+          }
+        });
+        actions.append(button);
+        nextRow.append(copy, actions);
+        if (row) {
+          if (cursor === row) cursor = nextRow;
+          row.replaceWith(nextRow);
         }
-        if (store.lobby.creating) return;
-        store.lobby.creating = true;
-        button.disabled = true;
-        $('lobby-error').textContent = '';
-        try {
-          await selectRoom(room.id);
-          if (!store.room.state || store.room.selected !== room.id)
-            throw new Error('Room unavailable. Choose another room.');
-          $('room-dialog').close('joined');
-          deps.returnToVideo();
-        } catch (error) {
-          $(container.id === 'lobby-rooms' ? 'lobby-error' : 'room-dialog-error').textContent = error.message;
-        } finally {
-          store.lobby.creating = false;
-          button.disabled = !!room.locked;
-        }
-      });
-      actions.append(button);
-      row.append(copy, actions);
-      container.append(row);
+        row = nextRow;
+      }
+      if (row !== cursor) container.insertBefore(row, cursor);
+      cursor = row.nextSibling;
     }
     if (focusedRoom)
       [...container.querySelectorAll('button')]

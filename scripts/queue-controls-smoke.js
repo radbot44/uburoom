@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { playbackBrowser, pause } = require('./lib/playback-browser');
-const { startFixtureServer, openPage, navigatePage, dom, act } = require('./lib/ui-fixture');
+const { startFixtureServer, openPage, navigatePage, dom } = require('./lib/ui-fixture');
 
 const { shown, isOpen } = dom;
 const byId = id => 'document.getElementById(' + JSON.stringify(id) + ')';
@@ -303,11 +303,9 @@ async function queueAcrossProviders(name) {
     await run(byId('room-name') + '.value="Across providers";' + byId('room-create') + '.click();true');
     // Selecting the new room resets Media to its Libraries home; browse only once that is done.
     await until(dom.text('#options-title') + '==="Across providers"', 'Room created', 30000);
-    await until(
-      act.pressUntil('.library-home-card[data-section="film"]', dom.q('.library-landing') + '.hidden'),
-      'Local library opened from Libraries home',
-      30000,
-    );
+    await until(shown('.library-home-card[data-section="film"]'), 'Local library card on Libraries home', 30000);
+    await run(dom.q('.library-home-card[data-section="film"]') + '.click();true');
+    await until(dom.q('.library-landing') + '.hidden', 'Local library opened from Libraries home', 30000);
     // The local file first, so it becomes Now Playing; then a Plex season.
     await until(shown('.library-tile .library-title'), 'Local library list', 45000);
     await run(dom.q('.library-tile .library-title') + '.click();true');
@@ -324,6 +322,14 @@ async function queueAcrossProviders(name) {
     await until(isOpen('#queue-bulk-dialog'), 'Add season dialog');
     await run(byId('queue-bulk-submit') + '.click();true');
     await until(poster('Episode 1') + '!==undefined', 'Season queued');
+    await run(
+      'window.__queueEntry=document.querySelector("#queue-upcoming-list .queue-entry");window.__queueEntry?.focus();refreshState()',
+    );
+    assert.equal(
+      await run('!!window.__queueEntry?.isConnected'),
+      true,
+      'queue entry keeps DOM identity across refresh',
+    );
     assert.ok(
       await run(poster('Local Film') + '.closest("[class*=now-playing]")!==null'),
       'the local file is Now Playing',

@@ -15,6 +15,8 @@ function prepare(next, { target, seconds = 1, hlsConfig }) {
     cache = { recording: true, bytes: 0, segments: new Map(), windows: new Map() };
   element.muted = true;
   element.preload = 'auto';
+  if (next?.directDelivery || next?.directHls) element.crossOrigin = 'anonymous';
+  else element.removeAttribute('crossorigin');
   let client,
     failed = false,
     closed = false,

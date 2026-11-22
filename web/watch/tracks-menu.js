@@ -353,7 +353,18 @@ export function mount(host, deps) {
         for (const btn of group.querySelectorAll('button')) btn.disabled = isEmbed;
       }
       const hint = $('audio-mode-hint');
-      if (hint && isEmbed) hint.textContent = 'Audio mode is unavailable for YouTube embeds.';
+      if (hint) {
+        if (isEmbed) hint.textContent = 'Audio mode is unavailable for YouTube embeds.';
+        else {
+          const mode = store.preferences.playerPreferences?.audioMode || 'normal';
+          hint.textContent =
+            mode === 'dialogue'
+              ? 'Boosts speech clarity and vocal frequencies.'
+              : mode === 'night'
+                ? 'Compresses loud peaks and lifts quiet audio for night listening.'
+                : 'Original dynamic range and audio balance.';
+        }
+      }
     }
     store.player.playerUI?.render();
   }

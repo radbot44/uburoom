@@ -240,54 +240,62 @@ function mount({
   }
 
   function renderTelemetryCard(person, anchorBtn, roomState) {
-    const wasFocusedInCard = !!telemetryCardElement?.contains(document.activeElement);
-    const isOpening = !telemetryCardElement;
-    if (telemetryCardElement) {
-      telemetryCardElement.remove();
-      telemetryCardElement = null;
-    }
     if (!person || !anchorBtn) {
-      activeTelemetryPersonId = null;
-      activeTelemetryAnchor = null;
+      closeTelemetryCard();
       return;
     }
-
+    const wasFocusedInCard = !!telemetryCardElement?.contains(document.activeElement);
+    const isOpening = !telemetryCardElement || activeTelemetryPersonId !== person.id;
     activeTelemetryPersonId = person.id;
     activeTelemetryAnchor = anchorBtn;
     anchorBtn.setAttribute('aria-expanded', 'true');
 
-    const card = document.createElement('div');
-    card.className = 'viewer-telemetry-card';
-    card.setAttribute('role', 'dialog');
+    let card = telemetryCardElement;
+    if (!card) {
+      card = document.createElement('div');
+      card.className = 'viewer-telemetry-card';
+      card.setAttribute('role', 'dialog');
+    }
     card.setAttribute('aria-label', 'Telemetry for ' + person.name);
 
-    const header = node('div', card, undefined, 'telemetry-card-header');
-    const userRow = node('div', header, undefined, 'telemetry-card-user');
+    let header = card.querySelector('.telemetry-card-header');
+    let closeBtn = header?.querySelector('.telemetry-card-close');
     const roleGlyph = person.role === 'creator' ? 'creator' : person.role === 'host' ? 'host' : 'user';
-    const roleIcon = uburoomIcons.icon(document, roleGlyph);
-    roleIcon.classList.add('telemetry-user-icon');
-    userRow.append(roleIcon);
+    const roleLabel = person.role === 'creator' ? 'Leader' : person.role === 'host' ? 'Host' : 'Viewer';
+    if (!header || header.dataset.roleGlyph !== roleGlyph) {
+      card.replaceChildren();
+      header = node('div', card, undefined, 'telemetry-card-header');
+      header.dataset.roleGlyph = roleGlyph;
+      const userRow = node('div', header, undefined, 'telemetry-card-user');
+      const roleIcon = uburoomIcons.icon(document, roleGlyph);
+      roleIcon.classList.add('telemetry-user-icon');
+      userRow.append(roleIcon);
+      node('strong', userRow, person.name, 'telemetry-user-name');
+      const roleTag = node('span', userRow, roleLabel, 'telemetry-role-tag');
+      if (person.role === 'creator') roleTag.classList.add('leader');
 
-    node('strong', userRow, person.name, 'telemetry-user-name');
-    const roleTag = node(
-      'span',
-      userRow,
-      person.role === 'creator' ? 'Leader' : person.role === 'host' ? 'Host' : 'Viewer',
-      'telemetry-role-tag',
-    );
-    if (person.role === 'creator') roleTag.classList.add('leader');
-
-    const closeBtn = document.createElement('button');
-    closeBtn.type = 'button';
-    closeBtn.className = 'icon-button telemetry-card-close';
-    closeBtn.setAttribute('aria-label', 'Close telemetry card');
-    closeBtn.append(uburoomIcons.icon(document, 'close'));
-    closeBtn.addEventListener('click', event => {
-      event.stopPropagation();
-      closeTelemetryCard();
-      anchorBtn.focus();
-    });
-    header.append(closeBtn);
+      closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'icon-button telemetry-card-close';
+      closeBtn.setAttribute('aria-label', 'Close telemetry card');
+      closeBtn.append(uburoomIcons.icon(document, 'close'));
+      closeBtn.addEventListener('click', event => {
+        event.stopPropagation();
+        const targetAnchor = activeTelemetryAnchor;
+        closeTelemetryCard();
+        targetAnchor?.focus();
+      });
+      header.append(closeBtn);
+    } else {
+      while (header.nextSibling) header.nextSibling.remove();
+      const userName = header.querySelector('.telemetry-user-name');
+      if (userName) userName.textContent = person.name;
+      const roleTag = header.querySelector('.telemetry-role-tag');
+      if (roleTag) {
+        roleTag.textContent = roleLabel;
+        roleTag.classList.toggle('leader', person.role === 'creator');
+      }
+    }
 
     const sync =
       person.syncQuality && typeof person.syncQuality === 'object'
@@ -360,7 +368,8 @@ function mount({
       });
     }
 
-    (document.fullscreenElement || document.body).append(card);
+    const hostParent = document.fullscreenElement || document.body;
+    if (card.parentNode !== hostParent) hostParent.append(card);
     telemetryCardElement = card;
 
     const rect = anchorBtn.getBoundingClientRect();
@@ -374,11 +383,11 @@ function mount({
     }
     card.style.setProperty('--x', Math.round(left) + 'px');
     card.style.setProperty('--y', Math.round(top) + 'px');
-    card.addEventListener('keydown', event => {
+    card.onkeydown = event => {
       if (event.key !== 'Tab') return;
       event.preventDefault();
       closeBtn.focus();
-    });
+    };
     if (isOpening || wasFocusedInCard) closeBtn.focus({ preventScroll: true });
   }
 
@@ -665,154 +674,212 @@ function mount({
     if (roster.dataset.signature === signature) return;
     roster.dataset.signature = signature;
     const focusId = roster.contains(document.activeElement) ? document.activeElement.id : undefined;
-    roster.replaceChildren();
     roster.classList.add('room-roster');
     roster.classList.toggle('can-host', canHost);
     roster.classList.toggle('can-kick', canKick);
-    for (const person of sortPeople(people, self)) {
-      const row = node('div', roster, undefined, 'room-person');
-      row.dataset.personId = person.id;
-      const roleCell = node('span', row, undefined, 'room-roster-role');
-      const roleName =
-        person.role === 'creator' ? 'Room Leader' : person.role === 'host' ? 'Host' : person.guest ? 'Guest' : 'Viewer';
-      const glyph =
-        person.role === 'creator'
-          ? 'creator'
-          : person.role === 'host'
-            ? 'host'
-            : person.guest
-              ? 'user-question'
-              : 'user';
-      roleCell.title = roleName;
-      roleCell.setAttribute('aria-label', roleName);
-      // People in through a guest pass can never be hosts.
+    const sortedPeople = sortPeople(people, self);
+    const existingRows = new Map(
+      [...roster.querySelectorAll(':scope > .room-person')].map(el => [el.dataset.personId, el]),
+    );
+    const wantedIds = new Set(sortedPeople.map(p => String(p.id)));
+    for (const [id, el] of existingRows) {
+      if (!wantedIds.has(id)) el.remove();
+    }
+    let cursor = roster.firstChild;
+    for (const person of sortedPeople) {
+      const personId = String(person.id);
       const allowed =
         person.role !== 'creator' &&
         !person.passGuest &&
         (person.explicitHost ? person.id === self || caps.manageHosts : caps.addHosts);
-      if (allowed) {
-        const label = person.pending
-          ? 'Remove assignment'
-          : person.explicitHost
-            ? person.id === self
-              ? 'Give up host role'
-              : 'Remove host'
-            : 'Make host';
-        let action;
-        action = controls.button(document, {
-          label: label + ': ' + person.name,
-          icon: glyph,
-          iconOnly: true,
-          disabled: rosterBusy || (inSettings && busy),
-          action: () => void personAction(person, value, inSettings, false, action),
-        });
-        action.classList.add('room-host-action');
-        if (person.role === 'viewer') {
-          action.classList.add('room-host-promote');
-          const hover = uburoomIcons.icon(document, 'host');
-          hover.classList.add('room-host-hover');
-          action.append(hover);
-        }
-        action.id = (inSettings ? 'room-host-' : 'room-roster-host-') + person.id;
-        roleCell.append(action);
-      } else roleCell.append(uburoomIcons.icon(document, glyph));
-      const nameCell = node('span', row, undefined, 'room-roster-name-cell');
-      const username = node('span', nameCell, person.name, 'room-roster-name');
-      if (inSettings) node('small', nameCell, person.role === 'creator' ? 'Room leader' : roleName, 'hint');
-      const answer = humanCheck && person.present && !person.pending ? checkAnswers?.[person.id] : undefined;
-      if (answer === 'ready' || answer === 'hold') nameCell.append(humanCheckStatus(answer));
-      username.title = person.name;
-      if (person.guest) {
-        username.classList.add('guest-name');
-        username.title += ' · Guest (name not verified)';
-        username.setAttribute('aria-label', username.title);
-      }
-      if (person.pending) {
-        username.title += ' · Awaiting ' + (person.provider === 'discord' ? 'Discord' : 'Plex') + ' sign-in';
-        username.setAttribute('aria-label', username.title);
-      }
-      if (!inSettings) {
-        const sync =
-          person.syncQuality && typeof person.syncQuality === 'object'
-            ? person.syncQuality
-            : { status: 'unknown', reason: 'measurements-unavailable', sessions: [] };
-        const unmeasured = isUnmeasuredSync(sync);
-        const levels = { excellent: 'Excellent', good: 'Good', fair: 'Fair', poor: 'Poor' };
-        const icons = { excellent: 'wifi', good: 'wifi-2', fair: 'wifi-1', poor: 'wifi-0' };
-        const score = Number.isFinite(sync.score) && sync.score >= 0 && sync.score <= 1 ? sync.score : 1;
-        const level = sync.level || uburoomSyncQuality.level(score, sync.lastKnownLevel) || 'excellent';
-        const sessions = Array.isArray(sync.sessions)
-          ? sync.sessions.filter(
-              session => session && Number.isFinite(session.score) && session.status !== 'disconnected',
-            )
-          : [];
-        const scoreLines = sessions.length
-          ? sessions.map(session => {
-              if (isUnmeasuredSync(session)) return 'Sync quality: ' + unmeasuredSyncLabel(session, person);
-              const value = Math.max(0, Math.min(1, session.score));
-              const sessionLevel =
-                uburoomSyncQuality.level(value, session.level || session.lastKnownLevel) || 'excellent';
-              return 'Sync quality: ' + Math.round(value * 100) + '% (' + levels[sessionLevel] + ')';
-            })
-          : [
-              'Sync quality: ' +
-                (unmeasured
-                  ? unmeasuredSyncLabel(sync, person)
-                  : Math.round(score * 100) + '% (' + levels[level] + ')'),
-            ];
-        const tooltip = scoreLines.join('\n');
-        const quality = node('button', row, undefined, 'room-roster-sync-quality');
-        quality.type = 'button';
-        if (!unmeasured) quality.dataset.quality = level;
-        quality.dataset.confidence =
-          sync.confidence === 'confident' ? 'confident' : sync.confidence === 'provisional' ? 'provisional' : 'reduced';
-        quality.title = tooltip;
-        quality.setAttribute('aria-label', 'Sync details for ' + person.name + ': ' + tooltip.replace(/\n/g, ', '));
-        quality.setAttribute('aria-haspopup', 'dialog');
-        quality.setAttribute('aria-expanded', activeTelemetryPersonId === person.id ? 'true' : 'false');
-        // A guest with a playback issue shows a warning instead of their sync level.
-        if (sync.issue) {
-          quality.dataset.issue = sync.issue === 'error' ? 'error' : 'warning';
-          quality.title = ISSUE_LABELS[sync.issue] + '\n' + tooltip;
-          quality.setAttribute(
-            'aria-label',
-            'Sync details for ' + person.name + ': ' + ISSUE_LABELS[sync.issue] + ', ' + tooltip.replace(/\n/g, ', '),
-          );
-        }
-        const qualityIcon = uburoomIcons.icon(document, sync.issue ? 'alert-triangle' : icons[level] || 'wifi');
-        qualityIcon.setAttribute('aria-hidden', 'true');
-        quality.append(qualityIcon);
-        quality.addEventListener('click', event => {
-          event.stopPropagation();
-          if (activeTelemetryPersonId === person.id) closeTelemetryCard();
-          else renderTelemetryCard(person, quality, value);
-        });
-        if (activeTelemetryPersonId === person.id) {
-          queueMicrotask(() => {
-            if (activeTelemetryPersonId === person.id) renderTelemetryCard(person, quality, value);
-          });
-        }
-      }
       const kickable =
         canKick &&
         person.present &&
         person.id !== self &&
         person.role !== 'creator' &&
         (person.role !== 'host' || canKickHosts);
-      row.classList.toggle('has-kick', !!kickable);
-      if (kickable) {
-        const cell = node('span', row, undefined, 'room-roster-action');
-        let action;
-        action = controls.button(document, {
-          label: 'Kick ' + person.name,
-          icon: 'karate',
-          iconOnly: true,
-          disabled: rosterBusy || (inSettings && busy),
-          action: () => void personAction(person, value, inSettings, true, action),
-        });
-        action.classList.add('watch-header-control');
-        action.id = (inSettings ? 'room-settings-kick-' : 'room-kick-') + person.id;
-        cell.append(action);
+      const answer = humanCheck && person.present && !person.pending ? checkAnswers?.[person.id] : undefined;
+      const sync =
+        !inSettings && person.syncQuality && typeof person.syncQuality === 'object'
+          ? person.syncQuality
+          : { status: 'unknown', reason: 'measurements-unavailable', sessions: [] };
+      const personSig = JSON.stringify([
+        person.id,
+        person.name,
+        person.role,
+        person.explicitHost,
+        person.pending,
+        person.provider,
+        person.present,
+        !!person.guest,
+        !!person.passGuest,
+        allowed,
+        kickable,
+        rosterBusy || (inSettings && busy),
+        answer,
+        !inSettings
+          ? [
+              sync.status,
+              sync.score,
+              sync.level,
+              sync.confidence,
+              sync.reason,
+              sync.lastKnownLevel,
+              sync.issue,
+              sync.sessions?.map(s => [s.score, s.level, s.lastKnownLevel, s.status, s.confidence, s.reason]),
+            ]
+          : null,
+      ]);
+      let row = existingRows.get(personId);
+      if (!row || row.dataset.signature !== personSig) {
+        const nextRow = node('div', null, undefined, 'room-person');
+        nextRow.dataset.personId = personId;
+        nextRow.dataset.signature = personSig;
+        const roleCell = node('span', nextRow, undefined, 'room-roster-role');
+        const roleName =
+          person.role === 'creator'
+            ? 'Room Leader'
+            : person.role === 'host'
+              ? 'Host'
+              : person.guest
+                ? 'Guest'
+                : 'Viewer';
+        const glyph =
+          person.role === 'creator'
+            ? 'creator'
+            : person.role === 'host'
+              ? 'host'
+              : person.guest
+                ? 'user-question'
+                : 'user';
+        roleCell.title = roleName;
+        roleCell.setAttribute('aria-label', roleName);
+        if (allowed) {
+          const label = person.pending
+            ? 'Remove assignment'
+            : person.explicitHost
+              ? person.id === self
+                ? 'Give up host role'
+                : 'Remove host'
+              : 'Make host';
+          let action;
+          action = controls.button(document, {
+            label: label + ': ' + person.name,
+            icon: glyph,
+            iconOnly: true,
+            disabled: rosterBusy || (inSettings && busy),
+            action: () => void personAction(person, value, inSettings, false, action),
+          });
+          action.classList.add('room-host-action');
+          if (person.role === 'viewer') {
+            action.classList.add('room-host-promote');
+            const hover = uburoomIcons.icon(document, 'host');
+            hover.classList.add('room-host-hover');
+            action.append(hover);
+          }
+          action.id = (inSettings ? 'room-host-' : 'room-roster-host-') + person.id;
+          roleCell.append(action);
+        } else roleCell.append(uburoomIcons.icon(document, glyph));
+        const nameCell = node('span', nextRow, undefined, 'room-roster-name-cell');
+        const username = node('span', nameCell, person.name, 'room-roster-name');
+        if (inSettings) node('small', nameCell, person.role === 'creator' ? 'Room leader' : roleName, 'hint');
+        if (answer === 'ready' || answer === 'hold') nameCell.append(humanCheckStatus(answer));
+        username.title = person.name;
+        if (person.guest) {
+          username.classList.add('guest-name');
+          username.title += ' · Guest (name not verified)';
+          username.setAttribute('aria-label', username.title);
+        }
+        if (person.pending) {
+          username.title += ' · Awaiting ' + (person.provider === 'discord' ? 'Discord' : 'Plex') + ' sign-in';
+          username.setAttribute('aria-label', username.title);
+        }
+        if (!inSettings) {
+          const unmeasured = isUnmeasuredSync(sync);
+          const levels = { excellent: 'Excellent', good: 'Good', fair: 'Fair', poor: 'Poor' };
+          const icons = { excellent: 'wifi', good: 'wifi-2', fair: 'wifi-1', poor: 'wifi-0' };
+          const score = Number.isFinite(sync.score) && sync.score >= 0 && sync.score <= 1 ? sync.score : 1;
+          const level = sync.level || uburoomSyncQuality.level(score, sync.lastKnownLevel) || 'excellent';
+          const sessions = Array.isArray(sync.sessions)
+            ? sync.sessions.filter(
+                session => session && Number.isFinite(session.score) && session.status !== 'disconnected',
+              )
+            : [];
+          const scoreLines = sessions.length
+            ? sessions.map(session => {
+                if (isUnmeasuredSync(session)) return 'Sync quality: ' + unmeasuredSyncLabel(session, person);
+                const val = Math.max(0, Math.min(1, session.score));
+                const sessionLevel =
+                  uburoomSyncQuality.level(val, session.level || session.lastKnownLevel) || 'excellent';
+                return 'Sync quality: ' + Math.round(val * 100) + '% (' + levels[sessionLevel] + ')';
+              })
+            : [
+                'Sync quality: ' +
+                  (unmeasured
+                    ? unmeasuredSyncLabel(sync, person)
+                    : Math.round(score * 100) + '% (' + levels[level] + ')'),
+              ];
+          const tooltip = scoreLines.join('\n');
+          const quality = node('button', nextRow, undefined, 'room-roster-sync-quality');
+          quality.type = 'button';
+          if (!unmeasured) quality.dataset.quality = level;
+          quality.dataset.confidence =
+            sync.confidence === 'confident'
+              ? 'confident'
+              : sync.confidence === 'provisional'
+                ? 'provisional'
+                : 'reduced';
+          quality.title = tooltip;
+          quality.setAttribute('aria-label', 'Sync details for ' + person.name + ': ' + tooltip.replace(/\n/g, ', '));
+          quality.setAttribute('aria-haspopup', 'dialog');
+          quality.setAttribute('aria-expanded', activeTelemetryPersonId === person.id ? 'true' : 'false');
+          if (sync.issue) {
+            quality.dataset.issue = sync.issue === 'error' ? 'error' : 'warning';
+            quality.title = ISSUE_LABELS[sync.issue] + '\n' + tooltip;
+            quality.setAttribute(
+              'aria-label',
+              'Sync details for ' + person.name + ': ' + ISSUE_LABELS[sync.issue] + ', ' + tooltip.replace(/\n/g, ', '),
+            );
+          }
+          const qualityIcon = uburoomIcons.icon(document, sync.issue ? 'alert-triangle' : icons[level] || 'wifi');
+          qualityIcon.setAttribute('aria-hidden', 'true');
+          quality.append(qualityIcon);
+          quality.addEventListener('click', event => {
+            event.stopPropagation();
+            if (activeTelemetryPersonId === person.id) closeTelemetryCard();
+            else renderTelemetryCard(person, quality, value);
+          });
+        }
+        nextRow.classList.toggle('has-kick', !!kickable);
+        if (kickable) {
+          const cell = node('span', nextRow, undefined, 'room-roster-action');
+          let action;
+          action = controls.button(document, {
+            label: 'Kick ' + person.name,
+            icon: 'karate',
+            iconOnly: true,
+            disabled: rosterBusy || (inSettings && busy),
+            action: () => void personAction(person, value, inSettings, true, action),
+          });
+          action.classList.add('watch-header-control');
+          action.id = (inSettings ? 'room-settings-kick-' : 'room-kick-') + person.id;
+          cell.append(action);
+        }
+        if (row) {
+          if (cursor === row) cursor = nextRow;
+          row.replaceWith(nextRow);
+        }
+        row = nextRow;
+      }
+      if (row !== cursor) roster.insertBefore(row, cursor);
+      cursor = row.nextSibling;
+      if (!inSettings && activeTelemetryPersonId === person.id) {
+        const quality = row.querySelector('.room-roster-sync-quality');
+        if (quality) {
+          queueMicrotask(() => {
+            if (activeTelemetryPersonId === person.id) renderTelemetryCard(person, quality, value);
+          });
+        }
       }
     }
     if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
@@ -855,65 +922,101 @@ function mount({
       const result = await request('rooms.saved', { args: { offset } });
       if (ticket !== savedGeneration || !$('room-dialog').open || busy) return;
       total = result.total;
-      $('saved-rooms').replaceChildren();
+      const savedContainer = $('saved-rooms');
+      const existingSaved = new Map(
+        [...savedContainer.querySelectorAll(':scope > .saved-room')].map(el => [el.dataset.roomId, el]),
+      );
+      const wantedSaved = new Set(result.rooms.map(r => String(r.id)));
+      for (const [id, el] of existingSaved) {
+        if (!wantedSaved.has(id)) el.remove();
+      }
+      let savedCursor = savedContainer.firstChild;
       for (const room of result.rooms) {
-        const row = node('div', $('saved-rooms'), undefined, 'saved-room');
-        const copy = node('div', row);
-        node('strong', copy, room.name);
-        node(
-          'p',
-          copy,
-          (room.recovering ? 'Recovering' : room.active ? 'Open' : 'Closed') +
-            ' · ' +
-            (room.title ? room.title + ' · Paused at ' + format(room.position) : 'No video selected'),
-          'hint',
-        );
-        if (room.retentionReason) node('small', copy, room.retentionReason, 'hint');
-        node(
-          'p',
-          copy,
-          'Last active ' +
-            new Date(room.lastAccessedAt).toLocaleString() +
-            ' · ' +
-            room.members +
-            ' / ' +
-            room.maxMembers +
-            ' people',
-          'hint',
-        );
-        const actions = node('div', row, undefined, 'room-actions');
+        const roomId = String(room.id);
         const currentRoom = room.active && getState()?.id === room.id;
-        button(actions, currentRoom ? 'Cancel' : room.active ? 'Join' : 'Reopen', async () => {
-          if (currentRoom) {
-            $('room-dialog').close('cancel');
-            return;
+        const roomSig = JSON.stringify([
+          room.id,
+          room.name,
+          room.recovering,
+          room.active,
+          room.title,
+          room.position,
+          room.retentionReason,
+          room.lastAccessedAt,
+          room.members,
+          room.maxMembers,
+          currentRoom,
+        ]);
+        let row = existingSaved.get(roomId);
+        if (!row || row.dataset.signature !== roomSig) {
+          const nextRow = node('div', null, undefined, 'saved-room');
+          nextRow.dataset.roomId = roomId;
+          nextRow.dataset.signature = roomSig;
+          const copy = node('div', nextRow);
+          node('strong', copy, room.name);
+          node(
+            'p',
+            copy,
+            (room.recovering ? 'Recovering' : room.active ? 'Open' : 'Closed') +
+              ' · ' +
+              (room.title ? room.title + ' · Paused at ' + format(room.position) : 'No video selected'),
+            'hint',
+          );
+          if (room.retentionReason) node('small', copy, room.retentionReason, 'hint');
+          node(
+            'p',
+            copy,
+            'Last active ' +
+              new Date(room.lastAccessedAt).toLocaleString() +
+              ' · ' +
+              room.members +
+              ' / ' +
+              room.maxMembers +
+              ' people',
+            'hint',
+          );
+          const actions = node('div', nextRow, undefined, 'room-actions');
+          button(actions, currentRoom ? 'Cancel' : room.active ? 'Join' : 'Reopen', async () => {
+            if (currentRoom) {
+              $('room-dialog').close('cancel');
+              return;
+            }
+            if (busy) return;
+            busy = true;
+            savedGeneration++;
+            const original = [...actions.querySelectorAll('button')];
+            original.forEach(control => (control.disabled = true));
+            $('room-saved-status').textContent = room.active ? 'Joining room…' : 'Opening room…';
+            $('room-dialog').setAttribute('aria-busy', 'true');
+            try {
+              const opened = room.active
+                ? room
+                : await request('room.reopen', { roomId: room.id }, { timeoutMs: 35000 });
+              await join(opened.id);
+              $('room-dialog').close('reopened');
+            } catch (error) {
+              $('room-dialog-error').textContent = error.message;
+            } finally {
+              busy = false;
+              $('room-chooser-refresh').classList.remove('spinning');
+              $('room-dialog').removeAttribute('aria-busy');
+              $('room-saved-status').textContent = '';
+              original.forEach(control => (control.disabled = false));
+            }
+          });
+          button(actions, 'Settings', () => {
+            openedFromSaved = true;
+            $('room-dialog').close('settings');
+            void open(room.id);
+          });
+          if (row) {
+            if (savedCursor === row) savedCursor = nextRow;
+            row.replaceWith(nextRow);
           }
-          if (busy) return;
-          busy = true;
-          savedGeneration++;
-          const original = [...actions.querySelectorAll('button')];
-          original.forEach(control => (control.disabled = true));
-          $('room-saved-status').textContent = room.active ? 'Joining room…' : 'Opening room…';
-          $('room-dialog').setAttribute('aria-busy', 'true');
-          try {
-            const opened = room.active ? room : await request('room.reopen', { roomId: room.id }, { timeoutMs: 35000 });
-            await join(opened.id);
-            $('room-dialog').close('reopened');
-          } catch (error) {
-            $('room-dialog-error').textContent = error.message;
-          } finally {
-            busy = false;
-            $('room-chooser-refresh').classList.remove('spinning');
-            $('room-dialog').removeAttribute('aria-busy');
-            $('room-saved-status').textContent = '';
-            original.forEach(control => (control.disabled = false));
-          }
-        });
-        button(actions, 'Settings', () => {
-          openedFromSaved = true;
-          $('room-dialog').close('settings');
-          void open(room.id);
-        });
+          row = nextRow;
+        }
+        if (row !== savedCursor) savedContainer.insertBefore(row, savedCursor);
+        savedCursor = row.nextSibling;
       }
       $('room-saved-status').textContent =
         total > 50
@@ -935,7 +1038,8 @@ function mount({
     return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
   }
   async function open(id, targetSection = 'general') {
-    if (!dialog.open || details?.id !== id) {
+    const switchingRoom = !dialog.open || details?.id !== id;
+    if (switchingRoom) {
       $('room-settings-name').textContent = $('room-role').textContent = '';
       $('room-host-disclosure').open = $('room-dates').open = false;
       clearSearch();
@@ -943,9 +1047,11 @@ function mount({
     }
     selectSection(targetSection);
     const ticket = ++generation;
-    details = undefined;
     visibilityDraft = undefined;
-    $('room-settings-content').hidden = true;
+    if (switchingRoom) {
+      details = undefined;
+      $('room-settings-content').hidden = true;
+    }
     setSettingsStatus('Loading room settings…');
     if (!dialog.open) show(dialog);
     try {
@@ -957,6 +1063,7 @@ function mount({
         capacityDraft = undefined;
         draftRoom = id;
       }
+      setSettingsStatus('');
       renderSettings();
     } catch (error) {
       if (ticket === generation && dialog.open) setSettingsStatus(error.message, false, true);
@@ -1012,6 +1119,7 @@ function mount({
     generation++;
     selectSection('general');
     if (!dialog.open) show(dialog);
+    setSettingsStatus('');
     renderSettings();
   }
   async function savePlayback(change) {
@@ -1160,11 +1268,89 @@ function mount({
       if (searchIndex >= 0) searchButtons[searchIndex].click();
     }
   });
+  const permissionControls = new Map();
+  function ensurePermissionTable() {
+    if ($('room-permissions').childElementCount > 0 && permissionControls.size > 0) return;
+    permissionControls.clear();
+    $('room-permissions').replaceChildren();
+    const header = node('tr', $('room-permissions'));
+    for (const [label, role] of [
+      ['Permission', ''],
+      ['Host', 'host'],
+      ['Viewer', 'viewer'],
+    ]) {
+      const cell = node('th', header, label);
+      cell.scope = 'col';
+      if (role) cell.dataset.permissionRole = role;
+    }
+    function permissionTitle(row, key, label) {
+      const cell = node('th', row);
+      cell.scope = 'row';
+      const title = node('span', cell, label, 'permission-name');
+      title.dataset.permissionTitle = key;
+      if (!descriptions[key]) return;
+      const caption = node('small', cell, descriptions[key], 'permission-caption');
+      caption.id = 'permission-description-' + key;
+      title.setAttribute('aria-describedby', caption.id);
+    }
+    function permissionButton(cell, { label, checked, disabled, reason, action }) {
+      const handle = controls.permissionButton(document, { label, checked, disabled, reason, action });
+      handle.element.classList.add('permission-button');
+      cell.append(handle.element);
+      return handle;
+    }
+    for (const [group, keys] of Object.entries({
+      Playback: ['playPause', 'seek', 'chooseMedia'],
+      Queue: ['addQueue', 'suggestMedia', 'editQueue', 'autoplay'],
+      'Room management': ['roomSettings', 'closeRoom', 'deleteRoom', 'addHosts', 'kickParticipants', 'allHosts'],
+      Continuity: ['continueWithoutHost'],
+    })) {
+      const heading = node('th', node('tr', $('room-permissions')), group, 'permission-group');
+      heading.colSpan = 3;
+      for (const key of keys) {
+        const label = key === 'allHosts' ? 'Everyone is host' : labels[key];
+        const row = node('tr', $('room-permissions'));
+        row.dataset.permissionRow = key;
+        permissionTitle(row, key, label);
+        if (key === 'allHosts') {
+          const cell = node('td', row);
+          cell.colSpan = 2;
+          const handle = permissionButton(cell, {
+            label,
+            checked: false,
+            disabled: false,
+            reason: '',
+            action: () => details && void edit({ action: 'allHosts', enabled: !details.permissions.allHosts }),
+          });
+          handle.element.id = 'room-all-hosts';
+          handle.element.setAttribute('aria-describedby', 'permission-description-allHosts');
+          permissionControls.set('allHosts', handle);
+          continue;
+        }
+        for (const role of ['host', 'viewer']) {
+          const cell = node('td', row);
+          cell.dataset.permissionRole = role;
+          const handle = permissionButton(cell, {
+            label: (role === 'host' ? 'Host' : 'Viewer') + ': ' + label,
+            checked: false,
+            disabled: false,
+            reason: '',
+            action: () =>
+              details &&
+              void edit({ action: 'permissions', role, permissions: { [key]: !details.permissions[role][key] } }),
+          });
+          handle.element.dataset.role = role;
+          handle.element.dataset.permission = key;
+          if (descriptions[key]) handle.element.setAttribute('aria-describedby', 'permission-description-' + key);
+          permissionControls.set(role + ':' + key, handle);
+        }
+      }
+    }
+  }
   function renderSettings() {
     const value = details;
     if (!value) return;
     $('room-settings-content').hidden = false;
-    $('room-settings-status').textContent = '';
     $('room-settings-panels').setAttribute('aria-busy', String(busy));
     $('room-role').textContent = getMe()?.adminMode ? 'Admin mode' : '';
     $('room-settings-name').textContent = value.name;
@@ -1228,22 +1414,26 @@ function mount({
     updateRosterSize();
     renderInvite(value);
     const previousTransfer = $('room-transfer-target').value;
-    $('room-transfer-target').replaceChildren();
     const transferGroup = $('room-transfer-target-group');
-    if (transferGroup) transferGroup.replaceChildren();
-    for (const person of value.hosts) {
-      const option = node('option', $('room-transfer-target'), person.name);
-      option.value = person.id;
-      if (transferGroup) {
-        const btn = node('button', transferGroup, person.name, 'group-button');
-        btn.type = 'button';
-        btn.dataset.value = person.id;
-        btn.title = 'Transfer room leadership to ' + person.name;
-        btn.addEventListener('click', () => {
-          $('room-transfer-target').value = person.id;
-          for (const b of transferGroup.querySelectorAll('button'))
-            b.setAttribute('aria-pressed', String(b.dataset.value === person.id));
-        });
+    const transferSig = JSON.stringify(value.hosts.map(p => [p.id, p.name]));
+    if ($('room-transfer-target').dataset.signature !== transferSig) {
+      $('room-transfer-target').dataset.signature = transferSig;
+      $('room-transfer-target').replaceChildren();
+      if (transferGroup) transferGroup.replaceChildren();
+      for (const person of value.hosts) {
+        const option = node('option', $('room-transfer-target'), person.name);
+        option.value = person.id;
+        if (transferGroup) {
+          const btn = node('button', transferGroup, person.name, 'group-button');
+          btn.type = 'button';
+          btn.dataset.value = person.id;
+          btn.title = 'Transfer room leadership to ' + person.name;
+          btn.addEventListener('click', () => {
+            $('room-transfer-target').value = person.id;
+            for (const b of transferGroup.querySelectorAll('button'))
+              b.setAttribute('aria-pressed', String(b.dataset.value === person.id));
+          });
+        }
       }
     }
     if (value.hosts.some(h => h.id === previousTransfer)) $('room-transfer-target').value = previousTransfer;
@@ -1286,84 +1476,28 @@ function mount({
     launch.hidden = !(value.draft || !value.active || (openedFromSaved && getState()?.id !== value.id));
     launch.textContent = value.draft ? 'Create room' : 'Reopen room';
     launch.disabled = busy;
-    $('room-permissions').replaceChildren();
-    const header = node('tr', $('room-permissions'));
-    for (const [label, role] of [
-      ['Permission', ''],
-      ['Host', 'host'],
-      ['Viewer', 'viewer'],
-    ]) {
-      const cell = node('th', header, label);
-      cell.scope = 'col';
-      if (role) cell.dataset.permissionRole = role;
-    }
-    function permissionTitle(row, key, label) {
-      const cell = node('th', row);
-      cell.scope = 'row';
-      const title = node('span', cell, label, 'permission-name');
-      title.dataset.permissionTitle = key;
-      if (!descriptions[key]) return;
-      const caption = node('small', cell, descriptions[key], 'permission-caption');
-      caption.id = 'permission-description-' + key;
-      title.setAttribute('aria-describedby', caption.id);
-    }
-    function permissionButton(cell, { label, checked, disabled, reason, action }) {
-      const { element: control } = controls.permissionButton(document, { label, checked, disabled, reason, action });
-      control.classList.add('permission-button');
-      cell.append(control);
-      return control;
-    }
-    for (const [group, keys] of Object.entries({
-      Playback: ['playPause', 'seek', 'chooseMedia'],
-      Queue: ['addQueue', 'suggestMedia', 'editQueue', 'autoplay'],
-      'Room management': ['roomSettings', 'closeRoom', 'deleteRoom', 'addHosts', 'kickParticipants', 'allHosts'],
-      Continuity: ['continueWithoutHost'],
-    })) {
-      const heading = node('th', node('tr', $('room-permissions')), group, 'permission-group');
-      heading.colSpan = 3;
-      for (const key of keys) {
-        const label = key === 'allHosts' ? 'Everyone is host' : labels[key];
-        const row = node('tr', $('room-permissions'));
-        row.dataset.permissionRow = key;
-        permissionTitle(row, key, label);
-        if (key === 'allHosts') {
-          const cell = node('td', row);
-          cell.colSpan = 2;
-          const control = permissionButton(cell, {
-            label,
-            checked: !!value.permissions.allHosts,
-            disabled: busy || !value.canSetAllHosts,
-            reason: busy ? 'Saving…' : !value.canSetAllHosts ? 'Only the room leader can change this' : '',
-            action: () => void edit({ action: 'allHosts', enabled: !value.permissions.allHosts }),
-          });
-          control.id = 'room-all-hosts';
-          control.setAttribute('aria-describedby', 'permission-description-allHosts');
-          continue;
-        }
-        for (const role of ['host', 'viewer']) {
-          const cell = node('td', row);
-          cell.dataset.permissionRole = role;
-          const restricted =
-            role === 'viewer' &&
-            ['roomSettings', 'closeRoom', 'deleteRoom', 'addHosts', 'kickParticipants'].includes(key);
-          const control = permissionButton(cell, {
-            label: (role === 'host' ? 'Host' : 'Viewer') + ': ' + label,
-            checked: !!value.permissions[role][key],
-            disabled: busy || !value.capabilities.managePermissions || restricted,
-            reason: busy
-              ? 'Saving…'
-              : restricted
-                ? 'Room management is restricted to the leader and authorized hosts'
-                : !value.capabilities.managePermissions
-                  ? 'Only the room leader or an active administrator can edit permissions'
-                  : '',
-            action: () =>
-              void edit({ action: 'permissions', role, permissions: { [key]: !value.permissions[role][key] } }),
-          });
-          control.dataset.role = role;
-          control.dataset.permission = key;
-          if (descriptions[key]) control.setAttribute('aria-describedby', 'permission-description-' + key);
-        }
+    ensurePermissionTable();
+    permissionControls.get('allHosts')?.update({
+      checked: !!value.permissions.allHosts,
+      disabled: busy || !value.canSetAllHosts,
+      reason: busy ? 'Saving…' : !value.canSetAllHosts ? 'Only the room leader can change this' : '',
+    });
+    for (const key of Object.keys(labels)) {
+      for (const role of ['host', 'viewer']) {
+        const restricted =
+          role === 'viewer' &&
+          ['roomSettings', 'closeRoom', 'deleteRoom', 'addHosts', 'kickParticipants'].includes(key);
+        permissionControls.get(role + ':' + key)?.update({
+          checked: !!value.permissions[role][key],
+          disabled: busy || !value.capabilities.managePermissions || restricted,
+          reason: busy
+            ? 'Saving…'
+            : restricted
+              ? 'Room management is restricted to the leader and authorized hosts'
+              : !value.capabilities.managePermissions
+                ? 'Only the room leader or an active administrator can edit permissions'
+                : '',
+        });
       }
     }
     $('room-close-row').hidden = !value.hasLiveRoom || !!value.singleRoom;
@@ -1426,29 +1560,33 @@ function mount({
     setSettingsStatus('Saving…');
     try {
       const result = await request('room.settings.edit', { roomId: id, args: { revision, change } });
+      busy = false;
+      if (change.action === 'visibility') visibilityDraft = undefined;
       if (ticket === generation && dialog.open) {
         if (result.deleted) dialog.close();
         else {
           details = result;
           if (change.action === 'maxMembers') capacityDraft = undefined;
           if (change.action === 'rename') renameDraft = result.name;
-          if (change.action === 'visibility') visibilityDraft = undefined;
           renderSettings();
         }
         setSettingsStatus('Saved', true);
       }
       await changed();
     } catch (error) {
-      if (change.action === 'visibility') visibilityDraft = undefined;
-      if (ticket === generation && dialog.open) setSettingsStatus(error.message, false, true);
-      else fail(error.message);
-    } finally {
       busy = false;
       if (change.action === 'visibility') visibilityDraft = undefined;
       if (ticket === generation && dialog.open) {
-        const notice = $('room-settings-status').textContent;
         renderSettings();
-        $('room-settings-status').textContent = notice;
+        setSettingsStatus(error.message, false, true);
+      } else fail(error.message);
+    } finally {
+      if (busy) {
+        busy = false;
+        if (change.action === 'visibility') visibilityDraft = undefined;
+        if (ticket === generation && dialog.open) renderSettings();
+      }
+      if (ticket === generation && dialog.open) {
         if (focusSelector && [document.body, dialog].includes(document.activeElement))
           (dialog.querySelector(focusSelector) || $('room-settings-dismiss')).focus();
       }
@@ -1458,86 +1596,136 @@ function mount({
   function renderInvite(value) {
     const box = $('room-invite'),
       invite = !value.draft && value.invite;
-    box.replaceChildren();
-    $('room-invited-section').hidden = true;
+    $('room-invited-section').hidden = !invite || !invite.invited.length;
     $('room-settings-share').hidden = !invite;
     box.hidden = !invite;
-    if (!invite) return;
-    node('h3', box, 'Invites');
-    const row = node('div', box, undefined, 'room-invite-row');
-    const code = node('code', row, invite.code, 'room-invite-code');
-    code.title = invite.url;
-    if (invite.canManage) {
-      const roll = controls.button(document, {
-        label: 'New invite code',
-        icon: 'arrows-shuffle',
-        disabled: busy,
-        action: () => void edit({ action: 'invite.reroll' }),
-      });
-      roll.id = 'room-invite-reroll';
-      row.append(roll);
+    if (!invite) {
+      box.dataset.signature = '';
+      box.replaceChildren();
+      $('room-invited').replaceChildren();
+      return;
     }
-    const guestRow = invite.guestsEnabled ? node('div', box, undefined, 'room-invite-row') : null;
-    if (invite.guestsEnabled && invite.canAllowGuests) {
-      const toggle = node('label', guestRow, undefined, 'watch-switch-label'),
-        input = node('input', toggle);
-      input.type = 'checkbox';
-      input.setAttribute('role', 'switch');
-      input.className = 'watch-switch';
-      input.id = 'room-allow-guests';
-      input.checked = invite.allowGuests;
-      input.disabled = busy;
-      node('span', toggle, 'Allow guests');
-      input.addEventListener('change', () => void edit({ action: 'guests.allow', enabled: input.checked }));
-    } else if (invite.guestsEnabled)
-      node('span', guestRow, invite.allowGuests ? 'Guests allowed' : 'Guests not allowed', 'hint');
-    if (invite.guestsEnabled && invite.canManage) {
-      const remove = node('button', guestRow, 'Remove all guests', 'quiet');
-      remove.type = 'button';
-      remove.disabled = busy;
-      remove.id = 'room-remove-guests';
-      remove.addEventListener('click', async () => {
-        if (
-          await confirm(
-            'Remove all guests? Everyone in this room as a guest is removed now, and the room gets a new invite code, so the old link stops working for everyone.',
-            { destructive: true },
+    const inviteSig = JSON.stringify([
+      invite.code,
+      invite.url,
+      !!invite.canManage,
+      !!invite.guestsEnabled,
+      !!invite.canAllowGuests,
+      !!invite.allowGuests,
+    ]);
+    if (box.dataset.signature !== inviteSig) {
+      box.dataset.signature = inviteSig;
+      box.replaceChildren();
+      node('h3', box, 'Invites');
+      const row = node('div', box, undefined, 'room-invite-row');
+      const code = node('code', row, invite.code, 'room-invite-code');
+      code.title = invite.url;
+      if (invite.canManage) {
+        const roll = controls.button(document, {
+          label: 'New invite code',
+          icon: 'arrows-shuffle',
+          disabled: busy,
+          action: () => void edit({ action: 'invite.reroll' }),
+        });
+        roll.id = 'room-invite-reroll';
+        row.append(roll);
+      }
+      const guestRow = invite.guestsEnabled ? node('div', box, undefined, 'room-invite-row') : null;
+      if (invite.guestsEnabled && invite.canAllowGuests) {
+        const toggle = node('label', guestRow, undefined, 'watch-switch-label'),
+          input = node('input', toggle);
+        input.type = 'checkbox';
+        input.setAttribute('role', 'switch');
+        input.className = 'watch-switch';
+        input.id = 'room-allow-guests';
+        input.checked = invite.allowGuests;
+        input.disabled = busy;
+        node('span', toggle, 'Allow guests');
+        input.addEventListener('change', () => void edit({ action: 'guests.allow', enabled: input.checked }));
+      } else if (invite.guestsEnabled)
+        node('span', guestRow, invite.allowGuests ? 'Guests allowed' : 'Guests not allowed', 'hint');
+      if (invite.guestsEnabled && invite.canManage) {
+        const remove = node('button', guestRow, 'Remove all guests', 'quiet');
+        remove.type = 'button';
+        remove.disabled = busy;
+        remove.id = 'room-remove-guests';
+        remove.addEventListener('click', async () => {
+          if (
+            await confirm(
+              'Remove all guests? Everyone in this room as a guest is removed now, and the room gets a new invite code, so the old link stops working for everyone.',
+              { destructive: true },
+            )
           )
-        )
-          void edit({ action: 'guests.removeAll' });
-      });
+            void edit({ action: 'guests.removeAll' });
+        });
+      }
+    } else {
+      if ($('room-invite-reroll')) $('room-invite-reroll').disabled = busy;
+      if ($('room-allow-guests')) {
+        $('room-allow-guests').checked = !!invite.allowGuests;
+        $('room-allow-guests').disabled = busy;
+      }
+      if ($('room-remove-guests')) $('room-remove-guests').disabled = busy;
     }
-    if (!invite.invited.length) return;
-    $('room-invited-section').hidden = false;
     const list = $('room-invited');
-    list.replaceChildren();
+    if (!invite.invited.length) {
+      list.replaceChildren();
+      return;
+    }
+    const existingInvited = new Map(
+      [...list.querySelectorAll(':scope > .room-invited-item')].map(el => [el.dataset.personId, el]),
+    );
+    const wantedInvited = new Set(invite.invited.map(p => String(p.id)));
+    for (const [id, el] of existingInvited) {
+      if (!wantedInvited.has(id)) el.remove();
+    }
+    let invitedCursor = list.firstChild;
     for (const person of invite.invited) {
-      const item = node('div', list, undefined, 'room-invited-item');
-      node('strong', node('div', item), person.name);
-      const revoke = node('button', node('div', item, undefined, 'room-actions'), 'Revoke', 'danger-button');
-      revoke.type = 'button';
-      revoke.disabled = busy;
-      revoke.setAttribute('aria-label', 'Revoke invite for ' + person.name);
-      revoke.addEventListener('click', async () => {
-        if (
-          await confirm(
-            'Revoke ' +
-              person.name +
-              '’s invite? They’re removed from the room and can’t use the invite again until the code changes.',
-            { destructive: true },
+      const personId = String(person.id);
+      const itemSig = JSON.stringify([person.id, person.name]);
+      let item = existingInvited.get(personId);
+      if (!item || item.dataset.signature !== itemSig) {
+        const nextItem = node('div', null, undefined, 'room-invited-item');
+        nextItem.dataset.personId = personId;
+        nextItem.dataset.signature = itemSig;
+        node('strong', node('div', nextItem), person.name);
+        const revoke = node('button', node('div', nextItem, undefined, 'room-actions'), 'Revoke', 'danger-button');
+        revoke.type = 'button';
+        revoke.disabled = busy;
+        revoke.setAttribute('aria-label', 'Revoke invite for ' + person.name);
+        revoke.addEventListener('click', async () => {
+          if (
+            await confirm(
+              'Revoke ' +
+                person.name +
+                '’s invite? They’re removed from the room and can’t use the invite again until the code changes.',
+              { destructive: true },
+            )
           )
-        )
-          void edit({ action: 'invite.revoke', userId: person.id });
-      });
+            void edit({ action: 'invite.revoke', userId: person.id });
+        });
+        if (item) {
+          if (invitedCursor === item) invitedCursor = nextItem;
+          item.replaceWith(nextItem);
+        }
+        item = nextItem;
+      } else {
+        const revoke = item.querySelector('button');
+        if (revoke) revoke.disabled = busy;
+      }
+      if (item !== invitedCursor) list.insertBefore(item, invitedCursor);
+      invitedCursor = item.nextSibling;
     }
   }
   function selectSection(value) {
+    const changedSection = section !== value;
     section = value;
     $('room-settings-section').value = value;
     for (const panel of dialog.querySelectorAll('[data-room-section]'))
       panel.hidden = panel.dataset.roomSection !== value;
     for (const control of $('room-settings-nav').children)
       control.setAttribute('aria-current', String(control.dataset.section === value));
-    $('room-settings-panels').scrollTop = 0;
+    if (changedSection) $('room-settings-panels').scrollTop = 0;
   }
   for (const [key, label] of [
     ['general', 'General'],

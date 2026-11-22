@@ -255,7 +255,7 @@ function mount(
     }
     lastAutoplayError = state?.autoplay?.error || '';
   }
-  every(250, renderContinuation);
+  renderContinuation();
 
   const bulkDialog = node('dialog', doc.body, undefined, 'watch-dialog queue-dialog');
   bulkDialog.id = 'queue-bulk-dialog';
@@ -1147,215 +1147,193 @@ function mount(
   }
 
   function renderUpcoming() {
-    upcomingView.replaceChildren();
     const state = getState(),
       items = currentQueue.items || [];
     const autoNext = state?.queueSummary?.autoQueue?.mode !== 'off' ? state?.queueSummary?.autoQueue?.next : null;
     const canEdit = !!state?.capabilities?.editQueue,
       canChoose = !!state?.capabilities?.chooseMedia;
-    const list = node('div', upcomingView, undefined, 'queue-list queue-upcoming-list');
-    list.id = 'queue-upcoming-list';
+    let list = upcomingView.querySelector(':scope > #queue-upcoming-list');
+    if (!list) {
+      upcomingView.replaceChildren();
+      list = node('div', upcomingView, undefined, 'queue-list queue-upcoming-list');
+      list.id = 'queue-upcoming-list';
+    }
+    const existingRows = new Map(
+      [...list.querySelectorAll(':scope > .queue-entry')].map(el => [el.dataset.entryId, el]),
+    );
+    const wantedIds = new Set(items.map(item => String(item.id)));
+    const showAuto = !!(autoNext && items.length >= (currentQueue.total || items.length));
+    const autoEntryId = showAuto ? 'auto:' + autoNext.mediaId : null;
+    if (autoEntryId) wantedIds.add(autoEntryId);
+    for (const [id, el] of existingRows) {
+      if (!wantedIds.has(id)) el.remove();
+    }
+    let cursor = list.firstChild;
     items.forEach((item, i) => {
-      const row = node('article', list, undefined, 'queue-entry');
-      row.dataset.entryId = item.id;
-      const top = node('div', row, undefined, 'queue-entry-top');
-      node('span', top, '', 'queue-rank');
-      const moves = node('div', top, undefined, 'queue-move-actions');
-      action(
-        moves,
-        'Move earlier',
-        'up',
-        () => moveItem(item.id, item.rank - 1),
-        !canEdit || i === 0,
-        'queue-action-up',
-      );
-      action(
-        moves,
-        'Move later',
-        'down',
-        () => moveItem(item.id, item.rank + 1),
-        !canEdit || item.rank === currentQueue.total - 1,
-        'queue-action-down',
-      );
-      action(moves, 'Remove from queue', 'close', () => removeItem(item.id), !canEdit, 'queue-action-remove');
-      art(row, item);
-      const info = node('div', row, undefined, 'queue-entry-info');
-      title(info, item, 'queue-entry-title');
-      node('span', info, formatTime(item.duration), 'queue-meta');
-      const actions = node('div', row, undefined, 'queue-entry-actions');
-      node('span', actions, 'Queue', 'queue-entry-caption');
-      action(actions, 'Play now', 'play', () => playEntry(item.id, false), !canChoose, 'queue-action-play');
+      const id = String(item.id);
       const skipLabel = i === 0 ? 'Skip to' : 'Skip ' + i + (i === 1 ? ' item to' : ' items to');
-      action(actions, skipLabel, 'player-track-next', () => playEntry(item.id, true), !canChoose, 'queue-action-skip');
+      const sig = JSON.stringify([
+        item.id,
+        item.mediaId,
+        item.title,
+        item.thumb,
+        item.duration,
+        formatSubtitle(item),
+        item.rank,
+        i,
+        currentQueue.total,
+        canEdit,
+        canChoose,
+        skipLabel,
+      ]);
+      let row = existingRows.get(id);
+      if (!row || row.dataset.signature !== sig) {
+        const nextRow = node('article', null, undefined, 'queue-entry');
+        nextRow.dataset.entryId = id;
+        nextRow.dataset.signature = sig;
+        const top = node('div', nextRow, undefined, 'queue-entry-top');
+        node('span', top, '', 'queue-rank');
+        const moves = node('div', top, undefined, 'queue-move-actions');
+        action(
+          moves,
+          'Move earlier',
+          'up',
+          () => moveItem(item.id, item.rank - 1),
+          !canEdit || i === 0,
+          'queue-action-up',
+        );
+        action(
+          moves,
+          'Move later',
+          'down',
+          () => moveItem(item.id, item.rank + 1),
+          !canEdit || item.rank === currentQueue.total - 1,
+          'queue-action-down',
+        );
+        action(moves, 'Remove from queue', 'close', () => removeItem(item.id), !canEdit, 'queue-action-remove');
+        art(nextRow, item);
+        const info = node('div', nextRow, undefined, 'queue-entry-info');
+        title(info, item, 'queue-entry-title');
+        node('span', info, formatTime(item.duration), 'queue-meta');
+        const actions = node('div', nextRow, undefined, 'queue-entry-actions');
+        node('span', actions, 'Queue', 'queue-entry-caption');
+        action(actions, 'Play now', 'play', () => playEntry(item.id, false), !canChoose, 'queue-action-play');
+        action(
+          actions,
+          skipLabel,
+          'player-track-next',
+          () => playEntry(item.id, true),
+          !canChoose,
+          'queue-action-skip',
+        );
+        if (row) {
+          if (cursor === row) cursor = nextRow;
+          row.replaceWith(nextRow);
+        }
+        row = nextRow;
+      }
+      if (row !== cursor) list.insertBefore(row, cursor);
+      cursor = row.nextSibling;
     });
-    if (autoNext && items.length >= (currentQueue.total || items.length)) {
+    if (showAuto && autoEntryId) {
       const canIdlePlay = !state?.mediaId && !state?.queueSummary?.current && !!state?.capabilities?.playPause;
-      const row = node('article', list, undefined, 'queue-entry queue-entry-auto');
-      row.dataset.entryId = 'auto:' + autoNext.mediaId;
-      const top = node('div', row, undefined, 'queue-entry-top');
-      node('span', top, 'AUTO', 'queue-rank queue-rank-auto');
-      const moves = node('div', top, undefined, 'queue-move-actions');
-      action(
-        moves,
-        'Add to queue',
-        'queue',
-        async () => {
-          await mutate('auto.pin');
-          await changed();
-        },
-        !state?.capabilities?.addQueue,
-        'queue-action-pin',
-      );
       const isShuffle = state?.queueSummary?.autoQueue?.mode === 'random';
-      action(
-        moves,
-        'Skip suggestion',
-        isShuffle ? 'refresh' : 'end',
-        async () => {
-          await mutate('auto.skip');
-          await changed();
-        },
-        !canEdit,
-        'queue-action-auto-skip',
-      );
-      art(row, autoNext);
-      const info = node('div', row, undefined, 'queue-entry-info');
-      title(info, autoNext, 'queue-entry-title');
-      node('span', info, formatTime(autoNext.duration), 'queue-meta');
-      const actions = node('div', row, undefined, 'queue-entry-actions');
-      node('span', actions, 'Auto-queue', 'queue-entry-caption');
-      action(
-        actions,
-        'Play now',
-        'play',
-        async () => {
-          await mutate('auto.playNow');
-          await changed();
-        },
-        !canChoose && !canIdlePlay,
-        'queue-action-play',
-      );
       const autoSkipLabel =
         items.length === 0 ? 'Skip to' : 'Skip ' + items.length + (items.length === 1 ? ' item to' : ' items to');
-      action(
-        actions,
+      const sig = JSON.stringify([
+        autoEntryId,
+        autoNext.title,
+        autoNext.thumb,
+        autoNext.duration,
+        formatSubtitle(autoNext),
+        !!state?.capabilities?.addQueue,
+        canEdit,
+        canChoose,
+        canIdlePlay,
+        isShuffle,
         autoSkipLabel,
-        'player-track-next',
-        async () => {
-          if (!items.length) await execute({ action: 'media.next' });
-          else {
-            await mutate('auto.playNow', { skipPrevious: true });
+      ]);
+      let row = existingRows.get(autoEntryId);
+      if (!row || row.dataset.signature !== sig) {
+        const nextRow = node('article', null, undefined, 'queue-entry queue-entry-auto');
+        nextRow.dataset.entryId = autoEntryId;
+        nextRow.dataset.signature = sig;
+        const top = node('div', nextRow, undefined, 'queue-entry-top');
+        node('span', top, 'AUTO', 'queue-rank queue-rank-auto');
+        const moves = node('div', top, undefined, 'queue-move-actions');
+        action(
+          moves,
+          'Add to queue',
+          'queue',
+          async () => {
+            await mutate('auto.pin');
             await changed();
-          }
-        },
-        !canChoose,
-        'queue-action-skip',
-      );
+          },
+          !state?.capabilities?.addQueue,
+          'queue-action-pin',
+        );
+        action(
+          moves,
+          'Skip suggestion',
+          isShuffle ? 'refresh' : 'end',
+          async () => {
+            await mutate('auto.skip');
+            await changed();
+          },
+          !canEdit,
+          'queue-action-auto-skip',
+        );
+        art(nextRow, autoNext);
+        const info = node('div', nextRow, undefined, 'queue-entry-info');
+        title(info, autoNext, 'queue-entry-title');
+        node('span', info, formatTime(autoNext.duration), 'queue-meta');
+        const actions = node('div', nextRow, undefined, 'queue-entry-actions');
+        node('span', actions, 'Auto-queue', 'queue-entry-caption');
+        action(
+          actions,
+          'Play now',
+          'play',
+          async () => {
+            await mutate('auto.playNow');
+            await changed();
+          },
+          !canChoose && !canIdlePlay,
+          'queue-action-play',
+        );
+        action(
+          actions,
+          autoSkipLabel,
+          'player-track-next',
+          async () => {
+            if (!items.length) await execute({ action: 'media.next' });
+            else {
+              await mutate('auto.playNow', { skipPrevious: true });
+              await changed();
+            }
+          },
+          !canChoose,
+          'queue-action-skip',
+        );
+        if (row) {
+          if (cursor === row) cursor = nextRow;
+          row.replaceWith(nextRow);
+        }
+        row = nextRow;
+      }
+      if (row !== cursor) list.insertBefore(row, cursor);
     }
     updateUpcomingTimes();
-    const actions = node('div', footer, undefined, 'queue-footer-actions watch-control-group');
+    let actions = footer.querySelector('.queue-footer-actions');
+    if (!actions) actions = node('div', footer, undefined, 'queue-footer-actions watch-control-group');
+    let more = actions.querySelector('.queue-load-more-upcoming');
     if (items.length < currentQueue.total) {
-      const more = button(actions, 'Load more upcoming', undefined, async () => {
-        const roomId = getState()?.id,
-          revision = lastFetchedRevision;
-        try {
-          const page = await request('room.queue', { roomId, args: { limit: 100, offset: items.length } });
-          if (
-            getState()?.id !== roomId ||
-            lastFetchedRevision !== revision ||
-            page.queueRevision !== revision ||
-            getState()?.queueSummary?.queueRevision !== revision
-          )
-            return;
-          currentQueue = { ...currentQueue, items: [...items, ...page.items], total: page.total };
-          renderTab();
-        } catch (error) {
-          uburoomPopover.show(more, { text: error.message, state: 'error' });
-        }
-      });
-      uburoomControls.content(more, { label: 'Load more upcoming' });
-    }
-    const shuffle = action(actions, 'Shuffle queue', 'shuffle', () => mutate('shuffle'), !canEdit || items.length < 2);
-    uburoomControls.content(shuffle, { label: 'Shuffle queue', icon: 'shuffle', iconOnly: true });
-    shuffle.classList.add('watch-control-solid-disabled');
-    if (shuffle.disabled)
-      shuffle.title = canEdit
-        ? 'Add at least two upcoming videos to shuffle.'
-        : 'Queue editing is unavailable for your role.';
-    shuffle.id = 'queue-shuffle';
-    const clear = button(
-      actions,
-      'Clear queue',
-      undefined,
-      async () => {
-        if (busy || !getState()?.capabilities?.editQueue || !currentQueue.items.length) return;
-        const roomId = getState().id;
-        if ((await confirm('Clear all upcoming videos from the queue?')) && getState()?.id === roomId) {
-          busy = true;
-          try {
-            await clearQueue();
-          } catch (error) {
-            uburoomPopover.show(clear, { text: error.message, state: 'error' });
-          } finally {
-            busy = false;
-          }
-        }
-      },
-      !canEdit || !items.length,
-    );
-    uburoomControls.content(clear, { label: 'Clear queue' });
-    clear.classList.add('watch-control-solid-disabled');
-    if (clear.disabled)
-      clear.title = canEdit ? 'There are no upcoming videos to clear.' : 'Queue editing is unavailable for your role.';
-    clear.id = 'queue-clear-queue';
-  }
-
-  function renderHistory() {
-    historyView.replaceChildren();
-    const footerActions = footer.querySelector('.queue-footer-actions');
-    const state = getState(),
-      items = currentHistory.items || [];
-    const canChoose = !!state?.capabilities?.chooseMedia;
-    const clear = button(
-      footerActions,
-      'Clear history',
-      undefined,
-      async () => {
-        if (busy || !getState()?.capabilities?.editQueue || !currentHistory.items.length) return;
-        const roomId = getState().id;
-        if ((await confirm('Clear all playback history for this room?')) && getState()?.id === roomId) {
-          busy = true;
-          try {
-            await clearHistory();
-          } catch (error) {
-            uburoomPopover.show(clear, { text: error.message, state: 'error' });
-          } finally {
-            busy = false;
-          }
-        }
-      },
-      !state?.capabilities?.editQueue || !items.length,
-      'queue-clear-history',
-    );
-    uburoomControls.content(clear, { label: 'Clear history' });
-    clear.classList.add('watch-control-solid-disabled');
-    if (clear.disabled)
-      clear.title = state?.capabilities?.editQueue
-        ? 'There is no playback history to clear.'
-        : 'Queue editing is unavailable for your role.';
-    clear.id = 'queue-clear-history';
-    footerActions.prepend(clear);
-    if (items.length < currentHistory.total) {
-      const older = button(
-        historyView,
-        'Load older history',
-        undefined,
-        async () => {
+      if (!more) {
+        more = button(actions, 'Load more upcoming', undefined, async () => {
           const roomId = getState()?.id,
-            revision = lastFetchedRevision;
-          older.disabled = true;
+            revision = lastFetchedRevision,
+            currentItems = currentQueue.items || [];
           try {
-            const page = await request('room.history', { roomId, args: { limit: 100, offset: items.length } });
+            const page = await request('room.queue', { roomId, args: { limit: 100, offset: currentItems.length } });
             if (
               getState()?.id !== roomId ||
               lastFetchedRevision !== revision ||
@@ -1363,73 +1341,237 @@ function mount(
               getState()?.queueSummary?.queueRevision !== revision
             )
               return;
-            currentHistory = { items: [...items, ...page.items], total: page.total };
+            currentQueue = { ...currentQueue, items: [...currentItems, ...page.items], total: page.total };
             renderTab();
           } catch (error) {
-            uburoomPopover.show(older, { text: error.message, state: 'error' });
-          } finally {
-            older.disabled = false;
+            uburoomPopover.show(more, { text: error.message, state: 'error' });
+          }
+        });
+        more.classList.add('queue-load-more-upcoming');
+        uburoomControls.content(more, { label: 'Load more upcoming' });
+      }
+    } else if (more) {
+      more.remove();
+    }
+    let shuffle = actions.querySelector('#queue-shuffle');
+    if (!shuffle) {
+      shuffle = action(actions, 'Shuffle queue', 'shuffle', () => mutate('shuffle'), !canEdit || items.length < 2);
+      uburoomControls.content(shuffle, { label: 'Shuffle queue', icon: 'shuffle', iconOnly: true });
+      shuffle.classList.add('watch-control-solid-disabled');
+      shuffle.id = 'queue-shuffle';
+    }
+    shuffle.disabled = !canEdit || items.length < 2;
+    shuffle.title = shuffle.disabled
+      ? canEdit
+        ? 'Add at least two upcoming videos to shuffle.'
+        : 'Queue editing is unavailable for your role.'
+      : 'Shuffle queue';
+    let clear = actions.querySelector('#queue-clear-queue');
+    if (!clear) {
+      clear = button(
+        actions,
+        'Clear queue',
+        undefined,
+        async () => {
+          if (busy || !getState()?.capabilities?.editQueue || !currentQueue.items.length) return;
+          const roomId = getState().id;
+          if ((await confirm('Clear all upcoming videos from the queue?')) && getState()?.id === roomId) {
+            busy = true;
+            try {
+              await clearQueue();
+            } catch (error) {
+              uburoomPopover.show(clear, { text: error.message, state: 'error' });
+            } finally {
+              busy = false;
+            }
           }
         },
-        false,
-        'quiet queue-history-older',
+        !canEdit || !items.length,
       );
+      uburoomControls.content(clear, { label: 'Clear queue' });
+      clear.classList.add('watch-control-solid-disabled');
+      clear.id = 'queue-clear-queue';
     }
-    const list = node('div', historyView, undefined, 'queue-list queue-history-list');
-    list.id = 'queue-history-list';
-    for (const item of [...items].reverse()) {
-      const row = node('article', list, undefined, 'queue-history-entry');
-      row.dataset.entryId = item.id;
+    clear.disabled = !canEdit || !items.length;
+    clear.title = clear.disabled
+      ? canEdit
+        ? 'There are no upcoming videos to clear.'
+        : 'Queue editing is unavailable for your role.'
+      : 'Clear queue';
+  }
+
+  function renderHistory() {
+    let footerActions = footer.querySelector('.queue-footer-actions');
+    if (!footerActions) footerActions = node('div', footer, undefined, 'queue-footer-actions watch-control-group');
+    const state = getState(),
+      items = currentHistory.items || [];
+    const canChoose = !!state?.capabilities?.chooseMedia;
+    let clear = footerActions.querySelector('#queue-clear-history');
+    if (!clear) {
+      clear = button(
+        footerActions,
+        'Clear history',
+        undefined,
+        async () => {
+          if (busy || !getState()?.capabilities?.editQueue || !currentHistory.items.length) return;
+          const roomId = getState().id;
+          if ((await confirm('Clear all playback history for this room?')) && getState()?.id === roomId) {
+            busy = true;
+            try {
+              await clearHistory();
+            } catch (error) {
+              uburoomPopover.show(clear, { text: error.message, state: 'error' });
+            } finally {
+              busy = false;
+            }
+          }
+        },
+        !state?.capabilities?.editQueue || !items.length,
+        'queue-clear-history',
+      );
+      uburoomControls.content(clear, { label: 'Clear history' });
+      clear.classList.add('watch-control-solid-disabled');
+      clear.id = 'queue-clear-history';
+      footerActions.prepend(clear);
+    }
+    clear.disabled = !state?.capabilities?.editQueue || !items.length;
+    clear.title = clear.disabled
+      ? state?.capabilities?.editQueue
+        ? 'There is no playback history to clear.'
+        : 'Queue editing is unavailable for your role.'
+      : 'Clear history';
+    let older = historyView.querySelector(':scope > .queue-history-older');
+    if (items.length < currentHistory.total) {
+      if (!older) {
+        older = button(
+          historyView,
+          'Load older history',
+          undefined,
+          async () => {
+            const roomId = getState()?.id,
+              revision = lastFetchedRevision,
+              currentItems = currentHistory.items || [];
+            older.disabled = true;
+            try {
+              const page = await request('room.history', {
+                roomId,
+                args: { limit: 100, offset: currentItems.length },
+              });
+              if (
+                getState()?.id !== roomId ||
+                lastFetchedRevision !== revision ||
+                page.queueRevision !== revision ||
+                getState()?.queueSummary?.queueRevision !== revision
+              )
+                return;
+              currentHistory = { items: [...currentItems, ...page.items], total: page.total };
+              renderTab();
+            } catch (error) {
+              uburoomPopover.show(older, { text: error.message, state: 'error' });
+            } finally {
+              older.disabled = false;
+            }
+          },
+          false,
+          'quiet queue-history-older',
+        );
+        historyView.prepend(older);
+      }
+    } else if (older) {
+      older.remove();
+    }
+    let list = historyView.querySelector(':scope > #queue-history-list');
+    if (!list) {
+      list = node('div', historyView, undefined, 'queue-list queue-history-list');
+      list.id = 'queue-history-list';
+    }
+    const existingRows = new Map(
+      [...list.querySelectorAll(':scope > .queue-history-entry')].map(el => [el.dataset.entryId, el]),
+    );
+    const reversed = [...items].reverse();
+    const wantedIds = new Set(reversed.map(item => String(item.id)));
+    for (const [id, el] of existingRows) {
+      if (!wantedIds.has(id)) el.remove();
+    }
+    let cursor = list.firstChild;
+    for (const item of reversed) {
+      const id = String(item.id);
       const outcome = item.outcome || 'interrupted';
-      const label = outcome === 'completed' ? 'Completed' : outcome === 'skipped' ? 'Skipped' : 'Stopped';
-      const top = node('div', row, undefined, 'queue-entry-top');
-      const status = node('span', top, undefined, 'queue-history-status queue-rank outcome-' + outcome);
-      const moves = node('div', top, undefined, 'queue-move-actions');
-      action(
-        moves,
-        'Remove from history',
-        'close',
-        () => removeItem(item.id),
-        !state?.capabilities?.editQueue,
-        'queue-action-remove',
-      );
-      status.title = label;
-      node('span', status, label.toUpperCase(), 'queue-outcome-label');
-      art(row, item);
-      const info = node('div', row, undefined, 'queue-entry-info');
-      title(info, item, 'queue-entry-title');
-      node(
-        'span',
-        info,
-        outcome === 'completed'
-          ? formatTime(item.duration)
-          : formatTime(item.position) + ' / ' + formatTime(item.duration),
-        'queue-meta',
-      );
-      const actions = node('div', row, undefined, 'queue-entry-actions');
-      node('span', actions, 'History', 'queue-entry-caption');
-      action(
-        actions,
-        'Restart from here',
-        'player-track-prev',
-        () => replayHistory(item.id, true, true),
-        !canChoose,
-        'queue-item-go-back',
-      );
-      action(
-        actions,
-        'Restart now',
-        'rotate-clockwise',
-        () => replayHistory(item.id, false),
-        !canChoose,
-        'queue-item-restart',
-      );
+      const sig = JSON.stringify([
+        item.id,
+        item.mediaId,
+        item.title,
+        item.thumb,
+        item.duration,
+        item.position,
+        outcome,
+        formatSubtitle(item),
+        !!state?.capabilities?.editQueue,
+        canChoose,
+      ]);
+      let row = existingRows.get(id);
+      if (!row || row.dataset.signature !== sig) {
+        const nextRow = node('article', null, undefined, 'queue-history-entry');
+        nextRow.dataset.entryId = id;
+        nextRow.dataset.signature = sig;
+        const label = outcome === 'completed' ? 'Completed' : outcome === 'skipped' ? 'Skipped' : 'Stopped';
+        const top = node('div', nextRow, undefined, 'queue-entry-top');
+        const status = node('span', top, undefined, 'queue-history-status queue-rank outcome-' + outcome);
+        const moves = node('div', top, undefined, 'queue-move-actions');
+        action(
+          moves,
+          'Remove from history',
+          'close',
+          () => removeItem(item.id),
+          !state?.capabilities?.editQueue,
+          'queue-action-remove',
+        );
+        status.title = label;
+        node('span', status, label.toUpperCase(), 'queue-outcome-label');
+        art(nextRow, item);
+        const info = node('div', nextRow, undefined, 'queue-entry-info');
+        title(info, item, 'queue-entry-title');
+        node(
+          'span',
+          info,
+          outcome === 'completed'
+            ? formatTime(item.duration)
+            : formatTime(item.position) + ' / ' + formatTime(item.duration),
+          'queue-meta',
+        );
+        const actions = node('div', nextRow, undefined, 'queue-entry-actions');
+        node('span', actions, 'History', 'queue-entry-caption');
+        action(
+          actions,
+          'Restart from here',
+          'player-track-prev',
+          () => replayHistory(item.id, true, true),
+          !canChoose,
+          'queue-item-go-back',
+        );
+        action(
+          actions,
+          'Restart now',
+          'rotate-clockwise',
+          () => replayHistory(item.id, false),
+          !canChoose,
+          'queue-item-restart',
+        );
+        if (row) {
+          if (cursor === row) cursor = nextRow;
+          row.replaceWith(nextRow);
+        }
+        row = nextRow;
+      }
+      if (row !== cursor) list.insertBefore(row, cursor);
+      cursor = row.nextSibling;
     }
   }
 
   function renderTab() {
-    const scrollTop = layout.scrollTop;
-    footer.querySelector('.queue-footer-actions')?.remove();
+    const anchorRow = !centerPending && layout.clientWidth ? nearestEntry() : undefined;
+    const anchorId = anchorRow?.dataset.entryId;
+    const anchorTop = anchorRow?.getBoundingClientRect().top;
     renderUpcoming();
     renderHistory();
     updateViewsVisibility();
@@ -1438,10 +1580,18 @@ function mount(
         imageObserver.unobserve(img);
         observedImages.delete(img);
       }
-    layout.scrollTop = scrollTop;
     if (Boolean(layout.querySelector('.queue-history-entry')) !== hadHistory) centerPending = true;
     if (centerPending) requestAnimationFrame(() => centerCurrent());
-    else updateNavigation();
+    else {
+      if (anchorId && anchorTop !== undefined) {
+        const retained = entries().find(row => row.dataset.entryId === anchorId);
+        if (retained) {
+          const delta = retained.getBoundingClientRect().top - anchorTop;
+          if (Math.abs(delta) > 1) layout.scrollTop += delta;
+        }
+      }
+      updateNavigation();
+    }
     scheduleNavigation();
   }
 
@@ -1651,8 +1801,37 @@ function mount(
     suggestionsToggle.setAttribute('aria-label', (suggestionsExpanded ? 'Hide ' : 'Show ') + label);
     suggestionsToggle.title = suggestionsExpanded ? 'Hide suggestions' : 'Show suggestions';
     suggestionsList.hidden = !suggestionsExpanded;
-    suggestionsList.replaceChildren();
-    if (suggestionsExpanded) for (const entry of suggestions) suggestionRow(entry, state);
+    if (!suggestionsExpanded) {
+      suggestionsList.replaceChildren();
+    } else {
+      const existingRows = new Map(
+        [...suggestionsList.querySelectorAll(':scope > .queue-entry-suggestion')].map(el => [
+          el.dataset.suggestionId,
+          el,
+        ]),
+      );
+      const wantedIds = new Set(suggestions.map(entry => String(entry.id)));
+      for (const [id, el] of existingRows) {
+        if (!wantedIds.has(id)) el.remove();
+      }
+      let cursor = suggestionsList.firstChild;
+      for (const entry of suggestions) {
+        const id = String(entry.id);
+        const sig = JSON.stringify([entry, state.capabilities]);
+        let row = existingRows.get(id);
+        if (!row || row.dataset.signature !== sig) {
+          const nextRow = suggestionRow(entry, state);
+          nextRow.dataset.signature = sig;
+          if (row) {
+            if (cursor === row) cursor = nextRow;
+            row.replaceWith(nextRow);
+          }
+          row = nextRow;
+        }
+        if (row !== cursor) suggestionsList.insertBefore(row, cursor);
+        cursor = row.nextSibling;
+      }
+    }
     updateViewsVisibility();
     if (hadRows !== !suggestionsView.hidden) scheduleNavigation();
   }
@@ -1660,7 +1839,7 @@ function mount(
   function suggestionRow(entry, state) {
     const item = entry.item || {};
     const capabilities = state.capabilities || {};
-    const row = node('article', suggestionsList, undefined, 'queue-entry queue-entry-suggestion');
+    const row = node('article', null, undefined, 'queue-entry queue-entry-suggestion');
     row.dataset.suggestionId = entry.id;
     const top = node('div', row, undefined, 'queue-entry-top');
     node('span', top, supportersText(entry.supporters), 'queue-suggestion-supporters');
@@ -1708,6 +1887,7 @@ function mount(
       !capabilities.chooseMedia,
       'queue-action-play',
     );
+    return row;
   }
 
   function render(queueSummary) {

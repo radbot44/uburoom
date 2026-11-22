@@ -42,14 +42,21 @@ function createSessions({ config, logger, registry, accounts, oauthFetch, onRepl
     }
     return out;
   }
-  async function replaceBrowserSession(req, res, loginRecord, { maxAge = loginSeconds, extraCookies = [] } = {}) {
-    const prevToken = cookies(req)[COOKIES.session];
-    const prevHash = prevToken && /^[a-f0-9]{64}$/.test(prevToken) ? hash(prevToken) : undefined;
-    if (prevHash && logins.has(prevHash)) {
-      logins.delete(prevHash);
-      cookieRenewedAt.delete(prevHash);
-      accounts.save();
-      if (onReplace) await onReplace(prevHash);
+  async function replaceBrowserSession(
+    req,
+    res,
+    loginRecord,
+    { maxAge = loginSeconds, extraCookies = [], preservePrevious = false } = {},
+  ) {
+    if (!preservePrevious) {
+      const prevToken = cookies(req)[COOKIES.session];
+      const prevHash = prevToken && /^[a-f0-9]{64}$/.test(prevToken) ? hash(prevToken) : undefined;
+      if (prevHash && logins.has(prevHash)) {
+        logins.delete(prevHash);
+        cookieRenewedAt.delete(prevHash);
+        accounts.save();
+        if (onReplace) await onReplace(prevHash);
+      }
     }
     const id = randomBytes(32).toString('hex');
     logins.set(hash(id), loginRecord);

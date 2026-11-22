@@ -793,7 +793,28 @@ function mount(
     shelfRead;
   const shelfHost = node('div', null, undefined, 'library-shelves');
   const librariesTitle = node('h3', null, 'Libraries', 'library-shelf-title');
-  const shelves = libraryShelves({ host: shelfHost, node, button, tile });
+  function patchShelfProgress(card, item, shape) {
+    const box = card.querySelector('.library-art');
+    if (box) {
+      let track = box.querySelector('.library-progress');
+      if (item.viewOffset > 0 && item.duration > 0) {
+        const pct = Math.min(100, Math.max(0, (item.viewOffset / item.duration) * 100));
+        if (!track) {
+          track = node('div', box, undefined, 'library-progress');
+          node('div', track, undefined, 'library-progress-fill');
+        }
+        const fill = track.querySelector('.library-progress-fill');
+        if (fill) fill.style.width = pct.toFixed(1) + '%';
+      } else if (track) {
+        track.remove();
+      }
+    }
+    if (shape === 'landscape') {
+      const meta = card.querySelector('.library-meta');
+      if (meta) meta.textContent = resumeLine(item);
+    }
+  }
+  const shelves = libraryShelves({ host: shelfHost, node, button, tile, patchProgress: patchShelfProgress });
   function renderShelves() {
     librariesTitle.hidden = !shelves.render([
       // What this room started and left unfinished, before each viewer's own Plex progress.
@@ -840,7 +861,6 @@ function mount(
     const details = screen.kind === 'details',
       atHome = screen.kind === 'home',
       collectionIndex = screen.kind === 'library' && screen.tab === 'collections';
-    scopeActions.replaceChildren();
     const section = sections.find(item => item.id === screen.section);
     const isLinkSection = !details && !atHome && (section?.source === 'link' || screen.source === 'link');
     scopeActions.hidden =
@@ -851,12 +871,19 @@ function mount(
       screen.tab !== 'library' ||
       section?.mediaType !== 'movie' ||
       section.autoQueue === false;
-    if (!scopeActions.hidden)
-      autoButton(
-        scopeActions,
-        { type: 'library', id: section.id, ...(section.serverId ? { serverId: section.serverId } : {}) },
-        section.title,
-      );
+    const scopeSig = scopeActions.hidden
+      ? ''
+      : JSON.stringify([section.id, section.serverId || '', section.title || '']);
+    if (scopeActions.dataset.signature !== scopeSig) {
+      scopeActions.dataset.signature = scopeSig;
+      scopeActions.replaceChildren();
+      if (!scopeActions.hidden)
+        autoButton(
+          scopeActions,
+          { type: 'library', id: section.id, ...(section.serverId ? { serverId: section.serverId } : {}) },
+          section.title,
+        );
+    }
     tools.hidden = details || atHome;
     if (toolsScreen !== screen) {
       toolsScreen = screen;
@@ -891,20 +918,26 @@ function mount(
         : collectionIndex
           ? 'Search collections'
           : 'Search this library';
-    sort.replaceChildren();
-    if (screen.parent || screen.collection) option(sort, 'default', 'Default order');
-    option(sort, 'title', screen.sort === 'title' && screen.order === 'desc' ? 'Title Z–A' : 'Title A–Z');
-    if (!collectionIndex) {
-      option(sort, 'added', screen.sort === 'added' && screen.order === 'asc' ? 'Oldest added' : 'Recently added');
-      option(sort, 'year', screen.sort === 'year' && screen.order === 'asc' ? 'Oldest release' : 'Newest release');
-      if (screen.kind !== 'show' || screen.onlySeason)
-        option(
-          sort,
-          'runtime',
-          screen.sort === 'runtime' && screen.order === 'desc' ? 'Longest runtime' : 'Shortest runtime',
-        );
+    const hasDefaultSort = !!(screen.parent || screen.collection);
+    const hasRuntimeSort = !collectionIndex && (screen.kind !== 'show' || !!screen.onlySeason);
+    const sortSig = JSON.stringify([hasDefaultSort, collectionIndex, hasRuntimeSort, screen.sort, screen.order]);
+    if (sort.dataset.signature !== sortSig) {
+      sort.dataset.signature = sortSig;
+      sort.replaceChildren();
+      if (hasDefaultSort) option(sort, 'default', 'Default order');
+      option(sort, 'title', screen.sort === 'title' && screen.order === 'desc' ? 'Title Z–A' : 'Title A–Z');
+      if (!collectionIndex) {
+        option(sort, 'added', screen.sort === 'added' && screen.order === 'asc' ? 'Oldest added' : 'Recently added');
+        option(sort, 'year', screen.sort === 'year' && screen.order === 'asc' ? 'Oldest release' : 'Newest release');
+        if (hasRuntimeSort)
+          option(
+            sort,
+            'runtime',
+            screen.sort === 'runtime' && screen.order === 'desc' ? 'Longest runtime' : 'Shortest runtime',
+          );
+      }
+      option(sort, 'random', 'Random');
     }
-    option(sort, 'random', 'Random');
     sort.value = screen.sort;
     direction.disabled = screen.sort === 'default';
     direction.title = direction.ariaLabel =
@@ -914,24 +947,37 @@ function mount(
           ? 'Ascending: switch to descending'
           : 'Descending: switch to ascending';
     if (direction.disabled) direction.title = 'Default order cannot be reversed.';
-    direction.replaceChildren(uburoomIcons.icon(doc, screen.sort === 'random' ? 'refresh' : 'sort'));
+    const dirIcon = screen.sort === 'random' ? 'refresh' : 'sort';
+    if (direction.dataset.icon !== dirIcon) {
+      direction.dataset.icon = dirIcon;
+      direction.replaceChildren(uburoomIcons.icon(doc, dirIcon));
+    }
     direction.dataset.order = screen.sort === 'random' ? '' : screen.order;
     genre.value = screen.genre;
     year.value = screen.year;
-    chips.replaceChildren();
-    for (const [key, control] of [
-      ['genre', genre],
-      ['year', year],
-    ])
-      if (screen[key]) {
-        const label = control.selectedOptions[0]?.textContent || screen[key];
-        const b = button(chips, 'Remove ' + label, 'close', 'library-filter-chip');
-        b.append(node('span', null, label));
-        b.onclick = () => {
-          screen[key] = '';
-          void query();
-        };
-      }
+    const chipsSig = JSON.stringify([
+      screen.genre || '',
+      screen.genre ? genre.selectedOptions[0]?.textContent || screen.genre : '',
+      screen.year || '',
+      screen.year ? year.selectedOptions[0]?.textContent || screen.year : '',
+    ]);
+    if (chips.dataset.signature !== chipsSig) {
+      chips.dataset.signature = chipsSig;
+      chips.replaceChildren();
+      for (const [key, control] of [
+        ['genre', genre],
+        ['year', year],
+      ])
+        if (screen[key]) {
+          const label = control.selectedOptions[0]?.textContent || screen[key];
+          const b = button(chips, 'Remove ' + label, 'close', 'library-filter-chip');
+          b.append(node('span', null, label));
+          b.onclick = () => {
+            screen[key] = '';
+            void query();
+          };
+        }
+    }
     host.dataset.view = view;
     viewButtons.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
     count.hidden = details || atHome;
@@ -1550,6 +1596,7 @@ function mount(
     overview.replaceChildren();
     overview.hidden = true;
     choices.clear();
+    chips.dataset.signature = '';
     chips.replaceChildren();
     chips.hidden = true;
     row.hidden = true;
@@ -1560,8 +1607,10 @@ function mount(
     linkClear.hidden = true;
     linkSubmit.disabled = false;
     results.hidden = true;
+    scopeActions.dataset.signature = '';
     scopeActions.replaceChildren();
     scopeActions.hidden = true;
+    sort.dataset.signature = '';
     resetStatus();
     count.hidden = !id;
     count.textContent = id ? 'Loading libraries…' : '';
@@ -1615,8 +1664,17 @@ function mount(
     },
     /** Admin mode shows or hides the sync test video's card on Libraries home. */
     refreshAdmin: () => {
-      const shown = !!landing.querySelector('[data-play="demo"]');
-      if (screen?.kind === 'home' && testVideo && shown !== isAdmin()) renderResults(true);
+      if (screen?.kind !== 'home' || !testVideo) return;
+      const existing = landing.querySelector('[data-play="demo"]')?.closest('.library-home-item');
+      if (isAdmin() && !existing) {
+        const { open } = homeCard(SYNC_CARD);
+        open.dataset.action = 'play';
+        open.dataset.play = 'demo';
+        open.onclick = () => void play(demoItem);
+        setBusy(busy);
+      } else if (!isAdmin() && existing) {
+        existing.remove();
+      }
     },
   };
 }

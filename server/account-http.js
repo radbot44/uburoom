@@ -59,7 +59,7 @@ function accountHttp({
     plexAuth.clear();
     await watchRoutes.invalidate(ids);
   }
-  async function session(req, res, account, name, oauth, extraCookies = []) {
+  async function session(req, res, account, name, oauth, extraCookies = [], { preservePrevious = false } = {}) {
     const record = {
       userId: account.id,
       accountRevision: account.revision,
@@ -69,10 +69,10 @@ function accountHttp({
       ...(oauth ? { oauth } : {}),
     };
     if (replaceBrowserSession) {
-      await replaceBrowserSession(req, res, record, { maxAge: 31536000, extraCookies });
+      await replaceBrowserSession(req, res, record, { maxAge: 31536000, extraCookies, preservePrevious });
       return;
     }
-    const previous = sourceHash(req);
+    const previous = !preservePrevious && sourceHash(req);
     if (previous) logins.delete(previous);
     const token = secret();
     logins.set(hash(token), record);
@@ -243,7 +243,7 @@ function accountHttp({
           (data.persona === 'host' ? config.ownerId : data.persona === 'guest2' ? 'demo-guest2' : 'demo-guest');
         const account = registry.resolve('discord', subject, 'Demo ' + data.persona);
         registry.seen(account.id);
-        await session(req, res, account, account.name);
+        await session(req, res, account, account.name, undefined, [], { preservePrevious: true });
         json(res, 200, { ok: true });
         return true;
       }

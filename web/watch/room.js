@@ -21,6 +21,8 @@ export function mount(host, deps) {
         !(store.identity.directRoomEntry && store.identity.pageBootstrap?.targetRoom?.media),
     );
     $('current-room').hidden = !inRoom;
+    $('room-lobby').hidden = inRoom;
+    if (!inRoom && store.lobby.knownRooms) deps.renderRoomChoices?.(store.lobby.knownRooms, $('lobby-rooms'));
     $('rooms').hidden = true;
     $('refresh').hidden = true;
     $('room-bar').hidden = !store.identity.me && $('auth-overlay').hidden;
@@ -52,8 +54,8 @@ export function mount(host, deps) {
       uburoomControls.content($('room-people-open'), {
         icon: 'users',
         label: store.room.state.viewers + ' / ' + (store.room.state.maxMembers || 20),
+        responsive: false,
       });
-      $('room-people-open').classList.remove('watch-control-responsive');
       $('room-people-open').setAttribute(
         'aria-label',
         'Viewers: ' + store.room.state.viewers + ' / ' + (store.room.state.maxMembers || 20),
@@ -527,7 +529,10 @@ export function mount(host, deps) {
               if (store.room.state === next) void deps.proxyDirectFile();
             });
           else if (next.directDelivery) void deps.attachDirectFile(next);
-          else deps.video.src = next.mediaUrl;
+          else {
+            deps.video.removeAttribute('crossorigin');
+            deps.video.src = next.mediaUrl;
+          }
           if (next.format === 'file') void deps.probePlaybackCapabilities({ type: 'file' });
         }
       }
@@ -589,16 +594,18 @@ export function mount(host, deps) {
     if (chaptersSelect) {
       const chapters = next.chapters || [];
       chaptersSelect.disabled = !chapters.length;
-      chaptersSelect.replaceChildren(
-        ...chapters.map(ch => {
-          const opt = document.createElement('option');
-          opt.value = String(ch.startTime);
-          opt.textContent = ch.title;
-          const end = ch.endTime || next.state.duration || ch.startTime;
-          opt.dataset.caption = deps.clock(ch.startTime) + ' – ' + deps.clock(end);
-          return opt;
-        }),
-      );
+      const existingOpts = [...chaptersSelect.options];
+      for (let i = existingOpts.length - 1; i >= chapters.length; i--) existingOpts[i].remove();
+      chapters.forEach((ch, i) => {
+        const opt = chaptersSelect.options[i] || document.createElement('option');
+        const val = String(ch.startTime);
+        if (opt.value !== val) opt.value = val;
+        if (opt.textContent !== ch.title) opt.textContent = ch.title;
+        const end = ch.endTime || next.state.duration || ch.startTime;
+        const caption = deps.clock(ch.startTime) + ' – ' + deps.clock(end);
+        if (opt.dataset.caption !== caption) opt.dataset.caption = caption;
+        if (!opt.parentNode) chaptersSelect.append(opt);
+      });
     }
     $('quality-notice').textContent = next.qualityNotice || '';
     deps.renderMediaInformation(next);
@@ -618,20 +625,28 @@ export function mount(host, deps) {
           ' at the highest quality available.'
         : '';
     $('quality-detail').hidden = !maximum && !next.fallbackActive;
+    const qualitySelect = $('quality');
     if (
-      JSON.stringify([...$('quality').options].map(o => [o.value, o.textContent])) !==
+      JSON.stringify([...qualitySelect.options].map(o => [o.value, o.textContent])) !==
       JSON.stringify(choices.map(q => [q.id, q.label]))
     ) {
-      const previous = $('quality').value;
-      $('quality').replaceChildren(
-        ...choices.map(q => {
-          const option = document.createElement('option');
+      const previous = qualitySelect.value;
+      const existingById = new Map([...qualitySelect.options].map(o => [o.value, o]));
+      for (const [id, opt] of existingById) {
+        if (!choices.some(q => q.id === id)) opt.remove();
+      }
+      let cursor = qualitySelect.firstChild;
+      for (const q of choices) {
+        let option = existingById.get(q.id);
+        if (!option) {
+          option = document.createElement('option');
           option.value = q.id;
-          option.textContent = q.label;
-          return option;
-        }),
-      );
-      if (choices.some(q => q.id === previous)) $('quality').value = previous;
+        }
+        if (option.textContent !== q.label) option.textContent = q.label;
+        if (option !== cursor) qualitySelect.insertBefore(option, cursor);
+        cursor = option.nextSibling;
+      }
+      if (choices.some(q => q.id === previous)) qualitySelect.value = previous;
     }
     if (next.mediaUrl && !store.room.pending && !store.stream.qualityPending && document.activeElement !== $('quality'))
       $('quality').value = uburoom.qualityId(next.quality);

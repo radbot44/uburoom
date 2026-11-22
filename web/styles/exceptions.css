@@ -101,7 +101,7 @@
     display: none;
   }
   /* Room tasks: discovery, current room and persistent management. */
-  .outside-room .outside-room .join-playback,
+  .outside-room .join-playback,
   .outside-room .timeline-row,
   .outside-room .playback-buttons,
   .outside-room .volume-control,
@@ -274,7 +274,7 @@
       .library-home-card,
       .library-home-collections,
       .library-tile,
-      .saved-rooms > li,
+      .saved-room,
       .lobby-event,
       .queue-entry,
       .queue-history-entry,

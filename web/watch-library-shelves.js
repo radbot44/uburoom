@@ -1,6 +1,6 @@
 // Home shelves own their DOM and scroll state. Account refreshes only fetch data; unchanged titles
 // keep their pictures, focus and controls when that data arrives again.
-export function libraryShelves({ host, node, button, tile }) {
+export function libraryShelves({ host, node, button, tile, patchProgress }) {
   const shelves = new Map();
   const key = item => JSON.stringify([item.serverId || '', item.id]);
   function create(title, shape) {
@@ -79,7 +79,8 @@ export function libraryShelves({ host, node, button, tile }) {
       let cursor = shelf.strip.firstChild;
       for (const item of items) {
         const id = key(item);
-        const signature = JSON.stringify(item);
+        const { viewOffset = 0, ...rest } = item;
+        const signature = JSON.stringify(rest);
         let entry = shelf.items.get(id);
         if (entry?.signature !== signature) {
           const card = tile(item, { parent: null, shape });
@@ -87,8 +88,11 @@ export function libraryShelves({ host, node, button, tile }) {
             if (cursor === entry.card) cursor = card;
             entry.card.replaceWith(card);
           }
-          entry = { card, signature };
+          entry = { card, signature, viewOffset };
           shelf.items.set(id, entry);
+        } else if (entry.viewOffset !== viewOffset) {
+          entry.viewOffset = viewOffset;
+          if (patchProgress) patchProgress(entry.card, item, shape);
         }
         if (entry.card !== cursor) shelf.strip.insertBefore(entry.card, cursor);
         cursor = entry.card.nextSibling;

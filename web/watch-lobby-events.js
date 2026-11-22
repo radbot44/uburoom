@@ -157,11 +157,52 @@ function mount({ request, schedule, join, reopen, changed }) {
     row.append(copy, actions);
     return row;
   }
+  function eventSignature(event) {
+    return JSON.stringify([
+      event.key,
+      event.title,
+      event.roomName,
+      event.roomId,
+      event.start,
+      event.end,
+      event.live,
+      event.active,
+      event.canManage,
+      event.canEdit,
+      event.invite,
+      event.discord?.interested,
+      event.live ? 'Starting now' : when(event),
+    ]);
+  }
   function render() {
     const events = value?.events || [];
     scheduleButton.hidden = !value?.canSchedule;
     section.hidden = !events.length;
-    list.replaceChildren(...(expanded ? events : events.slice(0, SHOWN)).map(card));
+    const shownEvents = expanded ? events : events.slice(0, SHOWN);
+    const existingRows = new Map(
+      [...list.querySelectorAll(':scope > .lobby-event')].map(el => [el.dataset.eventKey, el]),
+    );
+    const wantedKeys = new Set(shownEvents.map(e => e.key));
+    for (const [k, el] of existingRows) {
+      if (!wantedKeys.has(k)) el.remove();
+    }
+    let cursor = list.firstChild;
+    for (const event of shownEvents) {
+      const sig = eventSignature(event);
+      let row = existingRows.get(event.key);
+      if (!row || row.dataset.signature !== sig) {
+        const nextRow = card(event);
+        nextRow.dataset.eventKey = event.key;
+        nextRow.dataset.signature = sig;
+        if (row) {
+          if (cursor === row) cursor = nextRow;
+          row.replaceWith(nextRow);
+        }
+        row = nextRow;
+      }
+      if (row !== cursor) list.insertBefore(row, cursor);
+      cursor = row.nextSibling;
+    }
     more.hidden = events.length <= SHOWN;
     more.textContent = expanded ? 'Show fewer' : 'More (' + (events.length - SHOWN) + ')';
   }

@@ -2,27 +2,51 @@
 import * as uburoomIcons from './icons.js';
 
 const groups = new WeakMap();
-function content(control, { label, icon, iconOnly = false }) {
+function content(control, { label, icon, iconOnly = false, responsive }) {
   const doc = control.ownerDocument;
-  control.replaceChildren();
-  if (icon) control.append(uburoomIcons.icon(doc, icon));
-  const text = doc.createElement('span');
-  text.className = 'watch-control-label';
-  text.textContent = label;
-  if (!iconOnly) control.append(text);
+  const isResponsive = responsive !== undefined ? responsive : !!icon && !iconOnly;
+  const prevIcon = control.dataset.watchControlIcon || '';
+  const prevIconOnly = control.dataset.watchControlIconOnly === 'true';
+  if (
+    prevIcon === (icon || '') &&
+    prevIconOnly === !!iconOnly &&
+    control.classList.contains('watch-control') &&
+    (!icon || control.querySelector('svg'))
+  ) {
+    let text = control.querySelector('.watch-control-label');
+    if (!iconOnly) {
+      if (!text) {
+        text = doc.createElement('span');
+        text.className = 'watch-control-label';
+        control.append(text);
+      }
+      if (text.textContent !== label) text.textContent = label;
+    } else if (text) {
+      text.remove();
+    }
+  } else {
+    control.replaceChildren();
+    if (icon) control.append(uburoomIcons.icon(doc, icon));
+    const text = doc.createElement('span');
+    text.className = 'watch-control-label';
+    text.textContent = label;
+    if (!iconOnly) control.append(text);
+    control.dataset.watchControlIcon = icon || '';
+    control.dataset.watchControlIconOnly = String(!!iconOnly);
+  }
   control.classList.add('watch-control');
   control.classList.toggle('watch-control-icon', iconOnly);
-  control.classList.toggle('watch-control-responsive', !!icon && !iconOnly);
-  control.setAttribute('aria-label', label);
-  control.title = label;
+  control.classList.toggle('watch-control-responsive', !!isResponsive);
+  if (control.getAttribute('aria-label') !== label) control.setAttribute('aria-label', label);
+  if (control.title !== label) control.title = label;
   return control;
 }
-function button(doc, { label, icon, iconOnly = false, action, disabled = false }) {
+function button(doc, { label, icon, iconOnly = false, responsive, action, disabled = false }) {
   const control = doc.createElement('button');
   control.type = 'button';
   control.className = iconOnly ? 'icon-button' : 'quiet';
   control.disabled = disabled;
-  content(control, { label, icon, iconOnly });
+  content(control, { label, icon, iconOnly, responsive });
   if (action) control.addEventListener('click', action);
   return control;
 }
@@ -118,8 +142,13 @@ function switchPill(
 function permissionButton(doc, { label, checked = false, disabled = false, reason = '', action }) {
   const control = button(doc, { label, icon: checked ? 'thumb-up' : 'thumb-down', iconOnly: true, disabled, action });
   control.classList.add('watch-permission-button');
+  control.dataset.icon = checked ? 'thumb-up' : 'thumb-down';
   function update({ checked, disabled, reason = '' }) {
-    content(control, { label, icon: checked ? 'thumb-up' : 'thumb-down', iconOnly: true });
+    const icon = checked ? 'thumb-up' : 'thumb-down';
+    if (control.dataset.icon !== icon) {
+      control.dataset.icon = icon;
+      content(control, { label, icon, iconOnly: true });
+    }
     control.disabled = disabled;
     control.setAttribute('aria-pressed', String(checked));
     control.title = label + (checked ? ': Allowed' : ': Denied') + (reason ? '. ' + reason : '');

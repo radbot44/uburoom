@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { recordRoomSyncTimeline, sampleRoomSync } = require('../server/room/sync-history');
 const { playbackBrowser, pause } = require('./lib/playback-browser');
-const { startFixtureServer, openPage, dom, act } = require('./lib/ui-fixture');
+const { startFixtureServer, openPage, dom } = require('./lib/ui-fixture');
 
 const { shown, hidden, text, hasText, enabled, attr, isOpen, count } = dom;
 const byId = id => 'document.getElementById(' + JSON.stringify(id) + ')';
@@ -52,9 +52,20 @@ async function main() {
         return browser.evaluate(host, expression);
       };
       const until = (expression, label, timeout) => browser.until(host, expression, label, timeout);
-      // A dismiss pressed while the page resizes can be lost: press until the dialog has closed.
-      const closeSettings = () =>
-        until(act.pressUntil('#room-settings-dismiss', '!' + isOpen('#room-settings-dialog')), 'Settings closed');
+      const closeSettings = async () => {
+        await until(
+          '!(' +
+            shown('#queue-auto-save') +
+            ' && ' +
+            byId('queue-auto-save') +
+            '.disabled) && ' +
+            byId('room-settings-panels') +
+            '.getAttribute("aria-busy")!=="true"',
+          'Settings idle before closing',
+        );
+        await run(pressId('room-settings-dismiss'));
+        await until('!' + isOpen('#room-settings-dialog'), 'Settings closed');
+      };
       require('node:fs').mkdirSync(EVIDENCE, { recursive: true });
       const shot = label => browser.screenshot(host, path.resolve(EVIDENCE, 'room-ui-' + name + '-' + label + '.png'));
       await browser.viewport(host, 1360, 1000);
@@ -133,6 +144,17 @@ async function main() {
       );
       await run(pressId('room-share-dismiss'));
       await run(settingsSection('permissions'));
+      await run(
+        'window.__permBtn=document.querySelector("#room-permissions button[data-role=viewer][data-permission=seek]");window.__permBtn.focus();' +
+          pressId('room-settings-refresh'),
+      );
+      await until(
+        text('#room-settings-status') +
+          '==="" && ' +
+          shown('#room-settings-content') +
+          ' && window.__permBtn?.isConnected && document.activeElement===window.__permBtn',
+        'Permissions control preserves DOM identity and focus across refresh',
+      );
       await shot('permissions');
       await run(settingsSection('general'));
       await shot('lifecycle-desktop');
@@ -230,6 +252,9 @@ async function main() {
         text('.viewer-telemetry-card .telemetry-score-badge') + '==="Calibrating"',
         'Unmeasured calibrating card',
       );
+      await run(
+        'window.__telemetryClose=document.querySelector(".telemetry-card-close");window.__telemetryClose.focus()',
+      );
       quality(1, { confidence: 'provisional', reason: 'awaiting-measurements', updatedAt: Date.now() - 20000 });
       await run('refreshState()');
       await until(
@@ -237,8 +262,9 @@ async function main() {
         'Unmeasured no-recent-data badge',
       );
       await until(
-        text('.viewer-telemetry-card .telemetry-score-badge') + '==="No recent sync data"',
-        'Unmeasured no-recent-data card',
+        text('.viewer-telemetry-card .telemetry-score-badge') +
+          '==="No recent sync data" && window.__telemetryClose?.isConnected && document.activeElement===window.__telemetryClose',
+        'Unmeasured no-recent-data card preserves DOM identity and focus',
       );
       await run(press('.telemetry-card-close'));
       await until('!document.querySelector(".viewer-telemetry-card")', 'Telemetry card closed');
@@ -410,9 +436,6 @@ async function main() {
       await until('!document.querySelector("#queue-history-view .queue-history-entry")', 'History cleared');
       await run(pressId('queue-scroll-next'));
       await until(byId('queue-autoplay') + '.checked', 'Autoplay default on');
-      // Scrolling toward upcoming smooth-scrolls the queue list; Firefox ends it with sub-pixel steps for
-      // ~60 ms. Popovers close on any scroll, so a press inside that tail loses its confirmation.
-      await settledScroll(browser, host, '.queue-layout');
       const autoplay = () => app.watch.roomState.store.get(app.watch.rooms.get(id).roomId).autoplay;
       await until(enabled('#queue-autoplay'), 'Autoplay toggle ready');
       await run(pressId('queue-autoplay'));
@@ -1073,24 +1096,6 @@ async function checkPlaybackReconnect(watch, id, run, until) {
   await until('!reconnecting && ' + playingVideo + (lastPosition + 0.25), 'Video advances after reconnect');
 }
 
-// Wait until an element's vertical scroll position reads the same three times, 100 ms apart. Sampled from
-// the runner: Firefox throttles animation frames in this background tab, so a frame count never completes.
-async function settledScroll(browser, page, selector, timeout = 10000) {
-  const deadline = Date.now() + timeout;
-  let last,
-    same = 0;
-  while (Date.now() < deadline) {
-    const top = await browser.evaluate(
-      page,
-      'document.querySelector(' + JSON.stringify(selector) + ')?.scrollTop ?? null',
-    );
-    same = top === last ? same + 1 : 0;
-    if (same >= 2) return;
-    last = top;
-    await pause(100);
-  }
-  throw new Error(selector + ' scroll did not settle');
-}
 async function waitFor(check, label, timeout = 20000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {

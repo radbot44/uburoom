@@ -396,7 +396,7 @@
   .room-settings-dialog > header .icon-button {
     flex: none;
   }
-  #room-settings-dialog > header .icon-button svg {
+  .room-settings-dialog > header .icon-button svg {
     width: 24px;
     height: 24px;
   }
@@ -458,7 +458,7 @@
     .watch-control > svg,
     #options-panel .watch-control > svg,
     #room-dialog .watch-control > svg,
-    #room-settings-dialog .watch-control > svg
+    .room-settings-dialog .watch-control > svg
   ),
   .watch-segmented .group-button > svg {
     width: var(--watch-icon-size);

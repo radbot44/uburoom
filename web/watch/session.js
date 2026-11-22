@@ -394,8 +394,6 @@ export function mount(host, deps) {
     if (initialRooms) {
       if (store.identity.directRoomEntry) {
         store.lobby.knownRooms = initialRooms;
-        deps.renderRooms($('rooms'), initialRooms);
-        deps.renderRoomChoices(initialRooms, $('lobby-rooms'));
       } else {
         deps.applyRooms(initialRooms);
         $('auth-overlay').hidden = true;

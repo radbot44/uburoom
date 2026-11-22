@@ -45,7 +45,7 @@ function drawChart(canvas, { from, now, samples, series, interval, markers, spre
     min = spread ? 0 : -max;
   const x = time => left + ((time - from) / (now - from)) * (right - left);
   const y = value => bottom - ((value - min) / (max - min)) * (bottom - top);
-  ctx.font = '11px system-ui';
+  ctx.font = `11px ${style.getPropertyValue('--font-body').trim() || 'system-ui'}`;
   ctx.textBaseline = 'middle';
   for (let value = min; value <= max; value += spread ? step / 2 : step) {
     ctx.strokeStyle = style.getPropertyValue(value === 0 ? '--muted' : '--border');
@@ -144,6 +144,7 @@ export function mountRoomSync({ request, every, getState }) {
   close.append(icon(document, 'close'));
   close.addEventListener('click', () => dialogs.close(dialog));
   dialogs.register(dialog);
+  window.addEventListener('uburoom-theme', () => renderGraph());
 
   let data,
     roomId,

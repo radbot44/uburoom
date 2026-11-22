@@ -118,9 +118,8 @@ export function libraryChoices({ doc, parent, menuParent, header, headerRight, n
       controls.content(choiceMore, {
         label: text,
         icon: section ? sectionIcon(section) : undefined,
+        responsive: false,
       });
-      // It keeps its name at every width (truncating when it must) rather than collapsing to an icon.
-      choiceMore.classList.remove('watch-control-responsive');
       choiceMore.append(uburoomIcons.icon(doc, 'chevron'));
       choiceMore.setAttribute('aria-label', section ? 'Library: ' + section.title : 'More libraries');
       choiceMore.title = section ? 'Choose a library' : 'More libraries';
@@ -163,9 +162,7 @@ export function libraryChoices({ doc, parent, menuParent, header, headerRight, n
     choices.hidden = !show;
     sections.forEach(section => {
       const b = button(choices, section.title, undefined, 'library-key library-choice');
-      controls.content(b, { label: section.title, icon: sectionIcon(section) });
-      // Library buttons keep their names at every width: what does not fit goes into the More menu.
-      b.classList.remove('watch-control-responsive');
+      controls.content(b, { label: section.title, icon: sectionIcon(section), responsive: false });
       b.dataset.section = section.id;
       if (section.id === current) b.setAttribute('aria-current', 'page');
       b.onclick = () => onChoose(section.id);

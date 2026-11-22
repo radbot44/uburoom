@@ -4,8 +4,10 @@
     .account .identity-group {
       margin-left: auto;
     }
+    .identity,
     .account .identity {
-      max-width: 75px;
+      max-width: 90px;
+      font-size: var(--font-size-12);
     }
   }
   @media (max-width: 500px) {
@@ -142,12 +144,6 @@
     }
     .provider-row button {
       font-size: var(--font-size-14);
-    }
-  }
-  @media (max-width: 700px) {
-    .identity {
-      max-width: 90px;
-      font-size: var(--font-size-12);
     }
   }
   .drawer .identity {

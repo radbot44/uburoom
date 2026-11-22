@@ -402,6 +402,7 @@ export function mount(host, deps) {
     refreshHlsSession,
     renderProviderNotice,
     restartHlsForSeek,
+    showDisconnectToast,
     stopHls,
   };
 }

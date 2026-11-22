@@ -41,16 +41,18 @@ async function main() {
       await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
       config.publicUrl += ':' + app.server.address().port;
       browser = await playbackBrowser(name);
-      const page = await browser.page(config.publicUrl + '/watch?demo=host');
+      const page = await browser.page(config.publicUrl + '/?demo=host');
       const run = expression => browser.evaluate(page, expression);
       const until = (expression, label) => browser.until(page, expression, label);
       await until('typeof me!=="undefined" && !!me && !!transport?.ready', 'Signed-in Watch');
-      await run('$("create").click();$("room-name").value="Toast fixture";$("room-create").click()');
+      await run(
+        'document.getElementById("create").click();document.getElementById("room-name").value="Toast fixture";document.getElementById("room-create").click()',
+      );
       await until('!!state?.id', 'Created room');
       await run('transport.onMessage=()=>{}');
       // Use the real state application path, including revision/age filtering.
       await run(
-        'globalThis.toastState=state;applyState({...state,feedback:{revision:"toast-1",at:Date.now()+offset,action:"media.pause",sender:"Alice <fixture>"}})',
+        'globalThis.toastState=state;applyState({...state,feedback:{revision:"toast-1",at:playbackClock.read().serverTime,action:"media.pause",sender:"Alice <fixture>"}})',
       );
       assert.equal(
         await run('(document.querySelector("[data-toast=participant]")?.textContent||"")'),
@@ -100,7 +102,7 @@ async function main() {
         'Reconnect remains until cleared',
       );
       await run(
-        'hideDisconnectToast();applyState({...toastState,feedback:{revision:"toast-old",at:Date.now()+offset-4000,action:"media.pause",sender:"Old"}})',
+        'hideDisconnectToast();applyState({...toastState,feedback:{revision:"toast-old",at:playbackClock.read().serverTime-4000,action:"media.pause",sender:"Old"}})',
       );
       await until('document.querySelectorAll(".watch-toast").length===0', 'Stale feedback stays silent');
       // Superseded notification timers must not dismiss their replacement.
