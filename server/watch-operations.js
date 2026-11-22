@@ -722,9 +722,10 @@ function watchOperations({
       server === undefined &&
       !['section', 'parent', 'collection'].some(key => query[key]);
     const multiSource = op === 'library.shelves' || browseHome;
-    const provider = multiSource ? undefined : await hub.mediaFor(auth.actor, server);
+    const provider =
+      multiSource && (watch.providers?.list?.length ?? 0) > 1 ? undefined : await hub.mediaFor(auth.actor, server);
     const scopeCurrent = async () =>
-      multiSource ? true : (await hub.mediaFor(auth.actor, server)).principal === provider.principal;
+      !provider ? true : (await hub.mediaFor(auth.actor, server)).principal === provider.principal;
     const itemVisible = async () =>
       multiSource
         ? true

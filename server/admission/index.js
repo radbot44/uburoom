@@ -74,7 +74,7 @@ class Admission {
     return room ? 'guest:' + room + ':' + id : context?.activity === true ? 'activity:' + id : id;
   }
   discordDropped(identities, held) {
-    if (!['discord', 'owner'].includes(held?.via) || held.unanswered) return false;
+    if (!['discord', 'owner'].includes(held?.via) || held.unanswered || !held.cachedMember) return false;
     const discord = identities.find(identity => identity.provider === 'discord');
     const access = discord && this.discordAccess();
     if (!access || access.options?.()?.available === false) return false;
@@ -87,7 +87,7 @@ class Admission {
     const guestRoom = this.guestRoom(context);
     const key = this.admissionKey(account.id, context);
     const identities = this.registry.identities(account.id).filter(identity => identity.verified);
-    if (!this.registry.isGuest(account.id)) {
+    if (!this.registry.isGuest?.(account.id)) {
       const regularKey = context?.activity === true ? 'activity:' + account.id : account.id;
       const now = Date.now();
       const proof = [
@@ -102,15 +102,17 @@ class Admission {
         const outcome = await this.answerWithRule(account, identities, regularContext);
         const answer = outcome.allowed;
         regularAllowed = answer === true || (answer === undefined && !!held);
-        if (answer === true)
+        if (answer === true) {
+          const discord = identities.find(identity => identity.provider === 'discord');
           this.confirmed.set(regularKey, {
             proof,
             via: outcome.via,
+            cachedMember: !!(discord && this.discordAccess()?.isMember?.(discord.subject) === true),
             unanswered: false,
             recheck: Date.now() + RECHECK_MS,
             expires: Date.now() + CONFIRMED_MS,
           });
-        else if (regularAllowed) {
+        } else if (regularAllowed) {
           held.unanswered = true;
           held.recheck = Date.now() + UNANSWERED_RECHECK_MS;
           this.logger.warn('Access', `Keeping ${account.name || account.id} admitted: no provider answer`);
@@ -152,15 +154,17 @@ class Admission {
       const outcome = await this.answerWithRule(account, identities, context);
       const answer = outcome.allowed;
       allowed = answer === true || (answer === undefined && !!held);
-      if (answer === true)
+      if (answer === true) {
+        const discord = identities.find(identity => identity.provider === 'discord');
         this.confirmed.set(key, {
           proof,
           via: outcome.via,
+          cachedMember: !!(discord && this.discordAccess()?.isMember?.(discord.subject) === true),
           unanswered: false,
           recheck: Date.now() + RECHECK_MS,
           expires: Date.now() + CONFIRMED_MS,
         });
-      else if (allowed) {
+      } else if (allowed) {
         held.unanswered = true;
         held.recheck = Date.now() + UNANSWERED_RECHECK_MS;
         this.logger.warn('Access', `Keeping ${account.name || account.id} admitted: no provider answer`);

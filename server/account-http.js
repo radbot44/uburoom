@@ -150,9 +150,14 @@ function accountHttp({
     await session(req, res, result.user, result.user.name, oauth || login.oauth, extraCookies);
     return { linked: true };
   }
-  const plexEntryOffered = () =>
-    !!config.accessPolicy?.plex || (!!config.guests?.enabled && !!config.guests?.requireSignIn);
-  const plexLinkOffered = () => !!plexAuth?.configured;
+  function plexOffered() {
+    return (
+      !config.accessPolicy ||
+      !!config.accessPolicy.plex ||
+      !!plexAuth?.configured ||
+      (!!config.guests?.enabled && !!config.guests?.requireSignIn)
+    );
+  }
   async function startPlex(req, res, login, returnTo) {
     if (attempts.size >= 200) throw new Error('Plex sign-in is busy');
     const state = secret(),
@@ -200,11 +205,10 @@ function accountHttp({
         return true;
       }
       if (req.method === 'GET' && route === '/auth/plex') {
+        if (!plexOffered()) throw new Error('Plex sign-in is not offered on this server');
         // A guest signing in starts a separate account; guests never link providers.
         const current = await user(req);
         const linking = current && !registry.isGuest(current.userId) ? current : undefined;
-        if (!(linking ? plexLinkOffered() : plexEntryOffered()))
-          throw new Error('Plex sign-in is not offered on this server');
         const returnTo = safeReturn(url.searchParams.get('return'));
         const destination = await startPlex(req, res, linking, returnTo);
         res.writeHead(302, { Location: destination });
@@ -363,7 +367,7 @@ function accountHttp({
         return true;
       }
       if (req.method === 'POST' && route === '/api/account/plex/connect') {
-        if (registry.isGuest(login.userId) || !plexLinkOffered())
+        if (registry.isGuest(login.userId) || !plexOffered())
           throw new Error('Plex sign-in is not offered on this server');
         json(res, 200, { url: await startPlex(req, res, login) });
         return true;

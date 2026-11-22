@@ -1055,24 +1055,10 @@ class WatchRooms {
           return this.store.writeCheckpoint(record.id, record.checkpointRevision, bookmark);
         });
         const committed = await this.store.commit(saved);
-        if (this.watch.rooms.get(room.roomId) === room && !room.closed) {
-          await this.watch.inRoom(
-            room,
-            () => {
-              this.apply(room, committed);
-              if (room.saveError) {
-                room.saveError = undefined;
-                this.watch.changed(room);
-              }
-            },
-            undefined,
-          );
-        } else {
-          this.apply(room, committed);
-          if (room.saveError) {
-            room.saveError = undefined;
-            this.watch.changed(room);
-          }
+        this.apply(room, committed);
+        if (room.saveError) {
+          room.saveError = undefined;
+          this.watch.changed(room);
         }
       })
       .catch(error => {

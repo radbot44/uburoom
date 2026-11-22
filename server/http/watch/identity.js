@@ -43,8 +43,11 @@ function watchIdentity({ config, hub, user, webActor, entryPolicy, validIdentity
   async function login(req) {
     const identity = await rawLogin(req);
     if (!identity) return;
-    if (!config.accessPolicy.publicWeb && !identity.activity) return;
-    if (!(await entryPolicy.admit(identity.userId, identity))) return;
+    if (!config.accessPolicy?.publicWeb && config.accessPolicy && !identity.activity) return;
+    const admitted = entryPolicy
+      ? await entryPolicy.admit(identity.userId, identity)
+      : await hub.admit(identity.userId, identity);
+    if (!admitted) return;
     const current = await rawLogin(req);
     return current?.userId === identity.userId && current?.accountRevision === identity.accountRevision
       ? current
