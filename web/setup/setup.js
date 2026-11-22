@@ -586,7 +586,14 @@ for (const button of card('sources').querySelectorAll('[data-add]'))
   button.addEventListener('click', () => {
     const type = button.dataset.add;
     void run('sources', button, () =>
-      (type === 'plex' ? addPlex() : type === 'jellyfin' ? addJellyfin() : addFolder()).catch(error => {
+      (type === 'plex'
+        ? addPlex()
+        : type === 'jellyfin'
+          ? addJellyfin()
+          : type === 'folders'
+            ? addFolder()
+            : Promise.reject(new Error('Unsupported source type'))
+      ).catch(error => {
         closePanel();
         throw error;
       }),

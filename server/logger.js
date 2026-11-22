@@ -42,10 +42,10 @@ function redact(value, ancestors) {
   if (typeof value === 'string') {
     let result = value;
     result = result.replace(
-      /((?:x-plex-token|token|password|entry_password|client_secret|bot_token)\s*[:=]\s*['"]?)([^'"&\s,;]+)(['"]?)/gi,
+      /((?:x-plex-token|x-emby-token|x-mediabrowser-token|api_key|apiKey|token|password|entry_password|client_secret|bot_token)\s*[:=]\s*['"]?)([^'"&\s,;]+)(['"]?)/gi,
       (match, p1, p2, p3) => p1 + '[REDACTED]' + (typeof p3 === 'string' ? p3 : ''),
     );
-    result = result.replace(/(uburoom(?:_[a-z0-9_]+)?=)([^;,\s"']+)/gi, '$1[REDACTED]');
+    result = result.replace(/((?:__Host-)?uburoom(?:_[a-z0-9_]+)?=)([^;,\s"']+)/gi, '$1[REDACTED]');
     result = result.replace(/(Bearer\s+)([a-zA-Z0-9_\-\.]+)/gi, '$1[REDACTED]');
     return result;
   }
@@ -92,7 +92,7 @@ function redact(value, ancestors) {
     try {
       const sanitized = {};
       for (const [k, v] of Object.entries(value)) {
-        if (/token|secret|password|credential|cookie|authorization|csrf/i.test(k) && typeof v !== 'boolean') {
+        if (/token|secret|password|credential|cookie|authorization|csrf|api_?key/i.test(k) && typeof v !== 'boolean') {
           sanitized[k] = '[REDACTED]';
         } else {
           sanitized[k] = redact(v, ancestors);

@@ -211,15 +211,18 @@ rooms:
   host_permissions: [playPause, seek, chooseMedia, addQueue, suggestMedia, editQueue, autoplay, roomSettings, closeRoom, continueWithoutHost, kickParticipants]
   viewer_permissions: [playPause, suggestMedia]
 
-  # Exact provider IDs / guild role IDs; admins can toggle Admin mode.
+  # Exact identities ('discord:<id>', 'plex:<id>', 'uburoom:<subject>', 'jellyfin:<server id>:<user id>')
+  # or provider IDs / guild role IDs; admins can toggle Admin mode.
   # Admin mode grants full permissions in every room.
+  admin_identities: []
   admin_discord_ids: []
   admin_plex_ids: []
   admin_discord_role_ids: []
 
-  # Trusted members sit between admins and everyone else. Same kind of exact IDs.
+  # Trusted members sit between admins and everyone else. Same kind of exact identities/IDs.
   # Trusted grants no Admin mode, room rights, entry or Plex access by itself;
   # today it only matters for guests.issuers below.
+  trusted_identities: []
   trusted_discord_ids: []
   trusted_plex_ids: []
   trusted_discord_role_ids: []
@@ -228,9 +231,10 @@ rooms:
   # This means your uburoom will only have one shared queue.
   single_room: false # No create/delete/transfer.
   pause_on_buffering: false # Default for rooms that have no override. Pause everyone when an active viewer buffers.
-  # Optional Plex account ID for the fixed room leader.
-  # Blank: Discord owner if Discord sign-in is on; otherwise the Plex token account.
-  # With both sign-in methods off, the Discord owner stays the leader.
+  # Optional verified identity for the fixed room leader (same format as operator.identities),
+  # or blank to use operator.identities[0] / discord.owner_id / Plex token owner.
+  single_room_leader: ''
+  # Optional Plex account ID for the fixed room leader (legacy alternative to single_room_leader).
   single_room_leader_plex_id: ''
 
 # Every room has an invite link and code (like ubumfa-ogdave) that anyone in it can
@@ -278,7 +282,7 @@ transcoding:
   # Settings are for the uburoom encoder. Plex controls its own.
   # Software encoders: libsvtav1 (AV1), libvpx-vp9 (VP9), libvpx (VP8).
   # NVENC can only do AV1; Intel QSV can do AV1/VP9/VP8; software does all three.
-  encoder: 'auto' # auto | qsv | nvenc | software
+  encoder: 'auto' # auto | hardware | qsv | nvenc | software
   cpu_fallback: true
   # Decode and scale on the GPU for every source. Falls back to the CPU if it fails.
   hardware_decode: true

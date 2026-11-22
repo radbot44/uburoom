@@ -9,7 +9,6 @@ const { normalizeConfig } = require('../server/config');
 const { fixture } = require('./helpers/account-app');
 
 // Saved operator settings over HTTP; split from accounts.test.js so the two run side by side.
-const tls = { skip: !fs.existsSync(path.join(__dirname, '../certs/server-cert.pem')) };
 
 async function savedSettingsFixture(t) {
   const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'uburoom-settings-http-'));
@@ -49,135 +48,131 @@ rooms:
   return { ...f, directory, file, other, source, save };
 }
 
-test(
-  'saved operator settings HTTP uses the startup path, preserves the allowlist, rejects stale/unauthorized saves and audits names only',
-  tls,
-  async t => {
-    const f = await savedSettingsFixture(t),
-      endpoint = '/api/operator/settings/saved';
-    const browser = f.browser(),
-      ordinary = f.browser(),
-      admin = f.browser(),
-      anonymous = f.browser();
-    assert.equal((await anonymous.request(endpoint)).status, 401);
+test('saved operator settings HTTP uses the startup path, preserves the allowlist, rejects stale/unauthorized saves and audits names only', async t => {
+  const f = await savedSettingsFixture(t),
+    endpoint = '/api/operator/settings/saved';
+  const browser = f.browser(),
+    ordinary = f.browser(),
+    admin = f.browser(),
+    anonymous = f.browser();
+  assert.equal((await anonymous.request(endpoint)).status, 401);
+  assert.equal(
+    (await f.save(anonymous, { revision: 'a'.repeat(64), changes: { 'rooms.max_members': 12 } })).status,
+    401,
+  );
+  await browser.discord('guest');
+  await ordinary.discord('guest2');
+  await admin.discord();
+  assert.equal((await browser.request('/api/account')).body.serverOperator, true);
+  assert.equal((await ordinary.request('/api/account')).body.serverOperator, false);
+  assert.equal(
+    (await admin.request('/api/account')).body.serverOperator,
+    false,
+    'room owner authority is not server-operator capability',
+  );
+  assert.equal((await admin.post('/api/watch/admin-mode', { enabled: true })).status, 200);
+  const guilds = '/api/operator/discord/servers';
+  const server = { id: '100000000000000020', name: 'Fixture Discord', memberCount: 735 };
+  f.app.access.raw().joinedServers = () => [server];
+  assert.equal((await anonymous.request(guilds)).status, 401);
+  assert.deepEqual((await browser.request(guilds)).body, { servers: [server] });
+  for (const denied of [ordinary, admin]) {
+    assert.equal((await denied.request(endpoint)).status, 403);
+    assert.equal((await denied.request(guilds)).status, 403);
     assert.equal(
-      (await f.save(anonymous, { revision: 'a'.repeat(64), changes: { 'rooms.max_members': 12 } })).status,
-      401,
+      (await f.save(denied, { revision: 'a'.repeat(64), changes: { 'rooms.max_members': 12 } })).status,
+      403,
     );
-    await browser.discord('guest');
-    await ordinary.discord('guest2');
-    await admin.discord();
-    assert.equal((await browser.request('/api/account')).body.serverOperator, true);
-    assert.equal((await ordinary.request('/api/account')).body.serverOperator, false);
-    assert.equal(
-      (await admin.request('/api/account')).body.serverOperator,
-      false,
-      'room owner authority is not server-operator capability',
-    );
-    assert.equal((await admin.post('/api/watch/admin-mode', { enabled: true })).status, 200);
-    const guilds = '/api/operator/discord/servers';
-    const server = { id: '100000000000000020', name: 'Fixture Discord', memberCount: 735 };
-    f.app.access.raw().joinedServers = () => [server];
-    assert.equal((await anonymous.request(guilds)).status, 401);
-    assert.deepEqual((await browser.request(guilds)).body, { servers: [server] });
-    for (const denied of [ordinary, admin]) {
-      assert.equal((await denied.request(endpoint)).status, 403);
-      assert.equal((await denied.request(guilds)).status, 403);
-      assert.equal(
-        (await f.save(denied, { revision: 'a'.repeat(64), changes: { 'rooms.max_members': 12 } })).status,
-        403,
-      );
-    }
-    let response = await browser.request(endpoint + '?path=' + encodeURIComponent(f.other));
-    assert.equal(response.status, 200);
-    assert.equal(response.headers['cache-control'], 'no-store');
-    const initial = response.body;
-    assert.equal(initial.source, 'file');
-    assert.match(initial.revision, /^[a-f0-9]{64}$/);
-    assert.equal(initial.settings['rooms.max_members'], 20);
-    assert.deepEqual(initial.settings['transcoding.formats'], ['av1']);
-    for (const key of [
-      'access.discord',
-      'rooms.single_room',
-      'rooms.inactive_days',
-      'rooms.min_retained',
-      'rooms.max_history',
-      'operator.discord_id',
-      'plex.token',
-      'storage.credential_key_file',
-    ])
-      assert.equal(Object.hasOwn(initial.settings, key), false);
-    const payload = {
-      revision: initial.revision,
-      changes: {
-        ...initial.settings,
-        'discord.excluded_guild_ids': [server.id],
-        'rooms.max_members': 12,
-        'transcoding.max_jobs': 2,
-      },
-    };
-    assert.equal((await browser.request(endpoint, payload)).status, 403, 'save requires CSRF proof');
-    assert.equal((await f.save(browser, payload, { Origin: 'https://attacker.invalid' })).status, 403);
-    assert.equal(
-      (await f.save(browser, { ...payload, path: f.other })).status,
-      400,
-      'client-selected paths are rejected',
-    );
-    // The editor is fixed at app creation, even if this internal property changes.
-    f.config.configFile = f.other;
-    response = await f.save(browser, payload);
-    assert.equal(response.status, 200);
-    assert.deepEqual(response.body, { ok: true, restartRequired: true });
-    assert.equal(response.headers['cache-control'], 'no-store');
-    const saved = await browser.request(endpoint);
-    assert.equal(saved.body.settings['rooms.max_members'], 12);
-    assert.deepEqual(saved.body.settings['discord.excluded_guild_ids'], [server.id]);
-    assert.deepEqual(f.config.discordExcludedGuildIds, [], 'saved exclusions apply after restart');
-    assert.notEqual(saved.body.revision, initial.revision);
-    assert.equal(
-      (await browser.request('/api/operator/settings')).body.settings.rooms.limits.maxMembers,
-      20,
-      'saving does not change running configuration',
-    );
-    const contents = await fs.promises.readFile(f.file, 'utf8');
-    assert.ok(contents.includes('fixture-private-password'));
-    assert.ok(contents.includes('keep this capacity comment'));
-    assert.equal(await fs.promises.readFile(f.other, 'utf8'), f.source.replace('max_members: 20', 'max_members: 77'));
-    response = await f.save(browser, payload);
-    assert.equal(response.status, 409);
-    assert.equal(response.body.code, 'CONFIG_CONFLICT');
-    assert.equal(
-      (await f.save(browser, { revision: saved.body.revision, changes: { 'secrets.entry_password': 'do-not-save' } }))
-        .body.code,
-      'CONFIG_FORBIDDEN',
-    );
-    assert.equal(
-      (await f.save(browser, { revision: saved.body.revision, changes: { 'rooms.max_open': 100 } })).body.code,
-      'CONFIG_INVALID',
-    );
-    const events = f.app.registry.db
-      .prepare("SELECT actor,detail FROM audit WHERE action='operator-settings-save'")
-      .all();
-    assert.equal(events.length, 1);
-    assert.equal(events[0].actor, f.app.registry.identity('discord', f.provider.subjects.guest).userId);
-    assert.deepEqual(JSON.parse(events[0].detail), { settings: Object.keys(payload.changes).sort() });
-    const exposed = JSON.stringify([initial, saved.body, response.body, events]);
-    for (const value of [
-      'fixture-private-password',
-      'fixture-private-client-secret',
-      'fixture-owner',
-      f.file,
-      f.other,
-      f.directory,
-      'backupPath',
-    ])
-      assert.equal(exposed.includes(value), false);
-  },
-);
+  }
+  let response = await browser.request(endpoint + '?path=' + encodeURIComponent(f.other));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers['cache-control'], 'no-store');
+  const initial = response.body;
+  assert.equal(initial.source, 'file');
+  assert.match(initial.revision, /^[a-f0-9]{64}$/);
+  assert.equal(initial.settings['rooms.max_members'], 20);
+  assert.deepEqual(initial.settings['transcoding.formats'], ['av1']);
+  for (const key of [
+    'access.discord',
+    'rooms.single_room',
+    'rooms.inactive_days',
+    'rooms.min_retained',
+    'rooms.max_history',
+    'operator.discord_id',
+    'plex.token',
+    'storage.credential_key_file',
+  ])
+    assert.equal(Object.hasOwn(initial.settings, key), false);
+  const payload = {
+    revision: initial.revision,
+    changes: {
+      ...initial.settings,
+      'discord.excluded_guild_ids': [server.id],
+      'rooms.max_members': 12,
+      'transcoding.max_jobs': 2,
+    },
+  };
+  assert.equal((await browser.request(endpoint, payload)).status, 403, 'save requires CSRF proof');
+  assert.equal((await f.save(browser, payload, { Origin: 'https://attacker.invalid' })).status, 403);
+  assert.equal(
+    (await f.save(browser, { ...payload, path: f.other })).status,
+    400,
+    'client-selected paths are rejected',
+  );
+  // The editor is fixed at app creation, even if this internal property changes.
+  f.config.configFile = f.other;
+  response = await f.save(browser, payload);
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, { ok: true, restartRequired: true });
+  assert.equal(response.headers['cache-control'], 'no-store');
+  const saved = await browser.request(endpoint);
+  assert.equal(saved.body.settings['rooms.max_members'], 12);
+  assert.deepEqual(saved.body.settings['discord.excluded_guild_ids'], [server.id]);
+  assert.deepEqual(f.config.discordExcludedGuildIds, [], 'saved exclusions apply after restart');
+  assert.notEqual(saved.body.revision, initial.revision);
+  assert.equal(
+    (await browser.request('/api/operator/settings')).body.settings.rooms.limits.maxMembers,
+    20,
+    'saving does not change running configuration',
+  );
+  const contents = await fs.promises.readFile(f.file, 'utf8');
+  assert.ok(contents.includes('fixture-private-password'));
+  assert.ok(contents.includes('keep this capacity comment'));
+  assert.equal(await fs.promises.readFile(f.other, 'utf8'), f.source.replace('max_members: 20', 'max_members: 77'));
+  response = await f.save(browser, payload);
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'CONFIG_CONFLICT');
+  assert.equal(
+    (await f.save(browser, { revision: saved.body.revision, changes: { 'secrets.entry_password': 'do-not-save' } }))
+      .body.code,
+    'CONFIG_FORBIDDEN',
+  );
+  assert.equal(
+    (await f.save(browser, { revision: saved.body.revision, changes: { 'rooms.max_open': 100 } })).body.code,
+    'CONFIG_INVALID',
+  );
+  const events = f.app.registry.db
+    .prepare("SELECT actor,detail FROM audit WHERE action='operator-settings-save'")
+    .all();
+  assert.equal(events.length, 1);
+  assert.equal(events[0].actor, f.app.registry.identity('discord', f.provider.subjects.guest).userId);
+  assert.deepEqual(JSON.parse(events[0].detail), { settings: Object.keys(payload.changes).sort() });
+  const exposed = JSON.stringify([initial, saved.body, response.body, events]);
+  for (const value of [
+    'fixture-private-password',
+    'fixture-private-client-secret',
+    'fixture-owner',
+    f.file,
+    f.other,
+    f.directory,
+    'backupPath',
+  ])
+    assert.equal(exposed.includes(value), false);
+});
 
 test(
   'saved operator settings rechecks authorization after queueing and immediately before replacement',
-  { ...tls, timeout: 30000 },
+  { timeout: 30000 },
   async t => {
     const f = await savedSettingsFixture(t),
       browser = f.browser(),
@@ -251,169 +246,161 @@ test(
   },
 );
 
-test(
-  'saved operator settings sanitize write failures and report an audit failure after committed YAML honestly',
-  tls,
-  async t => {
-    const f = await savedSettingsFixture(t),
-      browser = f.browser(),
-      endpoint = '/api/operator/settings/saved';
-    await browser.discord('guest');
-    const initial = (await browser.request(endpoint)).body,
-      payload = { revision: initial.revision, changes: { 'rooms.max_members': 12 } };
-    const mock = t.mock.method(fs.promises, 'rename', async () => {
+test('saved operator settings sanitize write failures and report an audit failure after committed YAML honestly', async t => {
+  const f = await savedSettingsFixture(t),
+    browser = f.browser(),
+    endpoint = '/api/operator/settings/saved';
+  await browser.discord('guest');
+  const initial = (await browser.request(endpoint)).body,
+    payload = { revision: initial.revision, changes: { 'rooms.max_members': 12 } };
+  const mock = t.mock.method(fs.promises, 'rename', async () => {
+    throw new Error('private-storage-details ' + f.file);
+  });
+  let response = await f.save(browser, payload);
+  assert.equal(response.status, 503);
+  mock.mock.restore();
+  assert.equal(await fs.promises.readFile(f.file, 'utf8'), f.source);
+  const audit = f.app.registry.audit.bind(f.app.registry),
+    flush = f.app.registry.flush.bind(f.app.registry);
+  let fail = false;
+  const auditMock = t.mock.method(f.app.registry, 'audit', (...args) => {
+    audit(...args);
+    fail = true;
+  });
+  const flushMock = t.mock.method(f.app.registry, 'flush', async () => {
+    if (fail) {
+      fail = false;
       throw new Error('private-storage-details ' + f.file);
-    });
-    let response = await f.save(browser, payload);
-    assert.equal(response.status, 503);
-    mock.mock.restore();
-    assert.equal(await fs.promises.readFile(f.file, 'utf8'), f.source);
-    const audit = f.app.registry.audit.bind(f.app.registry),
-      flush = f.app.registry.flush.bind(f.app.registry);
-    let fail = false;
-    const auditMock = t.mock.method(f.app.registry, 'audit', (...args) => {
-      audit(...args);
-      fail = true;
-    });
-    const flushMock = t.mock.method(f.app.registry, 'flush', async () => {
-      if (fail) {
-        fail = false;
-        throw new Error('private-storage-details ' + f.file);
-      }
-      return flush();
-    });
-    response = await f.save(browser, payload);
-    assert.equal(response.status, 503);
-    auditMock.mock.restore();
-    flushMock.mock.restore();
-    assert.equal(response.body.saved, true);
-    assert.equal(response.body.restartRequired, true);
-    assert.match(response.body.error, /audit persistence/);
-    assert.equal(JSON.stringify(response.body).includes('private-storage-details'), false);
-    assert.equal(JSON.stringify(response.body).includes(f.file), false);
-    assert.equal(
-      (await browser.request(endpoint)).body.settings['rooms.max_members'],
-      12,
-      'audit failure does not roll back the already-saved file',
-    );
-  },
-);
+    }
+    return flush();
+  });
+  response = await f.save(browser, payload);
+  assert.equal(response.status, 503);
+  auditMock.mock.restore();
+  flushMock.mock.restore();
+  assert.equal(response.body.saved, true);
+  assert.equal(response.body.restartRequired, true);
+  assert.match(response.body.error, /audit persistence/);
+  assert.equal(JSON.stringify(response.body).includes('private-storage-details'), false);
+  assert.equal(JSON.stringify(response.body).includes(f.file), false);
+  assert.equal(
+    (await browser.request(endpoint)).body.settings['rooms.max_members'],
+    12,
+    'audit failure does not roll back the already-saved file',
+  );
+});
 
-test(
-  'operator settings HTTP uses verified session identities and exposes only nonprivate running settings',
-  tls,
-  async t => {
-    const settings = normalizeConfig({
-      rooms: { max_members: 12 },
-      directory: { expose_discord_members: false },
-      transcoding: { encoder: 'software', qualities: [[480, 1]] },
-    });
-    const f = await fixture(t, undefined, {
-      accessPolicy: settings.accessPolicy,
-      roomLimits: settings.roomLimits,
-      roomPermissions: settings.roomPermissions,
-      directory: settings.directory,
-      transcoding: settings.transcoding,
-    });
-    f.config.serverOperator = {
-      identities: [
-        { provider: 'discord', subject: f.provider.subjects.guest2 },
-        { provider: 'plex', subject: '101' },
-      ],
-    };
-    const endpoint = '/api/operator/settings',
-      anonymous = f.browser(),
-      ordinary = f.browser(),
-      admin = f.browser(),
-      operator = f.browser(),
-      pending = f.browser();
-    let response = await anonymous.request(endpoint + '?userId=101');
-    assert.equal(response.status, 401);
+test('operator settings HTTP uses verified session identities and exposes only nonprivate running settings', async t => {
+  const settings = normalizeConfig({
+    rooms: { max_members: 12 },
+    directory: { expose_discord_members: false },
+    transcoding: { encoder: 'software', qualities: [[480, 1]] },
+  });
+  const f = await fixture(t, undefined, {
+    accessPolicy: settings.accessPolicy,
+    roomLimits: settings.roomLimits,
+    roomPermissions: settings.roomPermissions,
+    directory: settings.directory,
+    transcoding: settings.transcoding,
+  });
+  f.config.serverOperator = {
+    identities: [
+      { provider: 'discord', subject: f.provider.subjects.guest2 },
+      { provider: 'plex', subject: '101' },
+    ],
+  };
+  const endpoint = '/api/operator/settings',
+    anonymous = f.browser(),
+    ordinary = f.browser(),
+    admin = f.browser(),
+    operator = f.browser(),
+    pending = f.browser();
+  let response = await anonymous.request(endpoint + '?userId=101');
+  assert.equal(response.status, 401);
+  assert.equal(response.headers['cache-control'], 'no-store');
+  await ordinary.discord('guest');
+  await admin.discord();
+  await pending.plex('bob');
+  assert.equal((await admin.post('/api/watch/admin-mode', { enabled: true })).status, 200);
+  for (const browser of [ordinary, admin, pending]) {
+    response = await browser.request(endpoint + '?userId=101', undefined, { 'X-User-Id': '101' });
+    assert.equal(response.status, 403);
     assert.equal(response.headers['cache-control'], 'no-store');
-    await ordinary.discord('guest');
-    await admin.discord();
-    await pending.plex('bob');
-    assert.equal((await admin.post('/api/watch/admin-mode', { enabled: true })).status, 200);
-    for (const browser of [ordinary, admin, pending]) {
-      response = await browser.request(endpoint + '?userId=101', undefined, { 'X-User-Id': '101' });
-      assert.equal(response.status, 403);
-      assert.equal(response.headers['cache-control'], 'no-store');
-    }
-    f.app.registry.assign(f.app.registry.preview(f.provider.subjects.guest2, '102'), 'fixture-admin');
-    assert.equal((await pending.request(endpoint)).status, 401, 'assignment invalidates the previous session revision');
-    await pending.plex('bob');
-    assert.equal(
-      (await pending.request(endpoint)).status,
-      403,
-      'a session with an unverified assigned operator identity is denied',
-    );
-    await operator.plex('alice');
-    // Seed private fields at every object depth to catch accidental object spreads.
-    const secret = 'settings-private-marker';
-    f.config.unlistedPrivateValue = secret;
-    f.config.accountFile = secret;
-    f.config.credentialKeyFile = secret;
-    f.config.tlsCert = secret;
-    f.config.tlsKey = secret;
-    f.config.ffmpegPath = secret;
-    f.config.ffprobePath = secret;
-    f.config.sources[0].delivery = { mode: 'proxy', clientUrl: secret, lanClientUrl: secret, token: secret };
-    f.config.serverPassword = secret;
-    for (const object of [
-      f.config.accessPolicy,
-      f.config.roomLimits,
-      f.config.roomPermissions,
-      f.config.roomPermissions.host,
-      f.config.roomPermissions.viewer,
-      f.config.directory,
-      f.config.transcoding,
-      f.config.transcoding.qualities[0],
-    ])
-      object.futurePrivate = secret;
-    response = await operator.request(endpoint);
-    assert.equal(response.status, 200);
-    assert.equal(response.headers['cache-control'], 'no-store');
-    assert.equal(response.body.source, 'running');
-    assert.deepEqual(response.body.settings.access, {
-      discordServer: true,
-      sourceMembers: [],
-      password: false,
-      accounts: false,
-      publicWeb: true,
-    });
-    assert.equal(response.body.settings.rooms.limits.maxMembers, 12);
-    assert.equal(response.body.settings.rooms.hostPermissions.seek, true);
-    assert.deepEqual(response.body.settings.directory, { discord: false });
-    assert.deepEqual(response.body.settings.transcoding.qualities, [{ height: 480, mbps: 1 }]);
-    assert.equal(response.body.settings.transcoding.encoder, 'software');
-    const serialized = JSON.stringify(response.body);
-    for (const privateValue of [
-      secret,
-      f.config.sources[0].token,
-      f.config.sources[0].url,
-      f.config.publicUrl,
-      f.config.clientSecret,
-      f.config.clientId,
-      f.config.ownerId,
-      f.provider.subjects.guest2,
-      '101',
-      '102',
-      'commands',
-    ]) {
-      assert.equal(serialized.includes(JSON.stringify(privateValue)), false, 'private value excluded: ' + privateValue);
-    }
-    assert.equal(
-      (await operator.request('/api/watch/me')).status,
-      401,
-      'operator status is not an entry rule: a Plex operator still needs a rule that lets them in',
-    );
-    assert.equal((await operator.request(endpoint, {})).status, 404, 'no settings write operation');
-  },
-);
+  }
+  f.app.registry.assign(f.app.registry.preview(f.provider.subjects.guest2, '102'), 'fixture-admin');
+  assert.equal((await pending.request(endpoint)).status, 401, 'assignment invalidates the previous session revision');
+  await pending.plex('bob');
+  assert.equal(
+    (await pending.request(endpoint)).status,
+    403,
+    'a session with an unverified assigned operator identity is denied',
+  );
+  await operator.plex('alice');
+  // Seed private fields at every object depth to catch accidental object spreads.
+  const secret = 'settings-private-marker';
+  f.config.unlistedPrivateValue = secret;
+  f.config.accountFile = secret;
+  f.config.credentialKeyFile = secret;
+  f.config.tlsCert = secret;
+  f.config.tlsKey = secret;
+  f.config.ffmpegPath = secret;
+  f.config.ffprobePath = secret;
+  f.config.sources[0].delivery = { mode: 'proxy', clientUrl: secret, lanClientUrl: secret, token: secret };
+  f.config.serverPassword = secret;
+  for (const object of [
+    f.config.accessPolicy,
+    f.config.roomLimits,
+    f.config.roomPermissions,
+    f.config.roomPermissions.host,
+    f.config.roomPermissions.viewer,
+    f.config.directory,
+    f.config.transcoding,
+    f.config.transcoding.qualities[0],
+  ])
+    object.futurePrivate = secret;
+  response = await operator.request(endpoint);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers['cache-control'], 'no-store');
+  assert.equal(response.body.source, 'running');
+  assert.deepEqual(response.body.settings.access, {
+    discordServer: true,
+    sourceMembers: [],
+    password: false,
+    accounts: false,
+    publicWeb: true,
+  });
+  assert.equal(response.body.settings.rooms.limits.maxMembers, 12);
+  assert.equal(response.body.settings.rooms.hostPermissions.seek, true);
+  assert.deepEqual(response.body.settings.directory, { discord: false });
+  assert.deepEqual(response.body.settings.transcoding.qualities, [{ height: 480, mbps: 1 }]);
+  assert.equal(response.body.settings.transcoding.encoder, 'software');
+  const serialized = JSON.stringify(response.body);
+  for (const privateValue of [
+    secret,
+    f.config.sources[0].token,
+    f.config.sources[0].url,
+    f.config.publicUrl,
+    f.config.clientSecret,
+    f.config.clientId,
+    f.config.ownerId,
+    f.provider.subjects.guest2,
+    '101',
+    '102',
+    'commands',
+  ]) {
+    assert.equal(serialized.includes(JSON.stringify(privateValue)), false, 'private value excluded: ' + privateValue);
+  }
+  assert.equal(
+    (await operator.request('/api/watch/me')).status,
+    401,
+    'operator status is not an entry rule: a Plex operator still needs a rule that lets them in',
+  );
+  assert.equal((await operator.request(endpoint, {})).status, 404, 'no settings write operation');
+});
 
 test(
   'operator settings rechecks logout, account validity and operator identity after persistence waits',
-  { ...tls, timeout: 15000 },
+  { timeout: 15000 },
   async t => {
     const f = await fixture(t, undefined, {
       accessPolicy: {

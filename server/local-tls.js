@@ -40,8 +40,16 @@ function formatUtcTime(d) {
 
 /** An IP address as the bytes of a certificate's IP entry. */
 function ipBytes(address) {
-  if (net.isIPv4(address)) return Buffer.from(address.split('.').map(Number));
-  const [head, tail = ''] = address.split('::');
+  const clean = String(address).replace(/^\[|\]$/g, '');
+  if (net.isIPv4(clean)) return Buffer.from(clean.split('.').map(Number));
+  let v6 = clean;
+  const dotted = /:(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(v6);
+  if (dotted) {
+    const hi = ((Number(dotted[1]) << 8) | Number(dotted[2])).toString(16);
+    const lo = ((Number(dotted[3]) << 8) | Number(dotted[4])).toString(16);
+    v6 = v6.slice(0, dotted.index) + ':' + hi + ':' + lo;
+  }
+  const [head, tail = ''] = v6.split('::');
   const part = text => (text ? text.split(':') : []);
   const groups = [...part(head), ...Array(8 - part(head).length - part(tail).length).fill('0'), ...part(tail)];
   return Buffer.concat(groups.map(group => Buffer.from(group.padStart(4, '0'), 'hex')));

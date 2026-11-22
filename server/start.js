@@ -17,11 +17,17 @@ async function listen(server, port, host, retries) {
   for (let attempt = 0; ; attempt++) {
     try {
       await new Promise((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(port, host, () => {
-          server.off('error', reject);
+        const onError = error => {
+          server.off('listening', onListening);
+          reject(error);
+        };
+        const onListening = () => {
+          server.off('error', onError);
           resolve(undefined);
-        });
+        };
+        server.once('error', onError);
+        server.once('listening', onListening);
+        server.listen(port, host);
       });
       return;
     } catch (error) {
@@ -39,10 +45,22 @@ async function listen(server, port, host, retries) {
  */
 async function startServer(config, { logger, setupHandoff, botStarter = startBot, signals = true, appOptions = {} }) {
   // Behind a trusted proxy (server.listen: 'http-proxy') uburoom speaks plain HTTP and needs no certificate.
+  const readTls = (file, kind) => {
+    try {
+      return fs.readFileSync(file);
+    } catch (error) {
+      throw Object.assign(
+        new Error(
+          `Missing or unreadable TLS ${kind} file (${file}): ${error.code || error.message}. Generate a local certificate or update server.tls_cert and server.tls_key.`,
+        ),
+        { cause: error },
+      );
+    }
+  };
   const tls =
     config.listen === 'http-proxy'
       ? undefined
-      : { cert: fs.readFileSync(config.tlsCert), key: fs.readFileSync(config.tlsKey) };
+      : { cert: readTls(config.tlsCert, 'certificate'), key: readTls(config.tlsKey, 'private key') };
   const app = createApp(config, { ...appOptions, logger, tls, setupHandoff });
   try {
     await app.completeSetup();
@@ -158,6 +176,7 @@ async function startWithSetup({ configFile, args = [], logger, setup = {}, signa
         process.off('SIGTERM', stopSetup);
       }
       try {
+        running = undefined;
         const config = loadConfig(configFile, args);
         const normal = await startServer(config, {
           logger: logger || new Logger(config.logging),

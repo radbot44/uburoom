@@ -26,7 +26,8 @@ test('example YAML is usable, private inputs are absent and defaults preserve ex
   assert.deepEqual(config.channels, []);
   assert.deepEqual(config.roomPermissions, Policy.policy());
   assert.equal(config.pauseOnBuffering, false);
-  assert.deepEqual(config.roomAdministrators, { discord: [], plex: [], discordRoles: [] });
+  assert.deepEqual(config.roomAdministrators, { discord: [], plex: [], discordRoles: [], identities: [] });
+  assert.deepEqual(config.trustedMembers, { discord: [], plex: [], discordRoles: [], identities: [] });
   assert.deepEqual(config.serverOperator, { identities: [] });
   assert.deepEqual(
     [config.accessPolicy.discordServer, config.accessPolicy.sourceMembers, config.accessPolicy.password],
@@ -257,12 +258,46 @@ test('malformed YAML and unsupported structures never echo secret source text', 
       secrets: { server_password: 'x' },
       rooms: { single_room: true },
     },
+    {
+      access: { discord_server: false, password: true },
+      secrets: { server_password: '1234567' },
+    },
+    { rooms: { single_room_leader: 'invalid' } },
     { rooms: { single_room_leader_plex_id: 'alice' } },
   ]) {
     assert.throws(() => normalizeConfig(value));
   }
+  assert.throws(
+    () =>
+      normalizeConfig({
+        access: { discord_server: false, password: true },
+        secrets: { server_password: '1234567' },
+      }),
+    /at least 8 characters/,
+  );
   assert.equal(normalizeConfig({}).guests.defaultAllow, true);
   assert.equal(normalizeConfig({ guests: { default_allow: false } }).guests.defaultAllow, false);
+  const identityLeader = normalizeConfig({
+    rooms: {
+      single_room: true,
+      single_room_leader: 'uburoom:alice',
+      admin_identities: ['uburoom:alice', 'jellyfin:' + 'a'.repeat(32) + ':' + 'b'.repeat(32)],
+      trusted_identities: ['discord:100000000000000002'],
+    },
+  });
+  assert.deepEqual(identityLeader.singleRoomLeader, { provider: 'uburoom', subject: 'alice' });
+  assert.deepEqual(identityLeader.roomAdministrators.identities, [
+    { provider: 'uburoom', subject: 'alice' },
+    { provider: 'jellyfin:' + 'a'.repeat(32), subject: 'b'.repeat(32) },
+  ]);
+  assert.deepEqual(identityLeader.trustedMembers.identities, [{ provider: 'discord', subject: '100000000000000002' }]);
+  assert.equal(
+    normalizeConfig({
+      operator: { identities: ['uburoom:alice'] },
+      rooms: { single_room: true },
+    }).singleRoom,
+    true,
+  );
   assert.equal(
     normalizeConfig({ rooms: { single_room: true, single_room_leader_plex_id: '101' } }).singleRoomLeaderPlexId,
     '101',
@@ -572,7 +607,28 @@ test('doctor validates database schema, envelope authentication, and cert-key pa
   const mismatchCheck = mismatchFail.find(c => c.name === 'Credential key match');
   assert.equal(mismatchCheck?.status, 'fail');
 
-  // 3. TLS cert-key pair check
+  // Canary-only database (empty credentials) detects mismatched key
+  const canaryDbFile = path.join(dir, 'canary.sqlite');
+  const db3 = new DatabaseSync(canaryDbFile);
+  initializeSchema(db3);
+  db3
+    .prepare('INSERT INTO meta(key, value) VALUES (?, ?)')
+    .run('credentialKeyCanary', JSON.stringify(vault.seal('uburoom-credential-key-v1')));
+  db3.close();
+  assert.equal(
+    checkStorageAndKey({ accountFile: canaryDbFile, credentialKeyFile: keyFile }).find(
+      c => c.name === 'Credential key match',
+    )?.status,
+    'pass',
+  );
+  assert.equal(
+    checkStorageAndKey({ accountFile: canaryDbFile, credentialKeyFile: wrongKeyFile }).find(
+      c => c.name === 'Credential key match',
+    )?.status,
+    'fail',
+  );
+
+  // 3. TLS cert-key pair & public_url coverage check
   const certFile = path.join(ROOT, 'certs', 'server-cert.pem');
   const validKeyFile = path.join(ROOT, 'certs', 'server-key.pem');
   const certPass = checkTlsCertificates({
@@ -582,6 +638,13 @@ test('doctor validates database schema, envelope authentication, and cert-key pa
   });
   const certMatchPass = certPass.find(c => c.name === 'Certificate & key match');
   assert.equal(certMatchPass?.status, 'pass');
+  assert.equal(certPass.find(c => c.name === 'Public URL certificate coverage')?.status, 'pass');
+  const certUncovered = checkTlsCertificates({
+    publicUrl: 'https://other.example:5756',
+    tlsCert: certFile,
+    tlsKey: validKeyFile,
+  });
+  assert.equal(certUncovered.find(c => c.name === 'Public URL certificate coverage')?.status, 'warn');
 
   // Generate mismatched private key
   const { privateKey: wrongPrivateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });

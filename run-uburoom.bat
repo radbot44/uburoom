@@ -13,6 +13,7 @@ if errorlevel 1 (
 if not exist "node_modules\ws" goto missing_dependencies
 if not exist "node_modules\discord.js" goto missing_dependencies
 if not exist "node_modules\hls.js" goto missing_dependencies
+if not exist "node_modules\yaml" goto missing_dependencies
 echo [uburoom] Starting server. This window stays open if startup fails.
 node server\index.js %*
 set "UBUROOM_EXIT=%errorlevel%"

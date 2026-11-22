@@ -101,7 +101,7 @@ export function mount(panel, { request, onSaved }) {
     sources = result.sources;
     removed = result.removed || [];
     types = result.types || types;
-    if (saved) onSaved?.();
+    if (saved) onSaved?.(result.revision);
   }
   function show(next) {
     generation++;
@@ -1071,6 +1071,9 @@ export function mount(panel, { request, onSaved }) {
   }
 
   return {
+    setRevision(next) {
+      if (next) revision = next;
+    },
     async load() {
       view = { name: 'list' };
       generation++;

@@ -202,6 +202,7 @@ function sourceSettings({
       {
         beforeReplace: auth.canSave,
         transform,
+        preserveBackup: !!operatorSignInRisk,
       },
     );
     if (action === 'add') flows.close(data.flow);

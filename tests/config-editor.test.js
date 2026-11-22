@@ -276,6 +276,25 @@ test('YAML editor leaves originals usable on backup, partial-write and replaceme
     true,
     'failed writes do not poison the queue',
   );
+  // Failed recovery backups stay preserved while routine saves prune to newest 3.
+  let nextRev = (await editor.read()).revision;
+  await assert.rejects(editor.save({ revision: '0'.repeat(64), changes: { 'rooms.max_members': 14 } }), {
+    code: 'CONFIG_CONFLICT',
+  });
+  for (let i = 0; i < 4; i++) {
+    const saved = await editor.save({ revision: nextRev, changes: { 'rooms.max_members': 15 + i } });
+    nextRev = saved.revision;
+  }
+  const backupDirs = (await fs.promises.readdir(directory)).filter(name => name.startsWith('.uburoom-config-'));
+  let preservedCount = 0;
+  let routineCount = 0;
+  for (const name of backupDirs) {
+    const files = await fs.promises.readdir(path.join(directory, name));
+    if (files.includes('.preserve')) preservedCount++;
+    else routineCount++;
+  }
+  assert.equal(preservedCount, 2, 'write and replace failure backups stay preserved');
+  assert.equal(routineCount, 3, 'routine backup folders are pruned to newest 3');
 });
 
 test('YAML editor saves access rules, write-only server password, and source member opt-in safely', async t => {

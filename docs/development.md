@@ -20,8 +20,7 @@ Requires Node **22.13.0+** and npm. In PowerShell:
 
 ```powershell
 npm ci
-.\scripts
-ew-dev-cert.ps1 -DnsNames @('localhost')
+.\scripts\new-dev-cert.ps1 -DnsNames @('localhost')
 node scripts/watch-demo.js --accounts
 ```
 

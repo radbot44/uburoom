@@ -37,14 +37,17 @@ const KEYS = [
   'tools.ffprobe',
   'rooms.host_permissions',
   'rooms.viewer_permissions',
+  'rooms.admin_identities',
   'rooms.admin_discord_ids',
   'rooms.admin_plex_ids',
   'rooms.admin_discord_role_ids',
+  'rooms.trusted_identities',
   'rooms.trusted_discord_ids',
   'rooms.trusted_plex_ids',
   'rooms.trusted_discord_role_ids',
   'rooms.single_room',
   'rooms.pause_on_buffering',
+  'rooms.single_room_leader',
   'rooms.single_room_leader_plex_id',
   'guests.enabled',
   'guests.default_allow',
@@ -90,7 +93,12 @@ function configPath(args = process.argv.slice(2)) {
 }
 
 function parseConfig(source) {
-  const doc = YAML.parseDocument(source, { prettyErrors: false, uniqueKeys: true, version: '1.2', stringKeys: true });
+  const doc = YAML.parseDocument(String(source || '').replace(/^\uFEFF/, ''), {
+    prettyErrors: false,
+    uniqueKeys: true,
+    version: '1.2',
+    stringKeys: true,
+  });
   const problem = doc.errors[0] || doc.warnings[0];
   // Parser messages can contain tokens/source text. Never echo them or the file.
   if (problem) throw new Error('Invalid config.yaml YAML (' + problem.code + '); check syntax and duplicate keys');
@@ -251,6 +259,8 @@ function normalizeConfig(
     throw new Error('access.password requires secrets.server_password');
   if (!config.accessPolicy.password && config.serverPassword)
     throw new Error('secrets.server_password is used only with access.password: true');
+  if (config.serverPassword && [...config.serverPassword].length < 8)
+    throw new Error('secrets.server_password must contain at least 8 characters');
   if (
     !config.accessPolicy.discordServer &&
     !sourceMembers.length &&
@@ -258,33 +268,42 @@ function normalizeConfig(
     !config.accessPolicy.accounts
   )
     throw new Error('access needs at least one entry rule: discord_server, source_members, password or accounts');
+  const parseIdentity = (entry, setting) => {
+    const match = /^(discord|plex|uburoom|jellyfin:[0-9a-f]{32}):(.+)$/.exec(entry);
+    const valid =
+      match &&
+      (match[1] === 'discord'
+        ? /^\d{17,20}$/.test(match[2])
+        : match[1] === 'plex'
+          ? /^\d{1,20}$/.test(match[2])
+          : match[1].startsWith('jellyfin:')
+            ? /^[0-9a-f]{32}$/.test(match[2])
+            : /^[A-Za-z0-9._@-]{1,100}$/.test(match[2]));
+    if (!valid)
+      throw new Error(
+        `${setting} entries are quoted 'discord:<id>', 'plex:<id>', 'uburoom:<subject>' or 'jellyfin:<server id>:<user id>' account identities`,
+      );
+    return { provider: match[1], subject: match[2] };
+  };
   // The server operator: exact verified identities, written provider:subject.
   const operators = list('operator.identities') || [];
   config.serverOperator = {
-    identities: operators.map(value => {
-      const match = /^(discord|plex|uburoom|jellyfin:[0-9a-f]{32}):(.+)$/.exec(value);
-      const valid =
-        match &&
-        (match[1] === 'discord'
-          ? /^\d{17,20}$/.test(match[2])
-          : match[1] === 'plex'
-            ? /^\d{1,20}$/.test(match[2])
-            : match[1].startsWith('jellyfin:')
-              ? /^[0-9a-f]{32}$/.test(match[2])
-              : /^[A-Za-z0-9._@-]{1,100}$/.test(match[2]));
-      if (!valid)
-        throw new Error(
-          "operator.identities entries are quoted 'discord:<id>', 'plex:<id>', 'uburoom:<subject>' or 'jellyfin:<server id>:<user id>' account identities",
-        );
-      return { provider: match[1], subject: match[2] };
-    }),
+    identities: operators.map(entry => parseIdentity(entry, 'operator.identities')),
   };
+  const adminIdentities = (list('rooms.admin_identities') || []).map(entry =>
+    parseIdentity(entry, 'rooms.admin_identities'),
+  );
+  const trustedIdentities = (list('rooms.trusted_identities') || []).map(entry =>
+    parseIdentity(entry, 'rooms.trusted_identities'),
+  );
   config.singleRoom = boolean('rooms.single_room', false);
   config.pauseOnBuffering = boolean('rooms.pause_on_buffering', false);
   config.directory = {
     discord: boolean('directory.expose_discord_members', true),
   };
   config.roomLimits = require('./room-limits').configuration(value.rooms);
+  const singleRoomLeader = get('rooms.single_room_leader');
+  config.singleRoomLeader = singleRoomLeader ? parseIdentity(singleRoomLeader, 'rooms.single_room_leader') : undefined;
   config.singleRoomLeaderPlexId = get('rooms.single_room_leader_plex_id');
   if (config.singleRoomLeaderPlexId && !/^\d{1,20}$/.test(config.singleRoomLeaderPlexId))
     throw new Error('rooms.single_room_leader_plex_id must be a quoted Plex account ID');
@@ -393,15 +412,20 @@ function normalizeConfig(
     throw new Error('Activity-only access requires Discord authorization and configured client credentials/owner');
   if (!config.accessPolicy.publicWeb && !config.botToken)
     throw new Error('Activity-only access requires a Discord bot for verified membership');
-  if (config.singleRoom && !config.singleRoomLeaderPlexId) {
+  if (
+    config.singleRoom &&
+    !config.singleRoomLeader &&
+    !config.singleRoomLeaderPlexId &&
+    !config.serverOperator.identities.length
+  ) {
     if (!config.accessPolicy.discord && config.accessPolicy.plex) {
       if (!ownerAccountSources(config.sources).length)
         throw new Error(
-          'Single-room mode requires a Plex source or rooms.single_room_leader_plex_id for Plex leadership',
+          'Single-room mode requires a Plex source, rooms.single_room_leader or rooms.single_room_leader_plex_id',
         );
     } else if (!config.ownerId)
       throw new Error(
-        'Single-room mode requires discord.owner_id or rooms.single_room_leader_plex_id for fixed room leadership',
+        'Single-room mode requires discord.owner_id, operator.identities, rooms.single_room_leader or rooms.single_room_leader_plex_id for fixed room leadership',
       );
   }
   if (!config.host.trim()) throw new Error('server.host must not be empty');
@@ -438,6 +462,8 @@ function normalizeConfig(
     directory: path.join(resolveFile('storage.data_directory', 'data'), 'diagnostics'),
   };
   Object.assign(config, Policy.configuration(value.rooms || {}));
+  config.roomAdministrators = { ...config.roomAdministrators, identities: adminIdentities };
+  config.trustedMembers = { ...config.trustedMembers, identities: trustedIdentities };
   const whole = (key, fallback, min, max) => {
     const selected = value.guests?.[key] ?? fallback;
     if (!Number.isSafeInteger(selected) || selected < min || selected > max)

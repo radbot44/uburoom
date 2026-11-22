@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const YAML = require('yaml');
 const { ROOT, parseConfig, normalizeConfig } = require('../config');
+const { serializeYaml } = require('../config-editor');
 
 const TEMPLATE = path.join(ROOT, 'config.example.yaml');
 // Where setup puts the certificate it makes, relative to the config file (inside the data folder).
@@ -72,9 +73,7 @@ function configText({ draft, rules, discordSettings }, { template, today = new D
   set(doc, ['server', 'public_url'], draft.network.publicUrl);
   set(doc, ['server', 'tls_cert'], CERT);
   set(doc, ['server', 'tls_key'], KEY);
-  let text = doc.toString({ lineWidth: 0, flowCollectionPadding: false });
-  if (source.includes('\r\n')) text = text.replace(/\r?\n/g, '\r\n');
-  return text;
+  return serializeYaml(doc, source, { flowCollectionPadding: false });
 }
 
 /**

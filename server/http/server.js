@@ -122,13 +122,26 @@ function createHttpServer({ config, logger, tls, json, route: dispatch }) {
         };
         if (!(await dispatch(ctx))) json(res, 404, { error: 'Not found' });
       })().catch(error => {
-        if (!res.headersSent)
-          json(res, error.status === 503 ? 503 : 400, {
-            error:
-              error.status === 503
-                ? 'Discord login renewal temporarily unavailable; try again shortly'
-                : 'Request failed; check configuration or try again',
-          });
+        const status =
+          error?.code === 'DISCORD_RENEWAL_UNAVAILABLE'
+            ? 503
+            : Number.isInteger(error?.status) && error.status >= 400 && error.status < 600
+              ? error.status
+              : error instanceof SyntaxError
+                ? 400
+                : 500;
+        if (status >= 500) logger?.error?.('http', error);
+        const message =
+          error?.code === 'DISCORD_RENEWAL_UNAVAILABLE'
+            ? 'Discord login renewal temporarily unavailable; try again shortly'
+            : error?.expose && error.message
+              ? error.message
+              : error instanceof SyntaxError
+                ? 'Invalid JSON request body'
+                : status >= 500
+                  ? 'Internal server error'
+                  : 'Request failed; check configuration or try again';
+        if (!res.headersSent) json(res, status, { error: message });
         else res.end();
       });
     });

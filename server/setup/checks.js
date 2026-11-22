@@ -6,6 +6,7 @@
  * every line passes.
  */
 const fs = require('node:fs');
+const net = require('node:net');
 const path = require('node:path');
 const doctor = require('../../scripts/doctor');
 const { certificateCovers, writeCertificate } = require('../local-tls');
@@ -69,13 +70,14 @@ function certificate(config, names) {
     const existing = fs.existsSync(config.tlsCert) ? fs.readFileSync(config.tlsCert) : undefined;
     if (existing && fs.existsSync(config.tlsKey) && certificateCovers(existing, names))
       return { id: 'certificate', status: 'pass', title, detail: 'Ready ' + label };
+    const cleaned = names.map(name => String(name).replace(/^\[|\]$/g, '')).filter(Boolean);
     writeCertificate({
       directory: path.dirname(config.tlsCert),
       certName: path.basename(config.tlsCert),
       keyName: path.basename(config.tlsKey),
       replace: true,
-      dnsNames: names.filter(name => !/^[\d.:]+$/.test(name)),
-      ipAddresses: names.filter(name => /^[\d.:]+$/.test(name)),
+      dnsNames: cleaned.filter(name => !net.isIP(name)),
+      ipAddresses: cleaned.filter(name => net.isIP(name)),
     });
     const [check] = doctor.checkTlsCertificates(config).filter(item => item.status === 'fail');
     if (check) return { id: 'certificate', status: 'fail', title, detail: String(check.message).slice(0, 300) };

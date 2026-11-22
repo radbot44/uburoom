@@ -181,7 +181,12 @@ async function startSetup({
     }
     const checks = await runChecks(config, { port: address().port }, answers.draft.network.names, {
       newAccount: answers.draft.account.provider === 'uburoom',
-      tools: { plexFetch, ...(jellyfinFetch ? { jellyfinFetch } : {}) },
+      tools: {
+        plexFetch,
+        ...(jellyfinFetch ? { jellyfinFetch } : {}),
+        ...(youtubeFetch ? { youtubeFetch } : {}),
+        ...(youtubeRunner ? { youtubeRunner } : {}),
+      },
     });
     return { text, config, answers, checks };
   }
@@ -234,7 +239,13 @@ async function startSetup({
       json(res, 200, { url: config.publicUrl + '/auth/setup#ticket=' + ticket });
     } finally {
       if (!finished) finishing = false;
-      else res.once('finish', () => setImmediate(() => server.closeAllConnections?.()));
+      else
+        res.once('finish', () =>
+          setImmediate(() => {
+            files.close();
+            server.closeAllConnections?.();
+          }),
+        );
     }
   }
 
@@ -314,11 +325,11 @@ async function startSetup({
       }
       if (!guard.valid(cookieValue(req)))
         return json(res, 401, { code: 'session', error: 'Enter the setup code again' });
+      origin = requestOrigin;
       if (req.method === 'POST' && route === '/setup/api/finish') return await finish(req, res, requestOrigin);
       const action = api[req.method + ' ' + route];
       if (!action) return json(res, 404, { error: 'Not found' });
       const data = req.method === 'POST' ? await body(req) : {};
-      origin = requestOrigin;
       json(res, 200, (await action(data, req)) || {});
     } catch (error) {
       if (res.headersSent) return res.end();
@@ -362,6 +373,7 @@ async function startSetup({
     (net.isIPv6(localHost) ? '[' + localHost + ']' : localHost) +
     ':' +
     address().port;
+  origin = shown;
   guard = createSetupGuard({
     announce(code) {
       log.info(`No config file at ${configFile}: setup mode.`);
@@ -383,6 +395,7 @@ async function startSetup({
     close() {
       clearInterval(sweep);
       wizard.close();
+      files.close();
       return new Promise(resolve => {
         if (!server.listening) return resolve(undefined);
         server.close(() => resolve(undefined));

@@ -116,7 +116,10 @@ function createSessions({ config, logger, registry, accounts, access, oauthFetch
           return login;
         })()
           .catch(() => {
-            throw Object.assign(new Error('Discord login renewal temporarily unavailable'), { status: 503 });
+            throw Object.assign(new Error('Discord login renewal temporarily unavailable'), {
+              status: 503,
+              code: 'DISCORD_RENEWAL_UNAVAILABLE',
+            });
           })
           .finally(() => renewals.delete(id));
         renewals.set(id, renewal);
@@ -149,14 +152,17 @@ function createSessions({ config, logger, registry, accounts, access, oauthFetch
     };
   }
   async function body(req, limit = 4096) {
-    if (!req.headers['content-type']?.startsWith('application/json')) throw new Error('JSON required');
+    if (!req.headers['content-type']?.startsWith('application/json'))
+      throw Object.assign(new Error('JSON required'), { status: 400, expose: true });
     let text = '';
     for await (const chunk of req) {
       text += chunk;
-      if (Buffer.byteLength(text) > limit) throw new Error('Body too large');
+      if (Buffer.byteLength(text) > limit)
+        throw Object.assign(new Error('Body too large'), { status: 413, expose: true });
     }
     const value = JSON.parse(text);
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid body');
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      throw Object.assign(new Error('Invalid body'), { status: 400, expose: true });
     return value;
   }
   async function discordFetch(url, options) {

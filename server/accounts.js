@@ -22,13 +22,15 @@ function privateFile(file) {
   )
     throw new Error('Cannot protect uburoom private files');
 }
-function credentialVault(file) {
+function credentialVault(fileOrKey) {
   let key;
-  if (file) {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    if (!fs.existsSync(file)) fs.writeFileSync(file, randomBytes(32), { flag: 'wx', mode: 0o600 });
-    privateFile(file);
-    key = fs.readFileSync(file);
+  if (Buffer.isBuffer(fileOrKey)) {
+    key = fileOrKey;
+  } else if (fileOrKey) {
+    fs.mkdirSync(path.dirname(fileOrKey), { recursive: true });
+    if (!fs.existsSync(fileOrKey)) fs.writeFileSync(fileOrKey, randomBytes(32), { flag: 'wx', mode: 0o600 });
+    privateFile(fileOrKey);
+    key = fs.readFileSync(fileOrKey);
   } else key = randomBytes(32);
   if (key.length !== 32) throw new Error('Invalid uburoom credential encryption key');
   return {
@@ -64,6 +66,32 @@ function displayName(value) {
   return name;
 }
 
+/**
+ * Read-only authentication of the key canary and every stored credential and OAuth envelope.
+ * Throws if any encrypted record cannot be authenticated with `vault`.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {ReturnType<typeof credentialVault>} vault
+ * @returns {{hasCanary: boolean}}
+ */
+function authenticateDatabaseEnvelopes(db, vault) {
+  const open = value => {
+    const envelope = JSON.parse(value);
+    if (envelope?.encrypted !== 1) throw new Error('Invalid encrypted record');
+    return vault.open(envelope);
+  };
+  const held = db.prepare("SELECT value FROM meta WHERE key='credentialKeyCanary'").get();
+  if (held && open(held.value) !== 'uburoom-credential-key-v1') throw new Error('Invalid key canary');
+  for (const row of db.prepare('SELECT value FROM credentials').all()) open(row.value);
+  for (const row of db.prepare('SELECT record FROM browser_logins').all()) {
+    const record = JSON.parse(row.record);
+    if (record.oauth) {
+      if (record.oauth.encrypted !== 1) throw new Error('Invalid encrypted OAuth record');
+      vault.open(record.oauth);
+    }
+  }
+  return { hasCanary: !!held };
+}
+
 class Accounts {
   constructor(file, vault) {
     if (file) fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -72,22 +100,8 @@ class Accounts {
       // Authenticate all durable envelopes before startup sweeps, context changes
       // or retention can discard the only remaining proof of the original key.
       try {
-        const open = value => {
-          const envelope = JSON.parse(value);
-          if (envelope?.encrypted !== 1) throw new Error('Invalid encrypted record');
-          return vault.open(envelope);
-        };
-        const held = db.prepare("SELECT value FROM meta WHERE key='credentialKeyCanary'").get();
-        if (held && open(held.value) !== 'uburoom-credential-key-v1') throw new Error('Invalid key canary');
-        for (const row of db.prepare('SELECT value FROM credentials').all()) open(row.value);
-        for (const row of db.prepare('SELECT record FROM browser_logins').all()) {
-          const record = JSON.parse(row.record);
-          if (record.oauth) {
-            if (record.oauth.encrypted !== 1) throw new Error('Invalid encrypted OAuth record');
-            vault.open(record.oauth);
-          }
-        }
-        if (!held) canary = JSON.stringify(vault.seal('uburoom-credential-key-v1'));
+        const { hasCanary } = authenticateDatabaseEnvelopes(db, vault);
+        if (!hasCanary) canary = JSON.stringify(vault.seal('uburoom-credential-key-v1'));
       } catch {
         throw new Error(
           'Cannot authenticate stored credentials; restore the original credential key and a matched database before starting',
@@ -390,4 +404,4 @@ class Accounts {
     return this.persistence.close();
   }
 }
-module.exports = { Accounts, credentialVault, privateFile, displayName };
+module.exports = { Accounts, credentialVault, authenticateDatabaseEnvelopes, privateFile, displayName };

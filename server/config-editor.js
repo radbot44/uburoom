@@ -251,6 +251,37 @@ function outputChanges(changes, transcoding) {
   ];
   return { ...rest, 'transcoding.outputs': [...kept, ...added] };
 }
+function serializeYaml(doc, source = '', options = {}) {
+  let next = doc.toString({ lineWidth: 0, ...options });
+  if (source.startsWith('\uFEFF')) next = '\uFEFF' + next;
+  if (source.includes('\r\n')) next = next.replace(/\r?\n/g, '\r\n');
+  return next;
+}
+
+/** Ensures at most `keep` routine backup folders remain beside the config file; preserved recovery backups stay untouched. */
+async function pruneBackups(file, currentDirectory, keep = 3) {
+  const parent = path.dirname(file);
+  const entries = await fs.readdir(parent, { withFileTypes: true }).catch(() => []);
+  const candidates = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('.uburoom-config-')) continue;
+    const dir = path.join(parent, entry.name);
+    const contents = new Set(await fs.readdir(dir).catch(() => []));
+    if (!contents.has('original.yaml') || contents.has('replacement.yaml') || contents.has('.preserve')) continue;
+    const stat = await fs.lstat(path.join(dir, 'original.yaml'), { bigint: true }).catch(() => undefined);
+    if (!stat) continue;
+    candidates.push({ dir, isCurrent: dir === currentDirectory, mtimeNs: stat.mtimeNs, name: entry.name });
+  }
+  candidates.sort((a, b) => {
+    if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
+    if (b.mtimeNs !== a.mtimeNs) return b.mtimeNs > a.mtimeNs ? 1 : -1;
+    return b.name.localeCompare(a.name);
+  });
+  for (const stale of candidates.slice(keep)) {
+    await fs.rm(stale.dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 function proposed(original, requested, file) {
   const current = validate(original, file);
   const changes = outputChanges(requested, current.transcoding);
@@ -261,7 +292,12 @@ function proposed(original, requested, file) {
   )
     changes['secrets.server_password'] = '';
   const source = original.toString('utf8');
-  const doc = YAML.parseDocument(source, { prettyErrors: false, uniqueKeys: true, version: '1.2', stringKeys: true });
+  const doc = YAML.parseDocument(source.replace(/^\uFEFF/, ''), {
+    prettyErrors: false,
+    uniqueKeys: true,
+    version: '1.2',
+    stringKeys: true,
+  });
   for (const [key, value] of Object.entries(changes)) {
     const parts = key.split('.'),
       old = doc.getIn(parts, true),
@@ -291,10 +327,7 @@ function proposed(original, requested, file) {
     }
     doc.setIn(parts, node);
   }
-  let next = doc.toString({ lineWidth: 0 });
-  if (source.startsWith('\uFEFF')) next = '\uFEFF' + next;
-  if (source.includes('\r\n')) next = next.replace(/\n/g, '\r\n');
-  const bytes = Buffer.from(next, 'utf8');
+  const bytes = Buffer.from(serializeYaml(doc, source), 'utf8');
   validate(bytes, file);
   return bytes;
 }
@@ -363,7 +396,12 @@ function fresh(doc, value, like) {
  */
 function proposedSources(original, change, file) {
   const source = original.toString('utf8');
-  const doc = YAML.parseDocument(source, { prettyErrors: false, uniqueKeys: true, version: '1.2', stringKeys: true });
+  const doc = YAML.parseDocument(source.replace(/^\uFEFF/, ''), {
+    prettyErrors: false,
+    uniqueKeys: true,
+    version: '1.2',
+    stringKeys: true,
+  });
   let list = doc.get('sources', true);
   if (list !== undefined && !YAML.isSeq(list)) throw failure('CONFIG_INVALID');
   const index = () => {
@@ -427,12 +465,10 @@ function proposedSources(original, change, file) {
       if (at >= 0) members.items.splice(at, 1);
     }
   } else throw failure('CONFIG_INVALID');
-  let next = doc.toString({ lineWidth: 0, flowCollectionPadding: false });
-  if (source.startsWith('﻿')) next = '﻿' + next;
-  if (source.includes('\r\n')) next = next.replace(/\n/g, '\r\n');
+  const next = serializeYaml(doc, source, { flowCollectionPadding: false });
   const bytes = Buffer.from(next, 'utf8');
   try {
-    normalizeConfig(parseConfig(next.replace(/^﻿/, '')), { base: path.dirname(file), discoverTools: false });
+    normalizeConfig(parseConfig(next), { base: path.dirname(file), discoverTools: false });
   } catch (error) {
     throw Object.assign(failure('SOURCE_INVALID'), { reason: String(error?.message || '').slice(0, 300) });
   }
@@ -501,9 +537,19 @@ function createConfigFile(selectedPath, bytes) {
           await fs.link(staged, file);
         } catch (error) {
           if (error.code === 'EEXIST') throw failure('CONFIG_EXISTS');
-          // No hard links here: an exclusive create still never replaces anything.
-          await writePrivate(file, bytes);
-          await protectFile(file);
+          if (!['ENOSYS', 'EPERM', 'ENOTSUP'].includes(error.code)) throw error;
+          // No hard links here: lock ACLs on an empty exclusive file before writing secrets.
+          const handle = await fs.open(file, 'wx', 0o600);
+          try {
+            await protectFile(file);
+            await handle.writeFile(bytes);
+            await handle.sync();
+          } catch (writeError) {
+            await handle.close().catch(() => {});
+            await fs.unlink(file).catch(() => {});
+            throw writeError;
+          }
+          await handle.close();
         }
         if (process.platform !== 'win32') {
           const handle = await fs.open(path.dirname(file), 'r');
@@ -609,7 +655,7 @@ function createConfigEditor(selectedPath = configPath()) {
      * Saves one change to `sources:` (see `proposedSources`), with the same revision check, backup,
      * private write and authorization recheck as `save`. Applies after a restart.
      */
-    saveSources(request, { beforeReplace, transform } = {}) {
+    saveSources(request, { beforeReplace, transform, preserveBackup = false } = {}) {
       const authorize = () => {
         if (beforeReplace && beforeReplace() !== true) throw failure('CONFIG_AUTHORIZATION');
       };
@@ -617,14 +663,14 @@ function createConfigEditor(selectedPath = configPath()) {
       if (typeof expected !== 'string' || !/^[a-f0-9]{64}$/.test(expected) || !change || typeof change !== 'object')
         return Promise.reject(failure('CONFIG_INVALID'));
       const copy = { ...structuredClone(change), ...(transform ? { transform } : {}) };
-      return commit(expected, authorize, bytes => proposedSources(bytes, copy, file));
+      return commit(expected, authorize, bytes => proposedSources(bytes, copy, file), { preserveBackup });
     },
   };
   /**
    * Replaces the file with what `build` makes of its current bytes, if it is still at `expected`:
    * a protected backup first, a private replacement beside it, then one rename.
    */
-  function commit(expected, authorize, build) {
+  function commit(expected, authorize, build, { preserveBackup = false } = {}) {
     return serialize(() =>
       sanitized(async () => {
         authorize();
@@ -636,6 +682,7 @@ function createConfigEditor(selectedPath = configPath()) {
         const backupPath = path.join(directory, 'original.yaml'),
           replacement = path.join(directory, 'replacement.yaml');
         let backupReady = false;
+        let preserveDir = preserveBackup;
         try {
           // The directory is empty until protected; never put secrets in an
           // inherited/public Windows directory even briefly.
@@ -666,14 +713,29 @@ function createConfigEditor(selectedPath = configPath()) {
           // fails closed. External editors can still race this check/rename.
           authorize();
           await fs.rename(replacement, file);
+          if (preserveDir) {
+            await fs.writeFile(path.join(directory, '.preserve'), '1', { flag: 'wx' }).catch(() => {});
+          }
+          await pruneBackups(file, directory);
           return { source: 'file', revision: nextRevision, restartRequired: true, backupPath };
+        } catch (error) {
+          if (error.code === 'CONFIG_CONFLICT' || error.code === 'CONFIG_AUTHORIZATION') {
+            backupReady = false;
+            preserveDir = false;
+          } else if (backupReady) {
+            preserveDir = true;
+          }
+          throw error;
         } finally {
           await fs.unlink(replacement).catch(() => {});
           if (!backupReady) await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+          else if (preserveDir) {
+            await fs.writeFile(path.join(directory, '.preserve'), '1', { flag: 'wx' }).catch(() => {});
+          }
         }
       }),
     );
   }
 }
 
-module.exports = { createConfigEditor, createConfigFile };
+module.exports = { createConfigEditor, createConfigFile, serializeYaml };

@@ -23,8 +23,13 @@ test('redact masks sensitive tokens, passwords, cookies, binary views, and cycli
   assert.equal(redact('Cookie: uburoom=abcdef1234567890; other=ok'), 'Cookie: uburoom=[REDACTED]; other=ok');
 
   assert.equal(
-    redact('Cookie: uburoom_session=secret123; uburoom_csrf=csrf456; uburoom=main789; other=fine'),
-    'Cookie: uburoom_session=[REDACTED]; uburoom_csrf=[REDACTED]; uburoom=[REDACTED]; other=fine',
+    redact('Cookie: uburoom_session=secret123; __Host-uburoom_oauth=oauth1; __Host-uburoom=main789; other=fine'),
+    'Cookie: uburoom_session=[REDACTED]; __Host-uburoom_oauth=[REDACTED]; __Host-uburoom=[REDACTED]; other=fine',
+  );
+
+  assert.equal(
+    redact('https://jf.example/Items?api_key=jfsecret1&X-Emby-Token=jfsecret2&X-MediaBrowser-Token=jfsecret3'),
+    'https://jf.example/Items?api_key=[REDACTED]&X-Emby-Token=[REDACTED]&X-MediaBrowser-Token=[REDACTED]',
   );
 
   assert.equal(redact('Authorization: Bearer my_jwt_token_here!'), 'Authorization: Bearer [REDACTED]!');

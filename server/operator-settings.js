@@ -1,24 +1,11 @@
 'use strict';
+const { CAPABILITIES } = require('../shared/sync/policy.mjs');
 
 // Deliberate allowlist of nonprivate running settings. Never spread config or
 // its nested objects here: future configuration fields are private by default.
 function runningSettings(config) {
   const select = (source, keys) => Object.fromEntries(keys.map(key => [key, source?.[key]]));
-  const permissions = source =>
-    select(source, [
-      'playPause',
-      'seek',
-      'chooseMedia',
-      'addQueue',
-      'editQueue',
-      'autoplay',
-      'roomSettings',
-      'closeRoom',
-      'deleteRoom',
-      'continueWithoutHost',
-      'addHosts',
-      'kickParticipants',
-    ]);
+  const permissions = source => select(source, CAPABILITIES);
   const transcoding = config.transcoding;
   return {
     source: 'running',

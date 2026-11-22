@@ -12,7 +12,7 @@ Uburoom's account, administration, and access architecture enforces layered auth
 | Admission | `server/admission/` only: any one entry rule (Discord server, source members, server password, uburoom accounts, room invite) and verified Activity context |
 | Media | Admitted: every library of every source, through the source's own credential |
 | Room roles | Viewer, host, creator and explicit Admin override; none changes media access |
-| Server operator | Verified Discord or Plex subject explicitly selected in YAML; independent of room roles and admission |
+| Server operator | Verified Discord, Plex, uburoom or Jellyfin identity explicitly selected in YAML; independent of room roles and admission |
 | Reporting | Actual verified Plex subject with server access, independently of the source/encoder credential |
 
 The owner picks entry rules in `access:`. Any matching rule admits a viewer. The `discord_server` rule verifies membership in an eligible server the bot joined. Operators can exclude servers through Server settings → Access. A Discord Activity also verifies its own instance and voice channel through Discord and the bot.
@@ -158,7 +158,7 @@ Configuration options for invites and guests are in [self-hosting](self-hosting.
 
 ### Server tiers and trusted members
 
-Server-wide standing is organized into four tiers: operator > admins > trusted > members (`RoomPolicy.serverTier`). The trusted tier sits between admins and members, configured via `rooms.trusted_discord_ids`, `rooms.trusted_plex_ids`, and `rooms.trusted_discord_role_ids`. It matches only verified provider identities and grants no Admin mode, room rights or server admission; its designated function is qualifying users to allow guests under `guests.issuers`.
+Server-wide standing is organized into four tiers: operator > admins > trusted > members (`RoomPolicy.serverTier`). Admins are configured via `rooms.admin_identities` (`'discord:<id>'`, `'plex:<id>'`, `'uburoom:<subject>'`, `'jellyfin:<server id>:<user id>'`) as well as `rooms.admin_discord_ids`, `rooms.admin_plex_ids`, and `rooms.admin_discord_role_ids`. The trusted tier sits between admins and members, configured via `rooms.trusted_identities`, `rooms.trusted_discord_ids`, `rooms.trusted_plex_ids`, and `rooms.trusted_discord_role_ids`. Both match only verified identities and trusted grants no Admin mode, room rights or server admission; its designated function is qualifying users to allow guests under `guests.issuers`. Fixed single-room leadership (`rooms.single_room: true`) supports `rooms.single_room_leader` (or `operator.identities` when `rooms.single_room_leader` / `rooms.single_room_leader_plex_id` / `discord.owner_id` are unset).
 
 ### Room invite architecture
 

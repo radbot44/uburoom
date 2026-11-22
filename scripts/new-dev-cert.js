@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 'use strict';
 const path = require('node:path');
+const net = require('node:net');
 const { writeCertificate } = require('../server/local-tls');
 
 const ROOT = path.join(__dirname, '..');
 
 /** The development certificate in `certs/` (or `options.directory`), made by server/local-tls.js. */
 function generateDevCert(options = {}) {
+  const names = (options.dnsNames || ['localhost']).map(name => String(name).replace(/^\[|\]$/g, '')).filter(Boolean);
+  const dnsNames = names.filter(name => !net.isIP(name));
+  const ipAddresses = [...names.filter(name => net.isIP(name)), ...(options.ipAddresses || [])];
   return writeCertificate({
     directory: path.resolve(ROOT, options.directory || 'certs'),
-    dnsNames: options.dnsNames || ['localhost'],
+    dnsNames,
+    ipAddresses,
     ifMissing: !!options.ifMissing,
     commonName: 'uburoom LAN development',
     days: 365,

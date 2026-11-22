@@ -5,7 +5,8 @@ const path = require('node:path');
 const net = require('node:net');
 const crypto = require('node:crypto');
 const cp = require('node:child_process');
-const { ROOT, parseConfig, normalizeConfig } = require('../server/config');
+const { configPath, parseConfig, normalizeConfig } = require('../server/config');
+const { credentialVault, authenticateDatabaseEnvelopes } = require('../server/accounts');
 const { findOnPath } = require('../server/media-tools');
 
 /**
@@ -366,31 +367,13 @@ function checkStorageAndKey(config) {
           }
         }
 
-        // When both a schema-valid dbFile and 32-byte keyFile exist, authenticate envelopes
+        // When both a schema-valid dbFile and 32-byte keyFile exist, authenticate envelopes via shared vault helper
         if (schemaValid && fs.existsSync(keyFile)) {
           try {
             const keyStats = fs.statSync(keyFile);
             if (keyStats.size === 32) {
               const keyRaw = fs.readFileSync(keyFile);
-              const openEnvelope = env => {
-                if (!env?.encrypted) return;
-                const decipher = crypto.createDecipheriv('aes-256-gcm', keyRaw, Buffer.from(env.iv, 'base64'));
-                decipher.setAuthTag(Buffer.from(env.tag, 'base64'));
-                return Buffer.concat([decipher.update(Buffer.from(env.data, 'base64')), decipher.final()]);
-              };
-
-              const credRows = db.prepare('SELECT value FROM credentials').all();
-              for (const row of credRows) {
-                const env = JSON.parse(row.value);
-                openEnvelope(env);
-              }
-              const loginRows = db.prepare('SELECT record FROM browser_logins').all();
-              for (const row of loginRows) {
-                const rec = JSON.parse(row.record);
-                if (rec?.oauth?.encrypted === 1) {
-                  openEnvelope(rec.oauth);
-                }
-              }
+              authenticateDatabaseEnvelopes(db, credentialVault(keyRaw));
               checks.push({
                 category: 'Storage & Keys',
                 name: 'Credential key match',
@@ -634,6 +617,29 @@ function checkTlsCertificates(config) {
         remediation: 'Ensure server.tls_key points to an unencrypted PEM private key.',
       });
     }
+
+    if (config?.publicUrl) {
+      try {
+        const publicHost = new URL(config.publicUrl).hostname.replace(/^\[(.*)\]$/, '$1');
+        if (publicHost) {
+          const matched = net.isIP(publicHost) ? cert.checkIP(publicHost) : cert.checkHost(publicHost);
+          checks.push({
+            category: 'TLS / Certificates',
+            name: 'Public URL certificate coverage',
+            status: matched ? 'pass' : 'warn',
+            message: matched
+              ? `Certificate covers public URL host (${publicHost})`
+              : `Certificate SANs do not cover server.public_url host (${publicHost})`,
+            ...(matched
+              ? {}
+              : {
+                  remediation:
+                    'Issue a TLS certificate whose SAN covers server.public_url (normal only when a proxy or tunnel terminates TLS).',
+                }),
+          });
+        }
+      } catch {}
+    }
   } catch (err) {
     checks.push({
       category: 'TLS / Certificates',
@@ -688,64 +694,106 @@ function checkMediaTools(config) {
         message: `${firstLine} (${ffmpeg})`,
       });
 
-      // Codecs / Encoders probe
-      try {
-        const encodersOutput = cp.execFileSync(ffmpeg, ['-encoders'], {
-          timeout: 4000,
-          encoding: 'utf8',
-          windowsHide: true,
-          stdio: ['ignore', 'pipe', 'ignore'],
-        });
-        const hasH264 = /libx264|h264_qsv|h264_nvenc|h264_amf/.test(encodersOutput);
-        const hasAac = /aac/.test(encodersOutput);
-        const hasOpus = /libopus|opus/.test(encodersOutput);
-        const hasQsv = /qsv/.test(encodersOutput);
-        const hasNvenc = /nvenc/.test(encodersOutput);
-        if (config.transcoding?.hardwareDecode !== false) {
-          const accels = cp.execFileSync(ffmpeg, ['-hide_banner', '-hwaccels'], {
+      // Codecs / Encoders probe for configured WebM conversion
+      if (config.transcoding?.uburoom && config.transcoding?.policy !== 'disabled') {
+        try {
+          const encodersOutput = cp.execFileSync(ffmpeg, ['-encoders'], {
             timeout: 4000,
             encoding: 'utf8',
             windowsHide: true,
             stdio: ['ignore', 'pipe', 'ignore'],
           });
-          const found = ['cuda', 'd3d11va', 'vaapi', 'videotoolbox'].filter(name =>
-            new RegExp(`^${name}$`, 'm').test(accels.replace(/\r/g, '')),
-          );
-          checks.push({
-            category: 'Media Tools',
-            name: 'Hardware decode',
-            status: found.length ? 'pass' : 'warn',
-            message: found.length
-              ? `FFmpeg offers ${found.join(', ')}. uburoom uses the CPU when a source or device fails.`
-              : 'FFmpeg offers no supported decode acceleration; conversion uses the CPU.',
-            ...(found.length
-              ? {}
-              : {
-                  remediation:
-                    'Use an FFmpeg build with hardware acceleration, or set transcoding.hardware_decode to false.',
-                }),
-          });
-        }
+          const hasToken = token => new RegExp(`(?<!\\S)${token}(?!\\S)`).test(encodersOutput);
+          const formatProbes = {
+            av1: {
+              label: 'AV1',
+              sw: () => hasToken('libsvtav1'),
+              hw: () => hasToken('av1_qsv') || hasToken('av1_nvenc') || hasToken('av1_amf') || hasToken('av1_vaapi'),
+            },
+            vp9: {
+              label: 'VP9',
+              sw: () => hasToken('libvpx-vp9'),
+              hw: () => hasToken('vp9_qsv') || hasToken('vp9_vaapi'),
+            },
+            vp8: {
+              label: 'VP8',
+              sw: () => hasToken('libvpx'),
+              hw: () => hasToken('vp8_vaapi'),
+            },
+          };
+          const configuredFormats = config.transcoding.formats?.length ? config.transcoding.formats : ['av1'];
+          const encoderChoice = config.transcoding.encoder || 'auto';
+          const hardwareOnly = encoderChoice === 'hardware' || encoderChoice === 'qsv' || encoderChoice === 'nvenc';
+          const softwareOnly = encoderChoice === 'software';
+          const availableLabels = [];
+          const missingLabels = [];
+          for (const fmt of configuredFormats) {
+            const probe = formatProbes[fmt];
+            if (!probe) continue;
+            const ok = softwareOnly ? probe.sw() : hardwareOnly ? probe.hw() : probe.sw() || probe.hw();
+            if (ok) availableLabels.push(probe.label);
+            else missingLabels.push(probe.label);
+          }
+          const hasOpus = hasToken('libopus');
+          if (!hasOpus) missingLabels.push('Opus (libopus)');
+          const hasQsv = hasToken('av1_qsv') || hasToken('vp9_qsv');
+          const hasNvenc = hasToken('av1_nvenc');
+          const hasAmf = hasToken('av1_amf');
+          const hasVaapi = hasToken('av1_vaapi') || hasToken('vp9_vaapi') || hasToken('vp8_vaapi');
+          if (config.transcoding?.hardwareDecode !== false) {
+            const accels = cp.execFileSync(ffmpeg, ['-hide_banner', '-hwaccels'], {
+              timeout: 4000,
+              encoding: 'utf8',
+              windowsHide: true,
+              stdio: ['ignore', 'pipe', 'ignore'],
+            });
+            const found = ['cuda', 'd3d11va', 'vaapi', 'videotoolbox'].filter(name =>
+              new RegExp(`^${name}$`, 'm').test(accels.replace(/\r/g, '')),
+            );
+            checks.push({
+              category: 'Media Tools',
+              name: 'Hardware decode',
+              status: found.length ? 'pass' : 'warn',
+              message: found.length
+                ? `FFmpeg offers ${found.join(', ')}. uburoom uses the CPU when a source or device fails.`
+                : 'FFmpeg offers no supported decode acceleration; conversion uses the CPU.',
+              ...(found.length
+                ? {}
+                : {
+                    remediation:
+                      'Use an FFmpeg build with hardware acceleration, or set transcoding.hardware_decode to false.',
+                  }),
+            });
+          }
 
-        const hw = [hasQsv ? 'Intel QSV' : '', hasNvenc ? 'NVIDIA NVENC' : ''].filter(Boolean).join(', ');
+          const hw = [
+            hasQsv ? 'Intel QSV' : '',
+            hasNvenc ? 'NVIDIA NVENC' : '',
+            hasAmf ? 'AMD AMF' : '',
+            hasVaapi ? 'VA-API' : '',
+          ]
+            .filter(Boolean)
+            .join(', ');
 
-        if (hasH264 && hasAac && hasOpus) {
-          checks.push({
-            category: 'Media Tools',
-            name: 'Required encoders',
-            status: 'pass',
-            message: `H.264, AAC, and Opus encoders available.${hw ? ` Hardware acceleration: ${hw}.` : ' (Software encoding available)'}`,
-          });
-        } else {
-          checks.push({
-            category: 'Media Tools',
-            name: 'Required encoders',
-            status: 'warn',
-            message: `Some encoders missing (H.264: ${hasH264}, AAC: ${hasAac}, Opus: ${hasOpus}).`,
-            remediation: 'Use a full FFmpeg build that includes libx264 and libopus.',
-          });
-        }
-      } catch {}
+          if (missingLabels.length === 0) {
+            checks.push({
+              category: 'Media Tools',
+              name: 'Required encoders',
+              status: 'pass',
+              message: `Configured WebM encoders (${[...availableLabels, 'Opus'].join(', ')}) available.${hw ? ` Hardware acceleration: ${hw}.` : ' (Software encoding available)'}`,
+            });
+          } else {
+            checks.push({
+              category: 'Media Tools',
+              name: 'Required encoders',
+              status: 'warn',
+              message: `Missing configured WebM encoders: ${missingLabels.join(', ')}.`,
+              remediation:
+                'Use a full FFmpeg build with libsvtav1, libvpx-vp9, libvpx, and libopus (or hardware WebM encoders), or adjust transcoding.formats.',
+            });
+          }
+        } catch {}
+      }
     } catch (err) {
       checks.push({
         category: 'Media Tools',
@@ -848,8 +896,9 @@ function checkGuestPasses(config) {
   const checks = [];
   const guests = config.guests;
   if (!guests?.enabled) return checks;
-  const trusted = config.trustedMembers || { discord: [], plex: [], discordRoles: [] };
-  const anyTrusted = trusted.discord.length + trusted.plex.length + trusted.discordRoles.length > 0;
+  const trusted = config.trustedMembers || { discord: [], plex: [], discordRoles: [], identities: [] };
+  const anyTrusted =
+    trusted.discord.length + trusted.plex.length + trusted.discordRoles.length + (trusted.identities?.length || 0) > 0;
   checks.push({
     category: 'Access',
     name: 'Guests',
@@ -863,7 +912,8 @@ function checkGuestPasses(config) {
       status: 'warn',
       message:
         'guests.issuers is trusted but no trusted members are listed, so only admins and the operator can turn on guests.',
-      remediation: 'Add rooms.trusted_discord_ids, rooms.trusted_plex_ids or rooms.trusted_discord_role_ids.',
+      remediation:
+        'Add rooms.trusted_identities, rooms.trusted_discord_ids, rooms.trusted_plex_ids or rooms.trusted_discord_role_ids.',
     });
   return checks;
 }
@@ -899,8 +949,9 @@ function checkAccess(config) {
 
 function checkEvents(config) {
   const minimum = config.events?.schedulers || 'trusted';
-  const trusted = config.trustedMembers || { discord: [], plex: [], discordRoles: [] };
-  const anyTrusted = trusted.discord.length + trusted.plex.length + trusted.discordRoles.length > 0;
+  const trusted = config.trustedMembers || { discord: [], plex: [], discordRoles: [], identities: [] };
+  const anyTrusted =
+    trusted.discord.length + trusted.plex.length + trusted.discordRoles.length + (trusted.identities?.length || 0) > 0;
   const who =
     minimum === 'trusted' && !anyTrusted
       ? 'admins and the operator (no trusted members are listed)'
@@ -942,15 +993,7 @@ async function checkSources(config) {
 async function runDoctor(options = {}) {
   const args = options.args || process.argv.slice(2);
   const jsonMode = args.includes('--json');
-  let customConfig = null;
-
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--config' || args[i].startsWith('--config=')) {
-      customConfig = args[i] === '--config' ? args[++i] : args[i].slice(9);
-    }
-  }
-
-  const selectedFile = customConfig ? path.resolve(customConfig) : path.resolve(ROOT, 'config.yaml');
+  const selectedFile = configPath(args);
   /** @type {DoctorCheck[]} */
   const allChecks = [];
 

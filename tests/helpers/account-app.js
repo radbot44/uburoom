@@ -5,14 +5,28 @@ const fs = require('node:fs'),
   path = require('node:path'),
   https = require('node:https');
 const { createApp } = require('../../server/app');
+const { createCertificate } = require('../../server/local-tls');
 const { accountFixture } = require('../../scripts/account-fixture');
 
 async function fixture(t, deliveryFetch, overrides = {}, services = {}) {
-  const provider = accountFixture(),
-    cert = fs.readFileSync(path.join(__dirname, '../../certs/server-cert.pem'));
+  const provider = accountFixture();
+  const certFile = path.join(__dirname, '../../certs/server-cert.pem');
+  const keyFile = path.join(__dirname, '../../certs/server-key.pem');
+  let cert = overrides.cert;
+  let key = overrides.key;
+  if (!cert || !key) {
+    if (fs.existsSync(certFile) && fs.existsSync(keyFile)) {
+      cert ||= fs.readFileSync(certFile);
+      key ||= fs.readFileSync(keyFile);
+    } else {
+      const generated = createCertificate();
+      cert ||= Buffer.from(generated.certPem);
+      key ||= Buffer.from(generated.keyPem);
+    }
+  }
   const config = {
     cert,
-    key: fs.readFileSync(path.join(__dirname, '../../certs/server-key.pem')),
+    key,
     publicUrl: 'https://localhost:6768',
     ownerId: provider.subjects.host,
     clientId: '100000000000000010',

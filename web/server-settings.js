@@ -4,6 +4,7 @@ import * as uburoomDialogs from './watch-dialogs.js';
 import * as uburoomIcons from './icons.js';
 import * as uburoomServerAccounts from './server-settings-accounts.js';
 import * as uburoomServerSources from './server-settings-sources.js';
+import { CAPABILITIES, VIEWER_BLOCKED } from '../shared/sync/policy.mjs';
 
 function mount({ request, trigger }) {
   const popups = uburoomDialogs,
@@ -146,17 +147,9 @@ function mount({ request, trigger }) {
     if (section !== key) content.scrollTop = 0;
     if (key === 'accounts' && section !== key && dialog.open) void accountsPanel.load();
     if (key === 'sources' && section !== key && dialog.open) void sourcesPanel.load();
-    if (
-      key !== 'accounts' &&
-      key !== 'sources' &&
-      section !== key &&
-      dialog.open &&
-      sourcesDirty &&
-      !dirty() &&
-      !busy
-    ) {
+    if (key !== 'accounts' && key !== 'sources' && section !== key && dialog.open && sourcesDirty && !busy) {
       sourcesDirty = false;
-      void load();
+      void load(dirty());
     }
     section = key;
     // Accounts and Sources do not depend on the saved settings, so they show even before (or without) them.
@@ -250,17 +243,13 @@ function mount({ request, trigger }) {
   });
   const sourcesPanel = uburoomServerSources.mount(panels.sources, {
     request,
-    onSaved: () => {
+    onSaved: nextRevision => {
       sourcesDirty = true;
+      if (nextRevision) revision = nextRevision;
     },
   });
   node('h3', panels.access, 'Who can sign in');
-  node(
-    'p',
-    panels.access,
-    'Anyone matching at least one enabled method can sign in and watch every library.',
-    'hint',
-  );
+  node('p', panels.access, 'Anyone matching at least one enabled method can sign in and watch every library.', 'hint');
   const sourceMembersKey = 'access.source_members';
   labels[sourceMembersKey] = 'Media server members';
   const sourceMemberRows = node('div', panels.access);
@@ -311,6 +300,7 @@ function mount({ request, trigger }) {
   serverPasswordInput.type = 'password';
   serverPasswordInput.id = 'server-secrets-server_password';
   serverPasswordInput.autocomplete = 'new-password';
+  serverPasswordInput.minLength = 8;
   serverPasswordInput.maxLength = 1024;
   serverPasswordInput.addEventListener('input', () => {
     serverPasswordDraft = serverPasswordInput.value;
@@ -447,13 +437,12 @@ function mount({ request, trigger }) {
     cell.scope = 'col';
     if (text !== 'Permission') cell.dataset.permissionRole = text === 'Host' ? 'host' : 'viewer';
   }
-  const body = node('tbody', table),
-    blocked = ['roomSettings', 'closeRoom', 'deleteRoom', 'addHosts', 'kickParticipants'];
-  for (const [cap, label] of Object.entries({
+  const PERMISSION_LABELS = {
     playPause: 'Play / pause',
     seek: 'Seek',
     chooseMedia: 'Skip / replay',
     addQueue: 'Add to queue',
+    suggestMedia: 'Suggest media',
     editQueue: 'Edit queue',
     autoplay: 'Manage auto-play',
     roomSettings: 'Room settings',
@@ -462,7 +451,11 @@ function mount({ request, trigger }) {
     continueWithoutHost: 'Continue without hosts',
     addHosts: 'Add hosts',
     kickParticipants: 'Kick viewers',
-  })) {
+  };
+  const body = node('tbody', table),
+    blocked = VIEWER_BLOCKED;
+  for (const cap of CAPABILITIES) {
+    const label = PERMISSION_LABELS[cap] || cap;
     const row = node('tr', body),
       heading = node('th', row, label);
     heading.scope = 'row';
@@ -607,28 +600,8 @@ function mount({ request, trigger }) {
             ? key === 'transcoding.qualities'
               ? value.map(pair => pair[0] + 'p / ' + pair[1] + ' Mbps').join(', ')
               : key === 'access.source_members'
-                ? value
-                    .map(id => (accessMeta?.sources || []).find(s => s.id === id)?.name || id)
-                    .join(', ') || 'None'
-                : value
-                    .map(
-                      name =>
-                        ({
-                          playPause: 'Play / pause',
-                          chooseMedia: 'Skip / replay',
-                          addQueue: 'Add to queue',
-                          editQueue: 'Edit queue',
-                          continueWithoutHost: 'Continue without hosts',
-                          roomSettings: 'Room settings',
-                          closeRoom: 'Close room',
-                          deleteRoom: 'Delete room',
-                          addHosts: 'Add hosts',
-                          kickParticipants: 'Kick viewers',
-                          autoplay: 'Manage auto-play',
-                          seek: 'Seek',
-                        })[name] || name.toUpperCase(),
-                    )
-                    .join(', ') || 'None'
+                ? value.map(id => (accessMeta?.sources || []).find(s => s.id === id)?.name || id).join(', ') || 'None'
+                : value.map(name => PERMISSION_LABELS[name] || name.toUpperCase()).join(', ') || 'None'
             : {
                 follow_provider: 'Follow media server settings',
                 override: 'Allow conversion',
@@ -734,6 +707,12 @@ function mount({ request, trigger }) {
       serverPasswordInput.focus();
       return;
     }
+    if (serverPasswordDraft.length > 0 && [...serverPasswordDraft].length < 8) {
+      selectSection('access');
+      error.textContent = 'Server password must contain at least 8 characters.';
+      serverPasswordInput.focus();
+      return;
+    }
     const pairs = draft['transcoding.qualities'];
     if (
       (!draft['transcoding.allow_original'] && !pairs.length) ||
@@ -775,6 +754,7 @@ function mount({ request, trigger }) {
         base = structuredClone(latest.settings);
         draft = structuredClone(base);
         revision = latest.revision;
+        sourcesPanel.setRevision?.(latest.revision);
         render();
       } catch (failure) {
         if (id === generation && dialog.open) {

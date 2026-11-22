@@ -3,10 +3,6 @@
 require('./start')
   .run()
   .catch(error => {
-    const missing = error.code === 'ENOENT';
-    const msg = missing
-      ? 'Missing TLS files. Follow README.md to generate a local development certificate.'
-      : error.message;
-    process.stderr.write(`[uburoom] ${msg}\n`);
+    process.stderr.write(`[uburoom] ${error.message}\n`);
     process.exitCode = 1;
   });

@@ -70,6 +70,6 @@ Post-Stage-2 verification of the `uburoom` browser client (`web/`) against [desi
 
 ## Intentional boundary and remaining open items
 
-- **Codec-test removal boundary:** `#library-codec-test` and `#codec-test-dialog` were removed from `web/` (`web/watch.html`, `web/watch.js`, `web/watch-library.js`, `web/watch/session.js`, `web/styles/dialogs.css`) and [design-guide.md](design-guide.md). Per the Stage 2 client-only change boundary, `server/watch-page.js` and `tests/watch-page.test.js` were left untouched and still retain the server-side reference until a server cleanup change updates them together.
+- **Codec-test removal boundary:** `#library-codec-test` and `#codec-test-dialog` were removed across `web/`, `server/watch-page.js`, `tests/watch-page.test.js`, and [design-guide.md](design-guide.md).
 - **Unexercised conditional dialogs / flows in default fixture:** `#entry-form`, `#guest-join`, and `#invite-code-form` (unauthenticated room join/unlock variants), `#handoff-dialog` (Discord Activity handoff), `#server-settings-dialog` (`#account-server-settings` absent in non-admin fixture state; `hasServerSettingsBtn: false`), and live populated `.library-filter-chip` pills (verified via `min-height: 32px` stylesheet rule and targeted checks, not populated in the minimal Browse fixture).
 - **Open acceptance gates (P7 UI):** Assistive-technology screen-reader traversal, real physical keyboard verification (including Firefox initial-`Tab` `#skip-link` behaviour), physical mobile/Activity layout checks, and owner visual sign-off (`D`).

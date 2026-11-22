@@ -60,12 +60,14 @@ function setupHandoff({ handoff, config, registry, uburoomAccounts, accountRoute
         methods: ['GET', 'HEAD'],
         path: '/auth/setup',
         async handle({ req, res }) {
+          res.setHeader('Referrer-Policy', 'no-referrer');
           files.send(
             req,
             res,
             await files.readAsset(path.join(WEB, 'setup/handoff.html')),
             'text/html; charset=utf-8',
             '/auth/setup',
+            { cacheControl: 'no-store' },
           );
         },
       },

@@ -75,7 +75,7 @@ function createStaticFiles({ config }) {
     if (assetCache.size < 128) assetCache.set(key, data);
     return data;
   }
-  function send(req, res, content, type, key) {
+  function send(req, res, content, type, key, { cacheControl = 'public, no-cache' } = {}) {
     const cacheKey = key || content;
     let entry = staticCache.get(cacheKey);
     if (!entry) {
@@ -92,8 +92,8 @@ function createStaticFiles({ config }) {
       };
       if (staticCache.size < 128) staticCache.set(cacheKey, entry);
     }
-    if (etagMatches(req.headers['if-none-match'], entry.etag)) {
-      res.writeHead(304, { ETag: entry.etag, 'Cache-Control': 'public, no-cache', Vary: 'Accept-Encoding' });
+    if (cacheControl !== 'no-store' && etagMatches(req.headers['if-none-match'], entry.etag)) {
+      res.writeHead(304, { ETag: entry.etag, 'Cache-Control': cacheControl, Vary: 'Accept-Encoding' });
       return res.end();
     }
     const accept = req.headers['accept-encoding'] || '';
@@ -110,7 +110,7 @@ function createStaticFiles({ config }) {
       'Content-Type': type,
       'Content-Length': body.length,
       ETag: entry.etag,
-      'Cache-Control': 'public, no-cache',
+      'Cache-Control': cacheControl,
       Vary: 'Accept-Encoding',
     };
     if (encoding) headers['Content-Encoding'] = encoding;
