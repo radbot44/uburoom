@@ -345,7 +345,7 @@ test('opening the lobby when the current room becomes unavailable renders the la
   let lobbyEventsRefreshed = 0;
   const mounted = mountModule(lobbyMod, {
     document: doc,
-    me: { id: 'u1', durableRooms: true },
+    me: { account: { id: 'u1' }, durableRooms: true },
     config: { singleRoom: false },
     selected: 'room-old',
     knownRooms: [{ id: 'room-old', name: 'Old Room', viewers: 1 }],
@@ -354,7 +354,7 @@ test('opening the lobby when the current room becomes unavailable renders the la
     diagnostics: { record() {} },
     renderEnding: () => {},
     toggleDrawer: () => {},
-    library: { setRoom() {}, setBusy() {} },
+    library: { setCatalog() {}, setRoom() {}, setBusy() {} },
     queue: { clear() {} },
     renderVisibility: () => {},
     renderTransport: () => {},

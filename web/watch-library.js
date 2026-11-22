@@ -2,6 +2,7 @@ import * as uburoomControls from './watch-controls.js';
 import * as uburoomIcons from './icons.js';
 import * as uburoomPopover from './watch-popover.js';
 import { mediaIdentity } from '../shared/room-protocol.mjs';
+import { libraryProgress, libraryProgressKey } from '../shared/library-progress.mjs';
 import { pictureLoader } from './watch-library-pictures.js';
 import { libraryChoices } from './watch-library-choices.js';
 import { homeCards, libraryKey, SYNC_CARD } from '../shared/library-cards.mjs';
@@ -25,6 +26,8 @@ function mount(
     suggestMedia,
     agreeSuggestion,
     initialLibrary,
+    initialAccount,
+    syncRoomLocation,
     isAdmin = () => false,
   },
 ) {
@@ -217,14 +220,20 @@ function mount(
     onScrolledChange: () => choices.fit(),
   });
   let toolsScreen;
-  let room,
+  let catalog,
+    room,
+    roomRead,
+    roomData,
+    roomReadAt = 0,
+    roomChecked = new Set(),
+    roomProgressRows = new Map(),
+    progressFor = libraryProgress(),
     generation = 0,
     controller,
     detailController,
     linkController,
     linkResolveVersion = 0,
-    // Reads that belong to the room being browsed; a room change aborts them.
-    roomController,
+    catalogController,
     timer,
     busy = false,
     playing;
@@ -279,7 +288,7 @@ function mount(
     return { ...context(), title: 'Libraries', kind: 'home' };
   }
   // Browser history holds only opaque indices. Private catalog data remains in
-  // room-scoped memory, and is discarded when viewing eligibility changes.
+  // account-scoped memory, and is discarded when catalog eligibility changes.
   function historyState(index = visitIndex) {
     return { ...history.state, uburoomLibrary: { epoch: historyEpoch, index } };
   }
@@ -327,13 +336,14 @@ function mount(
     scroll.reserveHeight();
   }
   function goHistory(delta) {
-    if (historyMoving || !room || visitIndex + delta < 0 || visitIndex + delta >= visits.length) return;
+    if (historyMoving || !catalog || visitIndex + delta < 0 || visitIndex + delta >= visits.length) return;
     historyMoving = true;
     history.go(delta);
   }
   window.addEventListener('popstate', event => {
     const entry = event.state?.uburoomLibrary;
     if (!historyEpoch) return;
+    syncRoomLocation();
     if (entry?.epoch === historyEpoch && entry.index === -1) {
       history.go(1);
       return;
@@ -350,12 +360,12 @@ function mount(
     visitIndex = entry.index;
     ({ screen, trail } = visits[visitIndex]);
     historyMoving = false;
-    if (!room || !screen) return;
+    if (!catalog || !screen) return;
     restoreScreen();
     if (screen.library !== filterSection) void fetchFacets(screen.library);
   });
   function goHome() {
-    if (!room || screen.kind === 'home') return;
+    if (!catalog || screen.kind === 'home') return;
     prepareNavigation();
     screen = homeContext();
     trail = [];
@@ -402,14 +412,14 @@ function mount(
     const current = screen,
       version = generation;
     requestAnimationFrame(() => {
-      if (room && screen === current && generation === version) scroll.scrollElement().scrollTop = value;
+      if (catalog && screen === current && generation === version) scroll.scrollElement().scrollTop = value;
     });
   }
   const pageObserver = new IntersectionObserver(
     entries => {
       if (
         entries.some(x => x.isIntersecting) &&
-        room &&
+        catalog &&
         screen?.kind !== 'details' &&
         screen?.kind !== 'home' &&
         screen?.nextOffset != null &&
@@ -425,14 +435,11 @@ function mount(
     sentinel.hidden = !screen || ['details', 'home'].includes(screen.kind) || screen.nextOffset == null;
     if (!sentinel.hidden && !screen.loading && !screen.pageError) pageObserver.observe(sentinel);
   }
-  // A library read is made for the room being browsed from, or for the lobby, and
-  // names the server of the library on screen. The front page names none: it lists
-  // every server's libraries.
-  const roomScope = () => (room === 'lobby' ? {} : { room });
+  // Catalog reads use the account; the server applies a guest's room grant automatically.
   // A page opened from outside a library (an episode from the queue, then its show) names its item's server.
   const scoped = (query = {}) => {
     const server = screen?.server;
-    return { ...roomScope(), ...(server ? { server } : {}), ...query };
+    return { ...(server ? { server } : {}), ...query };
   };
   function playable(item) {
     return ['movie', 'episode', 'demo'].includes(item.type);
@@ -471,12 +478,25 @@ function mount(
     doc,
     serverFor: item => item.serverId || screen?.server,
     fetchArt: (server, item, kind, type, signal) => {
-      const params = new URLSearchParams({ ...roomScope(), ...(server ? { server } : {}), item, kind, type });
+      const params = new URLSearchParams({ ...(server ? { server } : {}), item, kind, type });
       return artwork('/api/watch/library/art?' + params, signal);
     },
   });
   const { prefetch: prefetchArt, picture } = pictures;
-  function art(parent, item, landscape = false) {
+  const artItems = new WeakMap(),
+    resumeItems = new WeakMap();
+  function patchProgress(box, item, position) {
+    let track = box.querySelector('.library-progress');
+    if (position > 0 && item.duration > 0) {
+      if (!track) {
+        track = node('div', box, undefined, 'library-progress');
+        node('div', track, undefined, 'library-progress-fill');
+      }
+      const width = Math.min(100, (position / item.duration) * 100).toFixed(1) + '%';
+      if (track.firstElementChild.style.width !== width) track.firstElementChild.style.width = width;
+    } else track?.remove();
+  }
+  function art(parent, item, landscape = false, projectRoom = true) {
     const box = node('div', parent, undefined, 'library-art' + (landscape ? ' landscape' : ''));
     const fallback = node('span', box, undefined, 'library-art-fallback');
     fallback.append(
@@ -487,12 +507,8 @@ function mount(
     );
     node('span', fallback, item.title);
     if (landscape ? item.hasLandscape : item.hasPoster) picture(box, item, landscape ? 'landscape' : 'poster');
-    if (item.viewOffset > 0 && item.duration > 0) {
-      const pct = Math.min(100, Math.max(0, (item.viewOffset / item.duration) * 100));
-      const track = node('div', box, undefined, 'library-progress');
-      const fill = node('div', track, undefined, 'library-progress-fill');
-      fill.style.width = pct.toFixed(1) + '%';
-    }
+    if (projectRoom) artItems.set(box, item);
+    patchProgress(box, item, projectRoom ? progressFor(item) : item.viewOffset);
     box.classList.toggle('unavailable', item.available === false);
     node('span', box, 'Unavailable', 'library-unavailable').hidden = item.available !== false;
     return box;
@@ -540,7 +556,7 @@ function mount(
     b.hidden = !canSuggest();
     b.dataset.suggested = String(!!entry);
     b.setAttribute('aria-pressed', String(!!entry?.agreed));
-    b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canSuggest();
+    b.disabled = b.dataset.unavailable === 'true' || busy || !canSuggest();
     b.title = label + (count ? ' (' + count + (count === 1 ? ' agrees)' : ' agree)') : '');
     b.setAttribute('aria-label', b.title);
     const text = b.querySelector('.library-suggest-label');
@@ -554,7 +570,7 @@ function mount(
     const addAllowed = canAddQueue();
     for (const b of root.querySelectorAll('[data-queue-item]')) {
       b.hidden = !addAllowed;
-      b.disabled = b.dataset.unavailable === 'true' || busy || !room || !addAllowed;
+      b.disabled = b.dataset.unavailable === 'true' || busy || !addAllowed;
     }
     for (const b of root.querySelectorAll('[data-suggest]')) syncSuggestButton(b);
   }
@@ -562,11 +578,17 @@ function mount(
     busy = value;
     const root = host.closest('#library-panel') || host;
     for (const b of root.querySelectorAll('[data-play]'))
-      b.disabled = b.dataset.unavailable === 'true' || busy || !!playing || !room;
-    for (const b of root.querySelectorAll('[data-queue]:not([data-queue-item])'))
-      b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
-    for (const b of root.querySelectorAll('[data-auto-queue]'))
-      b.disabled = busy || !room || !getPlayer()?.capabilities?.editQueue;
+      b.disabled = b.dataset.unavailable === 'true' || busy || !!playing || !catalog;
+    const durable = !!getPlayer()?.durable;
+    for (const b of root.querySelectorAll('[data-queue]:not([data-queue-item])')) {
+      b.hidden = !durable;
+      b.disabled = b.dataset.unavailable === 'true' || busy || !canAddQueue();
+    }
+    for (const b of root.querySelectorAll('[data-auto-queue]')) {
+      b.hidden = !durable;
+      b.disabled = busy || !getPlayer()?.capabilities?.editQueue;
+    }
+    scopeActions.hidden = !durable || !scopeActions.childElementCount;
     syncSuggestions();
   }
   function formatTimestamp(value) {
@@ -579,15 +601,15 @@ function mount(
     );
   }
   async function play(item, options = {}) {
-    if (item.available === false || busy || playing || !room) return;
+    if (item.available === false || busy || playing || !catalog) return;
     const version = generation;
-    playing = item.id;
+    const attempt = (playing = {});
     setBusy(busy);
     resetStatus();
     note.textContent = 'Loading ' + identity(item) + '…';
     try {
       const result = await load(item, options);
-      if (version !== generation) return;
+      if (version !== generation || playing !== attempt) return;
       if (result?.status === 'cancelled') {
         note.textContent = '';
         return;
@@ -596,9 +618,9 @@ function mount(
       note.textContent = '';
       close();
     } catch (error) {
-      if (version === generation) signalError(error.message, () => play(item, options));
+      if (version === generation && playing === attempt) signalError(error.message, () => play(item, options));
     } finally {
-      if (version === generation) {
+      if (version === generation && playing === attempt) {
         playing = undefined;
         setBusy(busy);
       }
@@ -615,15 +637,28 @@ function mount(
     return b;
   }
   function resumeButton(parent, item) {
-    const timeStr = formatTimestamp(item.viewOffset);
-    const b = button(parent, 'Resume at ' + timeStr, 'play', 'library-resume quiet');
+    const b = button(parent, '', 'play', 'library-resume quiet');
     b.dataset.play = item.id;
     b.dataset.action = 'resume';
     b.dataset.unavailable = String(item.available === false);
-    b.disabled = item.available === false || busy || !!playing || !room;
-    b.append(node('span', null, 'Resume at ' + timeStr));
-    b.addEventListener('click', () => void play(item, { position: item.viewOffset, resume: true }));
+    b.append(node('span', null));
+    resumeItems.set(b, item);
+    patchResume(b, item);
+    b.addEventListener('click', () => {
+      const position = progressFor(item);
+      if (position > 0) void play(item, { position, resume: true });
+    });
     return b;
+  }
+  function patchResume(b, item) {
+    const position = progressFor(item);
+    b.hidden = position === 0;
+    const label = 'Resume at ' + formatTimestamp(position);
+    if (b.getAttribute('aria-label') !== label) {
+      b.setAttribute('aria-label', label);
+      b.title = label;
+      b.lastElementChild.textContent = label;
+    }
   }
   function queueButton(parent, item, large = false) {
     const b = button(
@@ -636,7 +671,7 @@ function mount(
     b.dataset.queue = item.id;
     b.dataset.queueItem = 'true';
     b.hidden = !canAddQueue();
-    b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
+    b.disabled = b.dataset.unavailable === 'true' || busy || !canAddQueue();
     if (large) b.append(node('span', null, 'Add to queue'));
     b.addEventListener('click', async event => {
       event.stopPropagation();
@@ -647,7 +682,7 @@ function mount(
       } catch (error) {
         uburoomPopover.show(b, { text: error.message, state: 'error' });
       } finally {
-        b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
+        b.disabled = b.dataset.unavailable === 'true' || busy || !canAddQueue();
       }
     });
     return b;
@@ -748,7 +783,7 @@ function mount(
         open();
       });
     }
-    const picture = art(card, item, shape ? shape === 'landscape' : episode);
+    const picture = art(card, item, shape ? shape === 'landscape' : episode, shape !== 'landscape');
     button(picture, 'View ' + identity(item), '', 'library-open').addEventListener('click', open);
     const copy = node('div', card, undefined, 'library-copy');
     const title = button(copy, 'View ' + identity(item), undefined, 'library-title');
@@ -763,12 +798,12 @@ function mount(
       if (row) {
         const actions = node('div', card, undefined, 'library-row-actions');
         playButton(actions, item);
-        if (addToQueue && getPlayer()?.durable) queueButton(actions, item);
-        if (suggestMedia && item.id !== 'demo' && getPlayer()?.durable) suggestButton(actions, item);
+        if (addToQueue) queueButton(actions, item);
+        if (suggestMedia && item.id !== 'demo') suggestButton(actions, item);
       } else {
         playButton(picture, item);
-        if (addToQueue && getPlayer()?.durable) queueButton(picture, item);
-        if (suggestMedia && item.id !== 'demo' && getPlayer()?.durable) suggestButton(picture, item);
+        if (addToQueue) queueButton(picture, item);
+        if (suggestMedia && item.id !== 'demo') suggestButton(picture, item);
       }
     } else {
       const target = row ? node('div', card, undefined, 'library-row-actions') : picture;
@@ -790,9 +825,8 @@ function mount(
     const left = item.duration > 0 && item.viewOffset > 0 ? item.duration - item.viewOffset : 0;
     return left > 60 ? runtime(left) + ' left' : metadata(item);
   }
-  // Media Home rows: fetched when Libraries home shows, at most once a minute for a room.
+  // Catalog shelves have the account's lifetime. The room row is read separately.
   let shelfData = null,
-    shelfRoom,
     shelfAt = 0,
     shelfRead;
   const shelfHost = node('div', null, undefined, 'library-shelves');
@@ -800,18 +834,8 @@ function mount(
   function patchShelfProgress(card, item, shape) {
     const box = card.querySelector('.library-art');
     if (box) {
-      let track = box.querySelector('.library-progress');
-      if (item.viewOffset > 0 && item.duration > 0) {
-        const pct = Math.min(100, Math.max(0, (item.viewOffset / item.duration) * 100));
-        if (!track) {
-          track = node('div', box, undefined, 'library-progress');
-          node('div', track, undefined, 'library-progress-fill');
-        }
-        const fill = track.querySelector('.library-progress-fill');
-        if (fill) fill.style.width = pct.toFixed(1) + '%';
-      } else if (track) {
-        track.remove();
-      }
+      if (shape !== 'landscape') artItems.set(box, item);
+      patchProgress(box, item, shape === 'landscape' ? item.viewOffset : progressFor(item));
     }
     if (shape === 'landscape') {
       const meta = card.querySelector('.library-meta');
@@ -820,35 +844,126 @@ function mount(
   }
   const shelves = libraryShelves({ host: shelfHost, node, button, tile, patchProgress: patchShelfProgress });
   function renderShelves() {
-    librariesTitle.hidden = !shelves.render([
-      // What this room started and left unfinished, before each viewer's own Plex progress.
-      { title: 'Continue in this room', items: shelfData?.roomContinue, shape: 'landscape' },
-      { title: 'Continue watching', items: shelfData?.continueWatching, shape: 'landscape' },
-      { title: 'Recently added', items: shelfData?.recentlyAdded, shape: 'poster' },
-    ]);
+    scroll.preserveVisible(landing.querySelectorAll('.library-shelf, .library-home-card'), () => {
+      librariesTitle.hidden = !shelves.render([
+        // What this room started and left unfinished, before each viewer's own Plex progress.
+        { title: 'Continue in this room', items: roomData?.roomItems, shape: 'landscape' },
+        { title: 'Continue watching', items: shelfData?.continueWatching, shape: 'landscape' },
+        { title: 'Recently added', items: shelfData?.recentlyAdded, shape: 'poster' },
+      ]);
+    });
     setBusy(busy);
   }
   function loadShelves() {
-    if (!room || (shelfRoom === room && Date.now() - shelfAt < 60000) || shelfRead) return;
-    const version = generation,
-      wanted = room;
+    if (!catalog || Date.now() - shelfAt < 60000 || shelfRead) return;
+    const version = generation;
     // Asked once the page has finished starting: the library can render Libraries home while it is still being
     // mounted (from the page's first paint), before the connection a request goes through exists.
-    const signal = roomController?.signal;
+    const signal = catalogController.signal;
     const read = Promise.resolve()
-      .then(() => request('library.shelves', roomScope(), signal))
+      .then(() => request('library.shelves', {}, signal))
       .then(data => {
-        if (version !== generation || wanted !== room) return;
+        if (version !== generation) return;
         shelfData = data;
-        shelfRoom = wanted;
         shelfAt = Date.now();
-        if (screen?.kind === 'home') renderShelves();
+        if (screen?.kind === 'home') {
+          renderShelves();
+          refreshRoomMedia();
+        }
       })
       .catch(() => {})
       .finally(() => {
         if (shelfRead === read) shelfRead = undefined;
       });
     shelfRead = read;
+  }
+  function showRoomMedia(data) {
+    roomData = data;
+    progressFor = libraryProgress(data?.progress);
+    if (screen?.kind === 'home') renderShelves();
+    for (const box of host.querySelectorAll('.library-art')) {
+      const item = artItems.get(box);
+      if (item) patchProgress(box, item, progressFor(item));
+    }
+    for (const b of overview.querySelectorAll('[data-action="resume"]')) patchResume(b, resumeItems.get(b));
+  }
+  async function refreshRoomMedia() {
+    if (!catalog || !room || roomRead) return;
+    const now = Date.now();
+    const expired = now - roomReadAt >= 60000;
+    if (expired) {
+      roomChecked.clear();
+      roomProgressRows.clear();
+    }
+    const includeContinue = screen?.kind === 'home' && (expired || roomData?.roomItems === undefined);
+    const pending = new Map();
+    for (const box of host.querySelectorAll('.library-art')) {
+      const item = artItems.get(box);
+      if (!item || !playable(item) || item.id === 'demo') continue;
+      const server = item.serverId || screen?.server || '';
+      const key = libraryProgressKey(server, item.id);
+      if (!roomChecked.has(key)) pending.set(key, [server, item.id]);
+    }
+    if (!pending.size && !includeContinue) return;
+    const read = (roomRead = new AbortController());
+    const wanted = room;
+    const entries = [...pending];
+    const encode = new TextEncoder();
+    let applied = false;
+    try {
+      let progress, roomItems;
+      let offset = 0;
+      do {
+        const start = offset;
+        let bytes = 0;
+        // Keep room progress batches inside the socket's 8 KiB message limit.
+        while (offset < entries.length && offset - start < 32) {
+          bytes += encode.encode(entries[offset][0]).length + 1;
+          if (offset > start && bytes > 7000) break;
+          offset++;
+        }
+        const batch = entries.slice(start, offset);
+        const data = await request(
+          'library.room',
+          { room: wanted, items: batch.map(([, pair]) => pair), includeContinue: start === 0 && includeContinue },
+          read.signal,
+        );
+        if (read.signal.aborted) return;
+        progress = data.progress;
+        roomItems ??= data.roomItems;
+        for (const [key] of batch) roomChecked.add(key);
+        for (const row of progress.history) roomProgressRows.set(libraryProgressKey(row.serverId, row.mediaId), row);
+      } while (offset < entries.length);
+      roomReadAt = now;
+      showRoomMedia({
+        progress: { ...progress, history: [...roomProgressRows.values()] },
+        roomItems: roomItems ?? roomData?.roomItems,
+      });
+      applied = true;
+    } catch (error) {
+      if (!read.signal.aborted && [401, 403].includes(error.status)) showRoomMedia(undefined);
+    } finally {
+      if (roomRead === read) {
+        roomRead = undefined;
+        if (applied) void refreshRoomMedia();
+      }
+    }
+  }
+  function setRoom(id) {
+    if (room !== id) {
+      if (room && playing) {
+        playing = undefined;
+        resetStatus();
+      }
+      room = id;
+      roomRead?.abort();
+      roomRead = undefined;
+      roomReadAt = 0;
+      roomChecked.clear();
+      roomProgressRows.clear();
+      showRoomMedia(undefined);
+      void refreshRoomMedia();
+    }
   }
   function renderTools() {
     if (!screen) return;
@@ -867,21 +982,19 @@ function mount(
       collectionIndex = screen.kind === 'library' && screen.tab === 'collections';
     const section = screen.library;
     const isLinkSection = !details && !atHome && (section?.source === 'link' || screen.source === 'link');
-    scopeActions.hidden =
+    const libraryAutoQueue = !(
       isLinkSection ||
       !autoQueue ||
-      !getPlayer()?.durable ||
       screen.kind !== 'library' ||
       screen.tab !== 'library' ||
       section?.mediaType !== 'movie' ||
-      section.autoQueue === false;
-    const scopeSig = scopeActions.hidden
-      ? ''
-      : JSON.stringify([section.id, section.serverId || '', section.title || '']);
+      section.autoQueue === false
+    );
+    const scopeSig = libraryAutoQueue ? JSON.stringify([section.id, section.serverId || '', section.title || '']) : '';
     if (scopeActions.dataset.signature !== scopeSig) {
       scopeActions.dataset.signature = scopeSig;
       scopeActions.replaceChildren();
-      if (!scopeActions.hidden)
+      if (libraryAutoQueue)
         autoButton(
           scopeActions,
           { type: 'library', id: section.id, ...(section.serverId ? { serverId: section.serverId } : {}) },
@@ -1087,6 +1200,7 @@ function mount(
     pictures.endReuse();
     watchNextPage();
     setBusy(busy);
+    void refreshRoomMedia();
   }
   function updateAvailability(root, item) {
     const missing = item.available === false;
@@ -1138,7 +1252,7 @@ function mount(
     }
   }
   async function loadPage(append = false) {
-    if (!room || !screen || ['details', 'home'].includes(screen.kind)) return;
+    if (!catalog || !screen || ['details', 'home'].includes(screen.kind)) return;
     if (append && (screen.loading || screen.nextOffset == null)) return;
     if (append && screen.dirty) {
       await query();
@@ -1148,7 +1262,7 @@ function mount(
     controller = new AbortController();
     const version = ++requestVersion,
       current = screen,
-      roomVersion = generation;
+      catalogVersion = generation;
     resetStatus();
     current.pageError = false;
     current.loading = true;
@@ -1177,7 +1291,7 @@ function mount(
           nextOffset: null,
         };
       else data = await request('library.browse', scoped(query), controller.signal);
-      if (version !== requestVersion || roomVersion !== generation || current !== screen) return;
+      if (version !== requestVersion || catalogVersion !== generation || current !== screen) return;
       // Use the complete child result, rather than the listing's season count.
       // A Specials folder counts as another season and keeps normal browsing.
       if (
@@ -1196,7 +1310,7 @@ function mount(
         current.parent = current.onlySeason.id;
         data = await request('library.browse', scoped({ ...query, parent: current.parent }), controller.signal);
       }
-      if (version !== requestVersion || roomVersion !== generation || current !== screen) return;
+      if (version !== requestVersion || catalogVersion !== generation || current !== screen) return;
       const seen = new Set(append ? current.items.map(x => x.id) : []),
         added = data.items.filter(x => {
           if (seen.has(x.id)) return false;
@@ -1213,10 +1327,11 @@ function mount(
         added.forEach(tile);
         watchNextPage();
         setBusy(busy);
+        void refreshRoomMedia();
       } else renderResults();
       void checkAvailability(added, current);
     } catch (error) {
-      if (version !== requestVersion || roomVersion !== generation || error.name === 'AbortError') return;
+      if (version !== requestVersion || catalogVersion !== generation || error.name === 'AbortError') return;
       current.loading = false;
       current.pageError = true;
       renderTools();
@@ -1253,15 +1368,11 @@ function mount(
       bulk: bulkButton,
       auto: autoButton,
     },
-    can: () => {
-      const durable = !!getPlayer()?.durable;
-      return {
-        durable,
-        queue: !!addToQueue && durable,
-        suggest: !!suggestMedia && durable,
-        bulk: !!addBulkToQueue,
-        auto: !!autoQueue,
-      };
+    can: {
+      queue: !!addToQueue,
+      suggest: !!suggestMedia,
+      bulk: !!addBulkToQueue,
+      auto: !!autoQueue,
     },
     openItem: (...args) => openItem(...args),
     openParent: target => openParent(target),
@@ -1282,6 +1393,7 @@ function mount(
       adoptLibrary(current, full);
       summary(full);
       setBusy(busy);
+      void refreshRoomMedia();
       void checkAvailability([full], current);
     } catch (error) {
       if (version === generation && screen === current && error.name !== 'AbortError')
@@ -1379,7 +1491,7 @@ function mount(
     }
     const version = generation;
     try {
-      const value = await request('library.filters', scoped({ section: library.id }), roomController.signal);
+      const value = await request('library.filters', scoped({ section: library.id }), catalogController.signal);
       if (version !== generation || read !== facetRead) return;
       for (const [control, values] of [
         [genre, value.genres],
@@ -1473,7 +1585,7 @@ function mount(
       }),
   );
   async function resolveLink(rawUrl) {
-    if (!room) return;
+    if (!catalog) return;
     const url = String(rawUrl || '').trim();
     if (!url) {
       linkStatus.textContent = 'Paste a YouTube video or playlist link first.';
@@ -1483,14 +1595,14 @@ function mount(
     linkController?.abort();
     linkController = new AbortController();
     const resolveId = ++linkResolveVersion;
-    const roomVersion = generation;
+    const catalogVersion = generation;
     linkSubmit.disabled = true;
     linkClear.hidden = false;
     linkStatus.textContent = 'Resolving YouTube link…';
     linkResults.replaceChildren();
     try {
       const data = await request('library.resolve', scoped({ url }), linkController.signal);
-      if (resolveId !== linkResolveVersion || roomVersion !== generation) return;
+      if (resolveId !== linkResolveVersion || catalogVersion !== generation) return;
       if (data.kind === 'playlist') {
         const plTitle = data.title || 'YouTube playlist';
         linkStatus.textContent =
@@ -1539,7 +1651,7 @@ function mount(
       }
       setBusy(busy);
     } catch (err) {
-      if (resolveId !== linkResolveVersion || roomVersion !== generation || err.name === 'AbortError') return;
+      if (resolveId !== linkResolveVersion || catalogVersion !== generation || err.name === 'AbortError') return;
       linkStatus.textContent = err.message || 'Could not resolve YouTube link.';
     } finally {
       if (resolveId === linkResolveVersion) linkSubmit.disabled = false;
@@ -1564,13 +1676,17 @@ function mount(
   });
   retry.onclick = () => errorAction?.();
   let initialData = initialLibrary;
-  async function setRoom(id) {
-    if (room === id) {
-      setBusy(busy);
-      return;
-    }
+  async function setCatalog(account, guestRoom) {
+    if (catalog?.account === account && catalog?.guestRoom === guestRoom) return;
     cancelAvailability();
-    room = id;
+    catalog = account ? { account, guestRoom } : undefined;
+    room = undefined;
+    roomRead?.abort();
+    roomRead = roomData = undefined;
+    roomReadAt = 0;
+    roomChecked.clear();
+    roomProgressRows.clear();
+    progressFor = libraryProgress();
     generation++;
     requestVersion++;
     controller?.abort();
@@ -1578,10 +1694,10 @@ function mount(
     linkController?.abort();
     linkResolveVersion++;
     clearTimeout(timer);
-    roomController?.abort();
-    roomController = new AbortController();
+    catalogController?.abort();
+    catalogController = new AbortController();
     shelfData = null;
-    shelfRoom = shelfRead = undefined;
+    shelfRead = undefined;
     shelfAt = 0;
     shelves.clear();
     pictures.reset();
@@ -1592,7 +1708,8 @@ function mount(
     playing = undefined;
     testVideo = false;
     screen = homeContext();
-    beginHistory();
+    if (catalog) beginHistory();
+    else historyEpoch = undefined;
     pageObserver.unobserve(sentinel);
     sentinel.hidden = true;
     host.style.minHeight = '';
@@ -1618,9 +1735,9 @@ function mount(
     scopeActions.hidden = true;
     sort.dataset.signature = '';
     resetStatus();
-    count.hidden = !id;
-    count.textContent = id ? 'Loading libraries…' : '';
-    tools.hidden = !id;
+    count.hidden = !catalog;
+    count.textContent = catalog ? 'Loading libraries…' : '';
+    tools.hidden = !catalog;
     navigationControls.forEach(n => {
       n.disabled = true;
     });
@@ -1633,10 +1750,11 @@ function mount(
     filterStatus.textContent = '';
     filters.hidden = true;
     filterButton.classList.remove('filter-active');
-    if (!id) return;
-    if (id === 'lobby' && initialData) {
-      const data = initialData;
-      initialData = undefined;
+    const bootstrap = initialData;
+    initialData = undefined;
+    if (!catalog) return;
+    if (!guestRoom && account === initialAccount && bootstrap) {
+      const data = bootstrap;
       sections = data.items || [];
       testVideo = !!data.testVideo;
       renderResults();
@@ -1646,7 +1764,8 @@ function mount(
     const version = generation;
     async function start() {
       try {
-        const data = await request('library.browse', roomScope(), roomController.signal);
+        if (version !== generation) return;
+        const data = await request('library.browse', {}, catalogController.signal);
         if (version !== generation) return;
         sections = data.items;
         testVideo = !!data.testVideo;
@@ -1658,14 +1777,16 @@ function mount(
     }
     await start();
   }
-  if (initialData) void setRoom('lobby');
+  if (initialData && initialAccount) void setCatalog(initialAccount);
   return {
+    setCatalog,
     setRoom,
     setBusy,
     openItem,
     reveal: behavior => scroll.position(behavior),
     refreshSuggestions: syncSuggestions,
     refreshShelves: () => {
+      void refreshRoomMedia();
       if (screen?.kind === 'home') loadShelves();
     },
     /** Admin mode shows or hides the sync test video's card on Libraries home. */

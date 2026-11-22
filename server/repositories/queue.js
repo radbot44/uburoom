@@ -133,8 +133,26 @@ class QueueRepo {
       "SELECT roomId FROM watch_queue_entries WHERE state='history' GROUP BY roomId HAVING COUNT(*)>?",
     );
     this.statements.listProgress = db.prepare(
-      "SELECT mediaId, position, duration, outcome FROM watch_queue_entries WHERE roomId = ? AND state IN ('current', 'history') ORDER BY updatedAt ASC",
+      "SELECT serverId, mediaId, position, duration, outcome FROM watch_queue_entries WHERE roomId = ? AND state IN ('current', 'history') ORDER BY updatedAt ASC",
     );
+    this.statements.libraryProgress = db.prepare(`
+      SELECT serverId, mediaId, position, duration, outcome FROM (
+        SELECT serverId, mediaId, position, duration, outcome,
+               row_number() OVER (PARTITION BY serverId, mediaId ORDER BY updatedAt DESC, rowid DESC) AS latest
+        FROM watch_queue_entries
+        WHERE roomId = ? AND state IN ('current', 'history') AND (serverId, mediaId) IN
+          (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?))
+      ) WHERE latest = 1
+    `);
+    this.statements.libraryContinue = db.prepare(`
+      SELECT serverId, mediaId, position, duration, outcome FROM (
+        SELECT serverId, mediaId, position, duration, outcome, endedAt, rowid AS occurrence,
+               row_number() OVER (PARTITION BY serverId, mediaId ORDER BY endedAt DESC, rowid DESC) AS latest
+        FROM watch_queue_entries WHERE roomId = ? AND state = 'history'
+      ) WHERE latest = 1 AND outcome IS NOT 'completed' AND position >= 10
+        AND (duration = 0 OR position <= duration * 0.92)
+      ORDER BY endedAt DESC, occurrence DESC LIMIT 10
+    `);
   }
   deleteRoomProgressByRoomId(...values) {
     return this.statements.deleteRoomProgressByRoomId.run(...values);
@@ -255,6 +273,12 @@ class QueueRepo {
   }
   listProgress(...values) {
     return this.statements.listProgress.all(...values);
+  }
+  libraryProgress(roomId, items) {
+    return this.statements.libraryProgress.all(roomId, JSON.stringify(items));
+  }
+  libraryContinue(roomId) {
+    return this.statements.libraryContinue.all(roomId);
   }
 }
 module.exports = { QueueRepo };

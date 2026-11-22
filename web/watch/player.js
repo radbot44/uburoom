@@ -429,7 +429,6 @@ export function mount(host, deps) {
     store.player.trackContext = undefined;
     clearPlayer(reason);
     store.room.state = undefined;
-    store.lobby.browseRoom = undefined;
     deps.renderBrowsing();
     deps.renderVisibility();
     deps.placeRoomBar();

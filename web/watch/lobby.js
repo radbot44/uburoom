@@ -84,13 +84,14 @@ export function mount(host, deps) {
       deps.clearPlayer('room-select');
       store.room.selected = id;
       store.room.state = undefined;
-      store.room.lastFeedback = store.lobby.browseRoom = undefined;
+      store.room.lastFeedback = undefined;
       deps.applyState(next);
       deps.placeRoomBar();
       deps.fail(store.player.playbackError);
       void deps.reportReadiness();
       if (previous) void deps.roomLink.leave(previous).catch(() => {});
-      if (store.player.immersive) deps.toggleDrawer(!!store.room.state?.canBrowse && !store.room.state?.mediaId);
+      if (store.player.immersive && !previous && store.room.state?.canBrowse && !store.room.state.mediaId)
+        deps.toggleDrawer(true);
     } finally {
       store.lobby.switchingRoom = false;
     }
@@ -216,11 +217,7 @@ export function mount(host, deps) {
         store.lobby.waitingRoom && rooms.find(room => room.id === store.lobby.waitingRoom.id && !room.locked);
       if (opened) {
         store.lobby.waitingRoom = undefined;
-        void selectRoom(opened.id)
-          .then(() => {
-            if (store.room.state) deps.returnToVideo();
-          })
-          .catch(error => deps.fail(error.message));
+        void selectRoom(opened.id).catch(error => deps.fail(error.message));
       } else renderWaiting();
     }
     deps.placeRoomBar();
@@ -229,17 +226,12 @@ export function mount(host, deps) {
     if (store.identity.config?.singleRoom) $('close-room').hidden = true;
   }
   function renderBrowsing() {
-    store.lobby.browseRoom =
-      !store.room.selected && store.identity.me
-        ? 'lobby'
-        : !store.connection.transport?.ready && !store.connection.reconnecting
-          ? undefined
-          : store.room.state?.canBrowse
-            ? store.room.state.id
-            : undefined;
-    $('library-panel').hidden =
-      !store.lobby.browseRoom && $('auth-overlay').hidden && (!store.identity.me || !!store.room.state);
-    void deps.library.setRoom(store.lobby.browseRoom);
+    const me = store.identity.me;
+    const room = store.room.state?.canBrowse ? store.room.state.id : undefined;
+    const account = !me?.guestRoomId || me.guestRoomId === room ? me?.account?.id : undefined;
+    $('library-panel').hidden = !account && $('auth-overlay').hidden && (!me || !!store.room.state || !!me.guestRoomId);
+    void deps.library.setCatalog(account, account ? me.guestRoomId : undefined);
+    deps.library.setRoom(account ? room : undefined);
     deps.library.setBusy(store.room.pending || store.connection.reconnecting);
   }
   function renderLibrary() {
@@ -353,7 +345,6 @@ export function mount(host, deps) {
             if (!store.room.state || store.room.selected !== room.id)
               throw new Error('Room unavailable. Choose another room.');
             $('room-dialog').close('joined');
-            deps.returnToVideo();
           } catch (error) {
             $(container.id === 'lobby-rooms' ? 'lobby-error' : 'room-dialog-error').textContent = error.message;
           } finally {
@@ -580,7 +571,6 @@ export function mount(host, deps) {
     try {
       await deps.roomLink.leave(id);
       store.room.selected = undefined;
-      store.lobby.browseRoom = undefined;
       deps.unavailable('', 'leave');
       await refreshRooms();
     } catch (error) {

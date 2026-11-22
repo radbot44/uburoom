@@ -472,6 +472,53 @@ async function main(name) {
       'document.querySelectorAll(".library-tile").length>=96',
       'automatically load next page after Retry',
     );
+    // Keep the room open when its host leaves so the active-room chooser can join it again.
+    const keptRoom = await evaluate(context, 'selected');
+    const keeper = await browser.page(config.publicUrl + '/?demo=guest');
+    await until(keeper, '!!me && transport?.ready', 'Second viewer signs in');
+    await evaluate(keeper, `selectRoom(${JSON.stringify(keptRoom)})`);
+    await until(keeper, '!!selected && !!state', 'Second viewer keeps the room open');
+    await browser.activate(context);
+    await evaluate(
+      context,
+      `(()=>{
+        window.scrollTo(0, document.querySelectorAll('.library-tile')[24].getBoundingClientRect().top + scrollY);
+        const tile=document.querySelector('.library-tile'), input=document.querySelector('[aria-label="Search this library"]');
+        input.focus({preventScroll:true});
+        input.value='Draft search';
+        window.mediaBeforeLeave={tile,input,top:scrollY,id:selected,queue:tile.querySelector('[data-queue-item]')};
+        document.getElementById('close-room').click();
+      })()`,
+    );
+    await until(context, '!selected && location.pathname==="/"', 'Leave while scrolled in a catalog');
+    const sameCatalog = `(()=>{const {tile,input,top}=window.mediaBeforeLeave;
+      return tile===document.querySelector('.library-tile') && input.value==='Draft search' && Math.abs(scrollY-top)<2;})()`;
+    assert.equal(await evaluate(context, sameCatalog), true, 'Leaving preserves the catalog DOM, draft and scroll');
+    assert.equal(
+      await evaluate(
+        context,
+        'document.activeElement===window.mediaBeforeLeave.input && window.mediaBeforeLeave.queue.hidden',
+      ),
+      true,
+      'Leaving keeps search focus and hides the room queue action',
+    );
+    await evaluate(context, 'document.getElementById("switch-room").click()');
+    const rejoin = 'document.querySelector(`#room-choices [data-join-room="${window.mediaBeforeLeave.id}"]`)';
+    await until(context, rejoin, 'Previously joined room is available');
+    await evaluate(context, rejoin + '.click()');
+    await until(
+      context,
+      'selected===window.mediaBeforeLeave.id && !document.getElementById("room-dialog").open',
+      'Rejoin while browsing',
+    );
+    assert.equal(await evaluate(context, sameCatalog), true, 'Joining preserves the catalog DOM, draft and scroll');
+    assert.equal(
+      await evaluate(context, '!window.mediaBeforeLeave.queue.hidden'),
+      true,
+      'Queue action returns in place',
+    );
+    await evaluate(keeper, 'document.getElementById("close-room").click()');
+    await until(keeper, '!selected', 'Second viewer leaves');
     await evaluate(context, 'search.value="Needle";search.dispatchEvent(new Event("input"))');
     await until(
       context,
@@ -1068,11 +1115,14 @@ async function main(name) {
       true,
       'List Play does not also open details',
     );
+    await evaluate(
+      context,
+      'execute({action:"media.pause"}).then(()=>execute({action:"media.seek.absolute",args:{seconds:17}}))',
+    );
     const activity = await browser.page(config.publicUrl + '/?demo=host&frame_id=fixture');
     await browser.viewport(activity, 1920, 1080);
     await until(activity, 'document.querySelector("#rooms button")', 'Activity rooms');
     await evaluate(activity, 'document.querySelector("#rooms button").click()');
-    // Joining resets Media to the room's Libraries home, and a press during that is lost: press until it opens.
     await until(activity, '!!selected && document.querySelectorAll(".library-home-card").length===3', 'Activity home');
     await until(
       activity,
@@ -1094,12 +1144,25 @@ async function main(name) {
     assert.equal(await evaluate(activity, 'getComputedStyle(drawer).display'), 'none', 'PIP stays video-only');
     await browser.viewport(activity, 1920, 1080);
     await until(activity, '!document.body.classList.contains("activity-pip")', 'Activity leaves PIP');
-    await evaluate(activity, 'document.getElementById("close-room").click()');
+    await evaluate(activity, act.openDrawer() + ';document.querySelector(\'[data-item="2"] .library-title\').click()');
     await until(
       activity,
-      '!selected && !document.getElementById("library-panel").hidden && document.querySelectorAll(".library-home-card").length===3',
-      'Leave restores lobby catalog',
+      'document.querySelector(".library-resume:not([hidden])")?.textContent==="Resume at 0:17"',
+      'Open details show this room’s progress',
     );
+    await evaluate(activity, 'window.mediaBeforeLeave=document.querySelector(".library-summary");');
+    await evaluate(activity, 'document.getElementById("close-room").click()');
+    await until(activity, '!selected && !document.getElementById("library-panel").hidden', 'Activity leaves the room');
+    assert.equal(
+      await evaluate(
+        activity,
+        'window.mediaBeforeLeave===document.querySelector(".library-summary") && document.querySelector(".library-resume").hidden',
+      ),
+      true,
+      'Leaving preserves the open details and removes this room’s resume point',
+    );
+    await evaluate(activity, 'history.back()');
+    await until(activity, 'document.querySelector(".library-tile")', 'Media Back restores the catalog after leaving');
     await evaluate(activity, 'history.back()');
     await pause(150);
     assert.equal(
@@ -1108,7 +1171,7 @@ async function main(name) {
         'location.pathname==="/" && document.querySelectorAll(".library > .library-tile").length===0 && !document.querySelector(".library-landing").hidden',
       ),
       true,
-      'Browser history cannot restore the previous room catalog',
+      'Media Back keeps its history after leaving the room',
     );
     const cabinCard = 'document.querySelector(\'.library-home-card[aria-label="Cabin Films"]\')';
     const cabinCatalog = 'document.querySelector(".library-tile .library-title")?.textContent==="Cabin Feature"';

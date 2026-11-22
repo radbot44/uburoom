@@ -1,9 +1,53 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { DatabaseSync } = require('node:sqlite');
 const { Plex } = require('../server/sources/plex/plex');
 const { plexProvider } = require('../server/sources/plex/provider');
 const { MediaProviders } = require('../server/media-providers');
+const { libraryProgress } = require('../shared/library-progress.mjs');
+const { initializeSchema } = require('../server/storage');
+const { repositories } = require('../server/repositories');
+
+test('room progress matches source and item, with personal progress restored outside the room', () => {
+  const item = { id: '1', serverId: 'cabin', duration: 1200, viewOffset: 90 };
+  const progress = libraryProgress({
+    current: { mediaId: '1', serverId: 'main', position: 700, duration: 1200 },
+    history: [{ mediaId: '1', serverId: 'cabin', position: 300, duration: 1200 }],
+  });
+  assert.equal(progress(item), 300);
+  assert.equal(progress({ ...item, serverId: 'main' }), 700);
+  assert.equal(libraryProgress()(item), 90);
+});
+
+test('the room catalog reads the latest occurrence for only the requested source and title', t => {
+  const db = new DatabaseSync(':memory:');
+  t.after(() => db.close());
+  initializeSchema(db);
+  db.exec(`
+    INSERT INTO users(id,name) VALUES('owner','Owner');
+    INSERT INTO watch_rooms(id,creatorId,name,visibility,revision,checkpointRevision,createdAt,updatedAt,permissions,lastAccessedAt)
+      VALUES('room-a','owner','Room A','public',1,1,0,0,'{}',0), ('room-b','owner','Room B','public',1,1,0,0,'{}',0);
+  `);
+  const insert = db.prepare(`
+    INSERT INTO watch_queue_entries(id,roomId,state,serverId,mediaId,type,title,duration,position,outcome,createdAt,endedAt,updatedAt)
+      VALUES(?,?,'history',?,'1','movie','Title',1200,?,?,0,?,?)
+  `);
+  insert.run('a-first', 'room-a', 'main', 290, 'stopped', 1, 1);
+  insert.run('a-latest', 'room-a', 'main', 1200, 'completed', 2, 2);
+  insert.run('cabin', 'room-a', 'cabin', 600, 'stopped', 3, 3);
+  insert.run('b', 'room-b', 'main', 800, 'stopped', 4, 4);
+  const queue = repositories(db).queue;
+  const progress = queue.libraryProgress('room-a', [['main', '1']]);
+  assert.deepEqual(
+    progress.map(row => [row.serverId, row.position, row.outcome]),
+    [['main', 1200, 'completed']],
+  );
+  assert.deepEqual(
+    queue.libraryContinue('room-a').map(row => [row.serverId, row.position]),
+    [['cabin', 600]],
+  );
+});
 
 test("Continue watching is only ever a viewer's own Plex progress, never the shared account's", async () => {
   const own = [{ id: '1', title: 'Mine', viewOffset: 120 }],

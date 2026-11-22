@@ -74,7 +74,7 @@ function syncRoomUrl(id, slug) {
   if (activity) return;
   if (store.identity.config?.singleRoom) {
     if (location.pathname !== '/' || location.search) {
-      history.replaceState(null, '', '/' + location.hash);
+      history.replaceState(history.state, '', '/' + location.hash);
     }
     return;
   }
@@ -85,7 +85,7 @@ function syncRoomUrl(id, slug) {
   const target =
     id && currentSlug ? '/room/' + encodeURIComponent(currentSlug) : id ? '/room/' + encodeURIComponent(id) : '/';
   if (location.pathname !== target || location.search) {
-    history.replaceState(null, '', target + location.hash);
+    history.replaceState(history.state, '', target + location.hash);
   }
 }
 // The selected room's two lanes as last received: {roomId, viewerId, room, viewer}, each
@@ -205,7 +205,6 @@ const lobbyEvents = uburoomLobbyEvents.mount({
   join: async id => {
     await deps.selectRoom(id);
     if (!store.room.state || store.room.selected !== id) throw new Error('Room unavailable');
-    deps.returnToVideo();
   },
   changed: () => {
     renderScheduleButton();
@@ -216,7 +215,6 @@ const lobbyEvents = uburoomLobbyEvents.mount({
     const opened = await deps.call('room.reopen', { roomId: id }, { timeoutMs: 35000 });
     await deps.selectRoom(opened.id);
     if (!store.room.state) throw new Error('Room unavailable');
-    deps.returnToVideo();
   },
 });
 deps.lobbyEvents = lobbyEvents;
@@ -248,7 +246,6 @@ const roomUI = uburoomRoomUI.mount({
   join: async id => {
     await deps.selectRoom(id);
     if (!store.room.state) throw new Error('Room unavailable');
-    deps.returnToVideo();
   },
   changed: async () => {
     await deps.refreshRooms();
@@ -300,6 +297,8 @@ const library = uburoomLibrary.mount($('library-content'), {
   artwork: fetchArtwork,
   initialLibrary:
     store.identity.pageBootstrap?.library?.status === 200 ? store.identity.pageBootstrap.library.value : undefined,
+  initialAccount: store.identity.pageBootstrap?.me?.value?.account?.id,
+  syncRoomLocation: () => syncRoomUrl(store.room.selected),
   load: (item, options) =>
     store.room.selected ? deps.loadLibraryItem(item, options) : deps.chooseRoom(item, 'active', options),
   addToQueue: async (item, trigger) => {

@@ -43,6 +43,7 @@ const CALLS = Object.freeze({
   'library.filters': { http: '/api/watch/library/filters' },
   'library.resolve': { http: '/api/watch/library/resolve' },
   'library.shelves': {},
+  'library.room': {},
   'playback.history': { http: '/api/watch/playback' },
   'rooms.list': {},
   'rooms.saved': {},

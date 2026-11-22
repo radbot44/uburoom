@@ -66,6 +66,9 @@
     align-items: center;
     margin-top: var(--space-14);
   }
+  .library-detail-actions:not(:has(> button:not([hidden]))) {
+    display: none;
+  }
   /* Details actions are the shared primary (Play now) and quiet buttons with an icon and label. */
   .library-detail-actions > button {
     display: inline-flex;

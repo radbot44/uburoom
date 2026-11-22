@@ -554,6 +554,7 @@ export function mount(host, deps) {
           } else deps.unavailable('You were removed from the room. You may rejoin.', 'kicked');
         } else if (message.type === 'lobby') {
           store.identity.me = message.identity;
+          deps.renderBrowsing();
           renderAccount();
           if (JSON.stringify(message.rooms) !== JSON.stringify(store.lobby.knownRooms)) deps.applyRooms(message.rooms);
         } else if (message.type === 'room' || message.type === 'viewer') {
@@ -581,6 +582,7 @@ export function mount(host, deps) {
           // The server was updated under this page; only a reload brings the matching client.
           deps.unavailable('uburoom was updated. Reload this page to continue.', 'protocol');
         } else if (message.type === 'error' && message.code === 'auth') {
+          store.identity.me = undefined;
           deps.unavailable(message.message || 'Sign in again', 'identity-poll');
         } else if (message.type === 'error' && message.code === 'unavailable') deps.connectionLost();
       },
@@ -595,6 +597,7 @@ export function mount(host, deps) {
       try {
         await deps.renewIdentity();
       } catch (error) {
+        store.identity.me = undefined;
         deps.unavailable('Disconnected. ' + error.message, 'identity-poll');
       }
     });

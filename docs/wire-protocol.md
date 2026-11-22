@@ -46,6 +46,8 @@ A request carries an `id` the client chooses (a non-negative integer, unique amo
 | `call` | `op`, `roomId?`, `args?` | Depends on `op` |
 | `resync` | none | `{ serverNow }`, after the lanes were sent again |
 
+Media catalog reads use the signed-in account. The server applies the invite's room grant for a guest. `library.room` takes `args.room`, up to 32 `[serverId, mediaId]` pairs in `args.items`, and optionally `args.includeContinue`. It checks room access and returns room progress separately from the catalog. With `includeContinue`, it also returns the authorized titles for Continue in this room.
+
 `viewerId` is a UUID the client makes for its tab and keeps across reconnects. `join` is the only way into a room: it admits the tab, or renews the tab that is already in. After a reconnect a client joins again with the same `viewerId`.
 
 Each connection holds one joined room/viewer pair. A successful join to another room or viewer ID releases its preceding viewer. Failed or canceled joins remove their provisional viewer, preparation retries and readiness participation; an older abandoned join cannot detach a newer successful attachment of the same viewer. Successfully joined viewers retain the ordinary reconnect grace after an unexpected connection loss.

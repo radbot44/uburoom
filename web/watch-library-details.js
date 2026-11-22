@@ -7,7 +7,7 @@ import * as uburoomIcons from './icons.js';
  * @param {{doc: Document, overview: HTMLElement, node: Function, button: Function, picture: Function, art: Function,
  *   metadata: Function, extras: Function, runtime: Function, playable: Function,
  *   actions: {play: Function, resume: Function, queue: Function, suggest: Function, bulk: Function, auto: Function},
- *   can: () => {queue: boolean, suggest: boolean, bulk: boolean, auto: boolean, durable: boolean},
+ *   can: {queue: boolean, suggest: boolean, bulk: boolean, auto: boolean},
  *   openItem: Function, openParent: Function}} ui
  */
 export function libraryDetails(ui) {
@@ -40,13 +40,13 @@ export function libraryDetails(ui) {
     if (playable(item)) {
       const actionRow = node('div', copy, undefined, 'library-detail-actions');
       actions.play(actionRow, item, true);
-      if (item.viewOffset > 0) actions.resume(actionRow, item);
-      if (can().queue) actions.queue(actionRow, item, true);
-      if (can().suggest && item.id !== 'demo') actions.suggest(actionRow, item, true);
-    } else if (can().durable) {
+      actions.resume(actionRow, item);
+      if (can.queue) actions.queue(actionRow, item, true);
+      if (can.suggest && item.id !== 'demo') actions.suggest(actionRow, item, true);
+    } else {
       const actionRow = node('div', copy, undefined, 'library-detail-actions');
-      if (can().bulk && ['show', 'season'].includes(item.type)) actions.bulk(actionRow, item);
-      if (can().auto && ['show', 'collection'].includes(item.type))
+      if (can.bulk && ['show', 'season'].includes(item.type)) actions.bulk(actionRow, item);
+      if (can.auto && ['show', 'collection'].includes(item.type))
         actions.auto(
           actionRow,
           { type: item.type, id: item.id, ...(item.serverId ? { serverId: item.serverId } : {}) },

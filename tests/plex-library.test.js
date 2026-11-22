@@ -538,6 +538,8 @@ test('lobby catalog, details, filters and artwork recheck identity and Plex scop
 });
 
 test('room watch party history takes priority over personal Plex progress in library listings and details', async () => {
+  const { libraryProgress } = require('../shared/library-progress.mjs');
+  let canView = true;
   const room = {
     roomId: 'room-1',
     media: { id: '10', duration: 7200 },
@@ -567,7 +569,7 @@ test('room watch party history takes priority over personal Plex progress in lib
     rooms,
     roomState: roomStateStub,
     position: () => 1500,
-    canView: async () => true,
+    canView: async () => canView,
     plex,
     providers: providersOf(plex),
   };
@@ -602,6 +604,21 @@ test('room watch party history takes priority over personal Plex progress in lib
     );
     assert.equal(itemRes.status, 200);
     assert.equal(itemRes.data.item.viewOffset, 1500);
+
+    const accountRes = {};
+    await routes.route(
+      { method: 'GET', headers: {}, socket: {} },
+      accountRes,
+      new URL('https://localhost/api/watch/library/item?item=10'),
+    );
+    assert.equal(accountRes.data.item.viewOffset, 300, 'catalog details carry personal progress independently');
+    const context = { headers: {}, cachedLogin: () => ({ userId: 'host' }) };
+    const args = { room: 'room-1', items: [['', '10']] };
+    const overlay = await routes.operations.call(context, 'library.room', { args });
+    assert.equal(overlay.status, 200);
+    assert.equal(libraryProgress(overlay.value.progress)(accountRes.data.item), 1500);
+    canView = false;
+    assert.equal((await routes.operations.call(context, 'library.room', { args })).status, 403);
   } finally {
     routes.close();
   }

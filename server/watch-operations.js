@@ -17,57 +17,53 @@ const { REJOIN } = require('./watch');
 const { waitFor } = require('./operation');
 const { CALLS, splitView } = require('../shared/wire-protocol.mjs');
 const { roomSyncHistory } = require('./room/sync-history');
+const { libraryProgress } = require('../shared/library-progress.mjs');
+
+function roomProgress(watch, roomId, items = null) {
+  const liveRoom = watch.rooms.get(roomId);
+  const bookmark = watch.roomState.store.get(roomId)?.bookmark;
+  let history = [];
+  try {
+    const queue = repositories(watch.roomState.store.db).queue;
+    history = items ? (items.length ? queue.libraryProgress(roomId, items) : []) : queue.listProgress(roomId);
+  } catch {}
+  return {
+    current: liveRoom?.media && {
+      mediaId: liveRoom.media.id,
+      serverId: liveRoom.media.roomServerId || liveRoom.media.serverId,
+      duration: liveRoom.media.duration,
+      position: watch.position(liveRoom),
+    },
+    bookmark: bookmark && {
+      mediaId: bookmark.mediaId,
+      serverId: bookmark.serverId,
+      duration: bookmark.duration,
+      position: bookmark.position,
+    },
+    history,
+  };
+}
 
 function applyRoomProgress(watch, roomId, items = []) {
   if (!roomId || !items.length) return;
-  const liveRoom = watch.rooms.get(roomId);
-  const saved = watch.roomState.store.get(roomId);
-  let dbRows = new Map();
-  try {
-    const rows = repositories(watch.roomState.store.db).queue.listProgress(roomId);
-    for (const r of rows) {
-      dbRows.set(r.mediaId, r);
-    }
-  } catch {}
+  const progress = libraryProgress(roomProgress(watch, roomId));
   for (const item of items) {
     if (!item) continue;
-    let pos = null;
-    if (liveRoom?.media) {
-      if (liveRoom.media.id === item.id) {
-        const p = watch.position(liveRoom);
-        const dur = liveRoom.media.duration || item.duration || 0;
-        if (p >= 10 && (!dur || p <= dur * 0.92)) pos = Math.round(p);
-        else if (dur && p > dur * 0.92) pos = 0;
-      }
-    }
-    if (pos === null && saved?.bookmark) {
-      if (saved.bookmark.mediaId === item.id) {
-        const p = saved.bookmark.position;
-        const dur = saved.bookmark.duration || item.duration || 0;
-        if (p >= 10 && (!dur || p <= dur * 0.92)) pos = Math.round(p);
-        else if (dur && p > dur * 0.92) pos = 0;
-      }
-    }
-    if (pos === null && dbRows.has(item.id)) {
-      const r = dbRows.get(item.id);
-      if (r.outcome === 'completed') pos = 0;
-      else {
-        const p = Number(r.position || 0),
-          dur = Number(r.duration || item.duration || 0);
-        if (p >= 10 && (!dur || p <= dur * 0.92)) pos = Math.round(p);
-        else if (dur && p > dur * 0.92) pos = 0;
-      }
-    }
-
-    if (pos !== null) {
-      if (pos > 0) item.viewOffset = pos;
-      else delete item.viewOffset;
-    } else if (item.viewOffset !== undefined) {
-      if (item.viewOffset < 10 || (item.duration && item.viewOffset > item.duration * 0.92)) {
-        delete item.viewOffset;
-      }
-    }
+    const position = progress(item);
+    if (position > 0) item.viewOffset = position;
+    else delete item.viewOffset;
   }
+}
+
+function roomLibraryContinue(watch, roomId, scopeFor) {
+  if (!roomId) return [];
+  let history = [];
+  try {
+    history = repositories(watch.roomState.store.db).queue.libraryContinue(roomId);
+  } catch {
+    /* A room without saved history has nothing to continue. */
+  }
+  return roomContinue(history, scopeFor);
 }
 
 /**
@@ -700,6 +696,32 @@ function watchOperations({
       (lobbyScope || (room && watch.rooms.get(room.roomId) === room && (await watch.canView(room, auth.actor)))) &&
       (await login(context))?.userId === auth.actor.userId;
     if (!(await eligible())) return result(403, { error: 'Library access requires room access' });
+    if (op === 'library.room') {
+      if (!room || !args.room) return result(400, { error: 'Select a room' });
+      const items = args.items ?? [];
+      if (
+        !Array.isArray(items) ||
+        items.length > 32 ||
+        items.some(
+          pair =>
+            !Array.isArray(pair) ||
+            pair.length !== 2 ||
+            typeof pair[0] !== 'string' ||
+            pair[0].length > 256 ||
+            typeof pair[1] !== 'string' ||
+            pair[1].length > 256 ||
+            !mediaIdentity(pair[1]),
+        )
+      )
+        return result(400, { error: 'Select up to 32 media items' });
+      const progress = roomProgress(watch, targetRoomId, items);
+      const roomItems =
+        args.includeContinue === true
+          ? await roomLibraryContinue(watch, targetRoomId, serverId => hub.mediaFor(auth.actor, serverId))
+          : undefined;
+      if (!(await eligible())) return result(403, { error: 'Library access was revoked' });
+      return result(200, { progress, roomItems });
+    }
     // The library names the server it is browsing; with none named on single-source setups it is the first one configured.
     let server = text(args.server) ?? undefined;
     if (op === 'library.resolve' && server === undefined) {
@@ -776,13 +798,9 @@ function watchOperations({
       data = await watch.providers.shelves(auth.actor, (actor, serverId) => hub.mediaFor(actor, serverId));
       // Recently added shows the room's progress as other library tiles do; Continue watching stays the viewer's own.
       if (data.recentlyAdded.length) applyRoomProgress(watch, args.room, data.recentlyAdded);
-      let history = [];
-      try {
-        if (args.room) history = repositories(watch.roomState.store.db).queue.listHistory(text(args.room));
-      } catch {
-        /* A room without saved history has nothing to continue. */
-      }
-      data.roomContinue = await roomContinue(history, serverId => hub.mediaFor(auth.actor, serverId));
+      data.roomContinue = await roomLibraryContinue(watch, text(args.room), serverId =>
+        hub.mediaFor(auth.actor, serverId),
+      );
     } else {
       // With no server and no location named, the front page lists every provider's libraries.
       if (browseHome)
@@ -858,6 +876,7 @@ function watchOperations({
     'library.art': input => library('library.art', input),
     'library.resolve': input => library('library.resolve', input),
     'library.shelves': input => library('library.shelves', input),
+    'library.room': input => library('library.room', input),
     async 'playback.history'({ auth, current }) {
       const history = await watch.tracking.history(auth.actor.userId);
       if (!(await current())) return result(403, { error: 'Playback history access expired' });

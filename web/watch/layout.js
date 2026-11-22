@@ -35,8 +35,7 @@ export function mount(host, deps) {
     });
     return { panel, button };
   });
-  let mobileSection = 'room',
-    sectionChosen = false;
+  let mobileSection;
   const sectionTabs = $('section-tabs') || document.createElement('nav');
   if (!sectionTabs.parentElement) {
     sectionTabs.id = 'section-tabs';
@@ -65,14 +64,14 @@ export function mount(host, deps) {
   function selectSection(key, focus = false) {
     if (mobileSection === 'queue' && key !== 'queue') deps.queueUI.rememberPosition();
     mobileSection = key;
-    sectionChosen = true;
     updateSectionTabs();
     if (key === 'queue') deps.queueUI.restorePosition();
     if (focus) $('section-tab-' + key).focus();
   }
   function updateSectionTabs() {
     const mobile = store.player.layout === 'phone';
-    if (!sectionChosen) mobileSection = store.room.state?.durable ? 'room' : 'media';
+    if (!mobileSection && mobile && store.identity.me)
+      mobileSection = store.room.state?.durable || store.identity.directRoomEntry ? 'room' : 'media';
     if (mobileSection === 'queue' && store.room.state && !store.room.state.durable) mobileSection = 'media';
     sectionTabs.hidden = !mobile;
     for (const { panel, button } of sectionToggles) {
@@ -82,7 +81,7 @@ export function mount(host, deps) {
     for (const [key, , id] of sections) {
       const panel = $(id),
         tab = $('section-tab-' + key),
-        active = key === mobileSection;
+        active = key === (mobileSection || 'media');
       tab.disabled = key === 'queue' && !!store.room.state && !store.room.state.durable;
       tab.setAttribute('aria-selected', String(active));
       tab.tabIndex = active ? 0 : -1;

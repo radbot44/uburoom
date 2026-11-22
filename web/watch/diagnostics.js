@@ -58,7 +58,6 @@ export function mount(host, deps) {
             await deps.roomLink.leave(id);
             if (store.room.selected === id) {
               store.room.selected = undefined;
-              store.lobby.browseRoom = undefined;
               deps.unavailable('', 'leave');
               await deps.refreshRooms();
               cleanup = true;

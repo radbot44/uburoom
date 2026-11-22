@@ -38,7 +38,6 @@ export const store = {
     creating: false,
     switchingRoom: false,
     knownRooms: [],
-    browseRoom: undefined,
     waitingRoom: undefined,
     roomNameDraft: undefined,
     roomVisibilityDraft: undefined,

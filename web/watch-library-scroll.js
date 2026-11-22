@@ -122,6 +122,31 @@ export function libraryScroll({ doc, host, header, tools, filters, results, ends
     // This scroll is the restore itself, not someone browsing: it neither tucks nor shows the tools.
     turnY = root.scrollTop;
   }
+  /** Keep a visible shelf or card in place when content above it changes in the live Home view. */
+  function preserveVisible(elements, update) {
+    const root = scrollElement();
+    const { top, bottom } = viewport(root);
+    const headerBounds = header?.getBoundingClientRect();
+    const scrolled = host.closest('#library-panel')?.getBoundingClientRect().top < top;
+    const anchors = scrolled
+      ? [...elements].flatMap(element => {
+          const bounds = element.getBoundingClientRect();
+          return bounds.bottom > (headerBounds?.bottom ?? top) && bounds.top < bottom
+            ? [{ element, top: bounds.top }]
+            : [];
+        })
+      : [];
+    const result = update();
+    const retained = anchors.find(anchor => anchor.element.isConnected);
+    if (retained) {
+      const delta = retained.element.getBoundingClientRect().top - retained.top;
+      if (Math.abs(delta) > 1) {
+        root.scrollTop += delta;
+        turnY = root.scrollTop;
+      }
+    }
+    return result;
+  }
   /** Bring the page's content into view under the header, unless some of it already shows. */
   function position(behavior = 'instant') {
     const root = scrollElement(),
@@ -148,5 +173,5 @@ export function libraryScroll({ doc, host, header, tools, filters, results, ends
     roomForScroll(desired);
     root.scrollTo({ top: desired, behavior });
   }
-  return { scrollElement, tuck, captureAnchor, reserveHeight, roomForScroll, restoreAnchor, position };
+  return { scrollElement, tuck, captureAnchor, reserveHeight, roomForScroll, restoreAnchor, preserveVisible, position };
 }
