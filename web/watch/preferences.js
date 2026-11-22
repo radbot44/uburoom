@@ -139,7 +139,8 @@ export function mount(host, deps) {
     }
   } catch {}
   store.preferences.preferredQuality = store.preferences.playerPreferences.quality;
-  let restoredPlayerSubtitles;
+  let restoredPlayerSubtitles,
+    restoringPlayerSubtitles = false;
   function rememberPlayerSubtitles(args) {
     if (args.subtitleMode) savePlayerPreferences({ subtitleMode: args.subtitleMode });
     // The audio language is remembered the same way, so a new visit starts with it.
@@ -161,6 +162,7 @@ export function mount(host, deps) {
     const key = next.id + ':' + next.mediaVersion;
     if (
       restoredPlayerSubtitles === key ||
+      restoringPlayerSubtitles ||
       !next.tracks ||
       !next.mediaUrl ||
       store.room.pending ||
@@ -182,15 +184,21 @@ export function mount(host, deps) {
       args.subtitleId = choice;
     const mode = store.preferences.playerPreferences.subtitleMode;
     if (['auto', 'burn'].includes(mode) && mode !== tracks.subtitleMode) args.subtitleMode = mode;
-    restoredPlayerSubtitles = key;
-    if (!Object.keys(args).length) return;
+    if (!Object.keys(args).length) {
+      restoredPlayerSubtitles = key;
+      return;
+    }
+    restoringPlayerSubtitles = true;
     try {
-      await deps.execute({
+      const result = await deps.execute({
         action: 'media.tracks.set',
         args: { mediaVersion: next.mediaVersion, streamVersion: next.streamVersion, ...args },
       });
+      if (!result || result.status === 'applied') restoredPlayerSubtitles = key;
     } catch (error) {
       deps.fail(error.message);
+    } finally {
+      restoringPlayerSubtitles = false;
     }
   }
 

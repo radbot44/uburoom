@@ -103,7 +103,24 @@ export function mount(host, deps) {
     }, 250);
   }
   let lastBurnFallbackKey = '',
+    burnFallbackRetryTimer,
     activeSubtitleKey = '';
+  function attemptBurnFallback() {
+    deps.time.clearTimeout?.(burnFallbackRetryTimer);
+    burnFallbackRetryTimer = undefined;
+    if (!store.room.state?.tracks?.subtitleId || (store.room.state.tracks.subtitleMode || 'auto') !== 'auto') return;
+    const key = `${store.room.state.mediaVersion}:${store.room.state.tracks.subtitleId}`;
+    if (lastBurnFallbackKey === key) return;
+    if (store.room.pending || store.stream.qualityPending) {
+      burnFallbackRetryTimer = (deps.time.setTimeout || setTimeout)(attemptBurnFallback, 200);
+      return;
+    }
+    void changeTrack(
+      { subtitleMode: 'burn' },
+      { mediaVersion: store.room.state.mediaVersion, streamVersion: store.room.state.streamVersion },
+      key,
+    );
+  }
   const captions = new uburoomSubtitles(
     deps.video,
     value => {
@@ -117,14 +134,7 @@ export function mount(host, deps) {
         store.room.state?.tracks?.subtitleId &&
         (store.room.state.tracks.subtitleMode || 'auto') === 'auto'
       ) {
-        const key = `${store.room.state.mediaVersion}:${store.room.state.tracks.subtitleId}`;
-        if (lastBurnFallbackKey !== key) {
-          lastBurnFallbackKey = key;
-          void changeTrack(
-            { subtitleMode: 'burn' },
-            { mediaVersion: store.room.state.mediaVersion, streamVersion: store.room.state.streamVersion },
-          );
-        }
+        attemptBurnFallback();
       }
     },
     mediaTime =>
@@ -357,7 +367,7 @@ export function mount(host, deps) {
     rpInput.checked = !!store.preferences.playerPreferences?.discordRichPresence;
     rpInput.disabled = richPresencePending;
   }
-  async function changeTrack(args, context = store.player.trackContext) {
+  async function changeTrack(args, context = store.player.trackContext, burnKey = undefined) {
     if (
       !store.room.state ||
       store.room.pending ||
@@ -370,7 +380,10 @@ export function mount(host, deps) {
     store.player.trackActionError = '';
     try {
       const result = await deps.execute({ action: 'media.tracks.set', args: { ...context, ...args } });
-      if (result.status === 'applied') deps.rememberPlayerSubtitles(args);
+      if (result.status === 'applied') {
+        if (burnKey) lastBurnFallbackKey = burnKey;
+        deps.rememberPlayerSubtitles(args);
+      }
     } catch (error) {
       store.player.trackActionError = error.message;
       deps.fail(error.message);

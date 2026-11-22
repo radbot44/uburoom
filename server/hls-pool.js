@@ -38,10 +38,49 @@ class HLSPool {
       });
     let url = media.start,
       text = media.initialManifest;
+    const readBytes = async (targetUrl, maxAllowed) => {
+      const response = await wait(provider.request(targetUrl, { ...options, streaming: true })),
+        reader = response.body.getReader();
+      const chunks = [];
+      let size = 0;
+      try {
+        for (;;) {
+          const { done, value } = await wait(reader.read());
+          if (done) break;
+          if (size + value.byteLength > maxAllowed || this.bytes + this.pendingBytes + value.byteLength > this.maxBytes)
+            return undefined;
+          size += value.byteLength;
+          this.pendingBytes += value.byteLength;
+          chunks.push(value);
+        }
+        if (!size) return undefined;
+        return {
+          bytes: Buffer.concat(chunks, size),
+          type: response.headers.get('content-type'),
+        };
+      } finally {
+        this.pendingBytes -= size;
+        void reader.cancel().catch(() => {});
+        reader.releaseLock();
+      }
+    };
+    const hasMp4Box = (buf, names) => {
+      for (let at = 0; at + 8 <= buf.length;) {
+        let size = buf.readUInt32BE(at);
+        if (size === 1) {
+          if (at + 16 > buf.length) break;
+          size = Number(buf.readBigUInt64BE(at + 8));
+        }
+        if (size < 8 || at + size > buf.length) break;
+        if (names.includes(buf.toString('latin1', at + 4, at + 8))) return true;
+        at += size;
+      }
+      return false;
+    };
     try {
       for (let depth = 0; depth < 3; depth++) {
         if (!text) text = await wait((await wait(provider.request(url, options))).text());
-        if (text.length > 2e6 || !text.startsWith('#EXTM3U') || /#EXT-X-(?:KEY|MAP):/.test(text)) return;
+        if (text.length > 2e6 || !text.startsWith('#EXTM3U') || /#EXT-X-KEY:/.test(text)) return;
         const first = text
           .split(/\r?\n/)
           .map(line => line.trim())
@@ -55,33 +94,40 @@ class HLSPool {
         }
         const sequence = /#EXT-X-MEDIA-SEQUENCE:([^\r\n]+)/.exec(text);
         if (sequence && Number(sequence[1]) !== 0) return;
-        const response = await wait(provider.request(target, { ...options, streaming: true })),
-          reader = response.body.getReader();
-        const chunks = [];
-        let size = 0;
-        try {
-          for (;;) {
-            const { done, value } = await wait(reader.read());
-            if (done) break;
-            if (
-              size + value.byteLength > this.anchorBytes ||
-              this.bytes + this.pendingBytes + value.byteLength > this.maxBytes
-            )
-              return;
-            size += value.byteLength;
-            this.pendingBytes += value.byteLength;
-            chunks.push(value);
+        const mapMatch = /#EXT-X-MAP:[^\r\n]*URI="([^"]+)"/.exec(text);
+        if (mapMatch) {
+          const initUrl = provider.url(new URL(mapMatch[1].trim(), url).href).href;
+          const initPart = await readBytes(initUrl, this.anchorBytes);
+          if (!initPart || !hasMp4Box(initPart.bytes, ['ftyp', 'moov'])) return;
+          const initSize = initPart.bytes.length;
+          this.pendingBytes += initSize;
+          let segPart;
+          try {
+            segPart = await readBytes(target, this.anchorBytes - initSize);
+          } finally {
+            this.pendingBytes -= initSize;
           }
-          if (!size) return;
-          const bytes = Buffer.concat(chunks, size);
-          if (bytes[0] !== 0x47 || size < 188 || (size > 188 && bytes[188] !== 0x47)) return;
-          this.bytes += size;
-          return { url: target, bytes, type: response.headers.get('content-type') || 'video/mp2t' };
-        } finally {
-          this.pendingBytes -= size;
-          void reader.cancel().catch(() => {});
-          reader.releaseLock();
+          if (!segPart || !hasMp4Box(segPart.bytes, ['moof', 'styp', 'sidx'])) return;
+          const totalBytes = initSize + segPart.bytes.length;
+          if (totalBytes > this.anchorBytes || this.bytes + this.pendingBytes + totalBytes > this.maxBytes) return;
+          this.bytes += totalBytes;
+          return {
+            url: target,
+            bytes: segPart.bytes,
+            type: segPart.type || 'video/iso.segment',
+            initUrl,
+            initBytes: initPart.bytes,
+            initType: initPart.type || 'video/mp4',
+            totalBytes,
+          };
         }
+        const tsPart = await readBytes(target, this.anchorBytes);
+        if (!tsPart) return;
+        const { bytes, type } = tsPart;
+        const size = bytes.length;
+        if (bytes[0] !== 0x47 || size < 188 || (size > 188 && bytes[188] !== 0x47)) return;
+        this.bytes += size;
+        return { url: target, bytes, type: type || 'video/mp2t', totalBytes: size };
       }
     } finally {
       clearTimeout(timer);
@@ -126,7 +172,7 @@ class HLSPool {
     this.live.delete(group);
     if (this.groups.get(group.key) === group) this.groups.delete(group.key);
     if (group.anchor) {
-      this.bytes -= group.anchor.bytes.length;
+      this.bytes -= group.anchor.totalBytes ?? group.anchor.bytes.length;
       group.anchor = undefined;
     }
     if (group.media && !group.claimed) await this.stop(group.media);
@@ -249,9 +295,19 @@ class HLSPool {
   }
   response(lease, target, method, range) {
     const anchor = !lease?.released && lease?.group.anchor;
-    if (!anchor || target !== anchor.url) return;
-    const size = anchor.bytes.length,
-      headers = { 'Content-Type': anchor.type, 'Accept-Ranges': 'bytes' };
+    if (!anchor) return;
+    let bodyBytes, contentType;
+    if (target === anchor.url) {
+      bodyBytes = anchor.bytes;
+      contentType = anchor.type;
+    } else if (anchor.initUrl && target === anchor.initUrl) {
+      bodyBytes = anchor.initBytes;
+      contentType = anchor.initType;
+    } else {
+      return;
+    }
+    const size = bodyBytes.length,
+      headers = { 'Content-Type': contentType, 'Accept-Ranges': 'bytes' };
     let start = 0,
       end = size - 1;
     if (range) {
@@ -268,7 +324,7 @@ class HLSPool {
       headers['Content-Range'] = 'bytes ' + start + '-' + end + '/' + size;
     }
     headers['Content-Length'] = String(end - start + 1);
-    return new Response(method === 'HEAD' ? null : anchor.bytes.subarray(start, end + 1), {
+    return new Response(method === 'HEAD' ? null : bodyBytes.subarray(start, end + 1), {
       status: range ? 206 : 200,
       headers,
     });

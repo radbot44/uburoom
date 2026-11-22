@@ -1198,7 +1198,7 @@ test('a run gives its slot to waiting work at a chunk boundary', async () => {
 test('run returns every WebM output of one process in pipe order', async () => {
   // Node stands in for FFmpeg: it writes each output file it is given, sized by position.
   const script =
-    "const fs=require('fs');process.argv.slice(1).filter(a=>a.endsWith('.webm')).forEach((f,i)=>fs.writeFileSync(f,Buffer.alloc(100+i)))";
+    "const fs=require('fs'),h=Buffer.from([0x1a,0x45,0xdf,0xa3,0x1f,0x43,0xb6,0x75]);process.argv.slice(1).filter(a=>a.endsWith('.webm')).forEach((f,i)=>{const b=Buffer.alloc(100+i);h.copy(b);fs.writeFileSync(f,b)})";
   const outputs = await run(
     process.execPath,
     ['-e', script, 'webm', 'pipe:1', 'pipe:3', 'pipe:4', 'pipe:5'],
@@ -1310,9 +1310,9 @@ test('CPU conversion splits the machine among running jobs instead of fixed thre
 
 test('segments hands over each finished segment in order and only a real end finishes the last', async () => {
   // Node stands in for FFmpeg: it opens each output's segments in turn, as the muxer does.
-  const script = `const fs=require('fs');const [count,code]=process.argv.slice(-2).map(Number);
+  const script = `const fs=require('fs'),h=Buffer.from([0x1a,0x45,0xdf,0xa3,0x1f,0x43,0xb6,0x75]);const [count,code]=process.argv.slice(-2).map(Number);
     const files=process.argv.slice(1,-2);let n=0;
-    const step=()=>{if(n===count)process.exit(code);for(const f of files)fs.writeFileSync(f.replace('%d',n),Buffer.alloc(100+n));n++;setTimeout(step,60)};step();`;
+    const step=()=>{if(n===count)process.exit(code);for(const f of files){const b=Buffer.alloc(100+n);h.copy(b);fs.writeFileSync(f.replace('%d',n),b);}n++;setTimeout(step,60)};step();`;
   const collect = async (count, code, ended = () => true) => {
     const seen = [];
     const done = segments(
@@ -1406,6 +1406,7 @@ test('run feeds its input to a WebM encode on stdin and returns only the WebM ou
   const script =
     "const c=[];process.stdin.on('data',d=>c.push(d)).on('end',()=>require('fs').writeFileSync(process.argv.at(-1),Buffer.concat(c)))";
   const input = Buffer.alloc(4000, 3);
+  Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x1f, 0x43, 0xb6, 0x75]).copy(input);
   const output = await run(
     process.execPath,
     ['-e', script, '--', '-i', 'pipe:0', '-f', 'webm', 'pipe:1'],

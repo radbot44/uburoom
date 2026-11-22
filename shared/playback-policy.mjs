@@ -34,22 +34,32 @@ function convertedOriginal(state) {
 // audio starts, and when its first picture plays. Other containers return undefined.
 function transportAudio(bytes) {
   if (!bytes.length || bytes.length % 188 || bytes[0] !== 0x47) return undefined;
-  let programPid, videoPid, audioPid, audioAt, audioPts, pts;
+  let programPid,
+    videoPid,
+    audioPid,
+    audioAt,
+    audioPts,
+    pts,
+    aac48Stereo = true;
   for (let at = 0; at < bytes.length; at += 188) {
     if (bytes[at] !== 0x47) return undefined;
+    const packetEnd = at + 188;
     const pid = ((bytes[at + 1] & 31) << 8) | bytes[at + 2],
       start = !!(bytes[at + 1] & 64),
       control = (bytes[at + 3] >> 4) & 3;
     if (!(control & 1)) continue;
     const payload = at + 4 + (control & 2 ? bytes[at + 4] + 1 : 0);
+    if (payload >= packetEnd) continue;
     if (start && (pid === 0 || pid === programPid)) {
-      const table = payload + 1 + bytes[payload],
-        end = table + 3 + (((bytes[table + 1] & 15) << 8) | bytes[table + 2]) - 4;
-      if (pid === 0) programPid = ((bytes[table + 10] & 31) << 8) | bytes[table + 11];
-      else
+      const table = payload + 1 + bytes[payload];
+      if (table + 3 > packetEnd) continue;
+      const end = Math.min(packetEnd, table + 3 + (((bytes[table + 1] & 15) << 8) | bytes[table + 2]) - 4);
+      if (pid === 0) {
+        if (table + 12 <= end) programPid = ((bytes[table + 10] & 31) << 8) | bytes[table + 11];
+      } else if (table + 12 <= end) {
         for (
           let entry = table + 12 + (((bytes[table + 10] & 15) << 8) | bytes[table + 11]);
-          entry < end;
+          entry + 5 <= end;
           entry += 5 + (((bytes[entry + 3] & 15) << 8) | bytes[entry + 4])
         ) {
           const type = bytes[entry],
@@ -57,7 +67,13 @@ function transportAudio(bytes) {
           if (type === 0x0f) audioPid = stream;
           if (type === 0x1b || type === 0x24) videoPid = stream;
         }
-    } else if (start && (pid === audioPid || pid === videoPid) && bytes[payload + 7] & 0x80) {
+      }
+    } else if (
+      start &&
+      (pid === audioPid || pid === videoPid) &&
+      payload + 14 <= packetEnd &&
+      bytes[payload + 7] & 0x80
+    ) {
       const p = payload + 9,
         time =
           ((bytes[p] >> 1) & 7) * 2 ** 30 +
@@ -66,10 +82,16 @@ function transportAudio(bytes) {
       if (pid === audioPid && audioAt === undefined) {
         audioAt = at;
         audioPts = time;
+        const es = payload + 9 + bytes[payload + 8];
+        if (es + 7 <= packetEnd && bytes[es] === 0xff && (bytes[es + 1] & 0xf0) === 0xf0) {
+          const freqIdx = (bytes[es + 2] >> 2) & 0x0f;
+          const chanCfg = ((bytes[es + 2] & 1) << 2) | ((bytes[es + 3] >> 6) & 3);
+          aac48Stereo = freqIdx === 3 && chanCfg === 2;
+        }
       }
     }
   }
-  return { audioPid, audioAt, audioPts, pts };
+  return { audioPid, audioAt, audioPts, pts, aac48Stereo };
 }
 // Silent 48 kHz stereo AAC packets for one segment, in the same pid as the real audio.
 function silentAudioPackets(pid, pts, seconds) {
@@ -180,7 +202,7 @@ function silentAudioLoader(cache) {
           // A segment runs slightly past its listed length; the player trims any overlap.
           const missing = hasAudio ? (found.audioPts - found.pts) / 90000 : frag.duration + 0.05;
           const silence =
-            found?.audioPid !== undefined && found.pts !== undefined && missing > 0.05
+            found?.audioPid !== undefined && found.pts !== undefined && found.aac48Stereo !== false && missing > 0.05
               ? silentAudioPackets(found.audioPid, found.pts, missing)
               : undefined;
           const at = found?.audioAt ?? bytes.length,
@@ -320,39 +342,79 @@ function supportsHdrDisplay(
     return false;
   }
 }
+const CONTAINER_MIME = Object.freeze({
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  mkv: 'video/x-matroska',
+  matroska: 'video/x-matroska',
+  ts: 'video/mp2t',
+  mpegts: 'video/mp2t',
+  avi: 'video/x-msvideo',
+});
 function needsVideoConversion(source, canPlayType, matchMedia, hdrMode) {
   // Positive answers remain only hints. Only an explicit negative for every
   // representative family probe rules out an initial HEVC direct-play trial.
   // Test Main/Main10 and both sample entries: bare `hvc1` alone is insufficient.
   if (!source || typeof canPlayType !== 'function') return false;
   try {
+    const rawContainer = String(source.container || '').toLowerCase();
+    if (source.format === 'file' && rawContainer) {
+      if (/^(mkv|matroska|ts|mpegts|avi)$/i.test(rawContainer)) {
+        const mime = CONTAINER_MIME[rawContainer];
+        if (mime && canPlayType(mime) === '') return true;
+      }
+    }
+    const baseMime = (source.format === 'file' && CONTAINER_MIME[rawContainer]) || 'video/mp4';
     if (source.hdrKind === 'dovi-p5') {
       if (!supportsHdrDisplay(matchMedia, hdrMode)) return true;
       const dovi = ['dvh1.05.06', 'dvhe.05.06'];
-      if (dovi.every(codec => canPlayType(`video/mp4; codecs="${codec}"`) === '')) return true;
+      if (dovi.every(codec => canPlayType(`${baseMime}; codecs="${codec}"`) === '')) return true;
     } else if (source.hdr) {
       if (!supportsHdrDisplay(matchMedia, hdrMode)) return true;
+    }
+    if (/^(h264|avc1)$/i.test(source.videoCodec || '') && Number(source.bitDepth) > 8) {
+      const hi10 = ['avc1.6e0028', 'avc1.6e0033'];
+      if (hi10.every(codec => canPlayType(`${baseMime}; codecs="${codec}"`) === '')) return true;
     }
     if (/^(hevc|h265|hvc1|hev1)$/i.test(source.videoCodec || '')) {
       const codecs =
         source.hdr || Number(source.bitDepth) >= 10
           ? ['hvc1.2.4.L153.B0', 'hev1.2.4.L153.B0']
           : ['hvc1.1.6.L93.B0', 'hev1.1.6.L93.B0', 'hvc1.2.4.L153.B0', 'hev1.2.4.L153.B0'];
-      if (codecs.every(codec => canPlayType(`video/mp4; codecs="${codec}"`) === '')) return true;
+      if (codecs.every(codec => canPlayType(`${baseMime}; codecs="${codec}"`) === '')) return true;
     }
   } catch {
     /* Unknown capability keeps the normal observed-playback path. */
   }
   return false;
 }
+const AUDIO_MIME_PROBES = Object.freeze({
+  aac: ['audio/mp4; codecs="mp4a.40.2"'],
+  mp3: ['audio/mpeg', 'audio/mp4; codecs="mp4a.40.34"'],
+  opus: ['audio/webm; codecs="opus"', 'audio/mp4; codecs="opus"'],
+  vorbis: ['audio/webm; codecs="vorbis"', 'audio/ogg; codecs="vorbis"'],
+  flac: ['audio/flac', 'audio/mp4; codecs="fLaC"'],
+  alac: ['audio/mp4; codecs="alac"'],
+  pcm: ['audio/wav; codecs="1"'],
+  ac3: ['audio/mp4; codecs="ac-3"'],
+  eac3: ['audio/mp4; codecs="ec-3"'],
+  dca: ['audio/mp4; codecs="dtsc"'],
+  dts: ['audio/mp4; codecs="dtsc"'],
+  truehd: ['audio/mp4; codecs="mlpa"'],
+});
 function needsAudioConversion(source, canPlayType) {
   if (!source || typeof canPlayType !== 'function') return false;
   try {
-    const codec = typeof source === 'string' ? source : source.audioCodec;
-    const audio = { aac: 'mp4a.40.2', ac3: 'ac-3', eac3: 'ec-3', dca: 'dtsc', dts: 'dtsc', truehd: 'mlpa' }[
-      String(codec || '').toLowerCase()
-    ];
-    if (audio && canPlayType(`audio/mp4; codecs="${audio}"`) === '') return true;
+    const raw = typeof source === 'string' ? source : source.audioCodec;
+    if (!raw) return false;
+    const key = String(raw)
+      .toLowerCase()
+      .replace(/^pcm_.*/, 'pcm');
+    const probes = AUDIO_MIME_PROBES[key];
+    if (!probes) return true;
+    if (probes.every(mime => canPlayType(mime) === '')) return true;
   } catch {
     /* Unknown capability keeps the normal observed-playback path. */
   }

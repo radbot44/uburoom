@@ -7,7 +7,8 @@ const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { fileStream } = require('./file-stream');
 const { PlaybackError } = require('./errors');
-const { run } = require('./media-tools');
+const { run, watchMemory } = require('./media-tools');
+const { processMemory } = require('./process-memory');
 
 /**
  * Keeps a file's picture and converts only its sound: the video stream is copied
@@ -32,6 +33,7 @@ const REMEMBERED = 20; // Files whose boundaries are kept.
 const AHEAD = 8; // Segments produced beyond the newest one asked for.
 const BEHIND = 6; // Segments kept behind the oldest recent request.
 const MAX_SEGMENTS = 64;
+const MAX_RUNS = 2;
 const IDLE_MS = 45000;
 const TIMESCALE = 90000;
 const COPYABLE = /^(h264|avc1|hevc|h265|hvc1|hev1)$/i;
@@ -135,7 +137,11 @@ class RemuxSession {
     this.init = undefined;
     /** @type {number[]} Where each segment starts. */
     this.boundaries = [];
-    /** @type {any} The FFmpeg run in progress. */
+    /** @type {number[] | undefined} Exact keyframe decode timestamps when known. */
+    this.boundaryDts = undefined;
+    /** @type {Set<any>} Active FFmpeg runs. */
+    this.activeRuns = new Set();
+    /** @type {any} The most recent FFmpeg run in progress. */
     this.run = undefined;
     /** @type {any} */
     this.idle = undefined;
@@ -147,7 +153,9 @@ class RemuxSession {
   }
   async prepare() {
     await fs.promises.mkdir(this.directory, { recursive: true });
-    this.boundaries = await this.owner.boundaries(this.source, this.abort.signal);
+    const found = /** @type {any} */ (await this.owner.boundaries(this.source, this.abort.signal));
+    this.boundaries = found;
+    this.boundaryDts = Array.isArray(found?.dts) && found.dts.length === found.length ? found.dts : undefined;
   }
   playlist() {
     const starts = this.boundaries,
@@ -165,25 +173,38 @@ class RemuxSession {
       '',
     ].join('\n');
   }
-  /** The segment a fragment belongs to: boundaries are picture times, a fragment's is its earlier decode time. */
+  /** The segment a fragment belongs to: matched against exact keyframe decode times. */
   locate(time) {
+    const list = this.boundaryDts || this.boundaries;
     let low = 0,
-      high = this.boundaries.length - 1;
+      high = list.length - 1;
     while (low < high) {
       const middle = (low + high + 1) >> 1;
-      if (this.boundaries[middle] - 0.5 <= time) low = middle;
+      if (list[middle] <= time + 1e-3) low = middle;
       else high = middle - 1;
     }
     return low;
   }
-  /** Start FFmpeg at a segment, replacing any run in progress. */
-  start(index) {
+  /** Start FFmpeg at a segment, replacing any run for the same lease or oldest when at cap. */
+  start(index, lease = this) {
     if (this.closed) return;
-    this.stop();
-    // The new run cannot produce earlier segments. Let their callers retry now.
+    for (const active of [...this.activeRuns]) {
+      if (active.lease === lease) {
+        active.controller.abort();
+        this.activeRuns.delete(active);
+      }
+    }
+    while (this.activeRuns.size >= MAX_RUNS) {
+      const oldest = this.activeRuns.values().next().value;
+      if (!oldest) break;
+      oldest.controller.abort();
+      this.activeRuns.delete(oldest);
+    }
+    const minFirst = Math.min(index, ...[...this.activeRuns].map(r => r.first));
+    // Waiters behind all active runs cannot be reached; let their callers retry now.
     const skipped = Object.assign(failure('The copied stream moved; retry this segment.'), { status: 503 });
     for (const [pending, list] of this.waiters)
-      if (pending < index) {
+      if (pending < minFirst) {
         this.waiters.delete(pending);
         for (const waiter of list) waiter.reject(skipped);
       }
@@ -191,19 +212,20 @@ class RemuxSession {
       controller = new AbortController(),
       run = (this.run = /** @type {any} */ ({
         id: randomUUID(),
+        lease,
         first: index,
         head: index,
         controller,
         paused: false,
       }));
+    this.activeRuns.add(run);
     const hevc = !/^(h264|avc1)$/i.test(this.source.videoCodec || '');
     const args = url => [
       '-hide_banner',
       '-loglevel',
       'error',
       '-nostdin',
-      // Seeking lands on a keyframe at or before this, which the fragments' own times reveal.
-      ...(index ? ['-ss', String(this.boundaries[index] + 0.05)] : []),
+      ...(index ? ['-ss', String(this.boundaries[index])] : []),
       '-copyts',
       '-i',
       url,
@@ -231,8 +253,8 @@ class RemuxSession {
       'frag_keyframe+empty_moov+default_base_moof+frag_discont',
       'pipe:1',
     ];
-    run.done = this.owner
-      .open(this.source, controller.signal, url => this.produce(run, args(url)))
+    const startProduce = () => this.owner.open(this.source, controller.signal, url => this.produce(run, args(url)));
+    run.done = (av1.processGate ? av1.processGate.run(controller.signal, startProduce) : startProduce())
       .catch(error => {
         if (controller.signal.aborted) return;
         av1.logger?.warn?.('Remux', `Copying "${this.source.title}" failed: ${String(error.message || error)}`);
@@ -243,7 +265,8 @@ class RemuxSession {
       })
       .finally(() => {
         this.runs.delete(run.done);
-        if (this.run === run) this.run = undefined;
+        this.activeRuns.delete(run);
+        if (this.run === run) this.run = [...this.activeRuns].at(-1);
       });
     this.runs.add(run.done);
   }
@@ -259,6 +282,9 @@ class RemuxSession {
         collecting,
         parts = [],
         stderr = '',
+        exited = false,
+        settled = false,
+        failureReason,
         writing = Promise.resolve();
       const flush = () => {
         if (collecting === undefined || !parts.length) return;
@@ -267,7 +293,18 @@ class RemuxSession {
         parts = [];
         writing = writing.then(() => this.store(run, index, bytes));
       };
-      const kill = () => child.kill('SIGKILL');
+      const kill = error => {
+        if (error instanceof Error) failureReason ||= error;
+        child.kill('SIGKILL');
+      };
+      const memoryCheck = watchMemory(
+        child,
+        1024 * 1024 * 1024,
+        processMemory,
+        1000,
+        () => settled || exited || !!failureReason || run.controller.signal.aborted,
+        kill,
+      );
       run.controller.signal.addEventListener('abort', kill, { once: true });
       child.stderr.on('data', data => {
         if (stderr.length < 2000) stderr += data;
@@ -282,17 +319,6 @@ class RemuxSession {
             else if (box.type === 'mdat' && moof) {
               const time = fragmentTime(moof),
                 index = time === undefined ? collecting : this.locate(time);
-              if (index !== undefined && run.landed === undefined) {
-                run.landed = index;
-                // A seek that passed the segment asked for cannot fill it: begin earlier.
-                if (index > run.first && run.first > 0) {
-                  const earlier = Math.max(0, run.first - 1);
-                  queueMicrotask(() => {
-                    if (this.run === run && !run.controller.signal.aborted) this.start(earlier);
-                  });
-                  return;
-                }
-              }
               if (index !== undefined && index >= run.first - 1) {
                 if (index !== collecting) {
                   flush();
@@ -304,14 +330,25 @@ class RemuxSession {
             }
           }
         } catch (error) {
-          kill();
+          kill(error);
           reject(error);
         }
       });
-      child.on('error', reject);
+      child.on('exit', () => {
+        exited = true;
+        clearInterval(memoryCheck);
+      });
+      child.on('error', err => {
+        settled = true;
+        clearInterval(memoryCheck);
+        reject(err);
+      });
       child.on('close', code => {
+        settled = true;
+        clearInterval(memoryCheck);
         run.controller.signal.removeEventListener('abort', kill);
         if (run.controller.signal.aborted) return void writing.then(resolve, reject);
+        if (failureReason) return reject(failureReason);
         if (code !== 0) return reject(failure('FFmpeg could not copy this video: ' + stderr.trim().slice(0, 300)));
         // The source ended, so the segment being collected is whole.
         flush();
@@ -341,14 +378,15 @@ class RemuxSession {
   }
   /** Hold FFmpeg once it is far enough ahead of what viewers ask for, and drop what is far behind. */
   pace() {
-    const run = this.run;
     const now = Date.now();
     for (const [lease, cursor] of this.cursors) if (now - cursor.at > IDLE_MS) this.cursors.delete(lease);
     const cursors = [...this.cursors.values()].map(cursor => cursor.index);
     const requests = [...cursors, ...this.waiters.keys()];
     const newest = requests.length ? Math.max(...requests) : this.requested;
     const oldest = requests.length ? Math.min(...requests) : this.requested;
-    if (run?.child) {
+    const activeRuns = this.activeRuns.size ? [...this.activeRuns] : this.run ? [this.run] : [];
+    for (const run of activeRuns) {
+      if (!run?.child) continue;
       const far = run.head > newest + AHEAD;
       if (far && !run.paused) run.child.stdout.pause();
       else if (!far && run.paused) run.child.stdout.resume();
@@ -373,6 +411,8 @@ class RemuxSession {
     while (this.segments.size > MAX_SEGMENTS && expendable.length) drop(expendable.shift());
   }
   stop() {
+    for (const active of [...this.activeRuns]) active.controller.abort();
+    this.activeRuns.clear();
     this.run?.controller.abort();
     this.run = undefined;
   }
@@ -392,7 +432,7 @@ class RemuxSession {
   async initSegment(signal) {
     await this.ready;
     if (this.init) return this.init;
-    if (!this.run) this.start(this.requested);
+    if (!this.run && !this.activeRuns.size) this.start(this.requested);
     return this.wait(this.initWaiters, signal);
   }
   wait(list, signal) {
@@ -429,10 +469,11 @@ class RemuxSession {
     this.opening.set(index, (this.opening.get(index) || 0) + 1);
     try {
       if (!this.segments.has(index)) {
-        const run = this.run;
+        const activeRuns = this.activeRuns.size ? [...this.activeRuns] : this.run ? [this.run] : [];
+        const covering = activeRuns.find(r => index >= r.head && index <= r.head + AHEAD);
         // A run reaches a segment only by producing every one before it.
         // One it already passed and has since dropped has to be produced again.
-        if (!run || index < run.head || index > run.head + AHEAD) this.start(index);
+        if (!covering) this.start(index, lease);
         else this.pace();
         const list = this.waiters.get(index) || [];
         this.waiters.set(index, list);
@@ -506,35 +547,50 @@ class Remux {
       const intervals = [];
       for (let at = from; at < Math.min(duration, from + share); at += step) intervals.push(at + '%+#2');
       if (!intervals.length) return [];
-      const raw = await this.open(source, signal, (url, local) =>
-        run(
-          av1.ffprobe,
-          [
-            '-v',
-            'error',
-            // Through the bridge, one connection for every seek; a new one each time is several times slower.
-            ...(local ? [] : ['-multiple_requests', '1']),
-            '-select_streams',
-            'v:0',
-            '-show_entries',
-            'packet=pts_time,flags',
-            '-of',
-            'csv=p=0',
-            '-read_intervals',
-            intervals.join(','),
-            url,
-          ],
-          signal,
-          120000,
-          8 * 1024 * 1024,
-        ),
-      );
-      return raw
-        .toString()
+      const runProbe = () =>
+        this.open(source, signal, (url, local) =>
+          run(
+            av1.ffprobe,
+            [
+              '-v',
+              'error',
+              // Through the bridge, one connection for every seek; a new one each time is several times slower.
+              ...(local ? [] : ['-multiple_requests', '1']),
+              '-select_streams',
+              'v:0',
+              '-show_entries',
+              'format=start_time:stream=start_time:packet=pts_time,dts_time,flags',
+              '-of',
+              'json',
+              '-read_intervals',
+              intervals.join(','),
+              url,
+            ],
+            signal,
+            120000,
+            8 * 1024 * 1024,
+          ),
+        );
+      const raw = await (av1.processGate ? av1.processGate.run(signal, runProbe) : runProbe());
+      const text = raw.toString().trim();
+      if (text.startsWith('{')) {
+        const parsed = JSON.parse(text);
+        const origin = Number(parsed.format?.start_time ?? parsed.streams?.[0]?.start_time) || 0;
+        const packets = Array.isArray(parsed.packets) ? parsed.packets : [];
+        return packets
+          .filter(p => String(p.flags || '').startsWith('K'))
+          .map(p => {
+            const pts = Number(p.pts_time ?? p.dts_time) - origin;
+            const dts = Number(p.dts_time ?? p.pts_time);
+            return { pts, dts };
+          })
+          .filter(p => Number.isFinite(p.pts) && p.pts >= 0 && p.pts < duration);
+      }
+      return text
         .split(/\r?\n/)
         .map(line => line.split(','))
         .filter(([time, flags]) => flags?.startsWith('K') && Number(time) >= 0 && Number(time) < duration)
-        .map(([time]) => Number(time));
+        .map(([time]) => ({ pts: Number(time), dts: Number(time) }));
     };
     const job = (async () => {
       const way = (await source.provider?.filePath?.(source).catch(() => undefined)) ? 'local' : 'bridged',
@@ -542,10 +598,17 @@ class Remux {
         share = Math.ceil(duration / step / SEARCHES[way]) * step,
         searches = [];
       for (let from = 0; from < duration; from += share) searches.push(search(from, share, step));
-      const found = [...new Set((await Promise.all(searches)).flat())].sort((a, b) => a - b);
-      if (!found.length) throw failure('This video has no keyframes to copy from.');
-      // Keyframes closer than a second would make needless tiny segments.
-      return found.filter((at, i, all) => i === 0 || at - all[i - 1] >= 1);
+      const allPackets = (await Promise.all(searches)).flat().sort((a, b) => a.pts - b.pts);
+      const unique = [];
+      for (const item of allPackets) {
+        if (!unique.length || item.pts - unique[unique.length - 1].pts >= 1) {
+          unique.push(item);
+        }
+      }
+      if (!unique.length) throw failure('This video has no keyframes to copy from.');
+      const ptsList = unique.map(item => item.pts);
+      Object.defineProperty(ptsList, 'dts', { value: unique.map(item => item.dts) });
+      return ptsList;
     })();
     // A failed search is not remembered, so the next viewer tries again.
     job.catch(() => this.known.get(source.sourceKey) === job && this.known.delete(source.sourceKey));
@@ -568,8 +631,11 @@ class Remux {
    * Join the copy of this source with this audio track, starting one if there is none.
    * The prepared media object becomes an HLS stream answered by this object.
    */
-  async acquire(media, audio, shareKey) {
+  async acquire(media, audio, shareKey, excludeLease) {
     const key = JSON.stringify([media.sourceKey, audio?.id ?? null, shareKey || null]);
+    if (excludeLease?.session && this.sessions.get(key) === excludeLease.session) {
+      this.sessions.delete(key);
+    }
     let session = this.sessions.get(key);
     if (!session) {
       session = new RemuxSession(

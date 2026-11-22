@@ -74,7 +74,7 @@ class Admission {
     return room ? 'guest:' + room + ':' + id : context?.activity === true ? 'activity:' + id : id;
   }
   discordDropped(identities, held) {
-    if (held?.via !== 'discord' || held.unanswered) return false;
+    if (!['discord', 'owner'].includes(held?.via) || held.unanswered) return false;
     const discord = identities.find(identity => identity.provider === 'discord');
     const access = discord && this.discordAccess();
     if (!access || access.options?.()?.available === false) return false;
@@ -285,7 +285,13 @@ class Admission {
   async answerWithRule(account, identities, context) {
     const discord = identities.find(identity => identity.provider === 'discord');
     // The installation owner (discord.owner_id), never a blank match.
-    if (this.config.ownerId && discord?.subject === this.config.ownerId) return { allowed: true, via: 'owner' };
+    if (this.config.ownerId && discord?.subject === this.config.ownerId) {
+      const access = this.discordAccess();
+      if (!access || access.options?.()?.available === false || access.isMember(discord.subject) !== false) {
+        return { allowed: true, via: 'owner' };
+      }
+      if ((await access.refresh?.(discord.subject)) === true) return { allowed: true, via: 'owner' };
+    }
     // The server password: a server-wide guest who entered the current one.
     if (
       this.settings.password &&

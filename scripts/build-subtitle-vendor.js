@@ -38,7 +38,7 @@ async function main() {
           return {
             contents: contents.replace(
               original,
-              'await Promise.race([(async()=>{await this.ready;await this.renderer?.[releaseProxy]();})(),new Promise(resolve=>setTimeout(resolve,1000))]);',
+              'try{await Promise.race([this.ready.then(()=>this.renderer?.[releaseProxy]?.()),new Promise(resolve=>setTimeout(resolve,50))]);}catch{}',
             ),
             loader: 'js',
           };
@@ -151,7 +151,7 @@ async function main() {
             )
             .replace(
               pgsIndex,
-              'isSyncedAtMediaTime(mediaTime) {\n        if (!this.isPartialStream) return true;\n        const timestamps = (this.state.useWorker && this.state.workerReady) ? this.state.timestamps : (this.pgsParser?.getTimestamps() ?? this.state.timestamps);\n        return timestamps.length > 0 && timestamps[timestamps.length - 1] > Math.max(0, (mediaTime + this.timeOffset) * 1000);\n    }\n    findCurrentIndex(time) {\n        const timestamps = (this.state.useWorker && this.state.workerReady) ? this.state.timestamps : (this.pgsParser?.getTimestamps() ?? this.state.timestamps);\n        const index = (this.state.useWorker && this.state.workerReady) ? binarySearchTimestamp(timestamps, time * 1000) : (this.pgsParser?.findIndexAtTimestamp(time) ?? -1);\n        return this.isPartialStream && (index < 0 || index >= timestamps.length - 1) ? -1 : index;\n    }',
+              'isSyncedAtMediaTime(mediaTime) {\n        if (!this.isPartialStream || this.boundedWindow) return true;\n        const timestamps = (this.state.useWorker && this.state.workerReady) ? this.state.timestamps : (this.pgsParser?.getTimestamps() ?? this.state.timestamps);\n        return timestamps.length > 0 && timestamps[timestamps.length - 1] > Math.max(0, (mediaTime + this.timeOffset) * 1000);\n    }\n    findCurrentIndex(time) {\n        const timestamps = (this.state.useWorker && this.state.workerReady) ? this.state.timestamps : (this.pgsParser?.getTimestamps() ?? this.state.timestamps);\n        const index = (this.state.useWorker && this.state.workerReady) ? binarySearchTimestamp(timestamps, time * 1000) : (this.pgsParser?.findIndexAtTimestamp(time) ?? -1);\n        return (this.isPartialStream && !this.boundedWindow) && (index < 0 || index >= timestamps.length - 1) ? -1 : index;\n    }',
             );
           return { contents, loader: 'js' };
         });

@@ -177,11 +177,15 @@ export function mount(host, deps) {
       }
       deps.video.crossOrigin = 'anonymous';
       deps.video.src = next.mediaUrl;
+      store.stream.directStartupBegan = deps.time.mono();
       store.stream.directStartupTimer = deps.time.setTimeout(() => {
+        store.stream.directStartupTimer = undefined;
         if (current() && deps.video.readyState < 2) void proxyDirectFile();
       }, 10000);
     } catch {
       if (current()) await proxyDirectFile();
+    } finally {
+      if (store.stream.directProbe === controller) store.stream.directProbe = undefined;
     }
   }
   // A quality change keeps the current stream playing from its buffer while the new one
@@ -221,7 +225,7 @@ export function mount(host, deps) {
     )
       return false;
     if (
-      deps.time.wall() - store.stream.lastQualityRequest > 10000 ||
+      deps.time.mono() - store.stream.lastQualityRequest > 10000 ||
       deps.video.readyState < 3 ||
       uburoomPlayback.bufferedAhead(deps.video.buffered, deps.video.currentTime) <= HOLD_RESERVE + 1
     )
@@ -282,8 +286,8 @@ export function mount(host, deps) {
   }
   // Plex copies H.264 and converts only the audio, so skip the file the browser cannot play.
   async function requestAudioStream(hold) {
-    const started = deps.time.wall();
-    while (store.stream.qualityPending && store.stream.heldStream === hold && deps.time.wall() - started < 3000)
+    const started = deps.time.mono();
+    while (store.stream.qualityPending && store.stream.heldStream === hold && deps.time.mono() - started < 3000)
       await new Promise(resolve => deps.time.setTimeout(resolve, 30));
     if (store.stream.heldStream !== hold) return;
     try {

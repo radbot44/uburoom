@@ -1,7 +1,7 @@
 // @ts-check
 'use strict';
 const { fromProvider } = require('./media-provider');
-const { run, codecMatches, classifyHdr } = require('./media-tools');
+const { codecMatches, classifyHdr } = require('./media-tools');
 
 // How a track list is named when its provider does not say.
 const LIBRARY = { name: 'The library', owner: "the library's", refresh: '' };
@@ -78,10 +78,17 @@ class MediaChecks {
   probe(media, args) {
     const av1 = this.pipeline?.av1;
     if (!av1?.ffprobe) throw new Error('FFprobe is not configured.');
-    const signal = AbortSignal.timeout(120000);
-    return av1.input({ ...media, start: media.sourceStart }, signal, url =>
-      run(av1.ffprobe, ['-v', 'error', ...args, url], signal, 120000, 16 * 1024 * 1024),
-    );
+    const timeoutController = new AbortController();
+    const timer = setTimeout(() => timeoutController.abort(new DOMException('Timeout', 'TimeoutError')), 120000);
+    timer.unref?.();
+    const signal = media?.lifecycleAbort?.signal
+      ? AbortSignal.any([media.lifecycleAbort.signal, timeoutController.signal])
+      : timeoutController.signal;
+    const execute = () =>
+      av1.input({ ...media, start: media.sourceStart }, signal, url =>
+        av1.run(av1.ffprobe, ['-v', 'error', ...args, url], signal, 120000, 16 * 1024 * 1024),
+      );
+    return execute().finally(() => clearTimeout(timer));
   }
   async fileItems(media) {
     const raw = await this.probe(media, [

@@ -37,7 +37,7 @@ export function mount(host, deps) {
       qualityRequest = qualityChange ? {} : undefined;
     if (qualityChange) {
       store.stream.qualityPending = qualityRequest;
-      store.stream.lastQualityRequest = deps.time.wall();
+      store.stream.lastQualityRequest = deps.time.mono();
     } else if (volumeChange) store.player.volumePending = true;
     else store.room.pending = true;
     deps.fail('');

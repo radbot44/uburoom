@@ -294,6 +294,23 @@ export function mount(host, deps) {
       ) {
         const replaced = next.mediaUrl !== held.mediaUrl;
         store.stream.heldStream.next = next;
+        if (store.room.state) {
+          store.room.state = {
+            ...next,
+            format: store.room.state.format,
+            container: store.room.state.container,
+            quality: store.room.state.quality,
+            videoCodec: store.room.state.videoCodec,
+            audioCodec: store.room.state.audioCodec,
+            compatible: store.room.state.compatible,
+            streamVersion: store.room.state.streamVersion,
+            mediaUrl: store.room.state.mediaUrl,
+            directHls: store.room.state.directHls,
+            directDelivery: store.room.state.directDelivery,
+            deliveryInfo: store.room.state.deliveryInfo,
+          };
+          store.room.receivedAt = deps.time.mono();
+        }
         if (replaced) deps.prepareHeldStream(store.stream.heldStream);
         return;
       }

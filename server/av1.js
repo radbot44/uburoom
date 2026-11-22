@@ -13,6 +13,7 @@ const { QUALITIES, qualityDefinition, qualityId } = require('../shared/room-prot
 const Playback = require('../shared/playback-policy.mjs');
 const { PlaybackError } = require('./errors');
 const { run, segments, stream, fileIndex, classifyHdr, cpuTonemap } = require('./media-tools');
+const SubtitleResources = require('./subtitle-resources');
 const CHUNK = Playback.BUFFER.chunkSeconds;
 // Audio starts this early so Opus has settled before the chunk's first sample, and the
 // player keeps only the chunk's own window. 312 samples of encoder delay plus ten
@@ -143,11 +144,36 @@ async function probeEncoder(ffmpeg, signal, execute = run, encoder = 'hardware',
   return output;
 }
 
+function resolveQuality(quality) {
+  if (quality && typeof quality === 'object' && Number(quality.height) > 0) {
+    return {
+      id: quality.id || `${quality.height}p${quality.bitrate}`,
+      width: quality.width || Math.round((Number(quality.height) * 16) / 9),
+      height: Number(quality.height),
+      bitrate: Number(quality.bitrate) || undefined,
+    };
+  }
+  const q = qualityDefinition(quality);
+  if (q) return q;
+  const match = /^(\d{3,4})p(\d+(?:\.\d+)?)$/.exec(String(quality || ''));
+  if (match) {
+    const height = Number(match[1]);
+    const rawRate = Number(match[2]);
+    return {
+      id: String(quality),
+      width: Math.round((height * 16) / 9),
+      height,
+      bitrate: rawRate <= 100 ? Math.round(rawRate * 1000) : Math.round(rawRate),
+    };
+  }
+  return null;
+}
+
 function outputSpec(info, quality, maxQuality = QUALITIES[1]) {
   const video = info.streams?.find(s => s.codec_type === 'video');
   if (!video || !(video.width > 0 && video.height > 0))
     throw new PlaybackError('Original source has no readable video.');
-  const q = qualityDefinition(quality);
+  const q = resolveQuality(quality);
   if (!q) throw new PlaybackError('Invalid WebM quality.');
   const ceiling = q.id === 'direct' && maxQuality ? maxQuality : q;
   const maxWidth = ceiling.width || 3840,
@@ -802,7 +828,8 @@ class AV1 {
     this.pendingBytes = 0;
     this.maxActive = Math.min(config.transcoding?.maxJobs || 2, Math.floor(this.maxBytes / this.jobBytes));
     this.run = (...args) => {
-      const job = Promise.resolve().then(() => execute(...args));
+      const invoke = () => execute(...args);
+      const job = Promise.resolve().then(() => (this.processGate ? this.processGate.run(args[2], invoke) : invoke()));
       this.jobs.add(job);
       job.finally(() => this.jobs.delete(job)).catch(() => {});
       return job;
@@ -814,7 +841,8 @@ class AV1 {
       return job;
     };
     this.stream = (...args) => {
-      const job = Promise.resolve().then(() => stream(...args));
+      const invoke = () => stream(...args);
+      const job = Promise.resolve().then(() => (this.processGate ? this.processGate.run(args[2], invoke) : invoke()));
       this.jobs.add(job);
       job.finally(() => this.jobs.delete(job)).catch(() => {});
       return job;
@@ -918,7 +946,7 @@ class AV1 {
     }
     return this.probePromises.get(codec);
   }
-  acquire(source, quality, existingOnly = false, codec = 'av1', { background = false } = {}) {
+  acquire(source, quality, existingOnly = false, codec = 'av1', { background = false, conversionRelease } = {}) {
     if (!Playback.localFormat(codec)) throw new PlaybackError('Unknown local output codec.');
     if (!this.ffmpeg)
       throw new PlaybackError(
@@ -970,6 +998,7 @@ class AV1 {
         controllers: new Set(),
         leases: new Set(),
         bytes: 0,
+        conversionRelease,
         // Qualities of one source that can share a decode. Burned subtitles are per selection.
         batchKey: source.burn
           ? undefined
@@ -978,6 +1007,9 @@ class AV1 {
               .digest('hex'),
       };
       this.groups.set(key, group);
+    } else if (conversionRelease) {
+      if (group.conversionRelease || this.liveRun(group)) conversionRelease();
+      else group.conversionRelease = conversionRelease;
     }
     group.refs++;
     // Each lease keeps its authorized source for future uncached chunk work.
@@ -994,6 +1026,8 @@ class AV1 {
     if (group.leases?.size) group.source = group.leases.values().next().value.source;
     if (--group.refs > 0) return;
     this.groups.delete(group.key);
+    group.conversionRelease?.();
+    group.conversionRelease = undefined;
     group.infoTask?.abort();
     for (const controller of group.controllers) controller.abort();
     group.chunks.clear();
@@ -1107,18 +1141,18 @@ class AV1 {
   }
   // Prepare what one chunk needs to burn the selected subtitle. Each process sees
   // only its own window, so cue timing comes from the same source position.
-  async burnInput(source, url, start, duration, signal) {
+  async burnInput(source, url, start, duration, signal, info) {
     const track = source.burn;
     if (!track) return;
     if (bitmapSubtitle(track)) {
       if (track.external) throw new PlaybackError('External image subtitles cannot be burned by local conversion.');
       return { bitmap: true, runIn: Math.min(BITMAP_RUN_IN, start) };
     }
+    const origin = track.external ? 0 : Number(info?.format?.start_time) || 0;
     let data;
     if (track.external) {
       const response = await source.provider.request(track.resources.data, { signal, headers: { Accept: '*/*' } });
-      if (!response.ok) throw new PlaybackError('The subtitle file is unavailable.');
-      data = Buffer.from(await response.arrayBuffer());
+      data = await SubtitleResources.read(response, signal, 4 * 1024 * 1024);
     } else {
       // Source timestamps, so cue times do not depend on the keyframe the seek landed on.
       data = await this.run(
@@ -1129,12 +1163,12 @@ class AV1 {
           'error',
           '-nostdin',
           '-ss',
-          String(Math.max(0, start - TEXT_RUN_IN)),
+          String(origin + Math.max(0, start - TEXT_RUN_IN)),
           '-copyts',
           '-i',
           url,
           '-to',
-          String(start + duration),
+          String(origin + start + duration),
           '-map',
           '0:' + track.index,
           '-c:s',
@@ -1155,7 +1189,7 @@ class AV1 {
         'subtitle.' + (track.external ? { subrip: 'srt', webvtt: 'vtt' }[track.codec] || track.codec : 'ass'),
       );
     await fs.writeFile(file, data);
-    return { file, offset: start, cleanup: () => fs.rm(directory, { recursive: true, force: true }) };
+    return { file, offset: origin + start, cleanup: () => fs.rm(directory, { recursive: true, force: true }) };
   }
   async slot(signal, action, owner, priority = { urgent: true }) {
     if (signal.aborted) throw new PlaybackError('WebM preparation cancelled.');
@@ -1432,7 +1466,12 @@ class AV1 {
       first = run.members[0],
       codec = first.group.codec;
     await this.conversionPolicy?.video('uburoom', codec, first.source.provider);
-    const releaseConversion = await this.conversionPolicy?.wait({ signal, background: run.priority.background });
+    let releaseConversion = first.group.conversionRelease;
+    if (releaseConversion) {
+      first.group.conversionRelease = undefined;
+    } else {
+      releaseConversion = await this.conversionPolicy?.wait({ signal, background: run.priority.background });
+    }
     // From here the run holds a conversion slot; waiting before this is waiting for a slot.
     run.slotAt = Date.now();
     try {
@@ -1606,7 +1645,7 @@ class AV1 {
             chosen.burn = { ...burn, index: fileIndex(first.source.tracks?.subtitles, burn, info.streams, 'subtitle') };
           const span = Math.min((run.end - start) * CHUNK, first.source.duration - start * CHUNK);
           const burned =
-            outputs.length === 1 ? await this.burnInput(chosen, url, start * CHUNK, span, signal) : undefined;
+            outputs.length === 1 ? await this.burnInput(chosen, url, start * CHUNK, span, signal, info) : undefined;
           // Sound is decoded once from the process's own read. Silence, and a first chunk the
           // copy began too late for, still come from processes of their own.
           const runIn = burned?.runIn || 0,
@@ -1719,7 +1758,7 @@ class AV1 {
     if (burn?.bitmap)
       graph = [
         '-filter_complex',
-        `[0:v:0]${filter.replace('setpts=PTS-STARTPTS,', '')}[picture];[0:${chosen.burn.index}]scale=${lead.width}:${lead.height}[subtitle];[picture][subtitle]overlay,format=nv12,trim=start=${runIn},setpts=PTS-STARTPTS[v0]`,
+        `[0:v:0]${filter.replace('setpts=PTS-STARTPTS,', '')}[picture];[0:${chosen.burn.index}]scale=${lead.width}:-2[subtitle];[picture][subtitle]overlay=(W-w)/2:(H-h)/2:shortest=1,format=nv12,trim=start=${runIn},setpts=PTS-STARTPTS[v0]`,
       ];
     else if (burn?.file)
       graph = [
@@ -1790,6 +1829,12 @@ class AV1 {
         'webm',
         '-segment_format_options',
         'cluster_time_limit=1000',
+        '-segment_list',
+        'segment-list:' + i,
+        '-segment_list_type',
+        'flat',
+        '-segment_list_flags',
+        '+live',
         '-reset_timestamps',
         '1',
         'segments:' + i,
@@ -2138,7 +2183,7 @@ class AV1 {
   // quarter more covers the container and sound. A flat 48 MB worst case per quality let a
   // shared chunk of five qualities fill the whole cache.
   chunkBytes(group) {
-    const kbps = (group.quality === 'direct' ? this.maxQuality : qualityDefinition(group.quality))?.bitrate;
+    const kbps = (group.quality === 'direct' ? this.maxQuality : resolveQuality(group.quality))?.bitrate;
     if (!kbps) return this.jobBytes;
     return Math.min(this.jobBytes, Math.ceil(((kbps + 128) * 1000 * (CHUNK + 2) * 1.25) / 8));
   }

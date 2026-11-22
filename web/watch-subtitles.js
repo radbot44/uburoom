@@ -154,7 +154,7 @@ class uburoomSubtitleWindows {
       this.fetching.controller.abort();
       this.fetching = null;
     }
-    if (this.error?.terminal || this.failures >= 3 || Date.now() < this.retryAt) return;
+    if (this.error?.terminal || this.failures >= 3 || performance.now() < this.retryAt) return;
     if (!this.isCovered(timeMs)) this.fetch(timeMs, true);
     else if (!this.isCovered(timeMs, 20000)) this.fetch(timeMs + 30000, false);
   }
@@ -323,7 +323,7 @@ class uburoomSubtitleWindows {
         }
         this.error = error;
         this.failures++;
-        this.retryAt = Date.now() + 1000 * 2 ** (this.failures - 1);
+        this.retryAt = performance.now() + 1000 * 2 ** (this.failures - 1);
         if (error.initialization) this.beforeMs = 60000;
         this.onError(error, error.terminal || this.failures >= 3);
         if (!error.terminal && this.failures < 3)
@@ -332,7 +332,7 @@ class uburoomSubtitleWindows {
               this.retryTimer = undefined;
               this.check(this.positionMs / 1000);
             },
-            Math.max(1, this.retryAt - Date.now()),
+            Math.max(1, this.retryAt - performance.now()),
           );
       } finally {
         this.requests.delete(pending);
@@ -368,7 +368,7 @@ class uburoomTextWindows {
     this.onState = onState;
     this.signal = signal;
     this.intervals = [];
-    this.seen = new Set();
+    this.seen = new Map();
     this.failures = 0;
     this.retryAt = 0;
   }
@@ -388,7 +388,7 @@ class uburoomTextWindows {
       this.fetching.controller.abort();
       this.fetching = undefined;
     }
-    if (this.fetching || this.failures >= 3 || Date.now() < this.retryAt) return;
+    if (this.fetching || this.failures >= 3 || performance.now() < this.retryAt) return;
     // A window reads every track of the video, so a short one brings up the first cues
     // soonest. Later windows continue from the end of what is already covered.
     if (!current) void this.fetch(timeMs, 5000, 15000);
@@ -401,7 +401,7 @@ class uburoomTextWindows {
   async fetch(targetMs, beforeMs, afterMs) {
     const controller = new AbortController(),
       pending = (this.fetching = { controller, startMs: Math.max(0, targetMs - beforeMs), endMs: targetMs + afterMs }),
-      began = Date.now();
+      began = performance.now();
     try {
       const response = await fetch(
         this.windowUrl + '?atMs=' + targetMs + '&beforeMs=' + beforeMs + '&afterMs=' + afterMs,
@@ -435,24 +435,25 @@ class uburoomTextWindows {
       this.intervals = merged;
       this.onCues(
         cues.filter(cue => {
-          const key = cue.end + '|' + cue.text;
-          if (this.seen.has(key)) return false;
-          this.seen.add(key);
+          const key = Math.round(cue.end * 1000) + '|' + cue.text;
+          const prevStart = this.seen.get(key);
+          if (prevStart !== undefined && cue.start >= prevStart - 0.001) return false;
+          this.seen.set(key, cue.start);
           return true;
         }),
       );
       this.failures = 0;
       this.retryAt = 0;
       this.onState();
-      trace('subtitle-window', { elapsedMs: Date.now() - began });
+      trace('subtitle-window', { elapsedMs: performance.now() - began });
     } catch (error) {
       if (this.disposed || controller.signal.aborted || this.signal?.aborted) return;
       trace('subtitle-window-failed', {
-        elapsedMs: Date.now() - began,
+        elapsedMs: performance.now() - began,
         attempt: this.failures + 1,
       });
       this.failures = error.terminal ? 3 : this.failures + 1;
-      this.retryAt = Date.now() + 1000 * 2 ** this.failures;
+      this.retryAt = performance.now() + 1000 * 2 ** this.failures;
       this.onState(error, this.failures >= 3);
     } finally {
       if (this.fetching === pending) this.fetching = undefined;
@@ -565,7 +566,7 @@ class uburoomSubtitles {
     const synced = this.windowScheduler
       ? this.windowScheduler.synced(this.mediaTime() - (this.offset || 0))
       : this.renderer.synced
-        ? this.renderer.synced(this.mediaTime())
+        ? this.renderer.synced(this.mediaTime() - (this.offset || 0))
         : true;
     if (this.windowScheduler?.error) return;
     if (synced === this.streamSynced) return;
@@ -759,10 +760,28 @@ class uburoomSubtitles {
         this.textWindows = new uburoomTextWindows(
           value.window,
           cues => {
+            let replaced = false;
             for (const cue of cues) {
-              this.cues.push(cue);
-              this.addCue(cue);
+              const key = Math.round(cue.end * 1000) + '|' + cue.text;
+              const existing = this.cues.find(c => Math.round(c.end * 1000) + '|' + c.text === key);
+              if (existing) {
+                if (cue.start < existing.start - 0.001) {
+                  existing.start = cue.start;
+                  replaced = true;
+                }
+              } else {
+                this.cues.push(cue);
+                this.addCue(cue);
+              }
             }
+            if (this.cues.length > 2500) {
+              const now = this.mediaTime() - (this.offset || 0);
+              this.cues.sort((a, b) => Math.abs(a.start - now) - Math.abs(b.start - now));
+              this.cues.length = 2000;
+              this.cues.sort((a, b) => a.start - b.start);
+              replaced = true;
+            }
+            if (replaced) this.rebuild();
           },
           (error, failed) => {
             this.status(

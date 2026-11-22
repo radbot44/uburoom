@@ -30,7 +30,14 @@ class FallbackStream {
     if (!active || this.closed || this.work || Date.now() < this.retryAt) return;
     const work = (this.work = { position, controller: new AbortController() });
     work.promise = this.fill(work)
-      .catch(() => {
+      .catch(error => {
+        if (
+          error?.playbackPolicy ||
+          /unavailable|not offered|disabled|unknown local output/i.test(error?.message || '')
+        ) {
+          this.closed = true;
+          return;
+        }
         this.retryAt = Date.now() + 5000;
       })
       .finally(() => {

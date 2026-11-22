@@ -256,8 +256,9 @@ module.exports = {
               {
                 ...viewer.trackChoice,
                 browserSubtitles: viewer.browserSubtitles,
+                localCodecs: viewer.localCodecs,
                 shareKey: [room.roomId, version],
-                excludeLease: current.hlsLease,
+                excludeLease: current.hlsLease || current.remuxLease,
                 authorized,
               },
             ),

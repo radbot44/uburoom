@@ -16,6 +16,52 @@ const cache = new Map(),
   windows = new Map();
 let bytes = 0,
   active = 0;
+const slotWaiters = [];
+async function acquireSlot(signal) {
+  signal?.throwIfAborted();
+  if (active < 2 && !slotWaiters.length) {
+    active++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      releaseSlot();
+    };
+  }
+  if (slotWaiters.length >= 16)
+    throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
+  await new Promise((resolve, reject) => {
+    const entry = {
+      resolve: () => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve();
+      },
+    };
+    const onAbort = () => {
+      const idx = slotWaiters.indexOf(entry);
+      if (idx >= 0) slotWaiters.splice(idx, 1);
+      reject(signal?.reason || new PlaybackError('Subtitle loading was cancelled.'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    slotWaiters.push(entry);
+  });
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    releaseSlot();
+  };
+}
+function releaseSlot() {
+  while (slotWaiters.length) {
+    const next = slotWaiters.shift();
+    if (next) {
+      next.resolve();
+      return;
+    }
+  }
+  active = Math.max(0, active - 1);
+}
 function classifyExtractionError(error) {
   if (/timed out/i.test(error?.message || '')) return new PlaybackError('Subtitle extraction timed out. Try burn-in.');
   if (/exceeded the.*limit|exceed/i.test(error?.message || ''))
@@ -141,12 +187,13 @@ function source(media) {
 function startPgsJob(av1, media) {
   const { track } = source(media),
     version = media.captionVersion;
-  if (active >= 2) throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
+  if (active >= 2 && slotWaiters.length >= 16)
+    throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
   const controller = new AbortController();
   const abort = AbortSignal.any([media.subtitleAbort.signal, controller.signal, AbortSignal.timeout(300000)]);
   const job = { media, version, controller, chunks: [], size: 0, listeners: new Set(), complete: false, error: null };
-  active++;
   job.promise = runOperation(abort, async () => {
+    const release = await acquireSlot(abort);
     try {
       if (!av1?.ffmpeg || !Number.isSafeInteger(track.index))
         throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
@@ -218,7 +265,7 @@ function startPgsJob(av1, media) {
         } catch {}
       throw job.error;
     } finally {
-      active--;
+      release();
       job.listeners.clear();
       if (job.media.subtitleJob === job) job.media.subtitleJob = undefined;
     }
@@ -471,47 +518,50 @@ async function load(av1, media, signal) {
     return previous;
   }
   if (media.subtitleJob?.version === version) return awaitJob(media.subtitleJob.promise, signal);
-  if (active >= 2) throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
+  if (active >= 2 && slotWaiters.length >= 16)
+    throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
   const abort = AbortSignal.any([media.subtitleAbort.signal, AbortSignal.timeout(85000)]);
   const job = { media, version };
-  active++;
   job.promise = runOperation(abort, async () => {
-    let result;
-    if (track.external) {
-      const { data: file, index } = track.resources || {};
-      if (!file || (track.delivery === 'vobsub' && !index)) throw new PlaybackError('Invalid subtitle resource.');
-      const data = await read(
-        await media.provider.request(file, { signal: abort, headers: { Accept: '*/*' } }),
-        abort,
-        track.delivery === 'ass' ? 4 * 1024 * 1024 : LIMIT,
-      );
-      result = { format: track.delivery, assets: new Map([['data', data]]) };
-      if (track.delivery === 'vobsub')
-        result.assets.set(
-          'index',
-          await read(
-            await media.provider.request(index, { signal: abort, headers: { Accept: '*/*' } }),
-            abort,
-            1024 * 1024,
-          ),
+    const release = await acquireSlot(abort);
+    try {
+      let result;
+      if (track.external) {
+        const { data: file, index } = track.resources || {};
+        if (!file || (track.delivery === 'vobsub' && !index)) throw new PlaybackError('Invalid subtitle resource.');
+        const data = await read(
+          await media.provider.request(file, { signal: abort, headers: { Accept: '*/*' } }),
+          abort,
+          track.delivery === 'ass' ? 4 * 1024 * 1024 : LIMIT,
         );
-    } else result = await extract(av1, media, track, abort);
-    const target = job.media;
-    abort.throwIfAborted();
-    if (target.captionVersion !== version) throw new PlaybackError('Subtitle selection changed.');
-    result.version = version;
-    result.size = [...result.assets.values()].reduce((sum, value) => sum + value.length, 0);
-    if (result.size > TOTAL) throw new PlaybackError('Subtitle resources exceed the cache limit.');
-    clearCached(target);
-    while (cache.size && cache.size >= 8) clearCached(cache.keys().next().value);
-    reserve(result.size);
-    cache.set(target, result);
-    bytes += result.size;
-    target.subtitleAssets = result.assets;
-    return result;
-  }).finally(() => {
-    active--;
-    if (job.media.subtitleJob === job) job.media.subtitleJob = undefined;
+        result = { format: track.delivery, assets: new Map([['data', data]]) };
+        if (track.delivery === 'vobsub')
+          result.assets.set(
+            'index',
+            await read(
+              await media.provider.request(index, { signal: abort, headers: { Accept: '*/*' } }),
+              abort,
+              1024 * 1024,
+            ),
+          );
+      } else result = await extract(av1, media, track, abort);
+      const target = job.media;
+      abort.throwIfAborted();
+      if (target.captionVersion !== version) throw new PlaybackError('Subtitle selection changed.');
+      result.version = version;
+      result.size = [...result.assets.values()].reduce((sum, value) => sum + value.length, 0);
+      if (result.size > TOTAL) throw new PlaybackError('Subtitle resources exceed the cache limit.');
+      clearCached(target);
+      while (cache.size && cache.size >= 8) clearCached(cache.keys().next().value);
+      reserve(result.size);
+      cache.set(target, result);
+      bytes += result.size;
+      target.subtitleAssets = result.assets;
+      return result;
+    } finally {
+      release();
+      if (job.media.subtitleJob === job) job.media.subtitleJob = undefined;
+    }
   });
   media.subtitleJob = job;
   return awaitJob(job.promise, signal);
@@ -663,7 +713,8 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
   let job = media.windowJobs.get(cacheKey);
   if (job?.controller.signal.aborted) job = undefined;
   if (job) return waitWindow(job, signal);
-  if (active >= 2) throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
+  if (active >= 2 && slotWaiters.length >= 16)
+    throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
   if (!av1?.ffmpeg || !Number.isSafeInteger(track.index))
     throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
   const controller = new AbortController();
@@ -671,9 +722,9 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
     [controller.signal, media.subtitleAbort?.signal, AbortSignal.timeout(30000)].filter(Boolean),
   );
   job = { media, controller, users: 0, complete: false };
-  active++;
   job.promise = Promise.resolve().then(() =>
     runOperation(abort, async () => {
+      const release = await acquireSlot(abort);
       try {
         const format =
           track.delivery === 'ass'
@@ -789,7 +840,7 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
             // Without -copyts cue times are relative to the keyframe the seek landed on, so they
             // shift between windows. With it, only an output -to ends the window at the right place.
             if (track.delivery === 'cues') {
-              const { packets } = await inspectWindow(
+              const { origin, packets } = await inspectWindow(
                 av1,
                 job.media,
                 url,
@@ -799,8 +850,8 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
                 endSeconds,
                 abort,
               );
-              const first = Math.round((job.media.subtitleOrigin + startSeconds) * 1000),
-                last = Math.round((job.media.subtitleOrigin + endSeconds) * 1000),
+              const first = Math.round((origin + startSeconds) * 1000),
+                last = Math.round((origin + endSeconds) * 1000),
                 wanted = [];
               for (const packet of packets) {
                 const at = Math.round(Number(packet.pts_time) * 1000);
@@ -838,7 +889,7 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
                   '-i',
                   url,
                   '-to',
-                  String(endSeconds),
+                  String(origin + endSeconds),
                   '-map',
                   '0:' + index,
                   '-c:s',
@@ -904,7 +955,13 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
         data ||= Buffer.alloc(0);
         let cues = 0;
         if (track.delivery === 'cues') {
-          const list = data.length ? Subtitles.parse(data.toString('utf8')) : [];
+          const origin = Number(target.subtitleOrigin) || 0;
+          const rawList = data.length ? Subtitles.parse(data.toString('utf8')) : [];
+          const list = origin
+            ? rawList
+                .map(c => ({ ...c, start: Math.max(0, c.start - origin), end: Math.max(0, c.end - origin) }))
+                .filter(c => c.end > c.start)
+            : rawList;
           cues = list.length;
           data = Buffer.from(JSON.stringify(list));
         } else if (track.delivery === 'pgs') cues = pgs.cues;
@@ -929,7 +986,7 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
         if (abort.aborted) throw error;
         throw classifyExtractionError(error);
       } finally {
-        active--;
+        release();
         job.complete = true;
         if (job.media.windowJobs?.get(cacheKey) === job) job.media.windowJobs.delete(cacheKey);
       }
@@ -938,4 +995,36 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
   media.windowJobs.set(cacheKey, job);
   return waitWindow(job, signal);
 }
-module.exports = { load, clear, transfer, read, pipe, window, classifyExtractionError, LIMIT };
+
+class SubtitleResourceManager {
+  load(av1, media, signal) {
+    return load(av1, media, signal);
+  }
+  clear(media) {
+    return clear(media);
+  }
+  transfer(from, to) {
+    return transfer(from, to);
+  }
+  read(response, signal, limit) {
+    return read(response, signal, limit);
+  }
+  pipe(av1, media, req, res, signal) {
+    return pipe(av1, media, req, res, signal);
+  }
+  window(av1, media, options) {
+    return window(av1, media, options);
+  }
+}
+
+module.exports = {
+  SubtitleResourceManager,
+  load,
+  clear,
+  transfer,
+  read,
+  pipe,
+  window,
+  classifyExtractionError,
+  LIMIT,
+};

@@ -23,11 +23,12 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
   if (!choices.sourceOnly && !pipeline.qualityOptions.some(q => q.id === quality))
     throw new PlaybackError('This quality is not offered by the server.');
   const { media, detail } = await provider.source(id, source, choices);
+  media.lifecycleAbort ||= new AbortController();
   media.quality = quality;
   const audio = media.selection.audio;
   if (audio) media.audioCodec = audio.codec;
   const burn = media.selection.subtitle?.available && media.selection.subtitle.delivery === 'burn';
-  const effectiveAudioTracks = media.sourceHdr && (!audio || audio.ordinal === 0) ? 1 : media.tracks.audio.length;
+  const effectiveAudioTracks = media.tracks.audio.length;
   const conversion =
     !choices.sourceOnly &&
     (!fallback || fallback === 'audio') &&
@@ -65,7 +66,9 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
     plan.route === 'file' &&
     (media.tracks.audio.length > 1 || (audio && !BROWSER_AUDIO.has(String(audio.codec).toLowerCase())))
   )
-    pipeline.remux.boundaries(media, AbortSignal.timeout(180000)).catch(() => {});
+    pipeline.remux
+      .boundaries(media, AbortSignal.any([media.lifecycleAbort.signal, AbortSignal.timeout(180000)]))
+      .catch(() => {});
   const directPlan = plan.route === 'provider-hls' ? await choices.directPlan?.() : undefined;
   const directHls = !!(directPlan || choices.directHls);
   if (directPlan) media.directHls = directPlan;
@@ -142,7 +145,7 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
       pipeline.conversionPolicy.copy();
       if (choices.authorized && !(await choices.authorized()))
         throw new PlaybackError('Viewing access or track selection expired.');
-      await pipeline.remux.acquire(media, audio, choices.shareKey);
+      await pipeline.remux.acquire(media, audio, choices.shareKey, choices.excludeLease);
       media.compatible = compatible;
     } catch (error) {
       const failure = new PlaybackError(
@@ -182,6 +185,7 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
     media.videoCodec = codec;
     media.audioCodec = 'opus';
     media.compatible = true;
+    let conversionRelease;
     if (
       !choices.sharedOnly &&
       pipeline.conversionPolicy.settings &&
@@ -191,11 +195,17 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
         media.av1Lease = pipeline.av1.acquire(localSource, quality, true, codec);
       } catch (error) {
         if (!error.conversionCapacity) throw error;
-        const release = await pipeline.conversionPolicy.wait({ authorized: choices.authorized });
-        release();
+        conversionRelease = await pipeline.conversionPolicy.wait({ authorized: choices.authorized });
       }
     }
-    media.av1Lease ||= pipeline.av1.acquire(localSource, quality, choices.sharedOnly, codec);
+    try {
+      media.av1Lease ||= pipeline.av1.acquire(localSource, quality, choices.sharedOnly, codec, {
+        conversionRelease,
+      });
+    } catch (error) {
+      conversionRelease?.();
+      throw error;
+    }
   } else {
     if (typeof provider.startTranscode !== 'function') {
       await provider.stop(media);

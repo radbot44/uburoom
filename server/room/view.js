@@ -339,7 +339,7 @@ module.exports = {
             sourceHdr: !!viewer.media.sourceHdr,
             sourceHdrKind: viewer.media.sourceHdrKind || 'sdr',
             sourceHdrLabel: viewer.media.sourceHdrLabel || 'SDR',
-            toneMapped: !!(viewer.media.sourceHdr && viewer.media.format !== 'file'),
+            toneMapped: !!(viewer.media.sourceHdr && !viewer.media.hdr),
             videoDecision: viewer.media.output?.videoDecision,
             audioDecision: viewer.media.output?.audioDecision,
             width: viewer.media.output?.width,

@@ -65,6 +65,7 @@ module.exports = {
   },
   dropMedia(room, reason = 'media-changed') {
     void this.reporting?.endRoom(room);
+    room.media?.lifecycleAbort?.abort();
     room.fallbackStream?.close();
     room.fallbackStream = undefined;
     this.cancelAutoplay(room);
@@ -75,6 +76,7 @@ module.exports = {
     room.disconnectedViewers.clear();
     for (const viewer of room.viewers.values()) {
       viewer.preparing?.abort();
+      viewer.media?.lifecycleAbort?.abort();
       this.tracking.end(viewer, reason);
       void this.stopMedia(room, viewer.media);
       void this.reporting?.end(viewer, reason);

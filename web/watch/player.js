@@ -6,6 +6,15 @@ import { store } from './store.js';
 
 /* Player lifecycle: frame counting, playback health and choppiness warnings, capability probes, clearing the player, hls.js configuration and the local unlock before shared play. */
 export function mount(host, deps) {
+  function clearDirectTimers(clearStartup = false) {
+    deps.time.clearTimeout(store.stream.directStallTimer);
+    store.stream.directStallTimer = undefined;
+    if (clearStartup) {
+      deps.time.clearTimeout(store.stream.directStartupTimer);
+      store.stream.directStartupTimer = undefined;
+      store.stream.directStartupBegan = undefined;
+    }
+  }
   deps.video.addEventListener('waiting', () => {
     deps.time.clearTimeout(store.stream.directStallTimer);
     if (!store.room.state?.directDelivery) return;
@@ -22,8 +31,35 @@ export function mount(host, deps) {
         void deps.proxyDirectFile();
     }, 8000);
   });
+  for (const evt of ['playing', 'canplay', 'loadeddata']) {
+    deps.video.addEventListener(evt, () => clearDirectTimers(true));
+  }
+  for (const evt of ['pause', 'seeked']) {
+    deps.video.addEventListener(evt, () => clearDirectTimers(false));
+  }
+  deps.video.addEventListener('progress', () => {
+    if (
+      !store.stream.directStartupTimer ||
+      !store.room.state?.directDelivery ||
+      deps.video.readyState >= 2 ||
+      deps.time.mono() - (store.stream.directStartupBegan || 0) >= 30000
+    )
+      return;
+    const stream = store.room.state.streamVersion;
+    deps.time.clearTimeout(store.stream.directStartupTimer);
+    store.stream.directStartupTimer = deps.time.setTimeout(() => {
+      store.stream.directStartupTimer = undefined;
+      if (store.room.state?.directDelivery && store.room.state.streamVersion === stream && deps.video.readyState < 2)
+        void deps.proxyDirectFile();
+    }, 8000);
+  });
   window.addEventListener('online', () => {
-    if (store.room.state?.directDelivery && (deps.video.error || deps.video.readyState < 2))
+    if (
+      store.room.state?.directDelivery &&
+      !store.stream.directProbe &&
+      !store.stream.directStartupTimer &&
+      (deps.video.error || (deps.video.readyState < 2 && deps.video.networkState === 3))
+    )
       void deps.proxyDirectFile();
   });
   function watchFrames() {
@@ -243,16 +279,30 @@ export function mount(host, deps) {
       document.visibilityState !== 'visible'
     ) {
       store.player.frameStartedAt = undefined;
+      store.player.noFramePlayingMs = 0;
+      store.player.lastFrameCheckAt = undefined;
       return;
     }
-    store.player.frameStartedAt ??= deps.time.mono();
+    const now = deps.time.mono();
     const frames = decodedFrames();
-    if (
-      deps.time.mono() - store.player.frameStartedAt > 8000 &&
-      (frames === 0 || !deps.video.videoWidth || !deps.video.videoHeight) &&
-      deps.video.currentTime > 1
-    )
-      void deps.compatibleFallback('Audio is playing without decoded video.');
+    if (frames > 0 && deps.video.videoWidth > 0 && deps.video.videoHeight > 0) {
+      store.player.noFramePlayingMs = 0;
+      store.player.lastFrameCheckAt = now;
+      return;
+    }
+    if (!store.player.playerWaiting && deps.video.readyState >= 3 && deps.video.currentTime > 1) {
+      store.player.frameStartedAt ??= now;
+      if (store.player.lastFrameCheckAt !== undefined) {
+        store.player.noFramePlayingMs =
+          (store.player.noFramePlayingMs || 0) + Math.max(0, Math.min(2000, now - store.player.lastFrameCheckAt));
+      }
+      store.player.lastFrameCheckAt = now;
+      if (store.player.noFramePlayingMs > 8000 || now - store.player.frameStartedAt > 8000) {
+        void deps.compatibleFallback('Audio is playing without decoded video.');
+      }
+    } else {
+      store.player.lastFrameCheckAt = undefined;
+    }
   }
   function clearPlayer(reason, preserveSubtitles = false, preserveChoppiness = false) {
     if (reason !== 'state-change') deps.fallbackPlayback.reset();
@@ -311,6 +361,8 @@ export function mount(host, deps) {
     if (store.player.frameCallback !== undefined) deps.video.cancelVideoFrameCallback?.(store.player.frameCallback);
     store.player.frameCallback = undefined;
     store.player.frameStartedAt = undefined;
+    store.player.noFramePlayingMs = 0;
+    store.player.lastFrameCheckAt = undefined;
     store.player.videoFrames = 0;
     deps.time.presentation.reset();
     deps.dropVolume();
@@ -410,22 +462,52 @@ export function mount(host, deps) {
         }),
       ]);
       deps.time.clearTimeout(playTimer);
-      const until = deps.time.mono() + 8500;
-      while (
+      if (
         (decodedFrames() === 0 || !deps.video.videoWidth) &&
-        deps.time.mono() < until &&
         store.room.state?.mediaVersion === version &&
         store.stream.mediaSource === source &&
         !deps.video.error
       ) {
-        await new Promise(resolve => deps.time.setTimeout(resolve, 100));
+        await new Promise(resolve => {
+          let waitTimer, frameId;
+          const check = () => {
+            if (
+              (decodedFrames() > 0 && deps.video.videoWidth > 0) ||
+              store.room.state?.mediaVersion !== version ||
+              store.stream.mediaSource !== source ||
+              deps.video.error
+            ) {
+              finish();
+              return;
+            }
+            if (typeof deps.video.requestVideoFrameCallback === 'function') {
+              frameId = deps.video.requestVideoFrameCallback(check);
+            }
+          };
+          const finish = () => {
+            deps.time.clearTimeout(waitTimer);
+            if (frameId !== undefined) deps.video.cancelVideoFrameCallback?.(frameId);
+            for (const evt of ['loadeddata', 'canplay', 'playing', 'timeupdate', 'error'])
+              deps.video.removeEventListener?.(evt, check);
+            resolve();
+          };
+          waitTimer = deps.time.setTimeout(finish, 8500);
+          for (const evt of ['loadeddata', 'canplay', 'playing', 'timeupdate', 'error'])
+            deps.video.addEventListener?.(evt, check);
+          if (typeof deps.video.requestVideoFrameCallback === 'function') {
+            frameId = deps.video.requestVideoFrameCallback(check);
+          } else {
+            check();
+          }
+        });
       }
       if (store.room.state?.mediaVersion !== version || store.stream.mediaSource !== source) return false;
-      if ((decodedFrames() === 0 || !deps.video.videoWidth) && document.visibilityState === 'visible') {
+      const hasDecodedFrame = decodedFrames() > 0 && deps.video.videoWidth > 0;
+      if (!hasDecodedFrame && document.visibilityState === 'visible') {
         void deps.compatibleFallback('No video frames were decoded.');
         return false;
       }
-      store.stream.readyVersion = version;
+      if (hasDecodedFrame) store.stream.readyVersion = version;
       store.player.autoplayBlocked = false;
       if (store.room.state.state.paused) deps.video.pause();
       return true;

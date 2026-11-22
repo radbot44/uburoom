@@ -250,14 +250,24 @@ export function mount(host, deps) {
       }
       return;
     }
+    const codecIncompatible = [
+      Hls.ErrorDetails.BUFFER_ADD_CODEC_ERROR,
+      Hls.ErrorDetails.BUFFER_INCOMPATIBLE_CODECS_ERROR,
+      Hls.ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR,
+    ].some(code => code && data.details === code);
     // hls.js also resets MediaSource internally on nonfatal reset events.
     if (data.details === Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET && !data.fatal) {
-      if (spendHlsRecovery()) return;
-    } else if (!data.fatal) return;
-    else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && spendHlsRecovery()) {
+      if (spendHlsRecovery()) {
+        store.player.sync.prepare?.({ timeline: true });
+        client.startLoad(store.player.sync.timelinePending ? 0 : deps.expected());
+        return;
+      }
+    } else if (!data.fatal && !codecIncompatible) return;
+    else if (!codecIncompatible && data.type === Hls.ErrorTypes.MEDIA_ERROR && spendHlsRecovery()) {
       // Retry the current authorized stream once. No shared command or timeline change.
       store.stream.hlsRecoveryTimer = deps.time.setTimeout(() => {
         if (store.stream.hls === client && store.room.state?.mediaUrl === store.stream.mediaSource) {
+          store.player.sync.prepare?.({ timeline: true });
           client.recoverMediaError();
           client.startLoad(store.player.sync.timelinePending ? 0 : deps.expected());
         }

@@ -109,10 +109,7 @@ class ConversionPolicy {
             wake = undefined;
             resolve();
           };
-          timer = setTimeout(
-            done,
-            authorized ? Math.min(200, Math.max(0, until - Date.now())) : Math.max(0, until - Date.now()),
-          );
+          timer = setTimeout(done, Math.max(0, until - Date.now()));
           wake = done;
           signal?.addEventListener('abort', done, { once: true });
         });
@@ -124,4 +121,70 @@ class ConversionPolicy {
     }
   }
 }
-module.exports = { ConversionPolicy };
+
+class ProcessGate {
+  constructor(limit = 6, maxWaiters = 64) {
+    this.limit = Math.max(1, limit);
+    this.maxWaiters = maxWaiters;
+    this.active = 0;
+    this.waiters = [];
+  }
+  async acquire(signal) {
+    if (signal?.aborted) throw signal.reason || new PlaybackError('Media process cancelled.');
+    if (this.active < this.limit && !this.waiters.length) {
+      this.active++;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        this.release();
+      };
+    }
+    if (this.waiters.length >= this.maxWaiters) {
+      throw Object.assign(new PlaybackError('Too many media processes are queued. Retry shortly.'), {
+        conversionCapacity: true,
+      });
+    }
+    await new Promise((resolve, reject) => {
+      const entry = {
+        resolve: () => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        },
+      };
+      const onAbort = () => {
+        const idx = this.waiters.indexOf(entry);
+        if (idx >= 0) this.waiters.splice(idx, 1);
+        reject(signal.reason || new PlaybackError('Media process cancelled.'));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.waiters.push(entry);
+    });
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.release();
+    };
+  }
+  release() {
+    while (this.waiters.length) {
+      const next = this.waiters.shift();
+      if (next) {
+        next.resolve();
+        return;
+      }
+    }
+    this.active = Math.max(0, this.active - 1);
+  }
+  async run(signal, action) {
+    const release = await this.acquire(signal);
+    try {
+      return await action();
+    } finally {
+      release();
+    }
+  }
+}
+
+module.exports = { ConversionPolicy, ProcessGate };

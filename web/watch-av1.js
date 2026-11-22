@@ -18,7 +18,7 @@ class uburoomAV1 {
     this.chunkBytes = new Map();
     this.seekVersion = 0;
     this.endSignalled = false;
-    this.lastPumpAt = 0;
+    this.lastPumpAt = -Infinity;
     this.onSeek = () => this.restart();
     this.onTimeUpdate = () => this.kick(false);
     this.onNeedData = () => this.kick(true);
@@ -249,7 +249,7 @@ class uburoomAV1 {
   }
   kick(urgent = false) {
     if (this.abort.signal.aborted || this.pumping || !this.buffer || this.held) return;
-    if (!urgent && Date.now() - this.lastPumpAt < 200) return;
+    if (!urgent && performance.now() - this.lastPumpAt < 200) return;
     this.pump().catch(error => this.fail(error));
   }
 
@@ -262,7 +262,7 @@ class uburoomAV1 {
       await this.fill();
     } finally {
       this.pumping = false;
-      this.lastPumpAt = Date.now();
+      this.lastPumpAt = performance.now();
       if (!this.abort.signal.aborted)
         this.timer = setTimeout(
           () => this.pump().catch(error => this.fail(error)),
@@ -315,7 +315,7 @@ class uburoomAV1 {
           if (index === first) throw failure.error;
           break;
         }
-        if (Date.now() < failure.retryAt) break;
+        if (performance.now() < failure.retryAt) break;
       }
       const estimate =
         this.prefetchSize?.index === index
@@ -329,7 +329,7 @@ class uburoomAV1 {
       }
       let videoBytes, audioBytes;
       const request = (this.request = new AbortController()),
-        began = Date.now();
+        began = performance.now();
       try {
         [videoBytes, audioBytes] = await Promise.all(
           ['video', 'audio'].map(async track => {
@@ -356,7 +356,7 @@ class uburoomAV1 {
           error,
           attempts,
           required: index === needed || (this.prefetchFailure?.index === index && this.prefetchFailure.required),
-          retryAt: Date.now() + 1000 * Math.min(8, 2 ** (attempts - 1)),
+          retryAt: performance.now() + 1000 * Math.min(8, 2 ** (attempts - 1)),
         };
         break;
       } finally {
@@ -365,7 +365,7 @@ class uburoomAV1 {
       // A shared seek may have happened while FFmpeg was running. Don't append
       // stale work; the next pump requests the authoritative position instead.
       if (superseded()) break;
-      const seconds = (Date.now() - began) / 1000;
+      const seconds = (performance.now() - began) / 1000;
       this.chunkTime = this.chunkTime ? Math.max(seconds, this.chunkTime * 0.7 + seconds * 0.3) : seconds;
       trace('chunk-loaded', { elapsedMs: seconds * 1000 });
       if (this.prefetchFailure?.index === index) this.prefetchFailure = undefined;

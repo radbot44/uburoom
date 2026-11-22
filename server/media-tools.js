@@ -7,6 +7,19 @@ const { spawn } = require('node:child_process');
 const { PlaybackError } = require('./errors');
 const { processMemory } = require('./process-memory');
 
+const WEBM_CLUSTER_ID = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
+function isValidWebm(bytes) {
+  return (
+    Buffer.isBuffer(bytes) &&
+    bytes.length >= 100 &&
+    bytes[0] === 0x1a &&
+    bytes[1] === 0x45 &&
+    bytes[2] === 0xdf &&
+    bytes[3] === 0xa3 &&
+    bytes.includes(WEBM_CLUSTER_ID)
+  );
+}
+
 // Startup-only discovery. Resolve an absolute executable so subprocesses do not
 // depend on their working directory, shell aliases, or later PATH changes.
 function findOnPath(name, environment = process.env, platform = process.platform) {
@@ -74,12 +87,13 @@ async function run(
     outputComplete,
     input,
     stream = false,
+    tempOutput,
   } = {},
 ) {
   if (signal?.aborted) throw new PlaybackError('WebM preparation cancelled.');
   // `stream` keeps a single WebM output on stdout: one whose header is complete when written,
   // such as live Opus, needs no file to seek back into.
-  const webm = !stream && args.includes('webm') && args.includes('pipe:1');
+  const webm = tempOutput ?? (!stream && args.includes('webm') && args.includes('pipe:1'));
   // WebM outputs named pipe:1, pipe:3, pipe:4 ..., returned in that order; pipe:0 is the input.
   const pipes = webm
     ? [...new Set(args.filter(arg => /^pipe:\d+$/.test(arg) && arg !== 'pipe:0' && arg !== 'pipe:2'))]
@@ -221,7 +235,7 @@ async function run(
         );
       });
     });
-    if (stream && output.length < 100)
+    if (stream && !isValidWebm(output))
       throw Object.assign(new PlaybackError('WebM output is empty or exceeded the supported limit.'), {
         exitFailure: true,
       });
@@ -232,6 +246,10 @@ async function run(
         exitFailure: true,
       });
     const bytes = await Promise.all(files.map(file => fsp.readFile(file)));
+    if (bytes.some(b => !isValidWebm(b)))
+      throw Object.assign(new PlaybackError('WebM output is empty or exceeded the supported limit.'), {
+        exitFailure: true,
+      });
     return pipes.length === 1 ? bytes[0] : split ? { video: bytes[0], audio: bytes[1] } : bytes;
   } finally {
     if (directory) {
@@ -275,8 +293,16 @@ async function segments(
 ) {
   if (signal?.aborted) throw signal.reason || new PlaybackError('WebM preparation cancelled.');
   const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'uburoom-run-'));
-  const outputs = [];
+  const outputs = [],
+    listFiles = new Map();
   args = args.map(arg => {
+    const listMatch = /^segment-list:(\d+)$/.exec(arg);
+    if (listMatch) {
+      const idx = Number(listMatch[1]),
+        listPath = path.join(directory, `list-${idx}.txt`);
+      listFiles.set(idx, listPath);
+      return listPath;
+    }
     const match = /^segments:(\d+)$/.exec(arg);
     if (!match) return arg;
     outputs.push(Number(match[1]));
@@ -289,19 +315,33 @@ async function segments(
       () => true,
       () => false,
     );
+  const completedCount = async output => {
+    const listPath = listFiles.get(output);
+    if (!listPath) return undefined;
+    try {
+      const text = await fsp.readFile(listPath, 'utf8');
+      return text.split(/\r?\n/).filter(Boolean).length;
+    } catch {
+      return 0;
+    }
+  };
   let scanning = Promise.resolve();
   const scan = final =>
     (scanning = scanning.then(async () => {
       for (const output of outputs) {
+        const listed = listFiles.has(output) ? await completedCount(output) : undefined;
         for (;;) {
           const n = next.get(output);
           if (!(await exists(file(output, n)))) break;
-          if (!final && !(await exists(file(output, n + 1)))) break;
+          if (!final) {
+            const ready = listed !== undefined && listed > n ? true : await exists(file(output, n + 1));
+            if (!ready) break;
+          }
           const bytes = await fsp.readFile(file(output, n));
           next.set(output, n + 1);
           await fsp.unlink(file(output, n));
           if (bytes.length > maxSegment) throw new PlaybackError('WebM output exceeded the supported limit.');
-          if (bytes.length < 100)
+          if (!isValidWebm(bytes))
             throw Object.assign(new PlaybackError('WebM output is empty or exceeded the supported limit.'), {
               exitFailure: true,
             });
@@ -309,11 +349,14 @@ async function segments(
         }
       }
     }));
-  let decoders = [];
+  let decoders = [],
+    fsWatcher;
   try {
     await new Promise((resolve, reject) => {
       const child = spawn(binary, args, { windowsHide: true, stdio: ['ignore', sound ? 'pipe' : 'ignore', 'pipe'] });
-      decoders = (sound?.commands || []).map((command, i) => decoder(binary, command, i, sound));
+      decoders = (sound?.commands || []).map((command, i) =>
+        decoder(binary, command, i, sound, { memoryLimit, memory, memoryInterval }),
+      );
       if (sound) tee(child.stdout, decoders, sound.onCopy);
       let failure,
         stderr = '',
@@ -329,10 +372,16 @@ async function segments(
         if (settled) return;
         settled = true;
         clearInterval(watcher);
+        fsWatcher?.close();
         clearInterval(memoryCheck);
         signal?.removeEventListener('abort', cancel);
         error ? reject(error) : resolve();
       };
+      try {
+        fsWatcher = fs.watch(directory, () => {
+          if (!failure && !settled) scan(false).catch(stop);
+        });
+      } catch {}
       const watcher = setInterval(() => {
         if (!failure) scan(false).catch(stop);
       }, poll);
@@ -362,6 +411,7 @@ async function segments(
       });
       child.on('close', async code => {
         clearInterval(watcher);
+        fsWatcher?.close();
         // Every segment before the last open one is complete, whatever the exit.
         await scan(false).catch(error => (failure ||= error));
         if (failure) return finish(failure);
@@ -384,24 +434,44 @@ async function segments(
     for (const each of decoders) each.child.kill('SIGKILL');
     throw error;
   } finally {
+    fsWatcher?.close();
     await scanning.catch(() => {});
     await Promise.all(decoders.map(each => each.closed));
     await fsp.rm(directory, { recursive: true, force: true });
   }
 }
 // One sound decoder of `segments`, reading the copy from stdin.
-function decoder(binary, args, i, sound) {
+function decoder(
+  binary,
+  args,
+  i,
+  sound,
+  { memoryLimit = 1024 * 1024 * 1024, memory = processMemory, memoryInterval = 1000 } = {},
+) {
   const child = spawn(binary, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
   child.stdin.on('error', () => {});
   child.stdout.on('data', bytes => sound.onData(i, bytes));
+  let done = false,
+    memoryCheck;
   const closed = new Promise(resolve => {
-    let done = false;
     const end = ok => {
       if (done) return;
       done = true;
+      clearInterval(memoryCheck);
       sound.onEnd(i, ok);
       resolve();
     };
+    memoryCheck = watchMemory(
+      child,
+      memoryLimit,
+      memory,
+      memoryInterval,
+      () => done,
+      () => {
+        child.kill('SIGKILL');
+        end(false);
+      },
+    );
     child.on('error', () => end(false));
     child.on('close', code => end(code === 0));
   });
@@ -466,12 +536,25 @@ function fileIndex(rows = [], track, streams = [], type) {
   return same[order].index;
 }
 
-function stream(binary, args, signal, onChunk, { idleTimeout = 30000, maxOutput = 64 * 1024 * 1024 } = {}) {
+function stream(
+  binary,
+  args,
+  signal,
+  onChunk,
+  {
+    idleTimeout = 30000,
+    maxOutput = 64 * 1024 * 1024,
+    memoryLimit = 1024 * 1024 * 1024,
+    memory = processMemory,
+    memoryInterval = 1000,
+  } = {},
+) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new PlaybackError('Subtitle loading was cancelled.'));
     const child = spawn(binary, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let size = 0,
       settled = false,
+      exited = false,
       failure,
       stderr = '',
       idleTimer;
@@ -479,6 +562,7 @@ function stream(binary, args, signal, onChunk, { idleTimeout = 30000, maxOutput 
       if (settled) return;
       settled = true;
       clearTimeout(idleTimer);
+      clearInterval(memoryCheck);
       signal?.removeEventListener('abort', cancel);
       error ? reject(error) : resolve();
     };
@@ -491,6 +575,14 @@ function stream(binary, args, signal, onChunk, { idleTimeout = 30000, maxOutput 
       clearTimeout(idleTimer);
       idleTimer = setTimeout(() => stop(new PlaybackError('Subtitle extraction timed out. Try burn-in.')), idleTimeout);
     };
+    const memoryCheck = watchMemory(
+      child,
+      memoryLimit,
+      memory,
+      memoryInterval,
+      () => settled || exited || !!failure,
+      stop,
+    );
     signal?.addEventListener('abort', cancel, { once: true });
     resetIdle();
     child.stdout.on('data', chunk => {
@@ -502,6 +594,10 @@ function stream(binary, args, signal, onChunk, { idleTimeout = 30000, maxOutput 
     });
     child.stderr.on('data', bytes => {
       stderr = (stderr + bytes.toString()).slice(-16000);
+    });
+    child.on('exit', () => {
+      exited = true;
+      clearInterval(memoryCheck);
     });
     child.on('error', () => finish(new PlaybackError('Subtitle extraction failed: FFmpeg unavailable on the server.')));
     child.on('close', code => {
@@ -627,4 +723,4 @@ function cpuTonemap(hdrInfo) {
     : [];
 }
 
-module.exports = { findOnPath, run, segments, stream, codecMatches, fileIndex, classifyHdr, cpuTonemap };
+module.exports = { findOnPath, run, segments, stream, watchMemory, codecMatches, fileIndex, classifyHdr, cpuTonemap };

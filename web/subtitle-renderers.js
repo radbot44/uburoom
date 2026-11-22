@@ -35,20 +35,21 @@ export const subtitleRenderers = {
     const repaint = () => {
       if (disposed || !renderer) return;
       const mediaTime = currentMediaTime();
-      if (format === 'ass')
+      if (format === 'ass') {
+        if (!video.videoWidth || !video.videoHeight) return;
         void (renderAssFrame || renderer.manualRender)
           .call(
             renderer,
             {
               expectedDisplayTime: performance.now(),
-              width: video.videoWidth || 1,
-              height: video.videoHeight || 1,
+              width: video.videoWidth,
+              height: video.videoHeight,
               mediaTime,
             },
             true,
           )
           ?.catch(() => {});
-      else renderer.renderAtMediaTime(mediaTime, true);
+      } else renderer.renderAtMediaTime(mediaTime, true);
     };
     const wait = promise =>
       new Promise((resolve, reject) => {
@@ -155,15 +156,20 @@ export const subtitleRenderers = {
             };
             renderer = format === 'pgs' ? new PgsRenderer(options) : new VobSubRenderer(options);
             renderer.resolveMediaTime = resolveMediaTime;
+            renderer.boundedWindow = Boolean(pushStream);
           }),
         );
         await wait(renderer.whenReady());
       }
       signal.throwIfAborted();
       repaint();
+      const resizeObserver =
+        typeof ResizeObserver === 'function' && video.parentElement ? new ResizeObserver(() => repaint()) : undefined;
+      resizeObserver?.observe(video.parentElement);
       for (const event of ['seeked', 'loadedmetadata', 'pause', 'playing', 'ratechange'])
         video.addEventListener(event, repaint);
       const cleanup = () => {
+        resizeObserver?.disconnect();
         signal.removeEventListener('abort', dispose);
         for (const event of ['seeked', 'loadedmetadata', 'pause', 'playing', 'ratechange'])
           video.removeEventListener(event, repaint);

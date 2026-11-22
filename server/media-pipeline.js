@@ -4,7 +4,7 @@ const { AV1 } = require('./av1');
 const { CacheBudget } = require('./cache-budget');
 const { HLSPool } = require('./hls-pool');
 const { Remux } = require('./remux');
-const { ConversionPolicy } = require('./transcoding-policy');
+const { ConversionPolicy, ProcessGate } = require('./transcoding-policy');
 const SubtitleResources = require('./subtitle-resources');
 
 // What every media provider plays through: local conversion, pooled provider HLS,
@@ -18,8 +18,11 @@ class MediaPipeline {
     this.cacheBudget = new CacheBudget();
     this.qualityOptions = config.transcoding?.qualities || QUALITIES;
     this.conversionPolicy = new ConversionPolicy(config.transcoding);
+    this.processGate = new ProcessGate(Math.max(4, (config.transcoding?.maxJobs || 2) * 3));
     this.av1 = new AV1(config, execute, logger);
     this.av1.conversionPolicy = this.conversionPolicy;
+    this.av1.processGate = this.processGate;
+    this.subtitleResources = new SubtitleResources.SubtitleResourceManager();
     this.hlsPool = new HLSPool(media => media.provider.stop(media));
     /** Copies a file's picture and converts only its sound, for providers with no transcoder. */
     this.remux = new Remux(this.av1);
@@ -44,8 +47,10 @@ class MediaPipeline {
    */
   async release(media, own) {
     if (!media) return;
+    media.lifecycleAbort?.abort();
     media.subtitleAbort?.abort();
     media.subtitleCache?.clear();
+    this.subtitleResources.clear(media);
     SubtitleResources.clear(media);
     // A shared output is ended by its pool once its last viewer leaves.
     if (media.hlsLease) return media.hlsLease.release();

@@ -26,12 +26,13 @@ function parse(text) {
       !Number.isFinite(start) ||
       !Number.isFinite(end) ||
       start < 0 ||
-      end <= start ||
+      end < start ||
       end > 1e9 ||
       value.length > 16000 ||
       cues.length >= 10000
     )
       throw new PlaybackError('Subtitle timing or content is invalid.');
+    if (end <= start) continue;
     if (value) cues.push({ start, end, text: value, settings: match[3] || '' });
   }
   if (!cues.length && !text.startsWith('WEBVTT'))

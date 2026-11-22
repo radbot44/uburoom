@@ -275,10 +275,10 @@ test('playback progress and underrun events kick the AV1 pump when timers are th
   const origMediaSource = globalThis.MediaSource;
   const origCreate = URL.createObjectURL;
   const origRevoke = URL.revokeObjectURL;
-  const origNow = Date.now;
+  const origNow = performance.now;
   let now = 1000;
   let pumps = 0;
-  Date.now = () => now;
+  performance.now = () => now;
   globalThis.MediaSource = class {
     addEventListener() {}
   };
@@ -326,7 +326,7 @@ test('playback progress and underrun events kick the AV1 pump when timers are th
     globalThis.MediaSource = origMediaSource;
     URL.createObjectURL = origCreate;
     URL.revokeObjectURL = origRevoke;
-    Date.now = origNow;
+    performance.now = origNow;
   }
 });
 
