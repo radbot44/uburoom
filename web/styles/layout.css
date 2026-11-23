@@ -451,13 +451,13 @@
     gap: var(--watch-control-gap);
     font-size: var(--font-size-24);
     line-height: 1.25;
-    font-weight: 400;
+    font-weight: 700;
     min-width: 0;
     margin: 0;
   }
   .watch-panel-heading .section-toggle {
     font: inherit;
-    font-weight: 400;
+    font-weight: 700;
     gap: var(--watch-control-gap);
     min-height: var(--watch-control-height);
   }

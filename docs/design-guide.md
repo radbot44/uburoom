@@ -39,7 +39,7 @@ Keep action, selection, navigation and status distinct. Reuse established except
 ### Typography
 
 - Body and controls use Inter, shipped with the app so text wraps the same on every machine (provenance in [third-party notices](third-party.md)).
-- Major headings, dialog headings and sidebar panel headings use Uburoom Sans at its natural weight only: never faux bold, no discretionary ligatures, no Color edition.
+- Major headings, dialog headings and sidebar panel headings use Uburoom Sans at weight 700 (via the multi-weight variable font): never faux bold, no discretionary ligatures, no Color edition.
 
 ## 3. Dialogs
 

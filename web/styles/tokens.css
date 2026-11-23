@@ -17,8 +17,8 @@
   }
   @font-face {
     font-family: 'Uburoom Sans';
-    src: url('/assets/fonts/UburoomSans-Regular.woff2') format('woff2');
-    font-weight: 400;
+    src: url('/assets/fonts/UburoomSans-Variable.woff2') format('woff2');
+    font-weight: 300 800;
     font-style: normal;
     font-display: swap;
   }
