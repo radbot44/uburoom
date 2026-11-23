@@ -43,21 +43,22 @@ export function mount(host, deps) {
       if (!$('room-share').firstChild)
         uburoomControls.content($('room-share'), { icon: 'share', label: 'Share room', iconOnly: true });
       $('room-share').setAttribute('aria-label', 'Share room');
-      if (!$('room-schedule').firstChild)
+      if (!$('room-schedule').firstChild) {
         uburoomControls.content($('room-schedule'), {
           icon: 'calendar-event',
-          label: 'Schedule event',
-          iconOnly: true,
+          label: 'Schedule',
         });
-      uburoomControls.content($('room-people-open'), {
-        icon: 'users',
-        label: store.room.state.viewers + ' / ' + (store.room.state.maxMembers || 20),
-        responsive: false,
-      });
-      $('room-people-open').setAttribute(
-        'aria-label',
-        'Viewers: ' + store.room.state.viewers + ' / ' + (store.room.state.maxMembers || 20),
-      );
+        $('room-schedule').setAttribute('aria-label', 'Schedule event');
+        $('room-schedule').title = 'Schedule event';
+      }
+      const viewersCount = store.room.state.viewers + '/' + (store.room.state.maxMembers || 20);
+      if ($('room-participants-heading')) $('room-participants-heading').textContent = 'Viewers (' + viewersCount + ')';
+      $('room-people-open')?.setAttribute('aria-label', 'Viewers (' + viewersCount + ')');
+      if ($('room-people-open')) $('room-people-open').title = store.room.state.durable ? 'Room settings: Viewers' : '';
+    } else if ($('room-participants-heading')) {
+      $('room-participants-heading').textContent = 'Viewers';
+      $('room-people-open')?.setAttribute('aria-label', 'Viewers');
+      if ($('room-people-open')) $('room-people-open').title = '';
     }
     deps.roomUI.render();
     renderHumanCheckPrompt();

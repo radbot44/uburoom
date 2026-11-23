@@ -1338,15 +1338,7 @@
                 </button>
               </h2>
               <div class="room-header-actions watch-control-group watch-header-actions">
-                <button
-                  id="room-schedule"
-                  class="quiet"
-                  aria-label="Schedule event"
-                  title="Schedule event"
-                  hidden
-                ></button
-                ><button id="room-share" class="quiet" aria-label="Share room invite" hidden></button
-                ><button id="room-people-open" class="room-people-open quiet" aria-label="Viewers" hidden></button
+                <button id="room-share" class="quiet" aria-label="Share room invite" hidden></button
                 ><button
                   id="room-settings-open"
                   class="icon-button"
@@ -1361,9 +1353,19 @@
                 <section class="room-participant-column" aria-label="Viewers">
                   <div class="room-panel-roster-frame room-roster-frame" id="room-roster-frame">
                     <h3 class="room-control-row room-roster-heading">
-                      <span>Viewers</span
-                      ><button id="room-sync-spread" class="room-sync-spread quiet" type="button" hidden>
-                        Room sync
+                      <button id="room-people-open" class="room-people-open" type="button" aria-label="Viewers">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          aria-hidden="true"
+                          data-tabler-icon="users"
+                        >
+                          <use href="#icon-users"></use></svg
+                        ><span id="room-participants-heading">Viewers</span>
                       </button>
                     </h3>
                     <div
@@ -1379,6 +1381,46 @@
                       aria-label="Expand viewers"
                       title="Expand viewers"
                       aria-expanded="false"
+                      hidden
+                    ></button>
+                  </div>
+                </section>
+                <section class="room-tools-column" id="room-tools-column" aria-label="Tools" hidden>
+                  <h3 class="room-control-row room-tools-heading">
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      data-tabler-icon="tool"
+                    >
+                      <use href="#icon-tool"></use></svg
+                    ><span>Tools</span>
+                  </h3>
+                  <div class="room-tools-list" role="group" aria-label="Room tools">
+                    <button
+                      id="room-schedule"
+                      class="quiet watch-control"
+                      type="button"
+                      aria-label="Schedule event"
+                      title="Schedule event"
+                      hidden
+                    ></button
+                    ><button
+                      id="room-human-check-ask"
+                      class="quiet watch-control room-human-check-ask"
+                      type="button"
+                      aria-label="Ask if everyone is ready"
+                      title="Ask if everyone is ready"
+                      hidden
+                    ></button
+                    ><button
+                      id="room-sync-spread"
+                      class="room-sync-spread quiet watch-control"
+                      type="button"
                       hidden
                     ></button>
                   </div>

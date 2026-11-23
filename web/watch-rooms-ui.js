@@ -437,21 +437,19 @@ function mount({
     humanCheckBusy = false,
     rosterRoom;
   const expand = $('room-participants-expand'),
-    rosterFrame = $('room-roster-frame');
-  // Starting and cancelling a ready check lives in the Viewers heading; answering happens on the video.
-  const humanCheckButton = controls.button(document, {
-    label: 'Ask if everyone is ready',
-    icon: 'help',
-    iconOnly: true,
-    action: () => {
-      const check = getState()?.humanCheck;
-      void runHumanCheckAction(() => (check ? onClearHumanCheck?.(check.id) : onAskHumanCheck?.()));
-    },
+    rosterFrame = $('room-roster-frame'),
+    toolsColumn = $('room-tools-column'),
+    humanCheckButton = $('room-human-check-ask');
+  // Starting and cancelling a ready check lives in the Tools column; answering happens on the video.
+  controls.content(humanCheckButton, { icon: 'users-check', label: 'Readiness check' });
+  humanCheckButton.addEventListener('click', () => {
+    const check = getState()?.humanCheck;
+    void runHumanCheckAction(() => (check ? onClearHumanCheck?.(check.id) : onAskHumanCheck?.()));
   });
-  humanCheckButton.id = 'room-human-check-ask';
-  humanCheckButton.classList.add('watch-header-control', 'room-human-check-ask');
-  humanCheckButton.hidden = true;
-  $('room-sync-spread').after(humanCheckButton);
+  function syncToolsVisibility() {
+    if (!toolsColumn) return;
+    toolsColumn.hidden = !toolsColumn.querySelector('.room-tools-list > button:not([hidden])');
+  }
   controls.content(expand, { icon: 'chevron', label: 'Expand viewers', iconOnly: true });
   const settingsRoster = $('room-current-people'),
     settingsFrame = document.createElement('div');
@@ -477,8 +475,15 @@ function mount({
   }
   function updateRosterSize() {
     for (const { roster, frame, button } of rosterViews) {
-      const overflow =
-        [...roster.children].reduce((height, row) => height + row.offsetHeight, 0) > roster.clientHeight + 1;
+      // Measure only viewer rows so OverlayScrollbars helpers and bottom expand padding do not trigger false overflow.
+      const style = getComputedStyle(roster);
+      const innerHeight =
+        roster.clientHeight - (parseFloat(style.paddingTop) || 0) - (parseFloat(style.paddingBottom) || 0);
+      const rowsHeight = [...roster.querySelectorAll(':scope > .room-person')].reduce(
+        (height, row) => height + row.offsetHeight,
+        0,
+      );
+      const overflow = rowsHeight > innerHeight + 1;
       const expanded = frame.classList.contains('expanded');
       button.hidden = !overflow && !expanded;
       frame.classList.toggle('has-overflow', overflow || expanded);
@@ -597,11 +602,13 @@ function mount({
     const active = !!state?.humanCheck;
     const admitted = (state?.participants || []).some(person => person.present && !person.pending);
     const label = active ? 'Cancel ready check' : 'Ask if everyone is ready';
+    controls.content(humanCheckButton, { icon: 'users-check', label: active ? 'Cancel check' : 'Readiness check' });
     humanCheckButton.hidden = !state?.canCheck;
     humanCheckButton.disabled = humanCheckBusy || (!active && !admitted);
     humanCheckButton.setAttribute('aria-pressed', String(active));
     humanCheckButton.setAttribute('aria-label', label);
     humanCheckButton.title = label;
+    syncToolsVisibility();
   }
   // One viewer's answer to the ready check: an icon beside their name, nothing until they answer.
   function humanCheckStatus(status) {
@@ -893,6 +900,7 @@ function mount({
     renderHumanCheckButton();
     renderPeople($('room-participants'), state?.participants || [], state || {});
     roomSync.render(state);
+    syncToolsVisibility();
     updateRosterSize();
   }
   let openedFromSaved = false,
@@ -1937,6 +1945,7 @@ function mount({
     openDraft,
     draftOptions,
     closeTelemetryCard,
+    syncToolsVisibility,
     clearDraft() {
       draftRecord = undefined;
     },
@@ -1955,7 +1964,7 @@ function mount({
         $('room-create-policy').hidden =
         $('room-create-settings').hidden =
           !getMe()?.durableRooms;
-      $('room-people-open').hidden = !getState()?.durable;
+      $('room-people-open').disabled = !getState()?.durable;
       $('room-settings-open').hidden = !getState()?.durable;
       $('room-save-error').textContent = getState()?.saveError || '';
     },

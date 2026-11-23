@@ -95,6 +95,26 @@ async function main() {
         console.log(name + ': first decoded playback and same-tab reconnect passed');
         continue;
       }
+      assert.equal(await run(text('#room-participants-heading')), 'Viewers (1/20)');
+      assert.equal(await run(hidden('#room-participants-expand')), true, 'expand chevron hidden when roster fits');
+      assert.equal(
+        await run(
+          '(()=>{const v=document.querySelector(".room-participant-column")?.getBoundingClientRect(),t=document.getElementById("room-tools-column")?.getBoundingClientRect();const ids=[...document.querySelectorAll("#room-tools-column .room-tools-list > button")].map(b=>b.id);return !!v&&!!t&&t.left>=v.right-1&&ids.join(",")==="room-schedule,room-human-check-ask,room-sync-spread";})()',
+        ),
+        true,
+        'Tools column sits right of Viewers with Schedule, Readiness check, Room sync order',
+      );
+      await run(pressId('room-people-open'));
+      await until(
+        isOpen('#room-settings-dialog') +
+          ' && ' +
+          shown('#room-settings-content') +
+          ' && ' +
+          attr('#room-settings-nav [data-section=people]', 'aria-current') +
+          '==="true"',
+        'Viewers heading opens Room settings -> Viewers',
+      );
+      await closeSettings();
       await run(pressId('room-settings-open'));
       await until(isOpen('#room-settings-dialog') + ' && ' + shown('#room-settings-content'), 'Lifecycle settings');
       assert.equal(await run(attr('#room-settings-nav [data-section=general]', 'aria-current')), 'true');
@@ -642,9 +662,19 @@ async function main() {
       );
       assert.equal(await browser.evaluate(guest, byId('next') + '.disabled'), true);
       assert.equal(
-        await browser.evaluate(guest, byId('room-schedule') + '.hidden'),
+        await browser.evaluate(
+          guest,
+          byId('room-schedule') +
+            '.hidden && ' +
+            byId('room-sync-spread') +
+            '.hidden && !' +
+            byId('room-human-check-ask') +
+            '.hidden && !' +
+            byId('room-tools-column') +
+            '.hidden',
+        ),
         true,
-        'a viewer who cannot schedule does not see Schedule',
+        'a viewer with play-pause sees only Readiness check in Tools, not Schedule or Room sync',
       );
       assert.equal(
         await browser.evaluate(

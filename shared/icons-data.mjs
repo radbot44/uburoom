@@ -767,6 +767,18 @@ const glyphs = Object.freeze({
     ['path', { d: 'M2 8a4 4 0 0 1 4 -4h12a4 4 0 0 1 4 4v8a4 4 0 0 1 -4 4h-12a4 4 0 0 1 -4 -4v-8z' }],
     ['path', { d: 'M10 9l5 3l-5 3z' }],
   ],
+  bolt: [['path', { d: 'M13 3l0 7l6 0l-8 11l0 -7l-6 0l8 -11' }]],
+  graph: [
+    ['path', { d: 'M4 18v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2' }],
+    ['path', { d: 'M7 14l3 -3l2 2l3 -3l2 2' }],
+  ],
+  tool: [['path', { d: 'M7 10h3v-3l-3.5 -3.5a6 6 0 0 1 8 8l6 6a2 2 0 0 1 -3 3l-6 -6a6 6 0 0 1 -8 -8l3.5 3.5' }]],
+  'users-check': [
+    ['path', { d: 'M5 7a4 4 0 1 0 8 0a4 4 0 1 0 -8 0' }],
+    ['path', { d: 'M3 21v-2c0 -2.209 1.791 -4 4 -4h4c.73 0 1.415 .196 2.004 .538' }],
+    ['path', { d: 'M16 3.13a4 4 0 0 1 0 7.75' }],
+    ['path', { d: 'M15 19l2 2l4 -4' }],
+  ],
 });
 const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 function resolveName(name, seekSeconds = 15) {

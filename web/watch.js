@@ -218,9 +218,10 @@ const lobbyEvents = uburoomLobbyEvents.mount({
   },
 });
 deps.lobbyEvents = lobbyEvents;
-// The room header calendar button appears only for people who can schedule here: hosts on a scheduling tier.
+// The Tools schedule button appears only for people who can schedule here: hosts on a scheduling tier.
 function renderScheduleButton() {
   $('room-schedule').hidden = !store.room.state?.durable || !store.room.state?.canManage || !lobbyEvents.canSchedule();
+  roomUI?.syncToolsVisibility?.();
 }
 const roomShare = uburoomShare.mount({
   request: (...args) => deps.call(...args),

@@ -408,10 +408,6 @@
   .room-permission-custom.all-hosts [data-permission-role='viewer'] {
     display: none;
   }
-  .room-header-actions .room-people-open {
-    padding-inline: var(--space-8);
-    font-size: var(--font-size-12);
-  }
   .room-participant-column {
     min-width: 0;
   }
@@ -843,15 +839,9 @@
       font-size: var(--font-size-12);
     }
   }
-  /* Host-only viewer sync spread, at the end of the roster heading. */
+  /* Host-only room sync spread numbers stay tabular inside the dialog. */
   .room-sync-spread {
-    margin-inline-start: auto;
-    min-height: 40px;
-    padding-inline: var(--space-10);
-    font-size: var(--font-size-12);
-    font-weight: 500;
     font-variant-numeric: tabular-nums;
-    white-space: nowrap;
   }
   .watch-dialog.room-sync-dialog {
     --sync-blue: #82bbff;
@@ -1006,19 +996,73 @@
       margin-inline-start: 0;
     }
   }
-  .room-roster-heading {
+  .room-roster-heading,
+  .room-tools-heading {
     box-sizing: border-box;
     height: var(--room-row-height);
     min-height: var(--room-row-height);
     margin: 0;
     display: flex;
     align-items: center;
-    justify-content: flex-start;
-    gap: var(--space-4);
-    padding: var(--space-10) var(--space-2) var(--space-2);
+    justify-content: center;
+    gap: var(--space-6);
+    padding: var(--space-6) var(--space-2) var(--space-2);
     border: 0;
     font-size: var(--font-size-12);
     font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .room-roster-heading .room-people-open {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-6);
+    min-height: var(--watch-control-height);
+    padding: 0 var(--space-10);
+    border: 0;
+    border-radius: var(--watch-control-radius);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    white-space: nowrap;
+  }
+  .room-roster-heading .room-people-open:hover:not(:disabled) {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .room-roster-heading .room-people-open:disabled {
+    opacity: 1;
+    cursor: default;
+  }
+  .room-tools-heading > svg,
+  .room-roster-heading .room-people-open > svg {
+    width: var(--space-16);
+    height: var(--space-16);
+    flex: none;
+  }
+  .room-tools-column {
+    min-width: 0;
+  }
+  .room-tools-list {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-8);
+  }
+  .room-tools-list > .watch-control {
+    justify-content: flex-start;
+    width: 100%;
+    white-space: nowrap;
+  }
+  @container (max-width: 350px) {
+    .room-tools-list {
+      align-items: center;
+    }
+    .room-tools-list > .watch-control {
+      justify-content: center;
+      width: var(--watch-control-height);
+      padding: 0;
+    }
   }
   :is(
     .watch-permission-button,
@@ -1076,14 +1120,8 @@
   .room-invited-section h3 {
     margin: var(--space-18) 0 var(--space-4);
   }
-  /* Ready check: its start button sits at the end of the Viewers heading; answers are icons beside names. */
-  .room-roster-heading > .room-human-check-ask {
-    margin-inline-start: auto;
-  }
-  .room-roster-heading > .room-sync-spread:not([hidden]) + .room-human-check-ask {
-    margin-inline-start: 0;
-  }
-  .room-human-check-ask[aria-pressed='true'] {
+  /* Ready check: its button lives in the Tools column; answers are icons beside names. */
+  .options-panel .room-human-check-ask[aria-pressed='true'] {
     color: var(--accent-text);
   }
   .room-roster-name-cell {

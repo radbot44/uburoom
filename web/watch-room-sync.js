@@ -1,3 +1,4 @@
+import * as controls from './watch-controls.js';
 import * as dialogs from './watch-dialogs.js';
 import { icon } from './icons.js';
 
@@ -353,9 +354,12 @@ export function mountRoomSync({ request, every, getState }) {
       const allowed = canSee(state);
       trigger.hidden = !allowed;
       const spread = state?.syncSpread;
-      text(trigger, spread ? 'Spread ' + spread.p50Ms + ' ms · p95 ' + spread.p95Ms + ' ms' : 'Room sync');
-      trigger.title = 'Open room sync. Reported by players; screen and speaker delay are not included.';
-      trigger.setAttribute('aria-label', spread ? trigger.textContent + '. Open room sync' : 'Open room sync');
+      const spreadSummary = spread ? 'Spread ' + spread.p50Ms + ' ms · p95 ' + spread.p95Ms + ' ms' : '';
+      controls.content(trigger, { icon: 'graph', label: 'Room sync' });
+      trigger.title =
+        (spreadSummary ? spreadSummary + ' · ' : '') +
+        'Open room sync. Reported by players; screen and speaker delay are not included.';
+      trigger.setAttribute('aria-label', spreadSummary ? 'Room sync: ' + spreadSummary : 'Open room sync');
       if (!dialog.open) return;
       if (!allowed || state.id !== roomId) {
         reset();

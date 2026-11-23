@@ -507,7 +507,12 @@
     position: relative;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-16);
+    align-items: start;
     width: 100%;
+  }
+  .room-content-columns:has(> .room-tools-column:not([hidden])) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
   }
   .options-panel {
     container-type: inline-size;
