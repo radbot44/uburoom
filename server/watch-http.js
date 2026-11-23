@@ -6,7 +6,7 @@ const { Handoff, SECRET } = require('./handoff');
 const { watchOperations } = require('./watch-operations');
 const { CALLS } = require('../shared/wire-protocol.mjs');
 const { clientAddress } = require('./client-address');
-const { isAllowedBrowserOrigin } = require('./origins');
+const { isAllowedBrowserOrigin, unconfiguredOriginMessage } = require('./origins');
 const { COOKIES: DEFAULT_COOKIES } = require('./http/sessions');
 const { displayName } = require('./accounts');
 const Ubumfa = require('../shared/ubumfa.mjs');
@@ -131,7 +131,16 @@ function watchHttp({
       return true;
     }
     if (config.accessPolicy && url.pathname === '/api/watch/entry' && req.method === 'POST') {
-      if (!allowedOrigin(req) || !throttle('entry:' + (clientAddress(req, config) || 'local'), 10)) {
+      if (!allowedOrigin(req)) {
+        const unconfigured = unconfiguredOriginMessage(config, req);
+        if (unconfigured) {
+          json(res, 403, { error: unconfigured });
+          return true;
+        }
+        json(res, 429, { error: 'Entry is unavailable; wait a minute and try again' });
+        return true;
+      }
+      if (!throttle('entry:' + (clientAddress(req, config) || 'local'), 10)) {
         json(res, 429, { error: 'Entry is unavailable; wait a minute and try again' });
         return true;
       }

@@ -492,3 +492,67 @@ test('setup options on the command line', () => {
   assert.throws(() => setupOptions(['--setup-host', 'example.com']), /IP address/);
   assert.throws(() => setupOptions(['--setup-host']), /requires a value/);
 });
+
+test('setup wizard supports internet remote-access routes and direct HTTPS with lan_url: auto', async t => {
+  const f = await setupFixture(t);
+  await signIn(f);
+  await f.browser.post('/setup/api/account/create', { username: 'alex', password: 'setup password 1' });
+  const { flow } = (await f.browser.post('/setup/api/sources/setup', { type: 'folders' })).body;
+  await step(f, flow, 'choose', { path: path.join(f.directory, 'Films'), type: 'movies' });
+  await f.browser.post('/setup/api/sources', { action: 'add', flow });
+  await f.browser.post('/setup/api/access', {
+    sourceMembers: [],
+    password: null,
+    accounts: true,
+    guests: true,
+    discord: false,
+  });
+
+  // Invalid public URL is rejected.
+  assert.equal(
+    (
+      await f.browser.post('/setup/api/network', {
+        where: 'internet',
+        port: f.port,
+        route: 'cloudflare',
+        publicUrl: 'http://watch.example.com',
+      })
+    ).status,
+    400,
+  );
+
+  // Cloudflare Tunnel route produces valid http-proxy config and passes checks without a local TLS cert.
+  const cf = await f.browser.post('/setup/api/network', {
+    where: 'internet',
+    port: f.port,
+    route: 'cloudflare',
+    publicUrl: 'https://watch.example.com',
+    trustedProxies: '127.0.0.1, ::1',
+  });
+  assert.equal(cf.status, 200);
+  assert.equal(cf.body.where, 'internet');
+  assert.equal(cf.body.route, 'cloudflare');
+  const cfCheck = await f.browser.post('/setup/api/check', {});
+  assert.equal(cfCheck.status, 200);
+  assert.ok(
+    cfCheck.body.checks.every(row => row.status === 'pass'),
+    JSON.stringify(cfCheck.body.checks),
+  );
+
+  // Direct HTTPS route with allowLan writes lan_url: 'auto' and passes checks.
+  const direct = await f.browser.post('/setup/api/network', {
+    where: 'internet',
+    port: f.port,
+    route: 'https',
+    publicUrl: 'https://watch.example.com',
+    allowLan: true,
+  });
+  assert.equal(direct.status, 200);
+  assert.equal(direct.body.allowLan, true);
+  const directCheck = await f.browser.post('/setup/api/check', {});
+  assert.equal(directCheck.status, 200);
+  assert.ok(
+    directCheck.body.checks.every(row => row.status === 'pass'),
+    JSON.stringify(directCheck.body.checks),
+  );
+});

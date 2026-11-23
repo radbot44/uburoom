@@ -1,6 +1,6 @@
 # TLS and remote access
 
-**Status: approved by the owner on 2026-11-21 (T1–T7 as recommended) and built:** `server.listen: 'http-proxy'` (T1–T5), the Docker health check (T6) and the [remote access guide](remote-access.md). The wizard step (T7) is still later work. Plain HTTP on the LAN stays forbidden (T5): browsers treat a non-HTTPS LAN address as an insecure context, which breaks uburoom's `Secure` sign-in cookies and features such as Document Picture-in-Picture and the clipboard, and it would send session cookies and passwords in clear.
+**Status: approved by the owner on 2026-11-21 (T1–T7 as recommended) and built:** `server.listen: 'http-proxy'` (T1–T5), the Docker health check (T6), the [remote access guide](remote-access.md), the setup wizard's internet-access option (T7), and optional direct LAN access (`server.lan_url`, including `'auto'` and one-time Discord/Plex OAuth handoff). Plain HTTP on the LAN stays forbidden (T5): browsers treat a non-HTTPS LAN address as an insecure context, which breaks uburoom's `Secure` sign-in cookies and features such as Document Picture-in-Picture and the clipboard, and it would send session cookies and passwords in clear.
 
 ## Problem
 
@@ -67,7 +67,11 @@ Alternative: skip the check and rely on `public_url` being HTTPS. Simpler, but m
 
 ### T7. Setup wizard
 
-**Recommend:** the wizard does not offer internet access in v1 (as [first-run-setup.md](first-run-setup.md) says). Once T1 exists, a later "Reach it from the internet" step can pick a route from the guide below and write `server.listen`, `public_url`, `trusted_proxies` and the header. Until then the guide is the only path.
+**Built:** Step 5 ("Where will people watch?") offers **This computer**, **My home network** (which also enables `server.lan_url: 'auto'` on bare-metal installs and adds the machine's hostname to the local certificate), and **The internet**. Picking **The internet** lets the operator enter `server.public_url` and pick Cloudflare Tunnel, Tailscale, Caddy/proxy (`server.listen: 'http-proxy'`, `trusted_proxies`, `trusted_proxy_header`), or Direct HTTPS (with an optional `server.lan_url: 'auto'` toggle for direct LAN access).
+
+### Direct LAN access (`server.lan_url`)
+
+Operators who want direct HTTPS LAN access alongside `server.public_url` can set `server.lan_url` to `'auto'` (in `server.listen: 'https'` mode, trusting this machine's detected private IPs, hostname, and loopback on `server.port` for local-network peers) or to an explicit HTTPS origin (for Docker or a local HTTPS reverse proxy). Plain HTTP on the LAN remains forbidden (T5). Discord and Plex sign-in and account linking bounce through `server.public_url`'s single registered callback and return to the LAN origin via a single-use, host-nonce-bound fragment ticket (`/auth/lan#ticket=…`). See [remote access](remote-access.md) for usage and `node scripts/new-dev-cert.js --lan` for LAN certificate SANs.
 
 ### Implementation sketch (if approved)
 

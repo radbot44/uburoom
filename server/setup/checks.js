@@ -65,6 +65,9 @@ async function sources(config, tools) {
 /** A certificate for the names people open uburoom at, made in the data folder unless one already covers them. */
 function certificate(config, names) {
   const title = 'Certificate';
+  if (config.listen === 'http-proxy') {
+    return { id: 'certificate', status: 'pass', title, detail: 'Handled by your proxy or tunnel (http-proxy mode)' };
+  }
   const label = 'for ' + listed(names);
   try {
     const existing = fs.existsSync(config.tlsCert) ? fs.readFileSync(config.tlsCert) : undefined;

@@ -376,13 +376,52 @@
           <div class="button-group watch-segmented" role="group" aria-label="Where people watch" id="network-where">
             <button class="group-button" type="button" data-where="computer" aria-pressed="true">This computer</button>
             <button class="group-button" type="button" data-where="home" aria-pressed="false">My home network</button>
+            <button class="group-button" type="button" data-where="internet" aria-pressed="false">The internet</button>
           </div>
           <div class="setup-field setup-gap">
             <label for="setup-port">Port</label>
             <input id="setup-port" class="setup-text-input setup-port" inputmode="numeric" maxlength="5" value="5756" />
             <span class="hint" id="network-port-hint">Use the setup port unless something else needs it.</span>
           </div>
-          <div class="setup-panel setup-where">
+          <div id="network-internet" class="setup-gap" hidden>
+            <div class="setup-field">
+              <label for="setup-public-url">Public HTTPS address</label>
+              <input
+                id="setup-public-url"
+                class="setup-text-input"
+                type="url"
+                placeholder="https://watch.example.com"
+                autocomplete="off"
+              />
+              <span class="hint">The HTTPS origin people open in their browser (no path).</span>
+            </div>
+            <div class="setup-field setup-gap">
+              <span class="setup-label">How it connects</span>
+              <div class="button-group watch-segmented" role="group" aria-label="Remote access route" id="setup-route">
+                <button class="group-button" type="button" data-route="cloudflare" aria-pressed="true">
+                  Cloudflare Tunnel
+                </button>
+                <button class="group-button" type="button" data-route="tailscale" aria-pressed="false">
+                  Tailscale
+                </button>
+                <button class="group-button" type="button" data-route="caddy" aria-pressed="false">
+                  Caddy / proxy
+                </button>
+                <button class="group-button" type="button" data-route="https" aria-pressed="false">Direct HTTPS</button>
+              </div>
+              <span class="hint" id="network-route-hint"></span>
+            </div>
+            <div class="setup-field setup-gap" id="network-proxies-field">
+              <label for="setup-trusted-proxies">Trusted proxy addresses</label>
+              <input id="setup-trusted-proxies" class="setup-text-input" autocomplete="off" />
+              <span class="hint">Comma-separated IPs or CIDRs allowed to talk plain HTTP to uburoom.</span>
+            </div>
+            <label class="setup-check setup-gap" id="network-lan-field" hidden>
+              <input id="setup-allow-lan" type="checkbox" checked />
+              <span>Also allow direct LAN access (<code>lan_url: auto</code>)</span>
+            </label>
+          </div>
+          <div class="setup-panel setup-where" id="network-local-panel">
             <p id="network-computer">Open uburoom at <strong></strong></p>
             <p id="network-home" hidden>Viewers open <strong></strong></p>
             <p class="hint" id="network-home-missing" hidden></p>
@@ -390,8 +429,8 @@
               Browsers show a certificate warning the first time. Viewers accept it once.
             </p>
           </div>
-          <p class="hint setup-gap">
-            Inviting people over the internet? Finish here first, then follow the remote access guide,
+          <p class="hint setup-gap" id="network-remote-guide">
+            Need help configuring Cloudflare Tunnel, Tailscale, or Caddy? See
             <code>docs/remote-access.md</code> in the uburoom folder.
           </p>
           <p class="setup-error" role="alert" hidden><span data-icon="alert-triangle"></span><span></span></p>

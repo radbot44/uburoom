@@ -3,6 +3,7 @@ const { randomBytes } = require('node:crypto');
 const { hash } = require('../../core');
 const { displayName } = require('../../accounts');
 const { clientAddress } = require('../../client-address');
+const { unconfiguredOriginMessage } = require('../../origins');
 const Ubumfa = require('../../../shared/ubumfa.mjs');
 const Policy = require('../../room-policy');
 
@@ -30,7 +31,12 @@ function roomInvites({
   // server already admits just goes to the room (and is remembered by a private
   // room). Anyone else enters as a guest when the room allows guests.
   async function joinInvite(req, res) {
-    if (!allowedOrigin(req) || !throttle('invite:' + (clientAddress(req, config) || 'local'), 20))
+    if (!allowedOrigin(req)) {
+      const unconfigured = unconfiguredOriginMessage(config, req);
+      if (unconfigured) return json(res, 403, { error: unconfigured });
+      return json(res, 429, { error: 'Too many tries; wait a minute and try again' });
+    }
+    if (!throttle('invite:' + (clientAddress(req, config) || 'local'), 20))
       return json(res, 429, { error: 'Too many tries; wait a minute and try again' });
     const data = await body(req);
     if (!['preview', 'join'].includes(data.action)) return json(res, 400, { error: 'Unsupported invite action' });

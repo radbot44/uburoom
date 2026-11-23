@@ -392,8 +392,36 @@ test('unconfigured LAN sign-in gives an actionable error and new-dev-cert --lan 
   assert.equal(evilSignIn.status, 403);
   assert.equal(evilSignIn.body.error, 'Not authorized');
 
+  // Guest / server-password entry and room invites also return the clear LAN error on unconfigured LAN hosts,
+  // while keeping 429 for foreign internet origins.
+  const lanEntry = await lan.request('/api/watch/entry', { password: 'test password' });
+  assert.equal(lanEntry.status, 403);
+  assert.match(lanEntry.body.error, /server\.lan_url/);
+  const evilEntry = await evil.request('/api/watch/entry', { password: 'test password' });
+  assert.equal(evilEntry.status, 429);
+
+  const lanInvite = await lan.request('/api/watch/invite', { action: 'preview', code: 'abcdef-ghijkl' });
+  assert.equal(lanInvite.status, 403);
+  assert.match(lanInvite.body.error, /server\.lan_url/);
+  const evilInvite = await evil.request('/api/watch/invite', { action: 'preview', code: 'abcdef-ghijkl' });
+  assert.equal(evilInvite.status, 429);
+
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-lan-cert-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const { checkTlsCertificates } = require('../scripts/doctor');
+  const localhostOnly = generateDevCert({ directory: path.join(dir, 'local-only') });
+  const warnChecks = checkTlsCertificates({
+    listen: 'https',
+    publicUrl: 'https://localhost:5756',
+    lanUrl: 'https://192.168.1.10:5756',
+    tlsCert: localhostOnly.certFile,
+    tlsKey: localhostOnly.keyFile,
+  });
+  assert.ok(
+    warnChecks.some(c => c.name === 'LAN URL certificate coverage' && c.status === 'warn'),
+    'doctor should warn when certificate SANs do not cover server.lan_url',
+  );
+
   const res = generateDevCert({
     directory: dir,
     lan: true,
@@ -409,4 +437,15 @@ test('unconfigured LAN sign-in gives an actionable error and new-dev-cert --lan 
   assert.match(cert.subjectAltName, /DNS:mediabox/);
   assert.match(cert.subjectAltName, /DNS:mediabox\.local/);
   assert.match(cert.subjectAltName, /IP Address:192\.168\.1\.10/);
+  const passChecks = checkTlsCertificates({
+    listen: 'https',
+    publicUrl: 'https://localhost:5756',
+    lanUrl: 'https://192.168.1.10:5756',
+    tlsCert: res.certFile,
+    tlsKey: res.keyFile,
+  });
+  assert.ok(
+    passChecks.some(c => c.name === 'LAN URL certificate coverage' && c.status === 'pass'),
+    'doctor should pass when certificate SANs cover server.lan_url',
+  );
 });

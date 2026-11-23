@@ -324,13 +324,49 @@ function createWizard({
       homeAddress: home,
     };
   }
+  const localHostname = () => {
+    const raw = String(os.hostname() || '')
+      .trim()
+      .toLowerCase();
+    if (!raw || !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(raw)) return [];
+    return raw.includes('.') ? [raw] : [raw, raw + '.local'];
+  };
+  const parseHttpsOrigin = raw => {
+    const text = typeof raw === 'string' ? raw.trim() : '';
+    let parsed;
+    try {
+      parsed = new URL(text);
+    } catch {
+      throw fail('Enter an HTTPS address like https://watch.example.com (no path)');
+    }
+    if (
+      parsed.protocol !== 'https:' ||
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash ||
+      parsed.pathname !== '/'
+    ) {
+      throw fail('Enter an HTTPS address like https://watch.example.com (no path)');
+    }
+    return parsed.origin;
+  };
   const network = {
     view() {
       const port = draft.network?.port ?? setupPort();
-      return { where: draft.network?.where || 'computer', port, published, ...networkOptions(port) };
+      return {
+        where: draft.network?.where || 'computer',
+        port,
+        published,
+        route: draft.network?.route || 'cloudflare',
+        publicUrl: draft.network?.where === 'internet' ? draft.network.publicUrl : '',
+        trustedProxies: draft.network?.trustedProxies || (published ? ['172.30.0.0/24'] : ['127.0.0.1', '::1']),
+        allowLan: draft.network?.allowLan ?? true,
+        ...networkOptions(port),
+      };
     },
     set(data) {
-      if (!['computer', 'home'].includes(data.where)) throw fail('Choose where people watch');
+      if (!['computer', 'home', 'internet'].includes(data.where)) throw fail('Choose where people watch');
       const port = typeof data.port === 'string' && /^\d{1,5}$/.test(data.port.trim()) ? Number(data.port) : data.port;
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw fail('Use a port from 1 to 65535');
       if (published && port !== setupPort()) throw fail('Keep the container port used by the Docker port mapping');
@@ -341,13 +377,66 @@ function createWizard({
             ? 'Open setup using the Docker host’s LAN address and published port, then choose My home network'
             : 'uburoom couldn’t find this computer’s address on the network; choose This computer',
         );
+      if (data.where === 'internet') {
+        const publicUrl = parseHttpsOrigin(data.publicUrl);
+        const route = data.route || 'cloudflare';
+        if (!['cloudflare', 'tailscale', 'caddy', 'https'].includes(route)) throw fail('Choose how people connect');
+        if (route === 'https') {
+          const allowLan = data.allowLan !== false;
+          const pubHost = new URL(publicUrl).hostname.replace(/^\[|\]$/g, '');
+          const lanNames = allowLan && !published ? [options.homeAddress, ...localHostname()].filter(Boolean) : [];
+          draft.network = {
+            where: 'internet',
+            route,
+            port,
+            listen: 'https',
+            host: wide ? setupHost : '0.0.0.0',
+            publicUrl,
+            lanUrl: allowLan && !published ? 'auto' : '',
+            allowLan,
+            trustedProxies: [],
+            trustedProxyHeader: 'x-forwarded-for',
+            names: [...new Set(['localhost', pubHost, ...lanNames])],
+          };
+          return network.view();
+        }
+        const rawProxies = Array.isArray(data.trustedProxies)
+          ? data.trustedProxies
+          : String(data.trustedProxies ?? (published ? '172.30.0.0/24' : '127.0.0.1, ::1'))
+              .split(',')
+              .map(s => s.trim())
+              .filter(Boolean);
+        if (!rawProxies.length) throw fail('Enter at least one trusted proxy address or CIDR');
+        draft.network = {
+          where: 'internet',
+          route,
+          port,
+          listen: 'http-proxy',
+          host: wide ? setupHost : '127.0.0.1',
+          publicUrl,
+          lanUrl: '',
+          allowLan: false,
+          trustedProxies: rawProxies,
+          trustedProxyHeader: route === 'cloudflare' ? 'cf-connecting-ip' : 'x-forwarded-for',
+          names: [],
+        };
+        return network.view();
+      }
+      const homeNames =
+        data.where === 'home'
+          ? ['localhost', options.homeAddress, ...(!published ? localHostname() : [])].filter(Boolean)
+          : ['localhost', options.computerAddress].filter(Boolean);
       draft.network = {
         where: data.where,
         port,
+        listen: 'https',
         // A container or NAS is reached through its published port either way.
         host: wide ? setupHost : data.where === 'home' ? '0.0.0.0' : setupHost,
         publicUrl: data.where === 'home' ? options.home : options.computer,
-        names: [...new Set(['localhost', data.where === 'home' ? options.homeAddress : options.computerAddress])],
+        lanUrl: data.where === 'home' && !published ? 'auto' : '',
+        trustedProxies: [],
+        trustedProxyHeader: 'x-forwarded-for',
+        names: [...new Set(homeNames)],
       };
       return network.view();
     },

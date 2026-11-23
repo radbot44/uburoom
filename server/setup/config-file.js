@@ -71,8 +71,14 @@ function configText({ draft, rules, discordSettings }, { template, today = new D
   set(doc, ['server', 'host'], draft.network.host);
   set(doc, ['server', 'port'], draft.network.port);
   set(doc, ['server', 'public_url'], draft.network.publicUrl);
-  set(doc, ['server', 'tls_cert'], CERT);
-  set(doc, ['server', 'tls_key'], KEY);
+  set(doc, ['server', 'lan_url'], draft.network.lanUrl || '');
+  set(doc, ['server', 'listen'], draft.network.listen || 'https');
+  if (draft.network.trustedProxies?.length) {
+    set(doc, ['server', 'trusted_proxies'], draft.network.trustedProxies);
+    set(doc, ['server', 'trusted_proxy_header'], draft.network.trustedProxyHeader || 'x-forwarded-for');
+  }
+  set(doc, ['server', 'tls_cert'], draft.network.listen === 'http-proxy' ? '' : CERT);
+  set(doc, ['server', 'tls_key'], draft.network.listen === 'http-proxy' ? '' : KEY);
   return serializeYaml(doc, source, { flowCollectionPadding: false });
 }
 

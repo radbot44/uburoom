@@ -796,12 +796,27 @@ $('access-next').addEventListener('click', () =>
 // ----- 5. Where people watch -----
 
 let networkView,
-  where = 'computer';
+  where = 'computer',
+  remoteRoute = 'cloudflare';
+const ROUTE_HINTS = {
+  cloudflare: 'Uses http-proxy mode with cf-connecting-ip. Point your Cloudflare Tunnel at HTTP on this port.',
+  tailscale: 'Uses http-proxy mode with x-forwarded-for. Run tailscale serve against HTTP on this port.',
+  caddy: 'Uses http-proxy mode with x-forwarded-for. Point Caddy or nginx at HTTP on this port.',
+  https: 'uburoom serves HTTPS itself with its own certificate and can also accept direct LAN connections.',
+};
 function renderWhere() {
   for (const button of $('network-where').querySelectorAll('[data-where]'))
     button.setAttribute('aria-pressed', String(button.dataset.where === where));
+  for (const button of $('setup-route').querySelectorAll('[data-route]'))
+    button.setAttribute('aria-pressed', String(button.dataset.route === remoteRoute));
   const port = /^\d{1,5}$/.test($('setup-port').value.trim()) ? $('setup-port').value.trim() : String(networkView.port);
   const address = host => 'https://' + (host.includes(':') ? `[${host}]` : host) + ':' + port;
+  const isInternet = where === 'internet';
+  $('network-internet').hidden = !isInternet;
+  $('network-local-panel').hidden = isInternet;
+  $('network-proxies-field').hidden = !isInternet || remoteRoute === 'https';
+  $('network-lan-field').hidden = !isInternet || remoteRoute !== 'https' || networkView.published;
+  $('network-route-hint').textContent = ROUTE_HINTS[remoteRoute] || '';
   $('network-computer').hidden = where !== 'computer';
   $('network-home').hidden = where !== 'home' || !networkView.homeAddress;
   $('network-home-hint').hidden = $('network-home').hidden;
@@ -821,8 +836,12 @@ function renderWhere() {
 async function loadNetwork() {
   networkView = await api('/setup/api/network');
   where = networkView.where;
+  remoteRoute = networkView.route || 'cloudflare';
   $('setup-port').value = String(networkView.port);
   $('setup-port').readOnly = networkView.published;
+  $('setup-public-url').value = networkView.publicUrl || '';
+  $('setup-trusted-proxies').value = (networkView.trustedProxies || []).join(', ');
+  $('setup-allow-lan').checked = networkView.allowLan !== false;
   $('network-port-hint').textContent = networkView.published
     ? 'Docker’s container port. The address below uses the published port.'
     : 'Use the setup port unless something else needs it.';
@@ -834,10 +853,23 @@ $('network-where').addEventListener('click', event => {
   where = button.dataset.where;
   renderWhere();
 });
+$('setup-route').addEventListener('click', event => {
+  const button = event.target.closest('[data-route]');
+  if (!button) return;
+  remoteRoute = button.dataset.route;
+  renderWhere();
+});
 $('setup-port').addEventListener('input', renderWhere);
 $('network-next').addEventListener('click', () =>
   run('network', $('network-next'), async () => {
-    await api('/setup/api/network', { where, port: $('setup-port').value.trim() });
+    const payload = { where, port: $('setup-port').value.trim() };
+    if (where === 'internet') {
+      payload.publicUrl = $('setup-public-url').value.trim();
+      payload.route = remoteRoute;
+      if (remoteRoute === 'https') payload.allowLan = $('setup-allow-lan').checked;
+      else payload.trustedProxies = $('setup-trusted-proxies').value.trim();
+    }
+    await api('/setup/api/network', payload);
     await open('check');
   }),
 );

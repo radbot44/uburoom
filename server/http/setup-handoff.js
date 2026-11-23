@@ -11,6 +11,7 @@
  */
 const path = require('node:path');
 const { createHash, timingSafeEqual } = require('node:crypto');
+const { isAllowedBrowserOrigin } = require('../origins');
 const { WEB } = require('./static');
 
 const EXPIRED = 'This sign-in from setup has expired. Sign in to uburoom.';
@@ -76,7 +77,8 @@ function setupHandoff({ handoff, config, registry, uburoomAccounts, accountRoute
         methods: ['POST'],
         path: '/api/setup-handoff',
         async handle({ req, res }) {
-          if (req.headers.origin !== config.publicUrl) return json(res, 403, { error: 'Not authorized' });
+          if (!isAllowedBrowserOrigin(config, req.headers.origin, req))
+            return json(res, 403, { error: 'Not authorized' });
           let data;
           try {
             data = await body(req, 1024);

@@ -680,6 +680,43 @@ function checkTlsCertificates(config) {
         }
       } catch {}
     }
+
+    if (config?.lanUrl) {
+      try {
+        const lanHosts = [];
+        if (config.lanUrl === 'auto') {
+          const { detectLanOrigins } = require('../server/origins');
+          const all = [...detectLanOrigins(config)];
+          const nonLoopback = all.filter(o => !/^https:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::|$)/.test(o));
+          for (const origin of nonLoopback.length ? nonLoopback : all) {
+            const h = new URL(origin).hostname.replace(/^\[(.*)\]$/, '$1');
+            if (h) lanHosts.push(h);
+          }
+        } else {
+          const h = new URL(config.lanUrl).hostname.replace(/^\[(.*)\]$/, '$1');
+          if (h) lanHosts.push(h);
+        }
+        if (lanHosts.length) {
+          const uncovered = lanHosts.filter(h => !(net.isIP(h) ? cert.checkIP(h) : cert.checkHost(h)));
+          checks.push({
+            category: 'TLS / Certificates',
+            name: 'LAN URL certificate coverage',
+            status: uncovered.length ? 'warn' : 'pass',
+            message: uncovered.length
+              ? `Certificate SANs do not cover server.lan_url host(s): ${uncovered.join(', ')}`
+              : `Certificate covers LAN URL host(s): ${lanHosts.join(', ')}`,
+            ...(uncovered.length
+              ? {
+                  remediation:
+                    config.lanUrl === 'auto'
+                      ? 'Regenerate a local certificate with LAN SANs: node scripts/new-dev-cert.js --lan'
+                      : `Generate or install a certificate covering ${uncovered.join(', ')} (e.g. node scripts/new-dev-cert.js --dnsNames=localhost,${uncovered.join(',')}).`,
+                }
+              : {}),
+          });
+        }
+      } catch {}
+    }
   } catch (err) {
     checks.push({
       category: 'TLS / Certificates',
