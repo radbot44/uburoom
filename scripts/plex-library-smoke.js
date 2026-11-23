@@ -502,7 +502,7 @@ async function main(name) {
       true,
       'Leaving keeps search focus and hides the room queue action',
     );
-    await evaluate(context, 'document.getElementById("switch-room").click()');
+    await evaluate(context, 'document.getElementById("choose-room").click()');
     const rejoin = 'document.querySelector(`#room-choices [data-join-room="${window.mediaBeforeLeave.id}"]`)';
     await until(context, rejoin, 'Previously joined room is available');
     await evaluate(context, rejoin + '.click()');

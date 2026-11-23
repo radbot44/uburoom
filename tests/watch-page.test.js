@@ -74,8 +74,7 @@ test('watchPage renders authenticated and unauthenticated bootstrap data safely 
     /outside-room/,
     'direct /room/<slug> removes outside-room class on first paint',
   );
-  assert.equal(attr(directRoomHtml, 'switch-room', 'aria-label'), 'Switch room');
-  assert.equal(attr(directRoomHtml, 'switch-room', 'title'), 'Switch room', 'switch-room control on first paint');
+  assert.equal(attr(directRoomHtml, 'choose-room', 'hidden'), true, 'room chooser hidden on first paint inside a room');
   assert.equal(
     attr(directRoomHtml, 'close-room', 'hidden'),
     undefined,

@@ -24,13 +24,11 @@ export function mount(host, deps) {
     $('rooms').hidden = true;
     $('refresh').hidden = true;
     $('room-bar').hidden = !store.identity.me && $('auth-overlay').hidden;
-    $('switch-room').textContent = inRoom ? 'Switch room' : 'Choose room';
-    $('switch-room').hidden = !!store.identity.config?.singleRoom;
+    $('choose-room').hidden = inRoom || !!store.identity.config?.singleRoom || !!store.identity.me?.guestRoomId;
     $('create').hidden = inRoom || !!store.identity.config?.singleRoom || !!store.identity.me?.guestRoomId;
     $('close-room').hidden = !inRoom || !!store.identity.config?.singleRoom;
     if (store.identity.config?.singleRoom || store.identity.me?.guestRoomId)
       for (const id of ['lobby-create', 'lobby-reopen', 'room-chooser-new']) $(id).hidden = true;
-    if (store.identity.me?.guestRoomId) $('switch-room').hidden = true;
     if ($('options-title'))
       $('options-title').textContent = store.room.state
         ? store.room.state.roomName || 'Room'
@@ -943,13 +941,13 @@ export function mount(host, deps) {
     const roomId = store.room.selected;
     const fromQueue = $('poll-fill-queue');
     const fromSuggestions = $('poll-fill-suggestions');
-    const addOption = $('poll-add-option');
+    const maxOptions = 6;
     let draftRevision = 0;
 
     /** @type {Array<{label: string, media?: any}>} */
     let draftOptions =
       Array.isArray(prefill?.options) && prefill.options.length >= 2
-        ? prefill.options.slice(0, 6)
+        ? prefill.options.slice(0, maxOptions)
         : [{ label: '' }, { label: '' }];
     let durationSeconds = null;
     let onClose = 'queueNext';
@@ -963,42 +961,69 @@ export function mount(host, deps) {
       if (playNowNote) playNowNote.hidden = !allMedia || onClose !== 'playNow';
     };
 
-    const renderDraftOptions = () => {
-      draftRevision++;
-      optionsWrap.replaceChildren();
-      addOption.disabled = draftOptions.length >= 6;
-      draftOptions.forEach((opt, idx) => {
-        const row = document.createElement('div');
-        row.className = 'poll-option-row';
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.maxLength = 100;
-        input.required = true;
-        input.placeholder = `Option ${idx + 1}`;
-        input.setAttribute('aria-label', input.placeholder);
-        input.value = opt.label;
-        input.addEventListener('input', () => {
-          opt.label = input.value;
-          draftRevision++;
-        });
-        row.append(input);
-        if (draftOptions.length > 2) {
-          const rm = uburoomControls.button(document, {
+    function addRemoveButtons() {
+      if (draftOptions.length <= 2) return;
+      draftOptions.forEach((_, index) => {
+        const row = optionsWrap.children[index];
+        if (row.querySelector('button')) return;
+        row.append(
+          uburoomControls.button(document, {
             icon: 'x',
-            label: `Remove option ${idx + 1}`,
+            label: `Remove option ${index + 1}`,
             iconOnly: true,
             action: () => {
-              draftOptions.splice(idx, 1);
+              draftOptions.splice(index, 1);
               renderDraftOptions();
-              optionsWrap.querySelectorAll('input')[Math.min(idx, draftOptions.length - 1)].focus();
+              optionsWrap.querySelectorAll('input')[Math.min(index, draftOptions.length - 1)].focus();
             },
-          });
-          row.append(rm);
-        }
-        optionsWrap.append(row);
+          }),
+        );
       });
+    }
+
+    function appendOptionRow(option) {
+      const row = document.createElement('div');
+      row.className = 'poll-option-row';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.maxLength = 100;
+      input.autocomplete = 'off';
+      input.value = option?.label || '';
+      const index = optionsWrap.children.length;
+      const label = () => {
+        input.required = !!option;
+        input.placeholder = option ? `Option ${index + 1}` : 'Type to add an option';
+        input.setAttribute('aria-label', input.placeholder);
+      };
+      label();
+      const update = event => {
+        draftRevision++;
+        if (option) {
+          option.label = input.value;
+        } else if (!event.isComposing && input.value.trim()) {
+          // Promote this same input so typing, selection and focus stay in place.
+          option = { label: input.value };
+          draftOptions.push(option);
+          label();
+          addRemoveButtons();
+          if (draftOptions.length < maxOptions) appendOptionRow();
+          syncOnCloseVisibility();
+        }
+      };
+      input.addEventListener('input', update);
+      input.addEventListener('compositionend', update);
+      row.append(input);
+      optionsWrap.append(row);
+    }
+
+    function renderDraftOptions() {
+      draftRevision++;
+      optionsWrap.replaceChildren();
+      draftOptions.forEach(appendOptionRow);
+      addRemoveButtons();
+      if (draftOptions.length < maxOptions) appendOptionRow();
       syncOnCloseVisibility();
-    };
+    }
 
     const form = $('poll-form');
     const setPressed = (selector, attr, val) => {
@@ -1030,12 +1055,8 @@ export function mount(host, deps) {
         setPressed('.poll-tie-chip', 'data-tie', tieRule);
       };
     });
-    addOption.onclick = () => {
-      draftOptions.push({ label: '' });
-      renderDraftOptions();
-      optionsWrap.querySelector('.poll-option-row:last-child input').focus();
-    };
     const fill = (options, defaultQuestion) => {
+      uburoomPopover.dismiss();
       draftOptions = options;
       if (!questionInput.value.trim()) questionInput.value = defaultQuestion;
       renderDraftOptions();
@@ -1053,7 +1074,7 @@ export function mount(host, deps) {
       const sameDraft = () =>
         dialog.open && fromQueue.onclick === fillQueue && store.room.selected === roomId && draftRevision === revision;
       try {
-        const { items } = await deps.call('room.queue', { roomId, args: { limit: 6 } });
+        const { items } = await deps.call('room.queue', { roomId, args: { limit: maxOptions } });
         if (!sameDraft()) return;
         if (items.length < 2) {
           dialogError(fromQueue, 'You need at least 2 queued items.');

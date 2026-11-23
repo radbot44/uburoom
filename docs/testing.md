@@ -41,6 +41,8 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 The room tool popup fixes were verified on Windows on 2026-11-23 in the working tree based on `a9a42c6`. The focused room tools, journal, readiness and suggestions Node tests passed (19 tests). The room UI smoke runner passed in Chrome and Firefox with new checks for poll validation and filling from the queue. Separate isolated browser checks exercised suggestion fill, announcement submission and live Activity updates while scrolled, including row identity, scroll position and keyboard focus. Live integration and owner acceptance remain open.
 
+The follow-up layout changes were verified on 2026-11-23 in the working tree based on `e7fbbcf`. All four `npm run smoke` runners passed in Chrome and Firefox. Focused browser checks also verified room bar placement, icon spacing, in-place poll option entry through the six-option limit, and live journal updates without the new-entry count moving the viewport. The watch page, room tools and journal Node tests passed (9 tests).
+
 The lobby omission fix passed 63 focused Node tests on Windows on 2026-11-22 (`watch`, `watch-page`, `watch-socket`, `accounts`, and `watch-transport`). In an isolated copy of `dd1d3c7` with the fix applied, `scripts/room-ui-smoke.js` passed in Chrome and Firefox. The guest received an empty lobby list during playback and kept playing. Both tabs returned to the lobby on room closure. Live Vigrid verification remains open.
 
 | Gate | Required methods | Remaining |

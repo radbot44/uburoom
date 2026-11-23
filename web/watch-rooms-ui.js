@@ -79,7 +79,7 @@ function mount({
   const controls = uburoomControls;
   const roomSync = mountRoomSync({ request, every, getState });
   $('room-bar').classList.add('watch-control-group');
-  for (const id of ['switch-room', 'create', 'reopen', 'admin-end-room', 'close-room']) {
+  for (const id of ['choose-room', 'create', 'reopen', 'admin-end-room', 'close-room']) {
     const control = $(id);
     controls.content(control, { label: control.textContent, icon: id === 'close-room' ? 'logout' : undefined });
   }
@@ -451,7 +451,7 @@ function mount({
     pollButton = $('room-poll-btn');
   // Starting and cancelling a ready check lives in the Tools column; answering happens on the video.
   controls.content(humanCheckButton, { icon: 'users-check', label: 'Readiness check' });
-  if (announceButton) controls.content(announceButton, { icon: 'bell', label: 'Announce' });
+  if (announceButton) controls.content(announceButton, { icon: 'speakerphone', label: 'Announce' });
   if (pollButton) controls.content(pollButton, { icon: 'chart-bar', label: 'Poll' });
   humanCheckButton.addEventListener('click', () => {
     const state = getState();

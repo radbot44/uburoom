@@ -203,8 +203,7 @@ function watchPage(source, initial, scrollbarStyleNonce) {
         .set('id', 'auth-overlay', { hidden: true })
         .content('id', 'options-title', roomName)
         .set('id', 'current-room', { hidden: false })
-        .set('id', 'switch-room', { 'aria-label': 'Switch room', title: 'Switch room' })
-        .content('id', 'switch-room', '<span class="watch-control-label">Switch room</span>')
+        .set('id', 'choose-room', { hidden: true })
         .set('id', 'create', { hidden: true })
         .set('id', 'close-room', { hidden: false });
       if (media?.title) {

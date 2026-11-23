@@ -506,7 +506,7 @@ export function mount(host, deps) {
     }
   }
   for (const id of ['create', 'lobby-create']) $(id).addEventListener('click', () => void chooseRoom(undefined, 'new'));
-  for (const id of ['switch-room']) $(id).addEventListener('click', () => void chooseRoom());
+  $('choose-room').addEventListener('click', () => void chooseRoom());
   $('room-dialog-close').addEventListener('click', () => uburoomDialogs.close($('room-dialog')));
   $('room-create-cancel').addEventListener('click', () => {
     if (roomChoice || openedAsNew) uburoomDialogs.close($('room-dialog'), 'cancel');
@@ -715,7 +715,7 @@ export function mount(host, deps) {
       'room-chooser-new',
       'create',
       'reopen',
-      'switch-room',
+      'choose-room',
       'room-bar',
     ])
       if ($(id)) $(id).hidden = true;

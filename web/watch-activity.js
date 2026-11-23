@@ -205,18 +205,11 @@ export function mountActivityHub({
   const nowSection = document.createElement('section');
   nowSection.className = 'activity-now';
   nowSection.hidden = true;
-  const nowTitle = document.createElement('div');
-  nowTitle.className = 'activity-section-label';
-  nowTitle.textContent = 'Now';
+  nowSection.setAttribute('aria-label', 'Active room tools');
   const nowList = document.createElement('div');
   nowList.className = 'activity-now-list';
-  nowSection.append(nowTitle, nowList);
+  nowSection.append(nowList);
 
-  const earlierHeader = document.createElement('div');
-  earlierHeader.className = 'activity-earlier-header';
-  const earlierTitle = document.createElement('div');
-  earlierTitle.className = 'activity-section-label';
-  earlierTitle.textContent = 'Earlier';
   const filterBar = document.createElement('div');
   filterBar.className = 'activity-filters';
   filterBar.setAttribute('role', 'group');
@@ -241,14 +234,13 @@ export function mountActivityHub({
     filterButtons.set(filter.id, btn);
     filterBar.append(btn);
   }
-  earlierHeader.append(earlierTitle, filterBar);
-
   const newPill = document.createElement('button');
   newPill.type = 'button';
   newPill.className = 'activity-new-pill';
   newPill.hidden = true;
   newPill.addEventListener('click', () => {
     viewport.scrollTop = 0;
+    viewport.focus({ preventScroll: true });
     unseenWhileScrolled = 0;
     newPill.hidden = true;
   });
@@ -258,7 +250,7 @@ export function mountActivityHub({
   viewport.className = 'activity-scroll';
   viewport.tabIndex = 0;
   viewport.setAttribute('role', 'region');
-  viewport.setAttribute('aria-label', 'Earlier activity');
+  viewport.setAttribute('aria-label', 'Room activity history');
   viewport.addEventListener('scroll', () => {
     if (viewport.scrollTop <= 16 && unseenWhileScrolled > 0) {
       unseenWhileScrolled = 0;
@@ -274,7 +266,10 @@ export function mountActivityHub({
   emptyEl.className = 'activity-empty';
   emptyEl.textContent = 'No room activity yet.';
 
-  body.append(nowSection, earlierHeader, newPill, viewport, emptyEl);
+  const history = document.createElement('div');
+  history.className = 'activity-history';
+  history.append(newPill, viewport, emptyEl);
+  body.append(nowSection, filterBar, history);
 
   function matchesFilter(entry) {
     if (activeFilter === 'all') return true;

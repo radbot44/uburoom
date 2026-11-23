@@ -106,7 +106,7 @@ export function describeNowItem(activity, state, now) {
     return {
       title: activity.text || 'Announcement',
       meta: activity.senderName ? `From ${activity.senderName}` : 'Announcement',
-      symbol: 'bell',
+      symbol: 'speakerphone',
     };
   }
   return { title: activity.kind, meta: '', symbol: 'info-circle' };

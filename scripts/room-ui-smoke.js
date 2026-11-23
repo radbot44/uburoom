@@ -112,6 +112,19 @@ async function main() {
           ' && document.activeElement.id === "poll-question"',
         'Missing poll question uses the shared field feedback',
       );
+      assert.equal(
+        await run(`(() => {
+        const row = document.querySelector('#poll-options-inputs input:not([required])');
+        row.focus();
+        row.value = 'A third option';
+        row.dispatchEvent(new Event('input', { bubbles: true }));
+        const next = document.querySelector('#poll-options-inputs input:not([required])');
+        return row === document.activeElement && row.required && row.value === 'A third option' &&
+          next !== row && next?.value === '';
+      })()`),
+        true,
+        'Typing promotes an option in place and leaves a blank row',
+      );
       await run(pressId('poll-cancel'));
       await run(pressId('room-people-open'));
       await until(
@@ -452,7 +465,7 @@ async function main() {
       await run(pressId('room-poll-btn'));
       await run(pressId('poll-fill-queue'));
       await until(
-        'Array.from(document.querySelectorAll("#poll-options-inputs input"), input => input.value).join(",") === "First queued item,Second queued item" && ' +
+        'Array.from(document.querySelectorAll("#poll-options-inputs input[required]"), input => input.value).join(",") === "First queued item,Second queued item" && ' +
           shown('#poll-on-close-group'),
         'Queue fills two media poll options in upcoming order',
       );

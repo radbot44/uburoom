@@ -131,7 +131,7 @@ async function main() {
       );
       assert.equal(
         await run(
-          '(()=>{const ids=["library-back","library-forward","library-home","library-direction","library-filters-toggle"];const elevated=getComputedStyle(document.getElementById("switch-room")).backgroundColor;return ids.every(id=>{const e=document.getElementById(id),r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.height===40 && s.borderRadius==="10px" && s.borderTopWidth==="0px" && s.backgroundColor===elevated})})()',
+          '(()=>{const ids=["library-back","library-forward","library-home","library-direction","library-filters-toggle"];const elevated=getComputedStyle(document.getElementById("room-activity-btn")).backgroundColor;return ids.every(id=>{const e=document.getElementById(id),r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.height===40 && s.borderRadius==="10px" && s.borderTopWidth==="0px" && s.backgroundColor===elevated})})()',
         ),
         true,
         'Media actions use the Room control surface even while disabled',

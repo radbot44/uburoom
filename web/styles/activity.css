@@ -1,10 +1,7 @@
 /* Activity hub, attention badges, and stage activity cards */
 
 .room-activity-btn {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  margin-inline-end: auto;
 }
 
 .activity-badge {
@@ -56,15 +53,6 @@
   flex-direction: column;
   min-height: 0;
   gap: var(--space-10);
-}
-
-.activity-section-label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted, #9aa3b2);
-  margin-bottom: 6px;
 }
 
 .activity-now {
@@ -127,10 +115,11 @@
   color: var(--muted, #9aa3b2);
 }
 
-.activity-earlier-header {
+.activity-history {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  min-height: 0;
 }
 
 .activity-filters {
@@ -156,7 +145,11 @@
 }
 
 .activity-new-pill {
-  align-self: center;
+  position: absolute;
+  inset-block-start: var(--space-4);
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
   padding: 3px 10px;
   border-radius: 999px;
   border: 0;
