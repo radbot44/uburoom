@@ -2,15 +2,20 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { once } = require('node:events');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { X509Certificate } = require('node:crypto');
 const https = require('node:https');
 const WebSocket = require('ws');
 const { fixture } = require('./helpers/account-app');
 const { accessPolicy } = require('./helpers/access');
 const { PROTOCOL_VERSION } = require('../shared/wire-protocol.mjs');
 const { detectLanOrigins, isAllowedBrowserOrigin } = require('../server/origins');
+const { generateDevCert } = require('../scripts/new-dev-cert');
 
-const LAN_ORIGIN = 'https://192.168.88.10:5756';
-const LAN_HOST = '192.168.88.10:5756';
+const LAN_ORIGIN = 'https://192.168.1.10:5756';
+const LAN_HOST = '192.168.1.10:5756';
 
 function tokenOf(url) {
   return new URL(url).hash.slice(1);
@@ -279,10 +284,10 @@ test('server.lan_url: auto detects local private IPs and hostname on server.port
   const detected = detectLanOrigins(
     { port: 5756, publicUrl: 'https://watch.example' },
     {
-      hostname: 'Vigrid',
+      hostname: 'MediaBox',
       interfaces: {
         eth0: [
-          { address: '192.168.88.10', family: 'IPv4', internal: false },
+          { address: '192.168.1.10', family: 'IPv4', internal: false },
           { address: '203.0.113.5', family: 'IPv4', internal: false },
           { address: 'fd12:3456::1', family: 'IPv6', internal: false },
           { address: 'fe80::1%eth0', family: 'IPv6', internal: false },
@@ -290,9 +295,9 @@ test('server.lan_url: auto detects local private IPs and hostname on server.port
       },
     },
   );
-  assert.ok(detected.has('https://192.168.88.10:5756'));
-  assert.ok(detected.has('https://vigrid:5756'));
-  assert.ok(detected.has('https://vigrid.local:5756'));
+  assert.ok(detected.has('https://192.168.1.10:5756'));
+  assert.ok(detected.has('https://mediabox:5756'));
+  assert.ok(detected.has('https://mediabox.local:5756'));
   assert.ok(detected.has('https://[fd12:3456::1]:5756'));
   assert.ok(detected.has('https://localhost:5756'));
   assert.equal(detected.has('https://203.0.113.5:5756'), false, 'public IPv4 is not a LAN origin');
@@ -302,20 +307,20 @@ test('server.lan_url: auto detects local private IPs and hostname on server.port
     publicUrl: 'https://watch.example',
     lanUrl: 'auto',
     listen: 'https',
-    lanAutoOrigins: ['https://192.168.88.10:5756', 'https://vigrid:5756'],
+    lanAutoOrigins: ['https://192.168.1.10:5756', 'https://mediabox:5756'],
   };
   assert.equal(
-    isAllowedBrowserOrigin(autoCfg, 'https://vigrid:5756', { socket: { remoteAddress: '192.168.88.42' } }),
+    isAllowedBrowserOrigin(autoCfg, 'https://mediabox:5756', { socket: { remoteAddress: '192.168.1.42' } }),
     true,
   );
   assert.equal(
-    isAllowedBrowserOrigin(autoCfg, 'https://vigrid:5756', { socket: { remoteAddress: '203.0.113.99' } }),
+    isAllowedBrowserOrigin(autoCfg, 'https://mediabox:5756', { socket: { remoteAddress: '203.0.113.99' } }),
     false,
     'non-local peer cannot use lan_url: auto',
   );
   assert.equal(
-    isAllowedBrowserOrigin({ ...autoCfg, listen: 'http-proxy' }, 'https://vigrid:5756', {
-      socket: { remoteAddress: '192.168.88.42' },
+    isAllowedBrowserOrigin({ ...autoCfg, listen: 'http-proxy' }, 'https://mediabox:5756', {
+      socket: { remoteAddress: '192.168.1.42' },
     }),
     false,
     'http-proxy mode disables lan_url: auto',
@@ -324,7 +329,7 @@ test('server.lan_url: auto detects local private IPs and hostname on server.port
   // End-to-end: both IP and hostname origins work under lan_url: 'auto'.
   const { app, config, provider, browser } = await fixture(t, undefined, {
     lanUrl: 'auto',
-    lanAutoOrigins: ['https://192.168.88.10:5756', 'https://vigrid:5756'],
+    lanAutoOrigins: ['https://192.168.1.10:5756', 'https://mediabox:5756'],
     accessPolicy: accessPolicy({ discordServer: true, accounts: true }),
   });
   config.serverOperator = { identities: [{ provider: 'discord', subject: provider.subjects.host }] };
@@ -333,7 +338,7 @@ test('server.lan_url: auto detects local private IPs and hostname on server.port
   assert.equal((await operator.request('/api/account/demo-login', { persona: 'host' })).status, 200);
   const created = (await operator.post('/api/operator/accounts', { username: 'carol' })).body;
 
-  const byHost = makeClient(port, 'https://vigrid:5756', 'vigrid:5756');
+  const byHost = makeClient(port, 'https://mediabox:5756', 'mediabox:5756');
   assert.equal(
     (
       await byHost.request('/api/uburoom-accounts/password', {
@@ -343,11 +348,65 @@ test('server.lan_url: auto detects local private IPs and hostname on server.port
     ).status,
     200,
   );
-  const byIp = makeClient(port, 'https://192.168.88.10:5756', '192.168.88.10:5756');
+  const byIp = makeClient(port, 'https://192.168.1.10:5756', '192.168.1.10:5756');
   assert.equal(
     (await byIp.request('/api/uburoom-accounts/sign-in', { username: 'carol', password: 'carol auto password' }))
       .status,
     200,
   );
   assert.equal((await byIp.request('/api/me')).body.loggedIn, true);
+});
+
+test('unconfigured LAN sign-in gives an actionable error and new-dev-cert --lan includes LAN SANs', async t => {
+  const { app, config } = await fixture(t, undefined, {
+    accessPolicy: accessPolicy({ discordServer: true, accounts: true }),
+  });
+  const port = app.server.address().port;
+  const lan = makeClient(port, LAN_ORIGIN, LAN_HOST);
+
+  const dStart = await lan.request('/auth/discord');
+  assert.equal(dStart.status, 302);
+  assert.equal(dStart.headers.location, '/auth/error');
+  const dErr = await lan.request('/api/account/auth-error');
+  assert.match(dErr.body.error, /server\.lan_url/);
+  assert.ok(dErr.body.error.includes(config.publicUrl));
+
+  const pStart = await lan.request('/auth/plex');
+  assert.equal(pStart.status, 302);
+  assert.equal(pStart.headers.location, '/auth/error');
+  const pErr = await lan.request('/api/account/auth-error');
+  assert.match(pErr.body.error, /server\.lan_url/);
+
+  const nativeSignIn = await lan.request('/api/uburoom-accounts/sign-in', {
+    username: 'alice',
+    password: 'some password',
+  });
+  assert.equal(nativeSignIn.status, 403);
+  assert.match(nativeSignIn.body.error, /server\.lan_url/);
+
+  const evil = makeClient(port, 'https://evil.example', 'evil.example');
+  const evilSignIn = await evil.request('/api/uburoom-accounts/sign-in', {
+    username: 'alice',
+    password: 'some password',
+  });
+  assert.equal(evilSignIn.status, 403);
+  assert.equal(evilSignIn.body.error, 'Not authorized');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-lan-cert-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const res = generateDevCert({
+    directory: dir,
+    lan: true,
+    lanEnv: {
+      hostname: 'MediaBox',
+      interfaces: {
+        eth0: [{ address: '192.168.1.10', family: 'IPv4', internal: false }],
+      },
+    },
+  });
+  const cert = new X509Certificate(fs.readFileSync(res.certFile));
+  assert.match(cert.subjectAltName, /DNS:localhost/);
+  assert.match(cert.subjectAltName, /DNS:mediabox/);
+  assert.match(cert.subjectAltName, /DNS:mediabox\.local/);
+  assert.match(cert.subjectAltName, /IP Address:192\.168\.1\.10/);
 });

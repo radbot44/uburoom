@@ -3,29 +3,38 @@
 const path = require('node:path');
 const net = require('node:net');
 const { writeCertificate } = require('../server/local-tls');
+const { detectLanOrigins } = require('../server/origins');
 
 const ROOT = path.join(__dirname, '..');
 
 /** The development certificate in `certs/` (or `options.directory`), made by server/local-tls.js. */
 function generateDevCert(options = {}) {
   const names = (options.dnsNames || ['localhost']).map(name => String(name).replace(/^\[|\]$/g, '')).filter(Boolean);
-  const dnsNames = names.filter(name => !net.isIP(name));
-  const ipAddresses = [...names.filter(name => net.isIP(name)), ...(options.ipAddresses || [])];
+  if (options.lan) {
+    for (const origin of detectLanOrigins({ port: 5756 }, options.lanEnv)) {
+      const host = new URL(origin).hostname.replace(/^\[|\]$/g, '');
+      if (host) names.push(host);
+    }
+  }
+  const dnsNames = [...new Set(names.filter(name => !net.isIP(name)))];
+  const ipAddresses = [...new Set([...names.filter(name => net.isIP(name)), ...(options.ipAddresses || [])])];
   return writeCertificate({
     directory: path.resolve(ROOT, options.directory || 'certs'),
     dnsNames,
     ipAddresses,
     ifMissing: !!options.ifMissing,
-    commonName: 'uburoom LAN development',
+    commonName: options.lan ? 'uburoom LAN' : 'uburoom LAN development',
     days: 365,
   });
 }
 
 function parseArgs(args) {
-  const options = { dnsNames: ['localhost'], directory: 'certs', ifMissing: false };
+  const options = { dnsNames: ['localhost'], directory: 'certs', ifMissing: false, lan: false };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--if-missing') {
       options.ifMissing = true;
+    } else if (args[i] === '--lan') {
+      options.lan = true;
     } else if (args[i] === '--directory' || args[i].startsWith('--directory=')) {
       options.directory = args[i] === '--directory' ? args[++i] : args[i].slice(12);
     } else if (args[i] === '--dnsNames' || args[i].startsWith('--dnsNames=')) {

@@ -2,7 +2,7 @@
 
 const { hash } = require('../core');
 const { clientAddress } = require('../client-address');
-const { isAllowedBrowserOrigin } = require('../origins');
+const { isAllowedBrowserOrigin, unconfiguredOriginMessage } = require('../origins');
 
 const path = '/api/account/jellyfin';
 
@@ -48,7 +48,11 @@ function jellyfinSignInRoute({
       !isAllowedBrowserOrigin(config, req.headers.origin, req) ||
       req.headers.authorization
     )
-      return json(res, 403, { error: 'Browser sign-in unavailable' });
+      return json(res, 403, {
+        error:
+          (!req.headers.authorization && config.accessPolicy?.publicWeb && unconfiguredOriginMessage(config, req)) ||
+          'Browser sign-in unavailable',
+      });
 
     try {
       sweepMeta();

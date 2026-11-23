@@ -159,6 +159,44 @@ function isLanRequest(config, req) {
   return !!requestLanOrigin(config, req);
 }
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * Whether a hostname looks like a local/LAN host (private IP, loopback, `.local`, or single-label hostname).
+ * @param {string} hostname
+ */
+function isLikelyLanHost(hostname) {
+  const host = hostname.toLowerCase();
+  if (LOOPBACK_HOSTS.has(host)) return true;
+  const bare = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+  if (isPrivateAutoAddress(bare)) return true;
+  if (host.endsWith('.local')) return true;
+  return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(host);
+}
+
+/**
+ * Returns a helpful operator-facing message when a sign-in request arrives on a local/LAN address
+ * that is not allowed by `server.public_url` or `server.lan_url`, or `undefined` otherwise.
+ * @param {{publicUrl?: string, lanUrl?: string, listen?: string, port?: number, trustedProxies?: string[], trustedProxyHeader?: string, lanAutoOrigins?: string[]}} config
+ * @param {{headers?: Record<string, any>, socket?: {remoteAddress?: string}, remoteAddress?: string}} req
+ */
+function unconfiguredOriginMessage(config, req) {
+  const origin = typeof req?.headers?.origin === 'string' ? req.headers.origin : requestHostOrigin(req);
+  if (!origin || origin === config.publicUrl || isAllowedBrowserOrigin(config, origin, req)) return undefined;
+  let host, pubHost;
+  try {
+    host = new URL(origin).hostname.toLowerCase();
+    pubHost = config.publicUrl ? new URL(config.publicUrl).hostname.toLowerCase() : '';
+  } catch {
+    return undefined;
+  }
+  if (LOOPBACK_HOSTS.has(host) && LOOPBACK_HOSTS.has(pubHost)) return undefined;
+  if (!isLikelyLanHost(host)) return undefined;
+  return config.lanUrl
+    ? `This address is not configured for sign-in. Open ${config.publicUrl} or check server.lan_url in config.yaml.`
+    : `This address is not enabled for sign-in. Open ${config.publicUrl}, or set server.lan_url in config.yaml.`;
+}
+
 module.exports = {
   detectLanOrigins,
   isLanOrigin,
@@ -166,4 +204,5 @@ module.exports = {
   requestHostOrigin,
   requestLanOrigin,
   isLanRequest,
+  unconfiguredOriginMessage,
 };

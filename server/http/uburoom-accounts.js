@@ -5,7 +5,7 @@ const { randomBytes } = require('node:crypto');
 const { hash } = require('../core');
 const { clientAddress } = require('../client-address');
 const { isServerOperator } = require('../operator-policy');
-const { isAllowedBrowserOrigin } = require('../origins');
+const { isAllowedBrowserOrigin, unconfiguredOriginMessage } = require('../origins');
 const { WEB } = require('./static');
 
 // Failed sign-ins allowed per window, per username and per address.
@@ -135,7 +135,8 @@ function uburoomAccountRoutes({
       methods: ['POST'],
       path: '/api/uburoom-accounts/link',
       async handle({ req, res }) {
-        if (!sameOrigin(req)) return json(res, 403, { error: 'Not authorized' });
+        if (!sameOrigin(req))
+          return json(res, 403, { error: unconfiguredOriginMessage(config, req) || 'Not authorized' });
         if (limited(addressKey(req), ADDRESS_FAILURES)) return json(res, 429, { error: LIMITED });
         const data = await body(req).catch(() => ({}));
         const info = uburoomAccounts.linkInfo(data.token);
@@ -151,7 +152,8 @@ function uburoomAccountRoutes({
       methods: ['POST'],
       path: '/api/uburoom-accounts/password',
       async handle({ req, res }) {
-        if (!sameOrigin(req)) return json(res, 403, { error: 'Not authorized' });
+        if (!sameOrigin(req))
+          return json(res, 403, { error: unconfiguredOriginMessage(config, req) || 'Not authorized' });
         if (limited(addressKey(req), ADDRESS_FAILURES)) return json(res, 429, { error: LIMITED });
         try {
           const data = await body(req);
@@ -176,7 +178,8 @@ function uburoomAccountRoutes({
       methods: ['POST'],
       path: '/api/uburoom-accounts/sign-in',
       async handle({ req, res }) {
-        if (!sameOrigin(req)) return json(res, 403, { error: 'Not authorized' });
+        if (!sameOrigin(req))
+          return json(res, 403, { error: unconfiguredOriginMessage(config, req) || 'Not authorized' });
         let data;
         try {
           data = await body(req);

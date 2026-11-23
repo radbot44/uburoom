@@ -2,7 +2,7 @@
 const path = require('node:path');
 const { randomBytes } = require('node:crypto');
 const { hash } = require('../core');
-const { isAllowedBrowserOrigin, isLanRequest } = require('../origins');
+const { isAllowedBrowserOrigin, isLanRequest, unconfiguredOriginMessage } = require('../origins');
 const { WEB } = require('./static');
 
 /** Where a sign-in may send the browser afterwards: only this server's own pages. */
@@ -132,6 +132,8 @@ function authRoutes({
             return accountRoutes().failAuth(res, error.message || 'Sign-in unavailable');
           }
         }
+        const unconfigured = unconfiguredOriginMessage(config, req);
+        if (unconfigured) return accountRoutes().failAuth(res, unconfigured);
         return signIn.start(req, res, undefined, route === '/auth/owner', returnTo);
       },
     },

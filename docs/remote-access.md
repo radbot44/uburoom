@@ -124,6 +124,24 @@ Cloudflare's terms restrict serving large amounts of video through its network, 
    Caddy gets a trusted certificate by itself, sends `X-Forwarded-For` and `X-Forwarded-Proto`, and passes WebSockets without extra settings. Set `trusted_proxy_header: 'x-forwarded-for'` and `trusted_proxies` to the Compose subnet.
 4. `docker compose up -d`, then check `https://watch.example.com/health` from outside your network.
 
+## Direct LAN access alongside remote access (optional)
+
+If you want devices at home to reach uburoom directly on the LAN (keeping local playback off your internet connection or tunnel) while remote friends keep using `server.public_url`, set `server.lan_url` in `config.yaml`:
+
+- **Bare-metal installs (`server.listen: 'https'`):** Set `server.lan_url: 'auto'` and `server.host: '0.0.0.0'`. uburoom trusts this machine's detected private IP(s) and hostname on `server.port` (for example `https://192.168.1.10:5756` and `https://myserver:5756`) for local-network peers.
+- **Docker or a local HTTPS reverse proxy:** Set `server.lan_url` to the explicit HTTPS origin (for example `'https://192.168.1.10:5756'` or `'https://uburoom.lan'`). Note that `server.listen: 'http-proxy'` rejects direct LAN connections unless a proxy in `server.trusted_proxies` also serves that LAN origin over HTTPS.
+
+How it behaves:
+
+- Native uburoom accounts, Jellyfin sign-in, guests, rooms, WebSockets, playback, and operator settings work directly on the LAN address.
+- Discord and Plex sign-in (and account linking) bounce through `server.public_url`'s single registered callback and return to the LAN tab through a one-time handoff—no second Discord redirect URI or split DNS is needed.
+- Shared invite links and password-set links continue to use `server.public_url`.
+- The LAN address must still use HTTPS. If you generate a local self-signed certificate, pass `--lan` so the certificate's SANs include this machine's LAN IP and hostname:
+
+  ```sh
+  node scripts/new-dev-cert.js --lan
+  ```
+
 ## If it does not work
 
 | Symptom | Likely cause |

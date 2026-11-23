@@ -3,7 +3,7 @@ const { randomBytes } = require('node:crypto');
 const { hash } = require('./core');
 const { isServerOperator } = require('./operator-policy');
 const { clientAddress } = require('./client-address');
-const { isLanRequest } = require('./origins');
+const { isLanRequest, unconfiguredOriginMessage } = require('./origins');
 const { COOKIES: DEFAULT_COOKIES } = require('./http/sessions');
 const { safeReturn } = require('./http/auth');
 const jellyfin = require('./http/jellyfin-sign-in');
@@ -229,6 +229,8 @@ function accountHttp({
           res.end();
           return true;
         }
+        const unconfigured = unconfiguredOriginMessage(config, req);
+        if (unconfigured) throw new Error(unconfigured);
         const destination = await startPlex(req, res, linking, returnTo);
         res.writeHead(302, { Location: destination });
         res.end();
