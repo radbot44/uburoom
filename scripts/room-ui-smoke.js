@@ -152,8 +152,14 @@ async function main() {
       await run(settingsSection('manage') + ';' + pressId('room-transfer-add-host'));
       await until('document.activeElement.id==="room-person-search"', 'Assign host shortcut opens roster search');
       await until(
-        shown('#room-settings-share') + ' && ' + shown('#room-invite-reroll'),
-        'Roster shows invite controls',
+        shown('#room-settings-share') +
+          ' && ' +
+          shown('#room-invite-url-input') +
+          ' && ' +
+          byId('room-invite-url-input') +
+          '.value.includes("/join/") && ' +
+          shown('#room-invite-reroll'),
+        'Roster shows host invite controls',
       );
       await run(press('#room-host-disclosure summary'));
       await shot('viewers');
@@ -683,6 +689,20 @@ async function main() {
         ),
         true,
       );
+      await browser.evaluate(guest, pressId('room-people-open'));
+      await browser.until(
+        guest,
+        isOpen('#room-settings-dialog') +
+          ' && ' +
+          shown('#room-settings-content') +
+          ' && ' +
+          shown('#room-settings-share') +
+          ' && ' +
+          hidden('#room-invite'),
+        'Non-host Viewers settings keeps Share invite and hides the Invites management box',
+      );
+      await browser.evaluate(guest, pressId('room-settings-dismiss'));
+      await browser.until(guest, '!' + isOpen('#room-settings-dialog'), 'Guest closes Room settings');
       const viewerPermissions = app.watch.rooms.get(id).permissions.viewer;
       assert.equal(viewerPermissions.addQueue || viewerPermissions.editQueue, false);
       // A viewer without seek permission is refused by the server's command engine, not only by a disabled

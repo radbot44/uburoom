@@ -68,7 +68,7 @@
     width: 100%;
   }
   .room-dialog input:not([type='checkbox']),
-  .room-settings-dialog input:not([type='checkbox']) {
+  .room-settings-dialog input:not([type='checkbox']):not(.room-share-url-input) {
     box-sizing: border-box;
     min-width: 0;
     border: 1px solid var(--border);
@@ -188,13 +188,5 @@
   }
   .invite-code-submit {
     min-height: 44px;
-  }
-  .room-invite-code {
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-    font-size: var(--font-size-16);
-    padding: var(--space-8) var(--space-10);
-    border-radius: var(--radius-8);
-    background: var(--elevated);
-    user-select: all;
   }
 }

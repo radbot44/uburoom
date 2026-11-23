@@ -1117,6 +1117,9 @@
     gap: var(--space-12);
     margin: var(--space-10) 0;
   }
+  .room-invite-row > .room-share-link-dock {
+    flex: 1 1 14rem;
+  }
   .room-invited-section h3 {
     margin: var(--space-18) 0 var(--space-4);
   }

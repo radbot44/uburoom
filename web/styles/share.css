@@ -16,6 +16,7 @@
   }
   .room-share-link-dock {
     flex: 1;
+    min-width: 0;
     display: flex;
     align-items: center;
     background: var(--elevated);
@@ -29,7 +30,7 @@
   .room-share-link-dock:focus-within {
     border-color: var(--primary);
   }
-  #room-share-url-input {
+  .room-share-url-input {
     background: none;
     border: 0;
     color: var(--text);

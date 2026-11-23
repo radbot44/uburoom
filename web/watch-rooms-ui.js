@@ -1600,17 +1600,18 @@ function mount({
       }
     }
   }
-  // A private room then lists who joined by invite, with Revoke.
+  // Host-only invites panel and (for private rooms) invited member list with Revoke.
   function renderInvite(value) {
     const box = $('room-invite'),
       invite = !value.draft && value.invite;
     $('room-invited-section').hidden = !invite || !invite.invited.length;
     $('room-settings-share').hidden = !invite;
-    box.hidden = !invite;
-    if (!invite) {
+    const showManage = Boolean(invite && invite.canManage);
+    box.hidden = !showManage;
+    if (!showManage) {
       box.dataset.signature = '';
       box.replaceChildren();
-      $('room-invited').replaceChildren();
+      if (!invite) $('room-invited').replaceChildren();
       return;
     }
     const inviteSig = JSON.stringify([
@@ -1626,18 +1627,43 @@ function mount({
       box.replaceChildren();
       node('h3', box, 'Invites');
       const row = node('div', box, undefined, 'room-invite-row');
-      const code = node('code', row, invite.code, 'room-invite-code');
-      code.title = invite.url;
-      if (invite.canManage) {
-        const roll = controls.button(document, {
-          label: 'New invite code',
-          icon: 'arrows-shuffle',
-          disabled: busy,
-          action: () => void edit({ action: 'invite.reroll' }),
-        });
-        roll.id = 'room-invite-reroll';
-        row.append(roll);
-      }
+      const dock = node('div', row, undefined, 'room-share-link-dock');
+      const urlInput = node('input', dock, undefined, 'room-share-url-input');
+      urlInput.id = 'room-invite-url-input';
+      urlInput.type = 'text';
+      urlInput.readOnly = true;
+      urlInput.autocomplete = 'off';
+      urlInput.spellcheck = false;
+      urlInput.value = (invite.url || '').replace(/^https?:\/\//i, '');
+      urlInput.setAttribute('aria-label', 'Invite link');
+      urlInput.title = 'Click to copy invite link';
+      const copyBtn = node('button', dock, undefined, 'icon-button room-share-dock-btn');
+      copyBtn.id = 'room-invite-copy';
+      copyBtn.type = 'button';
+      copyBtn.setAttribute('aria-label', 'Copy invite link');
+      copyBtn.title = 'Copy invite link';
+      copyBtn.append(uburoomIcons.icon(document, 'copy'));
+      const copyInviteUrl = async () => {
+        try {
+          await navigator.clipboard.writeText(invite.url);
+          uburoomPopover.show(copyBtn, { text: 'Invite link copied', state: 'success' });
+        } catch {
+          uburoomPopover.show(copyBtn, { text: "Couldn't copy invite", state: 'error' });
+        }
+      };
+      urlInput.addEventListener('click', () => {
+        urlInput.select();
+        void copyInviteUrl();
+      });
+      copyBtn.addEventListener('click', () => void copyInviteUrl());
+      const roll = controls.button(document, {
+        label: 'New invite code',
+        icon: 'arrows-shuffle',
+        disabled: busy,
+        action: () => void edit({ action: 'invite.reroll' }),
+      });
+      roll.id = 'room-invite-reroll';
+      row.append(roll);
       const guestRow = invite.guestsEnabled ? node('div', box, undefined, 'room-invite-row') : null;
       if (invite.guestsEnabled && invite.canAllowGuests) {
         const toggle = node('label', guestRow, undefined, 'watch-switch-label'),
@@ -1652,7 +1678,7 @@ function mount({
         input.addEventListener('change', () => void edit({ action: 'guests.allow', enabled: input.checked }));
       } else if (invite.guestsEnabled)
         node('span', guestRow, invite.allowGuests ? 'Guests allowed' : 'Guests not allowed', 'hint');
-      if (invite.guestsEnabled && invite.canManage) {
+      if (invite.guestsEnabled) {
         const remove = node('button', guestRow, 'Remove all guests', 'quiet');
         remove.type = 'button';
         remove.disabled = busy;
