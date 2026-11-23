@@ -705,19 +705,30 @@
                   <span id="stage-announcement-sender" class="stage-announcement-sender"></span>
                   <span id="stage-announcement-text" class="stage-announcement-text"></span>
                 </div>
-                <button id="stage-announcement-clear" class="quiet" type="button" hidden>Clear</button>
                 <button
                   id="stage-announcement-dismiss"
-                  class="quiet stage-card-minimize"
+                  class="icon-button stage-announcement-dismiss"
                   type="button"
-                  aria-label="Dismiss"
+                  aria-label="Hide announcement"
+                  title="Hide announcement"
                 >
-                  Hide
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    data-tabler-icon="x"
+                  >
+                    <use href="#icon-x"></use>
+                  </svg>
                 </button>
               </section>
               <section
                 id="poll-card"
-                class="readiness-choice human-check-prompt"
+                class="readiness-choice human-check-prompt poll-card"
                 aria-labelledby="poll-card-title"
                 aria-live="polite"
                 hidden
@@ -725,8 +736,8 @@
                 <h2 id="poll-card-title">Poll</h2>
                 <p id="poll-card-meta"></p>
                 <div id="poll-card-options" class="poll-options-grid"></div>
-                <p id="poll-card-error" class="hint" hidden></p>
-                <div>
+                <p id="poll-card-error" class="poll-card-error" hidden></p>
+                <div class="poll-card-actions">
                   <button id="poll-close-btn" class="primary" type="button" hidden>Close poll</button
                   ><button id="poll-clear-btn" class="quiet" type="button" hidden>Dismiss</button
                   ><button id="poll-minimize" class="quiet stage-card-minimize" type="button" aria-label="Minimize">
@@ -2589,7 +2600,6 @@
               Just show results
             </button>
           </div>
-          <p id="poll-play-now-note" class="hint" hidden>Play now replaces what is currently playing.</p>
         </div>
         <div class="dialog-field">
           <span class="dialog-field-label" id="poll-tie-label">Tie rule</span>

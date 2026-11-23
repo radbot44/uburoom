@@ -416,9 +416,19 @@ module.exports = {
             action: playNow ? 'queue.playNow' : 'queue.add',
             args: { item: winner.media },
           };
-      const ticket = this.hub.ticket(creator, room, command.action);
-      const outcome = await this.queueCommand(room.roomId, command, creator, ticket);
-      if (outcome?.status && outcome.status !== 'applied') {
+      const epoch = room.epoch;
+      const outcome = await this.hub.dispatch(
+        {
+          ...creator,
+          watchCurrent: async () =>
+            (!creator.watchCurrent || (await creator.watchCurrent())) &&
+            this.rooms.get(room.roomId) === room &&
+            room.epoch === epoch &&
+            !room.closed,
+        },
+        { ...command, roomId: room.roomId },
+      );
+      if (outcome.status !== 'applied') {
         await setError(outcome.message || 'Could not apply poll winner.');
       }
     } catch (error) {

@@ -62,8 +62,8 @@ function show(trigger, options = {}) {
 
   const popover = doc.createElement('div');
   popover.className = 'watch-popover state-' + state;
-  popover.setAttribute('role', 'status');
-  popover.setAttribute('aria-live', 'polite');
+  popover.setAttribute('role', state === 'tooltip' ? 'tooltip' : 'status');
+  if (state !== 'tooltip') popover.setAttribute('aria-live', 'polite');
 
   if (iconName) {
     const iconSpan = doc.createElement('span');

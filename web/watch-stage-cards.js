@@ -17,7 +17,7 @@ const PRIORITY = Object.freeze({
  * }} options
  */
 export function createStageCardManager({ isSystemCardVisible, attention }) {
-  /** @type {Array<{ kind: string, priority: number, element: () => HTMLElement | null, getActivity: (state: any) => any, render: (state: any, activity: any) => void }>} */
+  /** @type {Array<{ kind: string, priority: number, element: () => HTMLElement | null, getActivity: (state: any) => any, render: (state: any, activity: any) => void, hide?: () => void }>} */
   const cards = [];
 
   return {
@@ -56,6 +56,7 @@ export function createStageCardManager({ isSystemCardVisible, attention }) {
           card.render(state, winnerActivity);
           el.hidden = false;
         } else {
+          if (!el.hidden) card.hide?.();
           el.hidden = true;
         }
       }

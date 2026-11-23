@@ -784,6 +784,12 @@ export function mount(host, deps) {
   /** @type {Map<string, HTMLButtonElement>} */
   const pollTileNodes = new Map();
   let renderedPollId = '';
+  let pollTooltip;
+  function hidePollTooltip(tile = pollTooltip?.tile) {
+    if (!pollTooltip || pollTooltip.tile !== tile) return;
+    pollTooltip.feedback.dismiss();
+    pollTooltip = undefined;
+  }
   function renderPollCard(state, poll) {
     const now = deps.time.serverNow();
     const optionsEl = $('poll-card-options');
@@ -816,6 +822,7 @@ export function mount(host, deps) {
 
     // Preserve tile DOM nodes by option.id for the same poll so live vote updates never steal focus!
     if (renderedPollId !== poll.id) {
+      hidePollTooltip();
       renderedPollId = poll.id;
       pollTileNodes.clear();
       optionsEl.replaceChildren();
@@ -838,10 +845,27 @@ export function mount(host, deps) {
         const count = document.createElement('span');
         count.className = 'poll-option-count';
         head.append(label, count);
-        const votersEl = document.createElement('span');
-        votersEl.className = 'poll-option-voters';
-        tile.append(bar, head, votersEl);
+        tile.append(bar, head);
+        const showVoters = () => {
+          const names = tile.getAttribute('aria-description');
+          if (!names) return;
+          const feedback = uburoomPopover.show(tile, { state: 'tooltip', text: names, duration: 0 });
+          if (feedback) pollTooltip = { tile, feedback };
+        };
+        tile.addEventListener('pointerenter', event => {
+          if (event.pointerType !== 'touch') showVoters();
+        });
+        tile.addEventListener('pointerleave', () => {
+          if (!tile.matches(':focus-visible')) hidePollTooltip(tile);
+        });
+        tile.addEventListener('focus', () => {
+          if (tile.matches(':focus-visible')) showVoters();
+        });
+        tile.addEventListener('blur', () => {
+          if (!tile.matches(':hover')) hidePollTooltip(tile);
+        });
         tile.addEventListener('click', () => {
+          if (tile.getAttribute('aria-disabled') === 'true') return;
           const active = store.room.state?.activities?.find(a => a.kind === 'poll');
           if (!active) return;
           if (active.status === 'open') {
@@ -862,7 +886,6 @@ export function mount(host, deps) {
       const bar = /** @type {HTMLElement} */ (tile.querySelector('.poll-option-bar'));
       const labelEl = tile.querySelector('.poll-option-label');
       const countEl = tile.querySelector('.poll-option-count');
-      const votersEl = tile.querySelector('.poll-option-voters');
       bar.style.width = `${pct}%`;
       if (labelEl) {
         const prefix = poll.winnerOptionId === opt.id ? '★ ' : '';
@@ -874,15 +897,26 @@ export function mount(host, deps) {
           isTiePick && poll.tiedOptionIds?.includes(opt.id) ? `Pick (${list.length})` : `${list.length}`;
         if (countEl.textContent !== countText) countEl.textContent = countText;
       }
-      if (votersEl) {
-        const namesText = list.map(v => v.name).join(', ');
-        if (votersEl.textContent !== namesText) votersEl.textContent = namesText;
+      const names = list.map(voter => voter.name).join(', ');
+      if ((tile.getAttribute('aria-description') || '') !== names) {
+        if (names) {
+          tile.setAttribute('aria-description', names);
+          if (pollTooltip?.tile === tile) pollTooltip.feedback.update(names);
+        } else {
+          tile.removeAttribute('aria-description');
+          hidePollTooltip(tile);
+        }
       }
+      tile.classList.toggle('poll-option-winner', poll.winnerOptionId === opt.id);
       tile.setAttribute('aria-pressed', String(poll.myVote === opt.id));
-      tile.disabled =
-        !!store.room.pending ||
-        poll.status === 'closed' ||
-        (poll.status === 'tie' && (!isTiePick || !poll.tiedOptionIds?.includes(opt.id)));
+      tile.setAttribute(
+        'aria-disabled',
+        String(
+          !!store.room.pending ||
+            poll.status === 'closed' ||
+            (poll.status === 'tie' && (!isTiePick || !poll.tiedOptionIds?.includes(opt.id))),
+        ),
+      );
     }
     if (closeBtn) {
       closeBtn.hidden = !canManage || poll.status !== 'open';
@@ -936,7 +970,6 @@ export function mount(host, deps) {
     const questionInput = $('poll-question');
     const optionsWrap = $('poll-options-inputs');
     const onCloseGroup = $('poll-on-close-group');
-    const playNowNote = $('poll-play-now-note');
     if (dialog.open) return;
     const roomId = store.room.selected;
     const fromQueue = $('poll-fill-queue');
@@ -958,7 +991,6 @@ export function mount(host, deps) {
     const syncOnCloseVisibility = () => {
       const allMedia = draftOptions.length >= 2 && draftOptions.every(o => !!o.media);
       if (onCloseGroup) onCloseGroup.hidden = !allMedia;
-      if (playNowNote) playNowNote.hidden = !allMedia || onClose !== 'playNow';
     };
 
     function addRemoveButtons() {
@@ -1046,7 +1078,6 @@ export function mount(host, deps) {
       btn.onclick = () => {
         onClose = btn.getAttribute('data-action') || 'queueNext';
         setPressed('.poll-action-chip', 'data-action', onClose);
-        syncOnCloseVisibility();
       };
     });
     dialog.querySelectorAll('.poll-tie-chip').forEach(btn => {
@@ -1130,6 +1161,7 @@ export function mount(host, deps) {
       element: () => $('poll-card'),
       getActivity: state => (Array.isArray(state?.activities) ? state.activities.find(a => a.kind === 'poll') : null),
       render: renderPollCard,
+      hide: hidePollTooltip,
     });
     deps.stageCards.register({
       kind: 'break',
@@ -1155,17 +1187,12 @@ export function mount(host, deps) {
       render: (_state, ann) => {
         $('stage-announcement-sender').textContent = ann.senderName || 'Host';
         $('stage-announcement-text').textContent = ann.text || '';
-        const clearBtn = $('stage-announcement-clear');
-        if (clearBtn) clearBtn.hidden = !ann.can?.clear;
       },
     });
   }
   $('stage-announcement-dismiss')?.addEventListener('click', () => {
     const ann = store.room.state?.activities?.find(a => a.kind === 'announcement');
     if (ann?.id) deps.attention?.dismiss(ann.id);
-  });
-  $('stage-announcement-clear')?.addEventListener('click', () => {
-    void deps.execute({ action: 'announce.clear', args: {} }).catch(error => deps.fail(error.message));
   });
   {
     const announceBtn = $('room-announce-btn');

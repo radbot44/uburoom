@@ -88,6 +88,9 @@ export function mount() {
     const activityScroll = document.getElementById('activity-scroll');
     toggleInner(activityScroll, useDialogScrollbars && !!activity?.open);
 
+    const poll = document.getElementById('poll-card');
+    toggleInner(poll, useDialogScrollbars && !!poll && !poll.hidden);
+
     for (const dialog of document.querySelectorAll('dialog.watch-dialog')) {
       if (dialog.id === 'room-settings-dialog' || dialog.id === 'server-settings-dialog') continue;
       toggleInner(dialog, useDialogScrollbars && dialog.open);
@@ -118,9 +121,11 @@ export function mount() {
         attributes: true,
         attributeFilter: ['hidden'],
       });
-    const emptyStage = document.getElementById('empty-stage');
-    if (emptyStage)
-      new MutationObserver(syncInnerScrollbars).observe(emptyStage, { attributes: true, attributeFilter: ['hidden'] });
+    for (const id of ['empty-stage', 'poll-card']) {
+      const element = document.getElementById(id);
+      if (element)
+        new MutationObserver(syncInnerScrollbars).observe(element, { attributes: true, attributeFilter: ['hidden'] });
+    }
     for (const dialog of document.querySelectorAll('dialog')) {
       new MutationObserver(syncInnerScrollbars).observe(dialog, { attributes: true, attributeFilter: ['open'] });
     }

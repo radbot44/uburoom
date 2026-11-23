@@ -39,6 +39,8 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Outstanding M1 verification register
 
+The poll and announcement stage changes were verified in the working tree based on `8161728` on 2026-11-23. The focused room tools, journal, readiness and suggestions tests passed (20 tests). A live-room server regression exercised both media winner actions and their queue or playback effects. Isolated Chrome and Firefox checks covered announcement hide and Activity, queueing the winning poll option, and remote votes updating the shared voter tooltip without moving options or losing focus.
+
 The room tool popup fixes were verified on Windows on 2026-11-23 in the working tree based on `a9a42c6`. The focused room tools, journal, readiness and suggestions Node tests passed (19 tests). The room UI smoke runner passed in Chrome and Firefox with new checks for poll validation and filling from the queue. Separate isolated browser checks exercised suggestion fill, announcement submission and live Activity updates while scrolled, including row identity, scroll position and keyboard focus. Live integration and owner acceptance remain open.
 
 The follow-up layout changes were verified on 2026-11-23 in the working tree based on `e7fbbcf`. All four `npm run smoke` runners passed in Chrome and Firefox. Focused browser checks also verified room bar placement, icon spacing, in-place poll option entry through the six-option limit, and live journal updates without the new-entry count moving the viewport. The watch page, room tools and journal Node tests passed (9 tests).

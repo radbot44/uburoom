@@ -14,7 +14,7 @@ const RoomProtocol = require('../shared/room-protocol.mjs');
 const { Hub } = require('../server/core');
 const { liveWatch } = require('./helpers/live-room');
 
-async function createServerHarness(t) {
+async function createServerHarness(t, media = {}) {
   let wall = 1_000_000;
   const hub = new Hub({ ownerId: 'host' }, []);
   hub.clock = { now: () => wall };
@@ -25,7 +25,7 @@ async function createServerHarness(t) {
     validVoiceChannel: () => true,
     options: () => ({ available: true }),
   };
-  const { watch, registry, actor, open } = liveWatch(hub, { stop: async () => {}, allows: async () => true });
+  const { watch, registry, actor, open } = liveWatch(hub, { stop: async () => {}, allows: async () => true, ...media });
   const host = actor('host');
   const viewer = actor('viewer');
   const room = await open(host, { visibility: 'public', permissions: Policy.preset('host-control') });
@@ -285,6 +285,47 @@ test('polls enforce one vote per account, tie rules (host vs random), and close-
   const resultPoll = f.watch.view(f.room, f.host, hostTab).activities.find(a => a.kind === 'poll');
   assert.equal(resultPoll.status, 'closed');
   assert.match(resultPoll.actionError || '', /permission/i);
+});
+
+test('closing media polls runs Queue next and Play now through the live room command engine', async t => {
+  const playableItem = async id => ({ id, type: 'movie', title: 'Movie ' + id, duration: 120 });
+  const { watch, hub, host, room } = await createServerHarness(t, {
+    principal: 'fixture',
+    json: async () => ({ machineIdentifier: 'plex-1' }),
+    playableItem,
+    prepare: async id => ({ ...(await playableItem(id)), kind: 'plex', resources: new Map() }),
+    close: async () => {},
+  });
+  const viewerId = randomUUID();
+  watch.join(room, host, viewerId, { alive: async () => true, quality: 'direct' });
+  const command = (action, args) => hub.dispatch(host, { roomId: room.roomId, action, args });
+  const initial = await command('media.load', { mediaId: '100', quality: 'direct' });
+  assert.equal(initial.status, 'applied', initial.message);
+  const queue = watch.roomState.queue;
+  const winnerAction = t.mock.method(watch, 'executePollWinAction');
+
+  for (const [index, [onClose, winnerId]] of [
+    ['queueNext', '101'],
+    ['playNow', '102'],
+  ].entries()) {
+    const options = [winnerId, '103'].map(mediaId => ({
+      id: mediaId,
+      label: 'Movie ' + mediaId,
+      media: { serverId: 'plex-1', mediaId, type: 'movie', title: 'Movie ' + mediaId },
+    }));
+    const started = await command('poll.start', { question: 'Next movie?', options, onClose });
+    assert.equal(started.status, 'applied', started.message);
+    const pollId = room.activities.get('poll').id;
+    assert.equal((await command('poll.vote', { pollId, optionId: winnerId })).status, 'applied');
+    assert.equal((await command('poll.close', { pollId })).status, 'applied');
+    assert.equal(winnerAction.mock.callCount(), index + 1);
+    await winnerAction.mock.calls[index].result;
+    const poll = watch.view(room, host, viewerId).activities.find(activity => activity.kind === 'poll');
+    assert.equal(poll.actionError, undefined);
+    assert.equal(poll.winnerOptionId, winnerId);
+    assert.equal(queue.list(room.roomId).items[0]?.mediaId, '101');
+    assert.equal(room.media.id, onClose === 'playNow' ? '102' : '100');
+  }
 });
 
 test('room journal persists to watch_room_journal across close and reopen and clears on reset', async t => {

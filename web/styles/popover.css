@@ -89,6 +89,15 @@
   .watch-popover.state-loading {
     color: var(--muted);
   }
+  .watch-popover.state-tooltip {
+    max-width: min(30rem, calc(100vw - 16px));
+    height: auto;
+    min-height: 32px;
+    padding-block: var(--space-8);
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
   .watch-popover.state-loading .popover-icon {
     color: var(--primary);
     animation: popover-spin 1.5s linear infinite;
