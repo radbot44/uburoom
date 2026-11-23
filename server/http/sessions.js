@@ -1,6 +1,7 @@
 'use strict';
 const { randomBytes } = require('node:crypto');
 const { hash } = require('../core');
+const { isAllowedBrowserOrigin } = require('../origins');
 
 const COOKIES = Object.freeze({
   session: '__Host-uburoom',
@@ -171,9 +172,11 @@ function createSessions({ config, logger, registry, accounts, oauthFetch, onRepl
       : undefined;
   }
   async function protectedPost(req) {
-    if (req.headers.origin !== config.publicUrl) return;
+    if (!isAllowedBrowserOrigin(config, req.headers.origin, req)) return;
     const login = await user(req);
-    return login && req.headers.origin === config.publicUrl && req.headers['x-csrf-token'] === login.csrf
+    return login &&
+      isAllowedBrowserOrigin(config, req.headers.origin, req) &&
+      req.headers['x-csrf-token'] === login.csrf
       ? login
       : undefined;
   }

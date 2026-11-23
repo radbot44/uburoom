@@ -13,6 +13,7 @@ const path = require('node:path');
 const { hash } = require('./core');
 const { COOKIES } = require('./http/sessions');
 const { isServerOperator } = require('./operator-policy');
+const { isAllowedBrowserOrigin } = require('./origins');
 const { sourceType } = require('./sources');
 const flowsCore = require('./source-flows');
 
@@ -103,7 +104,7 @@ function sourceSettings({
     // Checked again just before the file is replaced, as for the other saved settings.
     const canSave = () =>
       still() &&
-      req.headers.origin === config.publicUrl &&
+      isAllowedBrowserOrigin(config, req.headers.origin, req) &&
       req.headers['x-csrf-token'] === login.csrf &&
       (!login.oauth || login.oauth.expires > Date.now());
     return { login, still, canSave };

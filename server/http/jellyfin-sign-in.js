@@ -2,6 +2,7 @@
 
 const { hash } = require('../core');
 const { clientAddress } = require('../client-address');
+const { isAllowedBrowserOrigin } = require('../origins');
 
 const path = '/api/account/jellyfin';
 
@@ -42,7 +43,11 @@ function jellyfinSignInRoute({
 
   return async function route(req, res) {
     if (req.method !== 'POST') return json(res, 405, { error: 'Use POST to sign in with Jellyfin' });
-    if (!config.accessPolicy?.publicWeb || req.headers.origin !== config.publicUrl || req.headers.authorization)
+    if (
+      !config.accessPolicy?.publicWeb ||
+      !isAllowedBrowserOrigin(config, req.headers.origin, req) ||
+      req.headers.authorization
+    )
       return json(res, 403, { error: 'Browser sign-in unavailable' });
 
     try {

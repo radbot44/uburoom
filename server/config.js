@@ -24,6 +24,7 @@ const KEYS = [
   'server.host',
   'server.port',
   'server.public_url',
+  'server.lan_url',
   'server.tls_cert',
   'server.tls_key',
   'server.listen',
@@ -187,6 +188,32 @@ function normalizeConfig(
   ) {
     throw new Error('server.public_url must be an HTTPS origin');
   }
+  const rawLanUrl = get('server.lan_url', '');
+  let lanUrl;
+  if (rawLanUrl === 'auto') {
+    lanUrl = 'auto';
+  } else if (rawLanUrl) {
+    let parsedLanUrl;
+    try {
+      parsedLanUrl = new URL(rawLanUrl);
+    } catch {
+      throw new Error("server.lan_url must be 'auto' or an HTTPS origin");
+    }
+    if (
+      parsedLanUrl.protocol !== 'https:' ||
+      parsedLanUrl.username ||
+      parsedLanUrl.password ||
+      parsedLanUrl.search ||
+      parsedLanUrl.hash ||
+      parsedLanUrl.pathname !== '/'
+    ) {
+      throw new Error("server.lan_url must be 'auto' or an HTTPS origin");
+    }
+    if (parsedLanUrl.origin === publicUrl.origin) {
+      throw new Error('server.lan_url must differ from server.public_url');
+    }
+    lanUrl = parsedLanUrl.origin;
+  }
   const resolveFile = (key, fallback) => path.resolve(base, get(key) || fallback);
   const home = environment.HOME || (platform === 'win32' && environment.USERPROFILE) || os.homedir();
   const keyDirectory =
@@ -206,6 +233,7 @@ function normalizeConfig(
     host: get('server.host', '127.0.0.1'),
     port,
     publicUrl: publicUrl.origin,
+    lanUrl,
     tlsCert: resolveFile('server.tls_cert', 'certs/server-cert.pem'),
     tlsKey: resolveFile('server.tls_key', 'certs/server-key.pem'),
     accountFile: path.join(resolveFile('storage.data_directory', 'data'), 'accounts.sqlite'),

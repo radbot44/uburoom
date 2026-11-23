@@ -74,6 +74,15 @@ async function startServer(config, { logger, setupHandoff, botStarter = startBot
     throw error;
   }
   logger.info('Server', `Server address: ${config.publicUrl}`);
+  if (config.lanUrl === 'auto') {
+    const { detectLanOrigins } = require('./origins');
+    const detected = [...detectLanOrigins(config)].filter(
+      origin => !/^https:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):/.test(origin),
+    );
+    if (detected.length) logger.info('Server', `LAN addresses (auto): ${detected.join(', ')}`);
+  } else if (config.lanUrl) {
+    logger.info('Server', `LAN address: ${config.lanUrl}`);
+  }
   // Two sources reporting one server is a configuration mistake; their media stays unavailable until fixed.
   void app.watch.providers.verify().catch(error => logger.error('Sources', error.message));
   logger.info(

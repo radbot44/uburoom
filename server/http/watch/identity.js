@@ -1,5 +1,6 @@
 'use strict';
 const { randomBytes, randomUUID } = require('node:crypto');
+const { isAllowedBrowserOrigin } = require('../../origins');
 
 /** Browser and bearer identities of the watch API: who a request is and whether the server admits them. */
 function watchIdentity({ config, hub, user, webActor, entryPolicy, validIdentity }) {
@@ -8,7 +9,8 @@ function watchIdentity({ config, hub, user, webActor, entryPolicy, validIdentity
     ? `https://${config.clientId}.discordsays.com`
     : undefined;
   const allowedOrigin = req =>
-    req.headers.origin === config.publicUrl || (activityOrigin && req.headers.origin === activityOrigin);
+    isAllowedBrowserOrigin(config, req.headers.origin, req) ||
+    (activityOrigin && req.headers.origin === activityOrigin);
   if (config.demo && (!['localhost', '127.0.0.1'].includes(new URL(config.publicUrl).hostname) || config.botToken))
     throw new Error('Demo identities are restricted to an isolated localhost server without a bot token');
   function issue(login, customLifetime) {

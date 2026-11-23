@@ -2,6 +2,7 @@
 'use strict';
 const { WebSocketServer } = require('ws');
 const { clientAddress } = require('./client-address');
+const { isAllowedBrowserOrigin } = require('./origins');
 const { runOperation, waitFor } = require('./operation');
 const { sampleRoomSync } = require('./room/sync-history');
 const {
@@ -39,8 +40,8 @@ function watchSockets({
   const clockEpoch = routes.clockEpoch,
     operations = routes.operations,
     maxConnections = config.maxConnections ?? 256;
-  const allowed = origin =>
-    origin === config.publicUrl ||
+  const allowed = (origin, req) =>
+    isAllowedBrowserOrigin(config, origin, req) ||
     (/^\d{17,20}$/.test(config.clientId || '') && origin === `https://${config.clientId}.discordsays.com`);
   // Wakes a room's subscribers for a room change and every connection for a lobby change.
   const broker = createSubscriptionBroker({
@@ -486,7 +487,7 @@ function watchSockets({
     if (socket.destroyed || socket.writableEnded) return;
     if (req.url !== '/watch-socket') return socket.destroy();
     if (
-      !allowed(req.headers.origin) ||
+      !allowed(req.headers.origin, req) ||
       !throttle('watch-socket:' + (clientAddress(req, config) || 'local'), 30) ||
       clients.size >= maxConnections
     )

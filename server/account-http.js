@@ -3,6 +3,7 @@ const { randomBytes } = require('node:crypto');
 const { hash } = require('./core');
 const { isServerOperator } = require('./operator-policy');
 const { clientAddress } = require('./client-address');
+const { isLanRequest } = require('./origins');
 const { COOKIES: DEFAULT_COOKIES } = require('./http/sessions');
 const { safeReturn } = require('./http/auth');
 const jellyfin = require('./http/jellyfin-sign-in');
@@ -206,6 +207,14 @@ function accountHttp({
       }
       if (req.method === 'GET' && route === '/auth/plex') {
         if (!plexOffered()) throw new Error('Plex sign-in is not offered on this server');
+        if (isLanRequest(config, req))
+          throw new Error(
+            'Plex sign-in is only available at ' +
+              config.publicUrl +
+              ' for now. Sign in with a uburoom account here or open ' +
+              config.publicUrl +
+              '.',
+          );
         // A guest signing in starts a separate account; guests never link providers.
         const current = await user(req);
         const linking = current && !registry.isGuest(current.userId) ? current : undefined;
@@ -369,10 +378,14 @@ function accountHttp({
       if (req.method === 'POST' && route === '/api/account/plex/connect') {
         if (registry.isGuest(login.userId) || !plexOffered())
           throw new Error('Plex sign-in is not offered on this server');
+        if (isLanRequest(config, req))
+          throw new Error('Linking Plex is only available at ' + config.publicUrl + ' for now.');
         json(res, 200, { url: await startPlex(req, res, login) });
         return true;
       }
       if (req.method === 'POST' && route === '/api/account/discord/connect') {
+        if (isLanRequest(config, req))
+          throw new Error('Linking Discord is only available at ' + config.publicUrl + ' for now.');
         await discordStart(req, res, login);
         return true;
       }
@@ -502,14 +515,17 @@ function accountHttp({
     } catch (error) {
       const message = error.message.includes('UNIQUE') ? 'Account identity conflict; preview again' : error.message;
       if (req.method === 'GET' && route.startsWith('/auth/plex')) {
-        const id = secret();
-        errors.set(id, { message, expires: Date.now() + 60000 });
-        res.setHeader('Set-Cookie', cookie(COOKIES.authError, id, 60));
-        res.writeHead(302, { Location: '/auth/error' });
-        res.end();
+        failAuth(res, message);
       } else json(res, 400, { error: message });
       return true;
     }
+  }
+  function failAuth(res, message) {
+    const id = secret();
+    errors.set(id, { message, expires: Date.now() + 60000 });
+    res.setHeader('Set-Cookie', cookie(COOKIES.authError, id, 60));
+    res.writeHead(302, { Location: '/auth/error' });
+    res.end();
   }
   function sweep() {
     for (const map of [attempts, previews, merges, errors])
@@ -518,6 +534,7 @@ function accountHttp({
   return {
     route,
     sweep,
+    failAuth,
     verifiedLink,
     completeSignIn,
     close() {

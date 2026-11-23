@@ -5,6 +5,7 @@ const { randomBytes } = require('node:crypto');
 const { hash } = require('../core');
 const { clientAddress } = require('../client-address');
 const { isServerOperator } = require('../operator-policy');
+const { isAllowedBrowserOrigin } = require('../origins');
 const { WEB } = require('./static');
 
 // Failed sign-ins allowed per window, per username and per address.
@@ -53,7 +54,7 @@ function uburoomAccountRoutes({
     }
   };
   const addressKey = req => 'address:' + (clientAddress(req, config) || 'local');
-  const sameOrigin = req => req.headers.origin === config.publicUrl;
+  const sameOrigin = req => isAllowedBrowserOrigin(config, req.headers.origin, req);
 
   /** A new browser session for this account; signing in replaces a guest session in this browser. */
   async function signedIn(req, res, userId) {

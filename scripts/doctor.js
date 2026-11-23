@@ -183,6 +183,46 @@ function checkConfiguration(configFile) {
     });
   }
 
+  if (normalizedConfig.lanUrl) {
+    if (normalizedConfig.lanUrl === 'auto') {
+      const { detectLanOrigins } = require('../server/origins');
+      const detected = [...detectLanOrigins(normalizedConfig)];
+      checks.push({
+        category: 'Configuration',
+        name: 'LAN URL protocol',
+        status: 'pass',
+        message: `HTTPS LAN origins (auto on port ${normalizedConfig.port}): ${detected.join(', ') || 'none detected'}`,
+      });
+    } else {
+      checks.push({
+        category: 'Configuration',
+        name: 'LAN URL protocol',
+        status: 'pass',
+        message: `HTTPS LAN origin: ${normalizedConfig.lanUrl}`,
+      });
+    }
+    if (normalizedConfig.listen === 'http-proxy') {
+      checks.push({
+        category: 'Configuration',
+        name: 'LAN URL with http-proxy',
+        status: 'warn',
+        message: `server.lan_url (${normalizedConfig.lanUrl}) is set with server.listen: 'http-proxy', which rejects direct LAN connections.`,
+        remediation:
+          normalizedConfig.lanUrl === 'auto'
+            ? "Use server.listen: 'https' for server.lan_url: 'auto', or set an explicit HTTPS origin served by a proxy in server.trusted_proxies."
+            : "Use server.listen: 'https' for direct LAN access, or serve server.lan_url over HTTPS through a proxy in server.trusted_proxies.",
+      });
+    } else if (['127.0.0.1', '::1', 'localhost'].includes(normalizedConfig.host)) {
+      checks.push({
+        category: 'Configuration',
+        name: 'LAN URL bind address',
+        status: 'warn',
+        message: `server.lan_url (${normalizedConfig.lanUrl}) is set, but server.host is loopback-only (${normalizedConfig.host}).`,
+        remediation: "Set server.host to '0.0.0.0' or your LAN IP so other devices on the network can reach it.",
+      });
+    }
+  }
+
   return { checks, config: normalizedConfig };
 }
 

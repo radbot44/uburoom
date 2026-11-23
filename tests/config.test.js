@@ -769,3 +769,64 @@ test('Dockerfile supports opt-in GPU_DRIVERS build arg while defaulting to none'
   }
   assert.ok(compose.includes('GPU_DRIVERS'), 'expected docker-compose.yml to document GPU_DRIVERS');
 });
+
+test('server.lan_url validates as an optional distinct HTTPS origin and doctor warns on unreachable setups', t => {
+  const valid = normalizeConfig({
+    server: {
+      host: '0.0.0.0',
+      public_url: 'https://watch.example',
+      lan_url: 'https://192.168.1.10:5756',
+    },
+  });
+  assert.equal(valid.lanUrl, 'https://192.168.1.10:5756');
+  assert.equal(
+    normalizeConfig({ server: { host: '0.0.0.0', public_url: 'https://watch.example', lan_url: 'auto' } }).lanUrl,
+    'auto',
+  );
+  assert.equal(normalizeConfig({ server: { public_url: 'https://watch.example', lan_url: '' } }).lanUrl, undefined);
+
+  for (const bad of [
+    'http://192.168.1.10:5756',
+    'https://192.168.1.10:5756/watch',
+    'https://192.168.1.10:5756/?a=1',
+    'https://user:pass@192.168.1.10:5756',
+    'not-a-url',
+  ]) {
+    assert.throws(
+      () => normalizeConfig({ server: { public_url: 'https://watch.example', lan_url: bad } }),
+      /server\.lan_url must be 'auto' or an HTTPS origin/,
+      `expected ${bad} to be rejected`,
+    );
+  }
+  assert.throws(
+    () =>
+      normalizeConfig({
+        server: { public_url: 'https://watch.example', lan_url: 'https://watch.example:443' },
+      }),
+    /server\.lan_url must differ from server\.public_url/,
+  );
+
+  const { checkConfiguration } = require('../scripts/doctor');
+  const dir = temporary(t);
+  const loopbackFile = path.join(dir, 'loopback.yaml');
+  fs.writeFileSync(
+    loopbackFile,
+    "server:\n  host: '127.0.0.1'\n  public_url: 'https://watch.example'\n  lan_url: 'https://192.168.1.10:5756'\n",
+  );
+  const loopbackChecks = checkConfiguration(loopbackFile).checks;
+  assert.ok(
+    loopbackChecks.some(c => c.name === 'LAN URL bind address' && c.status === 'warn'),
+    'expected doctor to warn when lan_url is paired with loopback server.host',
+  );
+
+  const proxyFile = path.join(dir, 'proxy.yaml');
+  fs.writeFileSync(
+    proxyFile,
+    "server:\n  listen: 'http-proxy'\n  host: '0.0.0.0'\n  public_url: 'https://watch.example'\n  lan_url: 'https://192.168.1.10:5756'\n  trusted_proxies: ['127.0.0.1']\n",
+  );
+  const proxyChecks = checkConfiguration(proxyFile).checks;
+  assert.ok(
+    proxyChecks.some(c => c.name === 'LAN URL with http-proxy' && c.status === 'warn'),
+    'expected doctor to warn when lan_url is paired with http-proxy mode',
+  );
+});

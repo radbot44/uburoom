@@ -2,6 +2,7 @@
 const { hash } = require('./core');
 const { isServerOperator } = require('./operator-policy');
 const { runningSettings } = require('./operator-settings');
+const { isAllowedBrowserOrigin } = require('./origins');
 
 function operatorHttp({
   config,
@@ -94,7 +95,7 @@ function operatorHttp({
         }
         const canSave = () =>
           operator() &&
-          req.headers.origin === config.publicUrl &&
+          isAllowedBrowserOrigin(config, req.headers.origin, req) &&
           req.headers['x-csrf-token'] === login.csrf &&
           (!login.oauth || login.oauth.expires > Date.now());
         await editor.save(data, { beforeReplace: canSave });

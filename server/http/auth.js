@@ -2,6 +2,7 @@
 const path = require('node:path');
 const { randomBytes } = require('node:crypto');
 const { hash } = require('../core');
+const { isAllowedBrowserOrigin, isLanRequest } = require('../origins');
 const { WEB } = require('./static');
 
 /** Where a sign-in may send the browser afterwards: only this server's own pages. */
@@ -113,6 +114,16 @@ function authRoutes({
       path: route => ['/auth/discord', '/auth/owner'].includes(route),
       async handle({ req, res, route, url }) {
         if (!oauthReady) return json(res, 503, { error: 'Configure Discord OAuth on the server first' });
+        if (isLanRequest(config, req)) {
+          const message =
+            'Discord sign-in is only available at ' +
+            config.publicUrl +
+            ' for now. Sign in with a uburoom account here or open ' +
+            config.publicUrl +
+            '.';
+          if (accountRoutes()?.failAuth) return accountRoutes().failAuth(res, message);
+          return json(res, 400, { error: message });
+        }
         return signIn.start(req, res, undefined, route === '/auth/owner', safeReturn(url.searchParams.get('return')));
       },
     },
@@ -186,7 +197,11 @@ function authRoutes({
         const token = cookies(req)[COOKIES.session],
           id = token && hash(token),
           login = id && logins.get(id);
-        if (!login || req.headers.origin !== config.publicUrl || req.headers['x-csrf-token'] !== login.csrf)
+        if (
+          !login ||
+          !isAllowedBrowserOrigin(config, req.headers.origin, req) ||
+          req.headers['x-csrf-token'] !== login.csrf
+        )
           return json(res, 403, { error: 'Not authorized' });
         hub.clearAdmin(webActor(login));
         logins.delete(id);

@@ -6,6 +6,7 @@ const { Handoff, SECRET } = require('./handoff');
 const { watchOperations } = require('./watch-operations');
 const { CALLS } = require('../shared/wire-protocol.mjs');
 const { clientAddress } = require('./client-address');
+const { isAllowedBrowserOrigin } = require('./origins');
 const { COOKIES: DEFAULT_COOKIES } = require('./http/sessions');
 const { displayName } = require('./accounts');
 const Ubumfa = require('../shared/ubumfa.mjs');
@@ -266,7 +267,7 @@ function watchHttp({
         return true;
       }
       if (req.method === 'POST' && url.pathname === '/api/watch/handoff/native/claim') {
-        if (req.headers.origin !== config.publicUrl || req.headers.authorization) {
+        if (!isAllowedBrowserOrigin(config, req.headers.origin, req) || req.headers.authorization) {
           json(res, 403, { error: 'Forbidden' });
           return true;
         }
@@ -295,7 +296,7 @@ function watchHttp({
         return true;
       }
       if (req.method === 'POST' && url.pathname === '/api/watch/handoff/native/approve') {
-        if (req.headers.origin !== config.publicUrl || req.headers.authorization) {
+        if (!isAllowedBrowserOrigin(config, req.headers.origin, req) || req.headers.authorization) {
           json(res, 403, { error: 'Forbidden' });
           return true;
         }
