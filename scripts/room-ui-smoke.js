@@ -99,11 +99,20 @@ async function main() {
       assert.equal(await run(hidden('#room-participants-expand')), true, 'expand chevron hidden when roster fits');
       assert.equal(
         await run(
-          '(()=>{const v=document.querySelector(".room-participant-column")?.getBoundingClientRect(),t=document.getElementById("room-tools-column")?.getBoundingClientRect();const ids=[...document.querySelectorAll("#room-tools-column .room-tools-list > button")].map(b=>b.id);return !!v&&!!t&&t.left>=v.right-1&&ids.join(",")==="room-schedule,room-human-check-ask,room-sync-spread";})()',
+          '(()=>{const v=document.querySelector(".room-participant-column")?.getBoundingClientRect(),t=document.getElementById("room-tools-column")?.getBoundingClientRect();const ids=[...document.querySelectorAll("#room-tools-column .room-tools-list > button")].map(b=>b.id);return !!v&&!!t&&t.left>=v.right-1&&ids.join(",")==="room-schedule,room-human-check-ask,room-announce-btn,room-poll-btn,room-sync-spread";})()',
         ),
         true,
-        'Tools column sits right of Viewers with Schedule, Readiness check, Room sync order',
+        'Tools column sits right of Viewers with Schedule, Readiness check, Announce, Poll, Room sync order',
       );
+      await run(pressId('room-poll-btn'));
+      await until(isOpen('#poll-dialog'), 'Poll composer opens');
+      await run(pressId('poll-submit'));
+      await until(
+        hasText('#poll-dialog .watch-popover.state-error', 'Enter a poll question') +
+          ' && document.activeElement.id === "poll-question"',
+        'Missing poll question uses the shared field feedback',
+      );
+      await run(pressId('poll-cancel'));
       await run(pressId('room-people-open'));
       await until(
         isOpen('#room-settings-dialog') +
@@ -440,6 +449,14 @@ async function main() {
         count('#queue-upcoming-list .queue-entry') + '===2 && ' + hasText('#queue-scroll-next', '2 queued'),
         'Second queue item added',
       );
+      await run(pressId('room-poll-btn'));
+      await run(pressId('poll-fill-queue'));
+      await until(
+        'Array.from(document.querySelectorAll("#poll-options-inputs input"), input => input.value).join(",") === "First queued item,Second queued item" && ' +
+          shown('#poll-on-close-group'),
+        'Queue fills two media poll options in upcoming order',
+      );
+      await run(pressId('poll-cancel'));
       await shot('queue');
       await run('document.querySelectorAll(".queue-action-down")[0].click()');
       await until(

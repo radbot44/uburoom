@@ -296,7 +296,6 @@ const roomUI = uburoomRoomUI.mount({
   getMe: () => store.identity.me,
   execute: (...args) => deps.execute(...args),
   share: (invite, name, id) => roomShare.open(id || store.room.selected),
-  onAskHumanCheck: () => deps.askHumanCheck(),
   onClearHumanCheck: checkId => deps.clearHumanCheck(checkId),
   join: async id => {
     await deps.selectRoom(id);

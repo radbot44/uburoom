@@ -779,6 +779,8 @@ const glyphs = Object.freeze({
     ['path', { d: 'M16 3.13a4 4 0 0 1 0 7.75' }],
     ['path', { d: 'M15 19l2 2l4 -4' }],
   ],
+    "speakerphone": [["path",{"d":"M18 8a3 3 0 0 1 0 6"}],["path",{"d":"M10 8v11a1 1 0 0 1 -1 1h-1a1 1 0 0 1 -1 -1v-5"}],["path",{"d":"M12 8l4.524 -3.77a.9 .9 0 0 1 1.476 .692v12.156a.9 .9 0 0 1 -1.476 .692l-4.524 -3.77h-8a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h8"}]],
+    "wood": [["path",{"d":"M6 5.5a6 2.5 0 1 0 12 0a6 2.5 0 1 0 -12 0"}],["path",{"d":"M18 5.5v4.626a1.415 1.415 0 0 1 1.683 2.18l-.097 .108l-1.586 1.586v4c0 1.61 -2.54 2.925 -5.725 3l-.275 0c-3.314 0 -6 -1.343 -6 -3v-2l-1.586 -1.586a1.414 1.414 0 0 1 1.586 -2.287v-6.627"}],["path",{"d":"M10 12.5v1.5"}],["path",{"d":"M14 16v1"}]]
 });
 const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 function resolveName(name, seekSeconds = 15) {

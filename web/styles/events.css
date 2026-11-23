@@ -1,8 +1,7 @@
 /* Watch nights: event scheduler and the lobby Upcoming list. Owned by web/watch-events.js and web/watch-lobby-events.js. */
 @layer components {
   #event-form {
-    display: block;
-    text-align: left;
+    margin-top: var(--space-20);
   }
   .event-form[hidden] {
     display: none;
@@ -18,44 +17,6 @@
   .event-discord-row[hidden],
   .event-room-row[hidden] {
     display: none;
-  }
-  .event-field {
-    margin-top: var(--space-14);
-  }
-  .event-field-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-8);
-    margin-bottom: var(--space-6);
-  }
-  .event-field-header label {
-    font-size: var(--font-size-14);
-    font-weight: 500;
-    color: var(--text);
-    margin: 0;
-  }
-  .event-field label:not(.event-field-header label) {
-    display: block;
-    font-size: var(--font-size-14);
-    font-weight: 500;
-    color: var(--text);
-    margin-bottom: var(--space-6);
-  }
-  .event-form :is(input:not([type='checkbox']), select, textarea) {
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-    min-height: var(--watch-control-height);
-    padding: var(--space-9) var(--space-12);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-10);
-    background: var(--elevated);
-    color: var(--text);
-    font: inherit;
-  }
-  .event-form textarea {
-    resize: vertical;
   }
   .event-zone-btn {
     background: none;

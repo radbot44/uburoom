@@ -72,7 +72,6 @@ function mount({
   draftChanged,
   execute,
   share,
-  onAskHumanCheck,
   onClearHumanCheck,
 }) {
   const $ = id => document.getElementById(id),
@@ -454,8 +453,7 @@ function mount({
   controls.content(humanCheckButton, { icon: 'users-check', label: 'Readiness check' });
   if (announceButton) controls.content(announceButton, { icon: 'bell', label: 'Announce' });
   if (pollButton) controls.content(pollButton, { icon: 'chart-bar', label: 'Poll' });
-  humanCheckButton.addEventListener('click', event => {
-    event.stopPropagation();
+  humanCheckButton.addEventListener('click', () => {
     const state = getState();
     const active =
       (Array.isArray(state?.activities) ? state.activities.find(a => a.kind === 'check') : null) || state?.humanCheck;
@@ -463,52 +461,8 @@ function mount({
       void runHumanCheckAction(() => onClearHumanCheck?.(active.id));
       return;
     }
-    const popover = $('break-popover');
-    if (!popover) {
-      void runHumanCheckAction(() => onAskHumanCheck?.());
-      return;
-    }
-    const opening = popover.hidden;
-    popover.hidden = !opening;
-    if (opening) {
-      const rect = humanCheckButton.getBoundingClientRect();
-      const left = Math.max(12, Math.min(rect.left, window.innerWidth - 292));
-      const spaceAbove = rect.top - 16;
-      popover.style.left = `${left}px`;
-      if (spaceAbove >= 220) {
-        popover.style.bottom = `${window.innerHeight - rect.top + 8}px`;
-        popover.style.top = 'auto';
-      } else {
-        popover.style.top = `${rect.bottom + 8}px`;
-        popover.style.bottom = 'auto';
-      }
-      $('break-ask-now')?.focus();
-    }
+    uburoomDialogs.open($('break-dialog'), humanCheckButton);
   });
-  {
-    const popover = $('break-popover');
-    if (popover) {
-      document.addEventListener('click', event => {
-        if (
-          !popover.hidden &&
-          !popover.contains(/** @type {Node} */ (event.target)) &&
-          event.target !== humanCheckButton
-        ) {
-          popover.hidden = true;
-        }
-      });
-      document.addEventListener('keydown', event => {
-        if (!popover.hidden && event.key === 'Escape') {
-          popover.hidden = true;
-          humanCheckButton.focus();
-        }
-      });
-      $('break-ask-now')?.addEventListener('click', () => {
-        popover.hidden = true;
-        void runHumanCheckAction(() => onAskHumanCheck?.());
-      });
-    }
-  }
   function syncToolsVisibility() {
     if (!toolsColumn) return;
     toolsColumn.hidden = !toolsColumn.querySelector('.room-tools-list > button:not([hidden])');

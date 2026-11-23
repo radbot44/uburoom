@@ -87,6 +87,50 @@
     justify-content: flex-end;
     margin-top: var(--space-20);
   }
+  .watch-dialog .dialog-form {
+    display: block;
+    text-align: left;
+    margin-top: 0;
+  }
+  .dialog-field {
+    margin-top: var(--space-14);
+  }
+  .dialog-field-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-8);
+    margin-bottom: var(--space-6);
+  }
+  .dialog-field-header label {
+    font-size: var(--font-size-14);
+    font-weight: 500;
+    color: var(--text);
+    margin: 0;
+  }
+  .dialog-field > label,
+  .dialog-field-label {
+    display: block;
+    font-size: var(--font-size-14);
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: var(--space-6);
+  }
+  .dialog-form :is(input:not([type='checkbox']), select, textarea) {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: var(--watch-control-height);
+    padding: var(--space-9) var(--space-12);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+    background: var(--elevated);
+    color: var(--text);
+    font: inherit;
+  }
+  .dialog-form textarea {
+    resize: vertical;
+  }
   .dialog-footer.with-divider {
     border-top: 1px solid var(--border);
     padding-top: var(--space-16);

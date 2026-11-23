@@ -1,8 +1,9 @@
 // @ts-check
-/* Activity hub: anchored panel with live Now items above the Earlier room journal.
+/* Activity dialog with live Now items above the Earlier room journal.
  * Preserves DOM identity, scroll position, and focus on live journal appends.
  */
 import * as uburoomIcons from './icons.js';
+import * as dialogs from './watch-dialogs.js';
 
 const FILTERS = Object.freeze([
   { id: 'all', label: 'All' },
@@ -166,12 +167,12 @@ export function formatJournalEntry(entry) {
 }
 
 /**
- * Mounts the Activity hub button, badge, fullscreen menu dot, and anchored panel.
+ * Mounts the Activity hub button, badge, fullscreen menu dot, and dialog.
  * @param {{
  *   button: HTMLElement,
  *   badge: HTMLElement,
  *   menuDot?: HTMLElement | null,
- *   panel: HTMLElement,
+ *   panel: HTMLDialogElement,
  *   journal: ReturnType<import('./watch/journal.js').createClientJournal>,
  *   attention: ReturnType<import('./watch-attention.js').createAttention>,
  *   getState: () => any,
@@ -190,24 +191,16 @@ export function mountActivityHub({
   getSelfId,
   onReopenActivity,
 }) {
-  let open = false;
   let activeFilter = 'all';
   let unseenWhileScrolled = 0;
+  let journalId = journal.journalId;
+  let roomId = journal.roomId;
   /** @type {Map<number, HTMLLIElement>} */
   const rowNodes = new Map();
 
-  // Build static panel shell once so live appends never recreate controls or steal focus.
-  panel.replaceChildren();
-  const header = document.createElement('div');
-  header.className = 'activity-header';
-  const heading = document.createElement('h3');
-  heading.textContent = 'Activity';
-  const closeBtn = document.createElement('button');
-  closeBtn.type = 'button';
-  closeBtn.className = 'icon-button activity-close';
-  closeBtn.setAttribute('aria-label', 'Close activity');
-  closeBtn.replaceChildren(uburoomIcons.icon(document, 'x'));
-  header.append(heading, closeBtn);
+  // Build the body once so live updates preserve the controls and scroll viewport.
+  const body = panel.querySelector('#activity-body');
+  const closeBtn = panel.querySelector('#activity-dismiss');
 
   const nowSection = document.createElement('section');
   nowSection.className = 'activity-now';
@@ -255,26 +248,33 @@ export function mountActivityHub({
   newPill.className = 'activity-new-pill';
   newPill.hidden = true;
   newPill.addEventListener('click', () => {
-    listEl.scrollTop = 0;
+    viewport.scrollTop = 0;
     unseenWhileScrolled = 0;
     newPill.hidden = true;
   });
 
-  const listEl = document.createElement('ol');
-  listEl.className = 'activity-list';
-  listEl.id = 'activity-list';
-  listEl.addEventListener('scroll', () => {
-    if (listEl.scrollTop <= 16 && unseenWhileScrolled > 0) {
+  const viewport = document.createElement('div');
+  viewport.id = 'activity-scroll';
+  viewport.className = 'activity-scroll';
+  viewport.tabIndex = 0;
+  viewport.setAttribute('role', 'region');
+  viewport.setAttribute('aria-label', 'Earlier activity');
+  viewport.addEventListener('scroll', () => {
+    if (viewport.scrollTop <= 16 && unseenWhileScrolled > 0) {
       unseenWhileScrolled = 0;
       newPill.hidden = true;
     }
   });
+  const listEl = document.createElement('ol');
+  listEl.id = 'activity-list';
+  listEl.className = 'activity-list';
+  viewport.append(listEl);
 
   const emptyEl = document.createElement('p');
   emptyEl.className = 'activity-empty';
   emptyEl.textContent = 'No room activity yet.';
 
-  panel.append(header, nowSection, earlierHeader, newPill, listEl, emptyEl);
+  body.append(nowSection, earlierHeader, newPill, viewport, emptyEl);
 
   function matchesFilter(entry) {
     if (activeFilter === 'all') return true;
@@ -311,7 +311,7 @@ export function mountActivityHub({
     }
   }
 
-  function rebuildList() {
+  function rebuildList(resetScroll = true) {
     const entries = journal.entries;
     const visible = [];
     for (let i = entries.length - 1; i >= 0; i--) {
@@ -324,30 +324,46 @@ export function mountActivityHub({
         rowNodes.delete(seq);
       }
     }
-    const frag = document.createDocumentFragment();
-    for (const entry of visible) {
+    for (const [index, entry] of visible.entries()) {
       let node = rowNodes.get(entry.seq);
       if (!node) {
         node = createRow(entry);
         rowNodes.set(entry.seq, node);
+      } else {
+        const [time, description] = node.children;
+        const stamp = formatTimestamp(entry.at);
+        const text = formatJournalEntry(entry);
+        if (time.textContent !== stamp) time.textContent = stamp;
+        if (description.textContent !== text) description.textContent = text;
       }
-      frag.append(node);
+      const atIndex = listEl.children[index];
+      if (node !== atIndex) listEl.insertBefore(node, atIndex || null);
     }
-    listEl.replaceChildren(frag);
     emptyEl.hidden = visible.length > 0;
-    unseenWhileScrolled = 0;
-    newPill.hidden = true;
+    viewport.hidden = !emptyEl.hidden;
+    if (resetScroll) {
+      viewport.scrollTop = 0;
+      unseenWhileScrolled = 0;
+      newPill.hidden = true;
+    }
   }
 
   function applyJournalChange(change) {
     updateRoomFilterVisibility();
     if (change.full) {
-      rebuildList();
+      const reset = change.journalId !== journalId || change.roomId !== roomId;
+      if (reset) {
+        journalId = change.journalId;
+        roomId = change.roomId;
+        listEl.replaceChildren();
+        rowNodes.clear();
+      }
+      rebuildList(reset);
       return;
     }
-    const wasScrolledDown = open && listEl.scrollTop > 24;
-    const prevScrollTop = listEl.scrollTop;
-    const prevScrollHeight = listEl.scrollHeight;
+    const wasScrolledDown = panel.open && viewport.scrollTop > 24;
+    const prevScrollTop = viewport.scrollTop;
+    const prevScrollHeight = viewport.scrollHeight;
 
     for (const oldSeq of change.replaced || []) {
       const oldNode = rowNodes.get(oldSeq);
@@ -368,9 +384,10 @@ export function mountActivityHub({
     }
 
     emptyEl.hidden = listEl.children.length > 0;
+    viewport.hidden = !emptyEl.hidden;
     if (prepended > 0 && wasScrolledDown) {
-      const addedHeight = listEl.scrollHeight - prevScrollHeight;
-      if (addedHeight > 0) listEl.scrollTop = prevScrollTop + addedHeight;
+      const addedHeight = viewport.scrollHeight - prevScrollHeight;
+      if (addedHeight > 0) viewport.scrollTop = prevScrollTop + addedHeight;
       unseenWhileScrolled += prepended;
       newPill.textContent = `${unseenWhileScrolled} new`;
       newPill.hidden = false;
@@ -413,7 +430,7 @@ export function mountActivityHub({
         btn.addEventListener('click', () => {
           attention.reopen(item.id);
           onReopenActivity?.(item.id);
-          setOpen(false);
+          dialogs.close(panel);
         });
       }
       btn.classList.toggle('needs-me', item.needsMe);
@@ -438,59 +455,11 @@ export function mountActivityHub({
     }
   }
 
-  function positionPanel() {
-    if (!open) return;
-    const rect = button.getBoundingClientRect();
-    const panelWidth = Math.min(360, window.innerWidth - 24);
-    const left = Math.max(12, Math.min(rect.left, window.innerWidth - panelWidth - 12));
-    const spaceAbove = rect.top - 16;
-    panel.style.left = `${left}px`;
-    panel.style.width = `${panelWidth}px`;
-    if (spaceAbove >= 260) {
-      panel.style.bottom = `${window.innerHeight - rect.top + 8}px`;
-      panel.style.top = 'auto';
-      panel.style.maxHeight = `${Math.min(440, spaceAbove)}px`;
-    } else {
-      panel.style.top = `${rect.bottom + 8}px`;
-      panel.style.bottom = 'auto';
-      panel.style.maxHeight = `${Math.min(440, window.innerHeight - rect.bottom - 16)}px`;
-    }
-  }
-
-  function setOpen(next) {
-    open = !!next;
-    panel.hidden = !open;
-    button.setAttribute('aria-expanded', String(open));
-    if (open) {
-      renderNowAndBadge();
-      positionPanel();
-      closeBtn.focus();
-    }
-  }
-
-  button.addEventListener('click', event => {
-    event.stopPropagation();
-    setOpen(!open);
+  button.addEventListener('click', () => {
+    renderNowAndBadge();
+    dialogs.open(panel, button);
   });
-  closeBtn.addEventListener('click', () => {
-    setOpen(false);
-    button.focus();
-  });
-  document.addEventListener('click', event => {
-    if (!open) return;
-    const target = /** @type {Node | null} */ (event.target);
-    if (target && !panel.contains(target) && !button.contains(target)) setOpen(false);
-  });
-  document.addEventListener('keydown', event => {
-    if (open && event.key === 'Escape') {
-      event.preventDefault();
-      setOpen(false);
-      button.focus();
-    }
-  });
-  window.addEventListener('resize', () => {
-    if (open) positionPanel();
-  });
+  closeBtn.addEventListener('click', () => dialogs.close(panel));
 
   const unsubscribe = journal.subscribe(applyJournalChange);
   rebuildList();
@@ -498,8 +467,6 @@ export function mountActivityHub({
 
   return {
     sync: renderNowAndBadge,
-    setOpen,
-    isOpen: () => open,
     destroy: unsubscribe,
   };
 }

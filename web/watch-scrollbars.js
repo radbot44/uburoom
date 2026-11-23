@@ -57,8 +57,8 @@ export function mount() {
   }
 
   function syncInnerScrollbars() {
-    // Keep touch, high-contrast and unsupported-browser internal scrollbars native.
-    const useCustom = safeInnerViewport && finePointer.matches && !forcedColors.matches;
+    const useDialogScrollbars = safeInnerViewport && !forcedColors.matches;
+    const useCustom = useDialogScrollbars && finePointer.matches;
     const immersive = body.classList.contains('immersive');
     const pip = body.classList.contains('activity-pip');
     const drawer = document.getElementById('drawer');
@@ -84,9 +84,13 @@ export function mount() {
     const serverSettingsContent = serverSettings?.querySelector('.server-settings-content');
     toggleInner(serverSettingsContent, useCustom && !!serverSettings?.open);
 
+    const activity = document.getElementById('activity-panel');
+    const activityScroll = document.getElementById('activity-scroll');
+    toggleInner(activityScroll, useDialogScrollbars && !!activity?.open);
+
     for (const dialog of document.querySelectorAll('dialog.watch-dialog')) {
       if (dialog.id === 'room-settings-dialog' || dialog.id === 'server-settings-dialog') continue;
-      toggleInner(dialog, useCustom && dialog.open);
+      toggleInner(dialog, useDialogScrollbars && dialog.open);
     }
   }
 

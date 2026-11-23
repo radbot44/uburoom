@@ -1,6 +1,7 @@
 import * as uburoom from '../../shared/engine.mjs';
 import { uburoomAV1 } from '../watch-av1.js';
 import * as uburoomControls from '../watch-controls.js';
+import * as uburoomDialogs from '../watch-dialogs.js';
 import * as uburoomPlayback from '../playback-policy.js';
 import * as uburoomPopover from '../watch-popover.js';
 import { $ } from './page.js';
@@ -668,9 +669,6 @@ export function mount(host, deps) {
       deps.fail(error.message);
     });
   }
-  function askHumanCheck() {
-    return sendHumanCheck('check.ask');
-  }
   function clearHumanCheck(checkId = store.room.state?.humanCheck?.id) {
     return sendHumanCheck('check.clear', checkId ? { checkId } : {});
   }
@@ -897,13 +895,56 @@ export function mount(host, deps) {
       clearBtn.disabled = !!store.room.pending;
     }
   }
+  function dialogError(anchor, message, placement) {
+    return uburoomPopover.show(anchor, { state: 'error', text: message, placement });
+  }
+
+  function validateField(input, message) {
+    input.focus();
+    // Focusing an offscreen field scrolls the dialog. Show feedback after that scroll
+    // so the shared popover's scroll dismissal does not hide it as soon as it opens.
+    requestAnimationFrame(() => {
+      if (document.activeElement !== input) return;
+      const feedback = dialogError(input, message, 'bottom');
+      if (feedback) input.addEventListener('input', feedback.dismiss, { once: true });
+    });
+  }
+
+  async function submitRoomTool(dialog, button, command) {
+    if (dialog.getAttribute('aria-busy') === 'true') return;
+    dialog.setAttribute('aria-busy', 'true');
+    const loading = uburoomPopover.show(button, { state: 'loading', text: 'Working…' });
+    let submitted = false;
+    try {
+      await deps.execute(command);
+      loading?.dismiss();
+      submitted = true;
+    } catch (error) {
+      dialogError(button, error.message);
+    } finally {
+      dialog.removeAttribute('aria-busy');
+    }
+    if (submitted) uburoomDialogs.close(dialog, 'submitted');
+  }
+
+  for (const name of ['break', 'announce', 'poll']) {
+    for (const action of ['cancel', 'dismiss']) {
+      $(name + '-' + action).addEventListener('click', () => uburoomDialogs.close($(name + '-dialog')));
+    }
+  }
+
   function openPollDialog(prefill = undefined) {
     const dialog = $('poll-dialog');
     const questionInput = $('poll-question');
     const optionsWrap = $('poll-options-inputs');
     const onCloseGroup = $('poll-on-close-group');
     const playNowNote = $('poll-play-now-note');
-    if (!dialog || !questionInput || !optionsWrap) return;
+    if (dialog.open) return;
+    const roomId = store.room.selected;
+    const fromQueue = $('poll-fill-queue');
+    const fromSuggestions = $('poll-fill-suggestions');
+    const addOption = $('poll-add-option');
+    let draftRevision = 0;
 
     /** @type {Array<{label: string, media?: any}>} */
     let draftOptions =
@@ -923,31 +964,34 @@ export function mount(host, deps) {
     };
 
     const renderDraftOptions = () => {
+      draftRevision++;
       optionsWrap.replaceChildren();
+      addOption.disabled = draftOptions.length >= 6;
       draftOptions.forEach((opt, idx) => {
         const row = document.createElement('div');
-        row.style.display = 'flex';
-        row.style.gap = '6px';
+        row.className = 'poll-option-row';
         const input = document.createElement('input');
         input.type = 'text';
         input.maxLength = 100;
         input.required = true;
         input.placeholder = `Option ${idx + 1}`;
-        input.value = opt.label || '';
-        input.style.flex = '1';
+        input.setAttribute('aria-label', input.placeholder);
+        input.value = opt.label;
         input.addEventListener('input', () => {
           opt.label = input.value;
+          draftRevision++;
         });
         row.append(input);
         if (draftOptions.length > 2) {
-          const rm = document.createElement('button');
-          rm.type = 'button';
-          rm.className = 'quiet';
-          rm.textContent = '×';
-          rm.setAttribute('aria-label', 'Remove option');
-          rm.addEventListener('click', () => {
-            draftOptions.splice(idx, 1);
-            renderDraftOptions();
+          const rm = uburoomControls.button(document, {
+            icon: 'x',
+            label: `Remove option ${idx + 1}`,
+            iconOnly: true,
+            action: () => {
+              draftOptions.splice(idx, 1);
+              renderDraftOptions();
+              optionsWrap.querySelectorAll('input')[Math.min(idx, draftOptions.length - 1)].focus();
+            },
           });
           row.append(rm);
         }
@@ -986,84 +1030,66 @@ export function mount(host, deps) {
         setPressed('.poll-tie-chip', 'data-tie', tieRule);
       };
     });
-    $('poll-add-option').onclick = () => {
-      if (draftOptions.length >= 6) return;
+    addOption.onclick = () => {
       draftOptions.push({ label: '' });
       renderDraftOptions();
+      optionsWrap.querySelector('.poll-option-row:last-child input').focus();
     };
-    $('poll-fill-suggestions').onclick = () => {
-      const suggestions = (store.room.state?.suggestions || []).slice(0, 6);
-      if (suggestions.length < 2) {
-        deps.fail('At least 2 suggestions are needed to fill a poll.');
-        return;
-      }
-      draftOptions = suggestions.map(s => ({
-        label: s.title || s.item?.title || 'Suggestion',
-        media: {
-          serverId: s.serverId || s.item?.serverId,
-          mediaId: s.mediaId || s.item?.mediaId,
-          type: s.type || s.item?.type || 'movie',
-          title: s.title || s.item?.title || 'Suggestion',
-          suggestionId: s.id,
-        },
-      }));
-      if (!questionInput.value.trim()) questionInput.value = 'Which suggestion should we watch next?';
+    const fill = (options, defaultQuestion) => {
+      draftOptions = options;
+      if (!questionInput.value.trim()) questionInput.value = defaultQuestion;
       renderDraftOptions();
     };
-    $('poll-fill-queue').onclick = async () => {
+    fromSuggestions.onclick = () => {
+      const options = deps.queueUI.suggestionPollOptions();
+      if (options.length < 2) {
+        dialogError(fromSuggestions, 'You need at least 2 suggestions.');
+        return;
+      }
+      fill(options, 'Which suggestion should we watch next?');
+    };
+    fromQueue.onclick = async function fillQueue() {
+      const revision = ++draftRevision;
+      const sameDraft = () =>
+        dialog.open && fromQueue.onclick === fillQueue && store.room.selected === roomId && draftRevision === revision;
       try {
-        const summary = await deps.call('room.queue', { roomId: store.room.selected });
-        const pending = (summary?.pending || []).slice(0, 6);
-        if (pending.length < 2) {
-          deps.fail('At least 2 queued items are needed to fill a poll.');
+        const { items } = await deps.call('room.queue', { roomId, args: { limit: 6 } });
+        if (!sameDraft()) return;
+        if (items.length < 2) {
+          dialogError(fromQueue, 'You need at least 2 queued items.');
           return;
         }
-        draftOptions = pending.map(item => ({
-          label: item.title || 'Queued item',
-          media: {
-            serverId: item.serverId,
-            mediaId: item.mediaId,
-            type: item.type || 'movie',
-            title: item.title || 'Queued item',
-          },
-        }));
-        if (!questionInput.value.trim()) questionInput.value = 'Which queued video next?';
-        renderDraftOptions();
+        fill(
+          items.map(({ serverId, mediaId, type, title }) => ({
+            label: title.slice(0, 100),
+            media: { serverId, mediaId, type, title },
+          })),
+          'Which queued video should we watch next?',
+        );
       } catch (error) {
-        deps.fail(error.message);
+        if (sameDraft()) dialogError(fromQueue, error.message);
       }
     };
-    $('poll-cancel').onclick = () => dialog.close();
     form.onsubmit = event => {
       event.preventDefault();
-      const question = questionInput.value.replace(/\s+/g, ' ').trim();
-      const options = draftOptions
-        .map((opt, idx) => ({
-          id: `opt-${idx + 1}`,
-          label: (opt.label || '').replace(/\s+/g, ' ').trim(),
-          ...(opt.media ? { media: opt.media } : {}),
-        }))
-        .filter(opt => opt.label);
-      if (!question || options.length < 2) return;
-      const allMedia = options.every(o => !!o.media);
-      dialog.close();
-      void deps
-        .execute({
-          action: 'poll.start',
-          args: {
-            question,
-            options,
-            durationSeconds,
-            onClose: allMedia ? onClose : 'results',
-            tieRule,
-          },
-        })
-        .catch(error => deps.fail(error.message));
+      if (dialog.getAttribute('aria-busy') === 'true') return;
+      const question = questionInput.value.trim();
+      if (!question) return validateField(questionInput, 'Enter a poll question.');
+      const emptyOption = draftOptions.findIndex(opt => !opt.label.trim());
+      if (emptyOption >= 0) {
+        validateField(optionsWrap.querySelectorAll('input')[emptyOption], 'Enter a poll option.');
+        return;
+      }
+      const options = draftOptions.map((opt, idx) => ({ ...opt, id: `opt-${idx + 1}` }));
+      const allMedia = options.every(opt => !!opt.media);
+      void submitRoomTool(dialog, $('poll-submit'), {
+        action: 'poll.start',
+        args: { question, options, durationSeconds, onClose: allMedia ? onClose : 'results', tieRule },
+      });
     };
 
     renderDraftOptions();
-    if (!dialog.open) dialog.showModal();
-    questionInput.focus();
+    uburoomDialogs.open(dialog);
   }
   $('room-poll-btn')?.addEventListener('click', () => openPollDialog());
   $('poll-close-btn')?.addEventListener('click', () => {
@@ -1127,7 +1153,6 @@ export function mount(host, deps) {
     const input = $('announce-text');
     const count = $('announce-count');
     const pin = $('announce-pin');
-    const cancel = $('announce-cancel');
     if (announceBtn && dialog && form && input) {
       const updateCount = () => {
         if (count) count.textContent = `${input.value.length} / 140`;
@@ -1137,18 +1162,16 @@ export function mount(host, deps) {
         input.value = '';
         if (pin) pin.checked = false;
         updateCount();
-        if (!dialog.open) dialog.showModal();
-        input.focus();
+        uburoomDialogs.open(dialog, announceBtn);
       });
-      cancel?.addEventListener('click', () => dialog.close());
       form.addEventListener('submit', event => {
         event.preventDefault();
         const text = input.value.replace(/\s+/g, ' ').trim();
-        if (!text) return;
-        dialog.close();
-        void deps
-          .execute({ action: 'announce.send', args: { text, pinned: !!pin?.checked } })
-          .catch(error => deps.fail(error.message));
+        if (!text) return validateField(input, 'Enter an announcement.');
+        void submitRoomTool(dialog, $('announce-submit'), {
+          action: 'announce.send',
+          args: { text, pinned: pin.checked },
+        });
       });
     }
   }
@@ -1185,20 +1208,22 @@ export function mount(host, deps) {
     if (brk?.id) deps.attention?.dismiss(brk.id);
   });
   {
-    const popover = $('break-popover');
-    const autoResumeEl = $('break-auto-resume');
-    const customInput = $('break-custom-minutes');
-    const startBreak = minutes => {
-      if (popover) popover.hidden = true;
-      const mins = Math.max(1, Math.min(120, Math.round(Number(minutes) || 5)));
-      void deps
-        .execute({ action: 'break.start', args: { minutes: mins, autoResume: !!autoResumeEl?.checked } })
-        .catch(error => deps.fail(error.message));
-    };
-    popover?.querySelectorAll('.break-chip').forEach(btn => {
-      btn.addEventListener('click', () => startBreak(btn.dataset.minutes));
+    const dialog = $('break-dialog');
+    const form = $('break-form');
+    const autoResume = $('break-auto-resume');
+    const customMinutes = $('break-custom-minutes');
+    const askNow = $('break-ask-now');
+    const startBreak = (anchor, minutes) =>
+      submitRoomTool(dialog, anchor, { action: 'break.start', args: { minutes, autoResume: autoResume.checked } });
+    askNow.addEventListener('click', () => void submitRoomTool(dialog, askNow, { action: 'check.ask' }));
+    dialog.querySelectorAll('.break-chip').forEach(button => {
+      button.addEventListener('click', () => void startBreak(button, Number(button.dataset.minutes)));
     });
-    $('break-start-custom')?.addEventListener('click', () => startBreak(customInput?.value));
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      if (!customMinutes.validity.valid) return validateField(customMinutes, 'Enter 1 to 120 whole minutes.');
+      void startBreak($('break-start'), customMinutes.valueAsNumber);
+    });
   }
   $('human-check-ready').addEventListener('click', () => void replyHumanCheck('ready'));
   $('human-check-hold').addEventListener('click', () => void replyHumanCheck('hold'));
@@ -1214,7 +1239,6 @@ export function mount(host, deps) {
   });
   return {
     applyState,
-    askHumanCheck,
     clearHumanCheck,
     renderHumanCheckPrompt,
     renderVisibility,

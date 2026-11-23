@@ -58,7 +58,7 @@ function show(trigger, options = {}) {
   activeDoc = doc;
   activeWin = win;
   const modal = trigger.closest('dialog[open]');
-  const container = doc.fullscreenElement || modal || doc.body;
+  const container = modal || doc.fullscreenElement || doc.body;
 
   const popover = doc.createElement('div');
   popover.className = 'watch-popover state-' + state;
@@ -158,7 +158,9 @@ function show(trigger, options = {}) {
 
   return {
     element: popover,
-    dismiss,
+    dismiss() {
+      if (currentPopover === popover) dismiss();
+    },
     update(nextText, nextState = state) {
       if (currentPopover !== popover) return;
       labelSpan.textContent = nextText;

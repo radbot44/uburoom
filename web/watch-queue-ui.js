@@ -169,21 +169,9 @@ function mount(
     'Poll these',
     undefined,
     () => {
-      const suggestions = rankedSuggestions(getState()).slice(0, 6);
-      if (suggestions.length < 2) return;
-      openPoll?.({
-        question: 'Which suggestion should we watch next?',
-        options: suggestions.map(s => ({
-          label: s.title || s.item?.title || 'Suggestion',
-          media: {
-            serverId: s.serverId || s.item?.serverId,
-            mediaId: s.mediaId || s.item?.mediaId,
-            type: s.type || s.item?.type || 'movie',
-            title: s.title || s.item?.title || 'Suggestion',
-            suggestionId: s.id,
-          },
-        })),
-      });
+      const options = suggestionPollOptions();
+      if (options.length < 2) return;
+      openPoll?.({ question: 'Which suggestion should we watch next?', options });
     },
     false,
     'quiet queue-suggestions-poll',
@@ -1804,6 +1792,15 @@ function mount(
     );
   }
 
+  function suggestionPollOptions() {
+    return rankedSuggestions(getState())
+      .slice(0, 6)
+      .map(({ id, item }) => ({
+        label: item.title.slice(0, 100),
+        media: { serverId: item.serverId, mediaId: item.mediaId, type: item.type, title: item.title, suggestionId: id },
+      }));
+  }
+
   function supportersText(supporters) {
     const [first = 'A viewer', ...others] = supporters;
     return 'Suggested by ' + first + (others.length ? ' +' + others.length : '');
@@ -2004,6 +2001,7 @@ function mount(
     add,
     bulk,
     openAuto,
+    suggestionPollOptions,
     fetchData,
     get selectedEntryId() {
       return null;
