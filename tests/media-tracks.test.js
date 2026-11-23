@@ -1173,6 +1173,90 @@ test('embedded text stays client-rendered, so Original is not forced into a conv
   assert.equal(planDelivery({ ...copy, quality: 'direct', audioTracks: 1 }).route, 'file');
 });
 
+test('loading and replacing a room video keeps its file check live and allows a fresh check', async () => {
+  const { plex } = provider(),
+    hub = new Hub({ ownerId: 'host' }, []);
+  hub.access = { isMember: () => true, refresh: async () => true, options: () => ({ available: true }) };
+  const { watch, actor, open } = liveWatch(hub, plex),
+    host = actor('host'),
+    room = await open(host),
+    viewerId = randomUUID();
+  const { watchOperations } = require('../server/watch-operations');
+  const operations = watchOperations({
+    config: {},
+    hub,
+    watch,
+    authorized: async () => ({ actor: host }),
+    throttle: () => true,
+  });
+  let probes = 0;
+  const av1 = plex.pipeline.av1;
+  av1.ffprobe = 'fixture-ffprobe';
+  av1.run = async (_binary, _args, signal) => {
+    await Promise.resolve();
+    signal.throwIfAborted();
+    probes++;
+    return Buffer.from('{"streams":[],"format":{"duration":"10"}}');
+  };
+  try {
+    watch.join(room, host, viewerId);
+    const load = () =>
+      hub.dispatch(
+        { ...host, watchViewerId: viewerId },
+        {
+          roomId: room.roomId,
+          action: 'media.load',
+          args: { mediaId: '1', quality: 'direct' },
+        },
+      );
+    assert.equal((await load()).status, 'applied');
+    const first = room.media;
+    assert.equal(first.lifecycleAbort.signal.aborted, false);
+    assert.ok((await watch.mediaChecks.start(first).promise).some(item => item.topic === 'tracks'));
+    assert.equal((await load()).status, 'applied');
+    assert.equal(first.lifecycleAbort.signal.aborted, true);
+    assert.equal(room.media.lifecycleAbort.signal.aborted, false);
+    assert.equal(probes, 1, 'the completed check is shared for the same file');
+    const check = refresh => operations.call({ headers: {} }, 'room.check', { roomId: room.roomId, args: { refresh } });
+    assert.equal((await check(true)).status, 200);
+    await watch.mediaChecks.start(room.media).promise;
+    assert.ok((await check(false)).value.items.some(item => item.topic === 'tracks'));
+    assert.equal(probes, 2);
+  } finally {
+    await watch.close();
+    await plex.close();
+  }
+});
+
+test('canceling a file check lets an active load of the same source start immediately', async () => {
+  const { MediaChecks } = require('../server/media-check');
+  const retired = new AbortController(),
+    active = new AbortController();
+  const av1 = {
+    ffprobe: 'fixture-ffprobe',
+    input: (_source, _signal, action) => action('fixture'),
+    run: async (_binary, _args, signal) => {
+      await Promise.resolve();
+      signal.throwIfAborted();
+      return Buffer.from('{"streams":[]}');
+    },
+  };
+  const checks = new MediaChecks({ pipeline: { av1 } });
+  const media = { sourceKey: 'same-source', lifecycleAbort: retired };
+  const canceled = checks.start(media);
+  retired.abort();
+  const current = { ...media, lifecycleAbort: active };
+  const replacement = checks.start(current);
+  assert.notEqual(replacement, canceled);
+  assert.equal(await canceled.promise, undefined);
+  await replacement.promise;
+  assert.deepEqual(
+    (await checks.report(current)).items.map(item => item.title),
+    ['Tracks match the file'],
+  );
+  assert.equal(checks.start(current), replacement);
+});
+
 test('codecMatches and trackItem handle PCM audio and embedded closed captions without false warnings', async () => {
   const { fileIndex } = require('../server/media-tools');
   const { MediaChecks } = require('../server/media-check');

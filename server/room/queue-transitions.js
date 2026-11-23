@@ -421,6 +421,8 @@ module.exports = {
         Number.isFinite(Number(args.position)) && Number(args.position) > 0
           ? Math.min(Number(args.position), prepared.duration)
           : 0;
+      // Drop the outgoing media before room.media names the new source.
+      this.dropMedia(room);
       room.media = prepared;
       room.mediaVersion = randomUUID();
       room.readinessVersion = undefined;
@@ -428,7 +430,6 @@ module.exports = {
       room.position = record ? queue.current(id).position : startPosition;
       room.changedAt = this.clock.now();
       if (room.recovery) this.roomState.finishRecovery(room);
-      this.dropMedia(room);
       room.state.paused = true;
       room.manualPaused = forcePlay ? false : initialAdd && !this.roomState.store.get(id).autoplay;
       room.initialGate = true;

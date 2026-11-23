@@ -22,7 +22,7 @@ class MediaChecks {
   /** @param {{pipeline?:any}} options */
   constructor({ pipeline } = {}) {
     this.pipeline = pipeline;
-    /** @type {Map<string,{promise:Promise<CheckItem[]>, items?:CheckItem[], checkedAt?:number}>} */
+    /** @type {Map<string,{promise:Promise<CheckItem[] | undefined>, signal?:AbortSignal, items?:CheckItem[], checkedAt?:number}>} */
     this.files = new Map();
   }
   key(media) {
@@ -31,24 +31,33 @@ class MediaChecks {
   /** Begin the file checks in the background; repeated calls share one run. */
   start(media) {
     const key = this.key(media);
-    if (!key || !fromProvider(media)) return;
-    let entry = this.files.get(key);
-    if (entry) {
-      this.files.delete(key);
-      this.files.set(key, entry);
-      return entry;
+    const signal = media?.lifecycleAbort?.signal;
+    if (!key || !fromProvider(media) || signal?.aborted) return;
+    const cached = this.files.get(key);
+    this.files.delete(key);
+    if (cached && (cached.items || !cached.signal?.aborted)) {
+      this.files.set(key, cached);
+      return cached;
     }
-    /** @type {Promise<CheckItem[]>} */
-    const promise = this.fileItems(media).catch(error => [
-      {
-        level: 'warning',
-        topic: 'file',
-        title: "This file couldn't be checked",
-        detail: String(error.message || error).slice(0, 200),
-      },
-    ]);
-    entry = { promise };
+    /** @type {Promise<CheckItem[] | undefined>} */
+    const promise = this.fileItems(media).catch(error => {
+      if (signal?.aborted) return;
+      return [
+        {
+          level: 'warning',
+          topic: 'file',
+          title: "This file couldn't be checked",
+          detail: String(error.message || error).slice(0, 200),
+        },
+      ];
+    });
+    const entry = { promise, signal, items: undefined, checkedAt: undefined };
     promise.then(items => {
+      // A canceled preload or room can share a source key with a subsequent active load.
+      if (!items) {
+        if (this.files.get(key) === entry) this.files.delete(key);
+        return;
+      }
       entry.items = items;
       entry.checkedAt = Date.now();
     });
