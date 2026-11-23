@@ -363,11 +363,21 @@ async function main() {
       await until(shown('#room-settings-content'), 'Room settings reopened');
       await run(settingsSection('people'));
       await until(shown('#room-current-people'), 'Room people settings');
+      assert.equal(await run(text('#room-viewer-count')), 'Viewers (1/12)');
       assert.equal(
-        await run(count('#room-current-people .room-roster-sync-quality')),
-        0,
-        'quality stays out of Room Settings participant lists',
+        await run(count('#room-current-people .room-roster-sync-quality[data-quality=excellent]')),
+        1,
+        'Room Settings participant list shows sync quality icons for present viewers',
       );
+      await run(press('#room-current-people .room-roster-sync-quality'));
+      await until(
+        shown('#room-settings-dialog .viewer-telemetry-card') +
+          ' && ' +
+          hasText('#room-settings-dialog .telemetry-score-badge', '94%'),
+        'Clicking sync icon in Room Settings opens telemetry card inside dialog',
+      );
+      await run(press('#room-settings-dialog .telemetry-card-close'));
+      await until('!document.querySelector(".viewer-telemetry-card")', 'Settings telemetry card closed');
       await closeSettings();
       delete hostPresence.syncQuality;
       hostPresence.syncQuality = undefined;
@@ -725,8 +735,35 @@ async function main() {
         () => [...room.viewers.values()].every(viewer => viewer.tracking?.previous?.state === 'playing'),
         'Both players reporting playback',
       );
-      // Inject a waiting event and keep the guest below the decoder-ready threshold until recovery.
       const video = byId('video');
+      const guestUserId = app.registry.identity('discord', subjects.guest).userId;
+      const originalList = app.watch.list;
+      await browser.until(guest, count('#rooms button') + '===1', 'Guest has the active lobby entry');
+      const beforeOmission = await browser.evaluate(guest, video + '.currentTime');
+      app.watch.list = function (actor, ...args) {
+        return actor.userId === guestUserId ? Promise.resolve([]) : originalList.call(this, actor, ...args);
+      };
+      try {
+        app.watch.changed(room, { lobby: true });
+        await browser.until(guest, count('#rooms button') + '===0', 'Guest receives an empty lobby list');
+        await browser.until(
+          guest,
+          hidden('#room-lobby') +
+            ' && ' +
+            video +
+            '.currentTime>' +
+            (beforeOmission + 0.5) +
+            ' && !' +
+            video +
+            '.paused',
+          'Guest keeps playing through the omission',
+        );
+      } finally {
+        app.watch.list = originalList;
+        app.watch.changed(room, { lobby: true });
+      }
+      await browser.until(guest, count('#rooms button') + '===1', 'Guest gets the lobby entry back');
+      // Inject a waiting event and keep the guest below the decoder-ready threshold until recovery.
       await browser.evaluate(
         guest,
         'Object.defineProperty(' +
@@ -800,7 +837,7 @@ async function main() {
       );
       await until(text('#room-settings-status') + '==="Saved"', 'Settings save completes');
       await browser.until(guest, '!' + byId('timeline') + '.disabled', 'Viewer seek grant');
-      await run(settingsSection('people') + ';' + press('#room-current-people button'));
+      await run(settingsSection('people') + ';' + press('#room-current-people .room-host-promote'));
       await browser.until(
         guest,
         hasText('#room-participants', 'Demo guest') + ' && ' + shown('#room-settings-open'),
@@ -887,6 +924,11 @@ async function main() {
       await until(isOpen('#room-confirm-dialog'), 'Close confirmation');
       await run(pressId('room-confirm-yes'));
       await until('!' + isOpen('#room-settings-dialog') + ' && ' + shown('#lobby-reopen'), 'Room closes for everyone');
+      await browser.until(
+        guest,
+        '!' + byId('room-lobby') + '.hidden && ' + video + '.paused && !' + video + '.hasAttribute("src")',
+        'Room close clears guest playback',
+      );
       assert.equal(app.watch.rooms.size, 0);
       await run(pressId('reopen'));
       await until(count('#saved-rooms .saved-room') + '===1', 'Saved room picker');

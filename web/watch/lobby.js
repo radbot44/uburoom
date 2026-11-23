@@ -165,22 +165,16 @@ export function mount(host, deps) {
     if ($('room-dialog').open && !store.lobby.creating) {
       renderRoomChoices(rooms);
     }
-    if (
-      !store.connection.reconnecting &&
-      !store.lobby.switchingRoom &&
-      !rooms.some(room => room.id === store.room.selected && !room.locked)
-    ) {
-      if (store.room.selected) {
-        const listed = rooms.find(room => room.id === store.room.selected);
+    // Loss of room access is confirmed through the joined room's responses.
+    if (store.room.selected && !store.connection.reconnecting && !store.lobby.switchingRoom) {
+      const listed = rooms.find(room => room.id === store.room.selected);
+      if (!listed || listed.locked) {
         deps.diagnostics.record('room-list-unavailable', {
           roomListState: listed?.locked ? 'locked' : 'missing',
           roomCount: rooms.length,
           connectionId: store.connection.transport?.connectionId,
           visibility: document.visibilityState,
         });
-        store.room.selected = undefined;
-        deps.unavailable('Room ended or was made private.');
-        if (store.player.immersive) deps.toggleDrawer(false);
       }
     }
     if (!$('room-lobby').hidden) renderRoomChoices(rooms, $('lobby-rooms'));

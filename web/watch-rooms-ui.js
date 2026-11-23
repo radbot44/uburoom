@@ -93,6 +93,7 @@ function mount({
     savedGeneration = 0;
   let activeTelemetryPersonId = null,
     activeTelemetryAnchor = null,
+    activeTelemetryRoster = null,
     telemetryCardElement = null;
 
   function humanReason(reason) {
@@ -233,6 +234,7 @@ function mount({
       activeTelemetryAnchor = null;
     }
     activeTelemetryPersonId = null;
+    activeTelemetryRoster = null;
     if (telemetryCardElement) {
       telemetryCardElement.remove();
       telemetryCardElement = null;
@@ -248,6 +250,7 @@ function mount({
     const isOpening = !telemetryCardElement || activeTelemetryPersonId !== person.id;
     activeTelemetryPersonId = person.id;
     activeTelemetryAnchor = anchorBtn;
+    activeTelemetryRoster = anchorBtn.closest('.room-roster');
     anchorBtn.setAttribute('aria-expanded', 'true');
 
     let card = telemetryCardElement;
@@ -368,7 +371,8 @@ function mount({
       });
     }
 
-    const hostParent = document.fullscreenElement || document.body;
+    const modal = anchorBtn.closest('dialog[open]');
+    const hostParent = modal || document.fullscreenElement || document.body;
     if (card.parentNode !== hostParent) hostParent.append(card);
     telemetryCardElement = card;
 
@@ -666,10 +670,12 @@ function mount({
           : null,
       ];
     });
+    const showSync = !inSettings || !!(value.active || (getState()?.id === value.id && !value.draft));
     const humanCheck = !inSettings ? value.humanCheck || null : null;
     const checkAnswers = humanCheck?.answers && typeof humanCheck.answers === 'object' ? humanCheck.answers : null;
     const signature = JSON.stringify([
       value.id,
+      showSync,
       peopleView,
       self,
       caps,
@@ -682,6 +688,7 @@ function mount({
     roster.dataset.signature = signature;
     const focusId = roster.contains(document.activeElement) ? document.activeElement.id : undefined;
     roster.classList.add('room-roster');
+    roster.classList.toggle('has-sync', showSync);
     roster.classList.toggle('can-host', canHost);
     roster.classList.toggle('can-kick', canKick);
     const sortedPeople = sortPeople(people, self);
@@ -706,8 +713,9 @@ function mount({
         person.role !== 'creator' &&
         (person.role !== 'host' || canKickHosts);
       const answer = humanCheck && person.present && !person.pending ? checkAnswers?.[person.id] : undefined;
+      const showPersonSync = showSync && person.present && !person.pending;
       const sync =
-        !inSettings && person.syncQuality && typeof person.syncQuality === 'object'
+        showPersonSync && person.syncQuality && typeof person.syncQuality === 'object'
           ? person.syncQuality
           : { status: 'unknown', reason: 'measurements-unavailable', sessions: [] };
       const personSig = JSON.stringify([
@@ -724,7 +732,7 @@ function mount({
         kickable,
         rosterBusy || (inSettings && busy),
         answer,
-        !inSettings
+        showPersonSync
           ? [
               sync.status,
               sync.score,
@@ -801,7 +809,7 @@ function mount({
           username.title += ' · Awaiting ' + (person.provider === 'discord' ? 'Discord' : 'Plex') + ' sign-in';
           username.setAttribute('aria-label', username.title);
         }
-        if (!inSettings) {
+        if (showPersonSync) {
           const unmeasured = isUnmeasuredSync(sync);
           const levels = { excellent: 'Excellent', good: 'Good', fair: 'Fair', poor: 'Poor' };
           const icons = { excellent: 'wifi', good: 'wifi-2', fair: 'wifi-1', poor: 'wifi-0' };
@@ -839,7 +847,10 @@ function mount({
           quality.title = tooltip;
           quality.setAttribute('aria-label', 'Sync details for ' + person.name + ': ' + tooltip.replace(/\n/g, ', '));
           quality.setAttribute('aria-haspopup', 'dialog');
-          quality.setAttribute('aria-expanded', activeTelemetryPersonId === person.id ? 'true' : 'false');
+          quality.setAttribute(
+            'aria-expanded',
+            activeTelemetryPersonId === person.id && activeTelemetryRoster === roster ? 'true' : 'false',
+          );
           if (sync.issue) {
             quality.dataset.issue = sync.issue === 'error' ? 'error' : 'warning';
             quality.title = ISSUE_LABELS[sync.issue] + '\n' + tooltip;
@@ -880,7 +891,7 @@ function mount({
       }
       if (row !== cursor) roster.insertBefore(row, cursor);
       cursor = row.nextSibling;
-      if (!inSettings && activeTelemetryPersonId === person.id) {
+      if (activeTelemetryPersonId === person.id && (!activeTelemetryRoster || activeTelemetryRoster === roster)) {
         const quality = row.querySelector('.room-roster-sync-quality');
         if (quality) {
           queueMicrotask(() => {
@@ -891,6 +902,56 @@ function mount({
     }
     if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
   }
+  function renderSettingsPeople(value, liveState = getState()) {
+    if (!value) return;
+    const isLiveCurrent = !!(liveState && !value.draft && liveState.id === value.id);
+    const liveParticipants = isLiveCurrent && Array.isArray(liveState.participants) ? liveState.participants : null;
+    const liveById = new Map((liveParticipants || []).map(p => [p.id, p]));
+    const viewerById = new Map((value.viewers || []).map(v => [v.id, v]));
+    const peopleById = new Map();
+    for (const person of value.candidates || []) {
+      const live = liveById.get(person.id);
+      const viewer = viewerById.get(person.id);
+      const present = liveParticipants ? !!live?.present : viewerById.has(person.id);
+      peopleById.set(person.id, {
+        ...person,
+        role:
+          person.id === value.creator.id
+            ? 'creator'
+            : value.hosts.some(host => host.id === person.id) || (value.permissions.allHosts && !person.passGuest)
+              ? 'host'
+              : 'viewer',
+        explicitHost: value.hosts.some(host => host.id === person.id),
+        present,
+        syncQuality: live?.syncQuality ?? viewer?.syncQuality,
+      });
+    }
+    for (const live of liveParticipants || []) {
+      if (!live.present || peopleById.has(live.id)) continue;
+      peopleById.set(live.id, live);
+    }
+    const people = [...peopleById.values()];
+    people.push(
+      ...(value.pendingHosts || []).map(person => ({
+        ...person,
+        id: 'pending-' + person.provider + '-' + person.subject,
+        role: 'host',
+        explicitHost: true,
+        present: false,
+        pending: true,
+      })),
+    );
+    const viewerLimit = Math.min(
+      value.maxMembers || value.serverMaxMembers || getMe()?.roomLimits?.maxMembers || 20,
+      value.serverMaxMembers || getMe()?.roomLimits?.maxMembers || 20,
+    );
+    const presentCount = isLiveCurrent
+      ? (liveState.viewers ?? people.filter(person => person.present && !person.pending).length)
+      : new Set((value.viewers || []).map(person => person.id)).size;
+    $('room-viewer-count').textContent = 'Viewers (' + presentCount + '/' + viewerLimit + ')';
+    renderPeople($('room-current-people'), people, value, true);
+    updateRosterSize();
+  }
   function renderLivePeople() {
     const state = getState();
     if (rosterRoom !== state?.id) {
@@ -899,6 +960,7 @@ function mount({
     }
     renderHumanCheckButton();
     renderPeople($('room-participants'), state?.participants || [], state || {});
+    if (dialog.open && details && !details.draft && details.id === state?.id) renderSettingsPeople(details, state);
     roomSync.render(state);
     syncToolsVisibility();
     updateRosterSize();
@@ -1378,7 +1440,6 @@ function mount({
       : '';
     $('room-dates').hidden = !value.createdAt;
     $('room-capacity-details').textContent = 'Server maximum ' + $('room-member-limit').max;
-    $('room-viewer-count').textContent = 'Viewers (' + new Set(value.viewers.map(person => person.id)).size + ')';
     const shownVisibility = visibilityDraft ?? value.visibility;
     $('room-visibility-details').textContent =
       shownVisibility === 'private'
@@ -1396,30 +1457,7 @@ function mount({
       ? 'Everyone is host. Everyone uses the host permissions below.'
       : 'Hosts also receive viewer permissions.';
     $('room-permission-custom').classList.toggle('all-hosts', !!value.permissions.allHosts);
-    const roster = $('room-current-people');
-    const people = value.candidates.map(person => ({
-      ...person,
-      role:
-        person.id === value.creator.id
-          ? 'creator'
-          : value.hosts.some(host => host.id === person.id) || (value.permissions.allHosts && !person.passGuest)
-            ? 'host'
-            : 'viewer',
-      explicitHost: value.hosts.some(host => host.id === person.id),
-      present: value.viewers.some(viewer => viewer.id === person.id),
-    }));
-    people.push(
-      ...(value.pendingHosts || []).map(person => ({
-        ...person,
-        id: 'pending-' + person.provider + '-' + person.subject,
-        role: 'host',
-        explicitHost: true,
-        present: false,
-        pending: true,
-      })),
-    );
-    renderPeople(roster, people, value, true);
-    updateRosterSize();
+    renderSettingsPeople(value);
     renderInvite(value);
     const previousTransfer = $('room-transfer-target').value;
     const transferGroup = $('room-transfer-target-group');
@@ -1754,6 +1792,7 @@ function mount({
   function selectSection(value) {
     const changedSection = section !== value;
     section = value;
+    if (value !== 'people' && activeTelemetryAnchor && dialog.contains(activeTelemetryAnchor)) closeTelemetryCard();
     $('room-settings-section').value = value;
     for (const panel of dialog.querySelectorAll('[data-room-section]'))
       panel.hidden = panel.dataset.roomSection !== value;
@@ -1861,6 +1900,7 @@ function mount({
   $('room-settings-dismiss').addEventListener('click', () => popups.close(dialog));
   dialog.addEventListener('close', () => {
     if (dialog.open) return;
+    if (activeTelemetryAnchor && dialog.contains(activeTelemetryAnchor)) closeTelemetryCard();
     clearSearch();
     generation++;
     details = undefined;

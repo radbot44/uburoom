@@ -243,6 +243,27 @@ test('lobby browsing needs no room; private creation never exposes the room to a
   host.ws.close();
   guest.ws.close();
 });
+test('closing a room tells the closing tab and other viewers their subscription ended', tls, async t => {
+  const f = await fixture(t);
+  const host = await f.connect(await f.login('host'));
+  const guest = await f.connect(await f.login('guest'));
+  t.after(() => {
+    host.ws.close();
+    guest.ws.close();
+  });
+  const roomId = (await host.call('/api/watch/rooms', {})).value.id;
+  const route = '/api/watch/rooms/' + roomId;
+  const joined = await host.call(route + '?viewer=' + randomUUID());
+  assert.equal(joined.status, 200);
+  assert.equal((await guest.call(route + '?viewer=' + randomUUID())).status, 200);
+
+  assert.equal((await host.call(route + '/close', { epoch: joined.value.epoch })).status, 200);
+  for (const tab of [host, guest]) {
+    assert.equal((await tab.send({ type: 'resync' })).type, 'ack');
+    assert.ok(tab.events.some(event => event.type === 'error' && event.code === 'room' && event.roomId === roomId));
+  }
+});
+
 test(
   'watch socket pushes shared Engine commands, rejects stale/foreign viewers, hides private rooms and preserves reconnect security',
   tls,

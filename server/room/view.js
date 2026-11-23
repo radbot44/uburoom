@@ -78,23 +78,32 @@ module.exports = {
     if (!room || this.rooms.get(room.roomId) !== room) return false;
     // A frozen room is its host's alone until it wakes or closes.
     if (room.frozen && actor.userId !== room.hostId) return false;
-    if (!canWatch(this.hub.access, actor.userId, actor)) {
+    const refreshAdmission = async () => {
       try {
-        if (!(await this.hub.admit(actor.userId, actor))) return false;
+        return await this.hub.admit(actor.userId, actor);
       } catch (error) {
-        if (!this.retainedThroughOutage(room, actor, error)) return false;
+        return this.retainedThroughOutage(room, actor, error);
       }
-    }
-    if (fromProvider(room.media)) {
+    };
+    if (!canWatch(this.hub.access, actor.userId, actor) && !(await refreshAdmission())) return false;
+    const media = room.media;
+    if (fromProvider(media)) {
       try {
-        const allowed = await (await this.streamScope(actor, room.media)).allows(room.media.id);
+        const allowed = await (await this.streamScope(actor, media)).allows(media.id);
         this.providerResponded();
         if (!allowed) return false;
       } catch (error) {
         if (!this.retainedThroughOutage(room, actor, error)) return false;
       }
     }
-    return this.hub.authorize(actor, room, 'room.view').ok;
+    // A provider check can outlast the cached admission. Refresh it before applying current room permissions.
+    if (!canWatch(this.hub.access, actor.userId, actor) && !(await refreshAdmission())) return false;
+    return (
+      this.rooms.get(room.roomId) === room &&
+      room.media === media &&
+      (!room.frozen || actor.userId === room.hostId) &&
+      this.hub.authorize(actor, room, 'room.view').ok
+    );
   },
   async list(actor, activity = false) {
     const rooms = [];

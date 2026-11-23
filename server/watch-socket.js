@@ -198,7 +198,11 @@ function watchSockets({
     if (client.room !== subscription || client.ws.readyState !== 1) return;
     if (result.status === 401) return signedOut(client, result);
     if (result.status >= 500) return send(client, refused('unavailable', result, { roomId }));
-    if (result.status !== 200) return send(client, refused('room', result, { roomId, viewerId }));
+    if (result.status !== 200) {
+      // Even the tab that closed the room needs its final subscription response.
+      if (!watch.rooms.has(roomId)) release(client, roomId);
+      return send(client, refused('room', result, { roomId, viewerId }));
+    }
     const sent = result.value;
     if (wantRoom) subscription.sentRoom = sent.version;
     if (wantViewer) subscription.stamp = sent.stamp;
@@ -405,7 +409,6 @@ function watchSockets({
     call: {
       run: (ctx, message) => operations.call(ctx, message.op, { roomId: message.roomId, args: message.args }),
       done(client, message, result) {
-        if (message.op === 'room.close') release(client, message.roomId);
         // A management change can alter what the lobby lists and what the room's tabs see.
         if (CALLS[message.op].write) watch.changed(watch.rooms.get(message.roomId), { lobby: true });
         return result.value;

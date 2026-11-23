@@ -39,6 +39,8 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Outstanding M1 verification register
 
+The lobby omission fix passed 63 focused Node tests on Windows on 2026-11-22 (`watch`, `watch-page`, `watch-socket`, `accounts`, and `watch-transport`). In an isolated copy of `dd1d3c7` with the fix applied, `scripts/room-ui-smoke.js` passed in Chrome and Firefox. The guest received an empty lobby list during playback and kept playing. Both tabs returned to the lobby on room closure. Live Vigrid verification remains open.
+
 | Gate | Required methods | Remaining |
 | --- | --- | --- |
 | Release | A/B/C, D UX | Independent install/origin/providers, operator restore/rollback, source/history/ZIP privacy and licensing |

@@ -2,6 +2,17 @@ import { store } from './store.js';
 
 /* Takes the room's state again: a resync on the open connection, or a fresh join on a new one. A late answer never overwrites a newer one. */
 export function mount(host, deps) {
+  function roomUnavailable(message, status) {
+    deps.diagnostics.record('room-state-unavailable', {
+      status,
+      connectionId: store.connection.transport?.connectionId,
+      visibility: document.visibilityState,
+    });
+    store.room.selected = store.connection.roomLanes = undefined;
+    void deps.clearRichPresence();
+    deps.unavailable(message || 'Room unavailable', 'room-poll');
+    if (store.player.immersive) deps.toggleDrawer(false);
+  }
   // Asks the server for this tab's room state again. The lanes arrive as pushes
   // before the answer, so the page shows the server's state once this resolves.
   async function refreshState() {
@@ -40,16 +51,9 @@ export function mount(host, deps) {
     } catch (error) {
       if (id === store.room.selected && sequence === store.connection.stateRequestSequence) {
         if (!error.status || error.status >= 500) deps.connectionLost();
-        else {
-          deps.diagnostics.record('room-state-unavailable', {
-            status: error.status,
-            connectionId: store.connection.transport?.connectionId,
-            visibility: document.visibilityState,
-          });
-          deps.unavailable(error.message, 'room-poll');
-        }
+        else roomUnavailable(error.message, error.status);
       }
     }
   }
-  return { refreshState, rejoinRoom };
+  return { refreshState, rejoinRoom, roomUnavailable };
 }

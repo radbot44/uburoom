@@ -566,18 +566,7 @@ export function mount(host, deps) {
             void deps.reportReadiness();
           }
         } else if (message.type === 'error' && message.code === 'room' && message.roomId === store.room.selected) {
-          deps.diagnostics.record('room-state-unavailable', {
-            status: message.status,
-            connectionId: store.connection.transport?.connectionId,
-            visibility: document.visibilityState,
-          });
-          // The room let this tab go (it went private, or the tab went silent). Leaving it
-          // selected would make choosing it again do nothing; the lobby offers it to rejoin.
-          if (message.rejoin) {
-            store.room.selected = store.connection.roomLanes = undefined;
-            void presence.clear();
-          }
-          deps.unavailable(message.message || 'Room unavailable', 'room-poll');
+          deps.roomUnavailable(message.message, message.status);
         } else if (message.type === 'error' && message.code === 'protocol') {
           // The server was updated under this page; only a reload brings the matching client.
           deps.unavailable('uburoom was updated. Reload this page to continue.', 'protocol');

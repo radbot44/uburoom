@@ -84,6 +84,8 @@ Position is never pushed as time passes: a client derives it from the timeline (
 
 Every `resyncMs` the server sends each lane again, changed or not, as a safety net. A client can ask for the same with `resync`.
 
+The lobby lane updates room discovery. A joined tab keeps its player when a lobby snapshot omits its room or lists it as locked. A refusal on the joined room's subscription ends playback and returns the tab to the lobby.
+
 ## Refusals about a room
 
 Errors without an `id` are about the connection or a room:

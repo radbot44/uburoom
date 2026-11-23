@@ -537,7 +537,7 @@ function watchOperations({
       if (fromProvider(room.media) && viewer.access?.media !== room.media) await watch.checkAccess(room, viewer);
       if (viewer.streamFailure) throw viewer.streamFailure;
       const { alive } = signedIn(context, auth);
-      if (!watch.canSee(room, auth.actor, viewer) || !(await alive()) || room.viewers.get(viewerId) !== viewer)
+      if (!(await alive()) || !watch.canSee(room, auth.actor, viewer) || room.viewers.get(viewerId) !== viewer)
         return result(403, { error: 'Viewing access was revoked' });
       return await project(context, auth, room, viewer, { ...want, renew: false });
     } catch (error) {

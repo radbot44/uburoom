@@ -308,10 +308,11 @@ test('Watch Night upcoming card description-only update preserves DOM node while
   assert.equal(editedEvent?.eventVersion, 2, 'Edit opens with latest eventVersion');
 });
 
-test('opening the lobby when the current room becomes unavailable renders the latest room list immediately', async t => {
+test('a lobby refresh preserves the selected room until its subscription refuses it', async t => {
   const { mountModule, stubDocument } = require('./helpers/watch-module');
   const lobbyMod = await import('../web/watch/lobby.js');
   const layoutMod = await import('../web/watch/layout.js');
+  const resyncMod = await import('../web/watch/room-resync.js');
 
   const prevMatchMedia = global.matchMedia;
   const prevResizeObserver = global.ResizeObserver;
@@ -343,6 +344,8 @@ test('opening the lobby when the current room becomes unavailable renders the la
   let layoutApi;
   let lobbyApi;
   let lobbyEventsRefreshed = 0;
+  let cleared = 0;
+  const state = { id: 'room-old', streamVersion: 'stream-1' };
   const mounted = mountModule(lobbyMod, {
     document: doc,
     me: { account: { id: 'u1' }, durableRooms: true },
@@ -352,6 +355,7 @@ test('opening the lobby when the current room becomes unavailable renders the la
     transport: { ready: true, connectionId: 'c1' },
     syncRoomUrl: () => {},
     diagnostics: { record() {} },
+    clearRichPresence: async () => {},
     renderEnding: () => {},
     toggleDrawer: () => {},
     library: { setCatalog() {}, setRoom() {}, setBusy() {} },
@@ -361,7 +365,10 @@ test('opening the lobby when the current room becomes unavailable renders the la
     renderScheduleButton: () => {},
     placeRoomBar: () => layoutApi?.placeRoomBar(),
     lobbyEvents: { refresh: async () => lobbyEventsRefreshed++ },
-    unavailable: () => {
+    unavailable: (message, reason) => {
+      assert.equal(message, 'Room unavailable or private');
+      assert.equal(reason, 'room-poll');
+      cleared++;
       // Simulate player.unavailable() calling placeRoomBar() which unhides #room-lobby.
       layoutApi.placeRoomBar();
     },
@@ -378,13 +385,25 @@ test('opening the lobby when the current room becomes unavailable renders the la
     return origRender(rooms, container);
   };
   layoutApi = layoutMod.mount(doc, mounted.deps);
+  const resync = resyncMod.mount(doc, mounted.deps);
+  mounted.view.state = state;
+  mounted.view.roomLanes = { roomId: 'room-old' };
 
   // Start inside 'room-old' with lobby hidden.
   assert.equal(doc.getElementById('room-lobby').hidden, true);
 
-  // Server sends updated room list without 'room-old'.
+  lobbyApi.applyRooms([]);
   lobbyApi.applyRooms([{ id: 'room-new', name: 'Fresh Room', viewers: 3 }]);
+  assert.equal(mounted.view.selected, 'room-old');
+  assert.equal(mounted.view.state, state);
+  assert.equal(mounted.view.roomLanes.roomId, 'room-old');
+  assert.equal(doc.getElementById('room-lobby').hidden, true);
+  assert.equal(cleared, 0);
 
+  resync.roomUnavailable('Room unavailable or private', 403);
+  assert.equal(mounted.view.selected, undefined);
+  assert.equal(mounted.view.roomLanes, undefined);
+  assert.equal(cleared, 1);
   assert.equal(doc.getElementById('room-lobby').hidden, false, 'lobby opened when current room became unavailable');
   assert.ok(rendered.length >= 1, 'lobby room list rendered immediately');
   assert.deepEqual(rendered.at(-1), ['room-new'], 'lobby displays the latest room list');

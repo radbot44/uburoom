@@ -8,6 +8,7 @@ const https = require('node:https');
 const { inspect } = require('node:util');
 const { createApp } = require('../server/app');
 const { Hub } = require('../server/core');
+const { Admission } = require('../server/admission');
 const { liveWatch } = require('./helpers/live-room');
 const { Plex } = require('../server/sources/plex/plex');
 
@@ -1249,6 +1250,49 @@ test('shared seeks wait for fresh viewer buffers, reject superseded readiness, a
   await watch.leave(room, host, second);
   assert.equal(room.state.paused, false, 'departed viewers do not hold the seek gate');
   watch.close();
+});
+
+test('a lobby list refreshes admission that expires during a media check', async t => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const hub = new Hub({}, []);
+  let discordAnswer = true;
+  const plex = {
+    allows: async () => {
+      now += 2000;
+      return true;
+    },
+    stop: async () => {},
+  };
+  const { watch, actor, open } = liveWatch(hub, plex);
+  t.after(() => watch.close());
+  const viewer = actor('viewer');
+  const admission = new Admission(
+    { accessPolicy: { discordServer: true } },
+    {
+      canonical: id => ({ id }),
+      identities: () => [{ provider: 'discord', subject: 'test', verified: true }],
+    },
+    undefined,
+    () => ({ isMember: () => false, refresh: async () => discordAnswer }),
+  );
+  hub.access = { canWatch: admission.fresh.bind(admission), refreshWatch: admission.admit.bind(admission) };
+  assert.equal(await hub.admit(viewer.userId, viewer), true);
+  const room = await open(viewer);
+  watch.join(room, viewer, randomUUID());
+  room.media = { kind: 'plex', id: '1', type: 'movie', title: 'Fixture', duration: 60, roomServerId: 'fixture' };
+
+  now += 299500;
+  discordAnswer = undefined;
+  assert.equal(await hub.admit(viewer.userId, viewer), true, 'admission is fresh when the lobby request starts');
+  assert.deepEqual(
+    (await watch.list(viewer)).map(room => room.id),
+    [room.roomId],
+  );
+
+  now += 29500;
+  discordAnswer = false;
+  assert.deepEqual(await watch.list(viewer), [], 'a confirmed revocation still hides the room');
 });
 
 test('a Plex outage keeps admitted viewers in the room, admits nobody new and never excuses a denial', async () => {

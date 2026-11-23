@@ -451,13 +451,19 @@
   .room-roster .room-person.has-kick {
     grid-template-columns: var(--role-column) minmax(0, 1fr) 40px;
   }
-  .room-participants .room-person {
+  .room-roster.has-sync .room-person {
     grid-template-columns: var(--role-column) minmax(0, 1fr) 24px;
   }
-  .room-participants.can-kick .room-person {
+  .room-roster.has-sync.can-kick .room-person {
     grid-template-columns: var(--role-column) minmax(0, 1fr) 24px 40px;
   }
-  .room-participants .room-roster-sync-quality {
+  .room-roster.has-sync .room-roster-sync-quality {
+    grid-column: 3;
+  }
+  .room-roster.has-sync .room-roster-action {
+    grid-column: 4;
+  }
+  .room-roster .room-roster-sync-quality {
     display: grid;
     place-items: center;
     width: 24px;
@@ -469,7 +475,7 @@
     cursor: pointer;
     color: var(--muted);
   }
-  .room-participants .room-roster-sync-quality svg {
+  .room-roster .room-roster-sync-quality svg {
     display: block;
     width: 20px;
     height: 20px;
@@ -479,22 +485,22 @@
     stroke-linecap: round;
     stroke-linejoin: round;
   }
-  .room-participants .room-roster-sync-quality[data-quality='excellent'] {
+  .room-roster .room-roster-sync-quality[data-quality='excellent'] {
     color: var(--success);
   }
-  .room-participants .room-roster-sync-quality[data-quality='good'] {
+  .room-roster .room-roster-sync-quality[data-quality='good'] {
     color: var(--good);
   }
-  .room-participants .room-roster-sync-quality[data-quality='fair'] {
+  .room-roster .room-roster-sync-quality[data-quality='fair'] {
     color: var(--warning);
   }
-  .room-participants .room-roster-sync-quality[data-quality='poor'] {
+  .room-roster .room-roster-sync-quality[data-quality='poor'] {
     color: var(--danger);
   }
-  .room-participants .room-roster-sync-quality[data-issue='warning'] {
+  .room-roster .room-roster-sync-quality[data-issue='warning'] {
     color: var(--warning);
   }
-  .room-participants .room-roster-sync-quality[data-issue='error'] {
+  .room-roster .room-roster-sync-quality[data-issue='error'] {
     color: var(--danger);
   }
   .telemetry-issue {
@@ -536,7 +542,7 @@
     font-variant-numeric: tabular-nums;
     overflow-wrap: anywhere;
   }
-  .room-participants .room-roster-sync-quality[data-confidence]:not([data-confidence='confident']) {
+  .room-roster .room-roster-sync-quality[data-confidence]:not([data-confidence='confident']) {
     color: var(--muted);
   }
   .viewer-telemetry-card {

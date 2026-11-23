@@ -5,7 +5,7 @@ const { RoomStore, newInviteCode } = require('./room-store');
 const { RoomQueue } = require('./room-queue');
 const Policy = require('./room-policy');
 const { canWatch } = require('./core');
-const { applyTimelineCommand } = require('../shared/sync');
+const { aggregateParticipantSyncQuality: syncQualityParticipants, applyTimelineCommand } = require('../shared/sync');
 const failure = (message, status = 409) => Object.assign(new Error(message), { status });
 
 // Durable lifecycle decisions. Watch retains the player, viewers and live clock.
@@ -518,6 +518,11 @@ class WatchRooms {
         ...[...(room?.viewers.values() || [])].map(viewer => viewer.userId),
       ]),
     ];
+    const viewerList = [...new Set([...(room?.viewers.values() || [])].map(viewer => viewer.userId))].map(person);
+    const viewers =
+      room && !room.frozen ? syncQualityParticipants(room, viewerList, this.watch.clock.now()) : viewerList;
+    if (!(this.watch.hub.isAdmin(actor) || Policy.allowed(record, actor.userId, 'roomSettings')))
+      for (const viewer of viewers) for (const session of viewer.syncQuality?.sessions || []) delete session.health;
     return {
       id,
       createdAt: record.createdAt,
@@ -539,7 +544,7 @@ class WatchRooms {
       creator: person(record.creatorId),
       hosts: record.hosts.map(person),
       candidates: candidates.map(person),
-      viewers: [...new Set([...(room?.viewers.values() || [])].map(viewer => viewer.userId))].map(person),
+      viewers,
       actorId: actor.userId,
       allHosts: !!record.permissions.allHosts,
       canSetAllHosts: record.creatorId === actor.userId && !actor.guestRoomId,
