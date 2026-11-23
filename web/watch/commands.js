@@ -40,23 +40,23 @@ export function mount(host, deps) {
       store.stream.lastQualityRequest = deps.time.mono();
     } else if (volumeChange) store.player.volumePending = true;
     else store.room.pending = true;
-    deps.fail('');
-    deps.renderTransport();
-    deps.renderHumanCheckPrompt?.();
-    if (
-      command.action.startsWith('media.seek') ||
-      [
-        'media.load',
-        'media.next',
-        'media.previous',
-        'queue.history.replay',
-        'queue.playNow',
-        'queue.suggestion.playNow',
-      ].includes(command.action)
-    )
-      deps.choppyDetector.interrupt();
-    deps.diagnosticSample('command-start', { action: command.action });
     try {
+      deps.fail('');
+      deps.renderTransport();
+      deps.renderHumanCheckPrompt?.();
+      if (
+        command.action.startsWith('media.seek') ||
+        [
+          'media.load',
+          'media.next',
+          'media.previous',
+          'queue.history.replay',
+          'queue.playNow',
+          'queue.suggestion.playNow',
+        ].includes(command.action)
+      )
+        deps.choppyDetector.interrupt();
+      deps.diagnosticSample('command-start', { action: command.action });
       const timing = deps.time.clock.read();
       if (!timing.valid)
         throw new Error('Playback timing is refreshing. Retry the control after the next room update.');

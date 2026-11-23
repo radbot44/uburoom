@@ -33,7 +33,7 @@ async function createServerHarness(t, media = {}) {
     await watch.close();
     await registry.close();
   });
-  return { hub, watch, registry, room, host, viewer };
+  return { hub, watch, registry, room, host, viewer, advance: ms => (wall += ms) };
 }
 
 test('announcements enforce length, rate limit, pinning vs auto-expiry, and permission', async () => {
@@ -120,7 +120,7 @@ test('breaks pause playback, extend, and auto-resume only after timer, all ready
   let seq = 0;
   const host = { userId: 'host-1', name: 'Alice' };
   const viewer = { userId: 'viewer-1', name: 'Bob' };
-  const room = createRoomState({
+  let room = createRoomState({
     roomId: 'room-brk',
     creatorId: host.userId,
     creatorName: host.name,
@@ -130,6 +130,8 @@ test('breaks pause playback, extend, and auto-resume only after timer, all ready
   });
   room.viewers.set('vh', { viewerId: 'vh', userId: host.userId, name: host.name, actor: host, at: clock });
   room.viewers.set('vv', { viewerId: 'vv', userId: viewer.userId, name: viewer.name, actor: viewer, at: clock });
+  room.hostViewerId = 'vh';
+  room.hadViewers = true;
   room.state.paused = false;
   room.manualPaused = false;
 
@@ -166,16 +168,24 @@ test('breaks pause playback, extend, and auto-resume only after timer, all ready
   snap = RoomAuthority.snapshotActivities(room, clock)[0];
   assert.equal(snap.resumingAt, null);
 
+  const timer = () => {
+    for (const viewer of room.viewers.values()) viewer.at = clock;
+    room = RoomAuthority.reduce(
+      room,
+      { type: 'timer' },
+      { now: clock, monoNow: mono, authorize: policyAuthorize },
+    ).state;
+  };
   // Timer reaches breakEndsAt -> starts 3s resuming countdown, still paused!
   clock += 10 * 60000;
-  RoomAuthority.settle(room, clock, mono);
+  timer();
   snap = RoomAuthority.snapshotActivities(room, clock)[0];
   assert.equal(snap.resumingAt, clock + Activities.BREAK_AUTO_RESUME_COUNTDOWN_MS);
   assert.equal(room.manualPaused, true);
 
   // After 3s countdown, auto-resumes playback and clears break!
   clock += Activities.BREAK_AUTO_RESUME_COUNTDOWN_MS;
-  RoomAuthority.settle(room, clock, mono);
+  timer();
   assert.equal(RoomAuthority.snapshotActivities(room, clock).length, 0);
   assert.equal(room.manualPaused, false);
 });
@@ -326,6 +336,68 @@ test('closing media polls runs Queue next and Play now through the live room com
     assert.equal(queue.list(room.roomId).items[0]?.mediaId, '101');
     assert.equal(room.media.id, onClose === 'playNow' ? '102' : '100');
   }
+});
+
+test('a room snapshot cannot close a timed poll or consume its winning action', async t => {
+  const playableItem = async id => ({ id, type: 'movie', title: 'Movie ' + id, duration: 120 });
+  const { watch, hub, host, room, advance } = await createServerHarness(t, {
+    principal: 'fixture',
+    json: async () => ({ machineIdentifier: 'plex-1' }),
+    playableItem,
+    prepare: async id => ({ ...(await playableItem(id)), kind: 'plex', resources: new Map() }),
+    close: async () => {},
+  });
+  const viewerId = randomUUID();
+  watch.join(room, host, viewerId, { alive: async () => true, quality: 'direct' });
+  const dispatch = (action, args) => hub.dispatch(host, { roomId: room.roomId, action, args });
+  const result = await dispatch('media.load', { mediaId: '100', quality: 'direct' });
+  assert.equal(result.status, 'applied', result.message);
+  const options = ['101', '102'].map(mediaId => ({
+    id: mediaId,
+    label: 'Movie ' + mediaId,
+    media: { serverId: 'plex-1', mediaId, title: 'Movie ' + mediaId },
+  }));
+  assert.equal(
+    (await dispatch('poll.start', { question: 'Next movie?', options, durationSeconds: 30 })).status,
+    'applied',
+  );
+  const pollId = room.activities.get('poll').id;
+  assert.equal((await dispatch('poll.vote', { pollId, optionId: '101' })).status, 'applied');
+  const at = advance(30000);
+  room.viewers.get(viewerId).at = at;
+  const winnerAction = t.mock.method(watch, 'executePollWinAction');
+  watch.view(room, host, viewerId);
+  assert.equal(room.activities.get('poll').status, 'open');
+  assert.equal((await dispatch('poll.vote', { pollId, optionId: '102' })).status, 'unavailable');
+  await watch.coordinator.dispatch(room, { type: 'timer' });
+  assert.equal(winnerAction.mock.callCount(), 1);
+  await winnerAction.mock.calls[0].result;
+  assert.equal(room.activities.get('poll').winnerOptionId, '101');
+  assert.equal(watch.roomState.queue.list(room.roomId).items[0]?.mediaId, '101');
+  assert.equal(
+    watch
+      .journal(room)
+      .since()
+      .filter(entry => entry.kind === 'poll.close').length,
+    1,
+  );
+});
+
+test('poll validation rejects duplicate option IDs after normalization', () => {
+  assert.throws(
+    () =>
+      RoomProtocol.validate({
+        action: 'poll.start',
+        args: {
+          question: 'Pick one',
+          options: [
+            { id: 'same', label: 'First' },
+            { id: ' same ', label: 'Second' },
+          ],
+        },
+      }),
+    /unique/,
+  );
 });
 
 test('room journal persists to watch_room_journal across close and reopen and clears on reset', async t => {

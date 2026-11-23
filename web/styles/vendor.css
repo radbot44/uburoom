@@ -30,7 +30,7 @@
     .watch-dialog,
     .server-settings-content,
     .activity-scroll,
-    .poll-card
+    .human-check-prompt
   ) {
     scrollbar-width: thin;
     scrollbar-color: color-mix(in srgb, var(--muted) 70%, transparent) transparent;

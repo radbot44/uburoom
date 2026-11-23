@@ -319,7 +319,6 @@ export function mount(host, deps) {
     deps.hideDisconnectToast();
     resetChoppyPlayback(preserveChoppiness);
     deps.toasts.dismiss('participant');
-    if (reason === 'room-leave' || reason === 'unavailable') deps.journal?.clear?.();
     if (reason !== 'state-change') store.player.playerUI?.reset();
     store.player.sync.reset();
     deps.resetSyncQuality();
@@ -428,6 +427,7 @@ export function mount(host, deps) {
     if ($('tracks-dialog').open) $('tracks-dialog').close();
     store.player.trackContext = undefined;
     clearPlayer(reason);
+    deps.journal.clear();
     store.room.state = undefined;
     deps.renderBrowsing();
     deps.renderVisibility();

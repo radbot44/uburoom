@@ -566,10 +566,8 @@ export function mount(host, deps) {
             void deps.reportReadiness();
           }
         } else if (message.type === 'journal') {
-          if (message.roomId === store.room.selected) {
-            const { gap } = deps.receiveJournal ? deps.receiveJournal(message) : { gap: false };
-            if (gap) void store.connection.transport?.resync?.().catch(() => {});
-          }
+          const { gap } = deps.receiveJournal(message);
+          if (gap) void store.connection.transport?.resync?.().catch(() => {});
         } else if (message.type === 'error' && message.code === 'room' && message.roomId === store.room.selected) {
           deps.roomUnavailable(message.message, message.status);
         } else if (message.type === 'error' && message.code === 'protocol') {

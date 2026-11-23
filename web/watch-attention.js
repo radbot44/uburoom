@@ -51,10 +51,8 @@ export function activityNeedsMe(activity, state, selfId, dismissed) {
     return activity.askedBy !== selfId && !activity.answers?.[selfId];
   }
   if (activity.kind === 'poll') {
-    if (activity.closed) return false;
-    const votes = activity.votes && typeof activity.votes === 'object' ? activity.votes : {};
-    const voted = Object.values(votes).some(list => Array.isArray(list) && list.includes(selfId));
-    return !voted;
+    if (activity.status === 'tie') return !!activity.can?.close;
+    return activity.status === 'open' && !activity.myVote;
   }
   if (activity.kind === 'announcement') {
     return activity.senderId !== selfId && !dismissed.has(activity.id);
@@ -65,7 +63,7 @@ export function activityNeedsMe(activity, state, selfId, dismissed) {
 /**
  * @param {any} activity
  * @param {any} state
- * @param {number} now
+ * @param {number | undefined} now
  */
 export function describeNowItem(activity, state, now) {
   if (activity.kind === 'check') {
@@ -75,10 +73,14 @@ export function describeNowItem(activity, state, now) {
     const answers = activity.answers && typeof activity.answers === 'object' ? activity.answers : {};
     const readyCount = admitted.filter(person => answers[person.id] === 'ready').length;
     if (activity.mode === 'break') {
-      const remaining =
-        activity.breakEndsAt > now ? `back in ${formatRemaining(activity.breakEndsAt - now)}` : 'ending';
+      let title = 'Break';
+      if (now !== undefined) {
+        if (activity.resumingAt > now) title += ` · resuming in ${Math.ceil((activity.resumingAt - now) / 1000)}s`;
+        else if (activity.breakEndsAt > now) title += ` · back in ${formatRemaining(activity.breakEndsAt - now)}`;
+        else title += ' · ready to resume';
+      }
       return {
-        title: `Break · ${remaining}`,
+        title,
         meta: `${readyCount}/${admitted.length} ready`,
         symbol: 'clock',
       };
@@ -91,11 +93,13 @@ export function describeNowItem(activity, state, now) {
   }
   if (activity.kind === 'poll') {
     const remaining =
-      !activity.closed && activity.closesAt > now
+      activity.status === 'open' && now !== undefined && activity.closesAt > now
         ? `${formatRemaining(activity.closesAt - now)} left`
-        : activity.closed
+        : activity.status === 'closed'
           ? 'Results'
-          : 'Open';
+          : activity.status === 'tie'
+            ? 'Host chooses winner'
+            : 'Open';
     return {
       title: `Poll · ${activity.question || 'Vote'}`,
       meta: remaining,
@@ -136,9 +140,9 @@ export function createAttention({ onChange = () => {} } = {}) {
      * Computes the live Now items and the attention badge count.
      * @param {any} state
      * @param {string | undefined} selfId
-     * @param {number} [now]
+     * @param {number | undefined} now
      */
-    compute(state, selfId, now = Date.now()) {
+    compute(state, selfId, now) {
       const list = Array.isArray(state?.activities) ? state.activities : [];
       const items = list.map(activity => {
         const desc = describeNowItem(activity, state, now);

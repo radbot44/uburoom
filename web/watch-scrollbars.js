@@ -88,8 +88,9 @@ export function mount() {
     const activityScroll = document.getElementById('activity-scroll');
     toggleInner(activityScroll, useDialogScrollbars && !!activity?.open);
 
-    const poll = document.getElementById('poll-card');
-    toggleInner(poll, useDialogScrollbars && !!poll && !poll.hidden);
+    for (const card of document.querySelectorAll('.human-check-prompt')) {
+      toggleInner(card, useDialogScrollbars && !card.hidden);
+    }
 
     for (const dialog of document.querySelectorAll('dialog.watch-dialog')) {
       if (dialog.id === 'room-settings-dialog' || dialog.id === 'server-settings-dialog') continue;
@@ -121,7 +122,7 @@ export function mount() {
         attributes: true,
         attributeFilter: ['hidden'],
       });
-    for (const id of ['empty-stage', 'poll-card']) {
+    for (const id of ['empty-stage', 'poll-card', 'break-card', 'human-check-prompt']) {
       const element = document.getElementById(id);
       if (element)
         new MutationObserver(syncInnerScrollbars).observe(element, { attributes: true, attributeFilter: ['hidden'] });

@@ -2,7 +2,7 @@
 
 A client holds one WebSocket to `/watch-socket` per tab or app window. Everything about rooms travels on it as JSON messages with a `type`. The message shapes and their validators live in [`shared/wire-protocol.mjs`](../shared/wire-protocol.mjs); the server, the browser and the test harnesses load that file, and other clients (such as `plezy-uburoom`) mirror it.
 
-Protocol version: **3**. Earlier protocol versions (1 and 2) are no longer spoken.
+Protocol version: **4**. Earlier protocol versions are no longer spoken.
 
 ## Connecting
 
@@ -10,16 +10,16 @@ Protocol version: **3**. Earlier protocol versions (1 and 2) are no longer spoke
 2. Send `hello` within five seconds:
 
    ```json
-   { "type": "hello", "protocol": 3, "token": "<64 hex, for bearer sign-in>", "csrf": "<for cookie sign-in>" }
+   { "type": "hello", "protocol": 4, "token": "<64 hex, for bearer sign-in>", "csrf": "<for cookie sign-in>" }
    ```
 
 3. The server answers `welcome`:
 
    ```json
-   { "type": "welcome", "protocol": 3, "connectionId": 7, "resyncMs": 20000 }
+   { "type": "welcome", "protocol": 4, "connectionId": 7, "resyncMs": 20000 }
    ```
 
-A client that states another version, or sends anything other than `hello` first, gets `{ "type": "error", "code": "protocol", "status": 426, "message": "…", "supported": [3] }` and the socket closes with code 4010. Show the message and stop reconnecting: only updating the client helps.
+A client that states another version, or sends anything other than `hello` first, gets `{ "type": "error", "code": "protocol", "status": 426, "message": "…", "supported": [4] }` and the socket closes with code 4010. Show the message and stop reconnecting: only updating the client helps.
 
 Sending `hello` again on an open connection renews its sign-in (for example with a renewed bearer token).
 
@@ -38,7 +38,7 @@ A request carries an `id` the client chooses (a non-negative integer, unique amo
 
 | Type | Fields | Answer |
 | --- | --- | --- |
-| `join` | `roomId`, `viewerId`, optional `preferences` | Both lanes of the tab's view (below), `timing` |
+| `join` | `roomId`, `viewerId`, optional `preferences` | Both view lanes (below), `timing`, and the initial `journal` snapshot |
 | `leave` | `roomId`, `viewerId` | `{ ok: true }` |
 | `command` | `roomId`, `viewerId?`, `epoch`, `expiresAt`, `command: { action, args? }` | The command's outcome: `{ status: "applied" \| …, message? }` |
 | `ready` | `roomId`, `viewerId`, `mediaVersion`, `ready`, `readinessVersion`, optional `blocker` | `{ ok: true }` |
@@ -72,10 +72,10 @@ The server sends state without being asked, and only when it changed.
 | --- | --- | --- |
 | `room` | `roomId`, `viewerId`, `version`, `state`: the room as this tab may see it (timeline, media, queue summary, participants, permissions, live `activities`) | The room changed |
 | `viewer` | `roomId`, `viewerId`, `version`, `state`: this tab's own stream, tracks and settings, with `mediaVersion` | This tab's stream or settings changed, or the room's video did |
-| `journal` | `roomId`, `journalId`, `full`, `head`, `entries`: audience-filtered room activity log entries (capped at 500) | On join (`full: true`), on new entries (`full: false`), or on role/visibility/reset changes (`full: true`) |
+| `journal` | `roomId`, `journalId`, `full`, `head`, `entries`, `removed`: audience-filtered room activity (capped at 500) and removed sequence numbers | On updates or when the subscriber needs a fresh snapshot |
 | `lobby` | `version`, `identity`, `rooms` | The room list or the person's standing changed |
 
-Protocol 3 retires `room.feedback` (participant toasts now derive from live `journal` appends) and moves live room tools (readiness checks, breaks, announcements, polls) onto `room.activities`. Periodic `resyncMs` sweeps do not resend the `journal` lane when nothing changed; explicit client `resync` requests send a `full: true` journal snapshot.
+Participant toasts derive from live journal appends, and live room tools use `room.activities`. Protocol 4 includes the initial journal snapshot in the join acknowledgement. Journal deltas include `removed` sequence numbers for entries replaced or evicted since the subscriber's last cursor. The server sends a full snapshot when the cursor predates retained changes, the audience changes, or the client requests `resync`. Periodic `resyncMs` sweeps send no journal payload when it is unchanged.
 
 A tab's view is its two lanes together: `mergeView(room.state, viewer.state)`. The `viewer` lane names the `mediaVersion` its stream belongs to; show the lanes together only when both name the same one (`lanesAgree`), so a new video is never paired with the previous video's stream. A lane message replaces that lane whole. Drop one whose `version` is lower than the lane's current version.
 

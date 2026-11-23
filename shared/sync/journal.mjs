@@ -70,6 +70,9 @@ export function createJournal(options = {}) {
   const mergeKeys = new WeakMap();
   /** @type {Set<number>} */
   const deletedSeqs = new Set();
+  /** @type {Array<{seq: number, audience?: string, atSeq: number}>} */
+  const recentRemovals = [];
+  let deltaFloor = 0;
 
   if (Array.isArray(options.entries) && options.entries.length) {
     const sorted = options.entries
@@ -78,6 +81,12 @@ export function createJournal(options = {}) {
       .sort((a, b) => a.seq - b.seq);
     entries = sorted.length > limit ? sorted.slice(sorted.length - limit) : sorted;
     if (entries.length) head = Math.max(head, entries[entries.length - 1].seq);
+    deltaFloor = head;
+  }
+
+  function trackRemoval(entry, atSeq) {
+    recentRemovals.push({ seq: entry.seq, audience: entry.audience, atSeq });
+    if (recentRemovals.length > limit) deltaFloor = recentRemovals.shift().atSeq;
   }
 
   return {
@@ -133,6 +142,7 @@ export function createJournal(options = {}) {
               data = merged;
               entries.splice(index, 1);
               deletedSeqs.add(candidate.seq);
+              trackRemoval(candidate, head + 1);
             }
             break;
           }
@@ -154,7 +164,7 @@ export function createJournal(options = {}) {
       if (key) mergeKeys.set(entry, key);
       entries.push(entry);
       if (entries.length > limit) {
-        entries.splice(0, entries.length - limit);
+        trackRemoval(entries.shift(), head);
       }
       return entry;
     },
@@ -163,6 +173,15 @@ export function createJournal(options = {}) {
       if (!sinceSeq || sinceSeq <= 0) return entries.slice();
       if (sinceSeq >= head) return [];
       return entries.filter(entry => entry.seq > sinceSeq);
+    },
+    /** Returns an exact append/removal delta, or a full snapshot when the cursor fell behind. */
+    changesSince(sinceSeq) {
+      const full = sinceSeq === undefined || sinceSeq < deltaFloor || sinceSeq > head;
+      return {
+        full,
+        entries: this.since(full ? 0 : sinceSeq),
+        removed: full ? [] : recentRemovals.filter(entry => entry.atSeq > sinceSeq && entry.seq <= sinceSeq),
+      };
     },
     /** Returns a copy of the journal state. */
     snapshot() {
@@ -179,6 +198,7 @@ export function createJournal(options = {}) {
         head,
         entries: this.since(savedSeq),
         deletes: [...deletedSeqs],
+        trimThrough: entries.length ? entries[0].seq - 1 : 0,
       };
     },
     /** Marks previously flushed merge deletes as persisted. @param {number[]} flushedDeletes */
@@ -200,12 +220,16 @@ export function createJournal(options = {}) {
         entries.length ? entries[entries.length - 1].seq : 0,
       );
       deletedSeqs.clear();
+      recentRemovals.length = 0;
+      deltaFloor = head;
     },
     /** Clears all entries and rotates `journalId` so clients reset their copy. */
     clear(nextJournalId = undefined) {
       entries = [];
       head = 0;
       deletedSeqs.clear();
+      recentRemovals.length = 0;
+      deltaFloor = 0;
       journalId = typeof nextJournalId === 'string' && nextJournalId ? nextJournalId : createId();
     },
   };

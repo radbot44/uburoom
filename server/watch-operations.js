@@ -332,7 +332,7 @@ function watchOperations({
    * @param {any} auth
    * @param {any} room
    * @param {any} viewer
-   * @param {{room?: boolean, viewer?: boolean, journal?: {full?: boolean, sinceSeq?: number} | false, renew: boolean}} want
+   * @param {{room?: boolean, viewer?: boolean, journal?: {full?: boolean, sinceSeq?: number, journalId?: string, audienceKey?: string} | false, renew: boolean}} want
    */
   async function project(
     context,
@@ -450,19 +450,20 @@ function watchOperations({
     if (wantJournal) {
       const journal = watch.journal(room);
       if (journal) {
-        const full = !!wantJournal.full;
-        const sinceSeq = full ? 0 : wantJournal.sinceSeq || 0;
-        const raw = journal.since(sinceSeq);
-        const entries = raw.filter(entry => !entry.audience || hub.authorize(auth.actor, room, entry.audience).ok);
+        const visible = entry => !entry.audience || hub.authorize(auth.actor, room, entry.audience).ok;
         const audienceKey = [
           hub.authorize(auth.actor, room, 'kickParticipants').ok ? 1 : 0,
           hub.authorize(auth.actor, room, 'roomSettings').ok ? 1 : 0,
         ].join(':');
+        const reset =
+          wantJournal.full || wantJournal.journalId !== journal.journalId || wantJournal.audienceKey !== audienceKey;
+        const delta = journal.changesSince(reset ? undefined : wantJournal.sinceSeq || 0);
         journalPayload = {
           journalId: journal.journalId,
-          full,
+          full: delta.full,
           head: journal.head,
-          entries,
+          entries: delta.entries.filter(visible),
+          removed: delta.removed.filter(visible).map(entry => entry.seq),
           audienceKey,
         };
       }
@@ -543,7 +544,7 @@ function watchOperations({
    * @param {Context} context
    * @param {string} roomId
    * @param {string} viewerId
-   * @param {{room?: boolean, viewer?: boolean, journal?: {full?: boolean, sinceSeq?: number} | false}} [want] The lanes to project.
+   * @param {{room?: boolean, viewer?: boolean, journal?: {full?: boolean, sinceSeq?: number, journalId?: string, audienceKey?: string} | false}} [want] The lanes to project.
    */
   async function lanes(context, roomId, viewerId, want = {}) {
     try {

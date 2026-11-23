@@ -1,6 +1,7 @@
 // @ts-check
 /* Single authority for stage overlay card precedence.
- * Order: system readiness/recovery > break > poll > readiness check > announcement.
+ * System readiness/recovery comes first. Automatic cards prefer break, poll,
+ * readiness check and announcement. The viewer can open a specific card from Activity.
  */
 
 const PRIORITY = Object.freeze({
@@ -19,14 +20,21 @@ const PRIORITY = Object.freeze({
 export function createStageCardManager({ isSystemCardVisible, attention }) {
   /** @type {Array<{ kind: string, priority: number, element: () => HTMLElement | null, getActivity: (state: any) => any, render: (state: any, activity: any) => void, hide?: () => void }>} */
   const cards = [];
+  let requestedId;
 
-  return {
+  const manager = {
     register(card) {
       cards.push({
         ...card,
         priority: card.priority ?? PRIORITY[card.kind] ?? 0,
       });
       cards.sort((a, b) => b.priority - a.priority);
+    },
+    open(id, state) {
+      if (isSystemCardVisible()) return false;
+      requestedId = id;
+      attention.reopen(id);
+      return manager.sync(state) === id;
     },
     /**
      * Evaluates card precedence and renders/shows at most one activity card
@@ -43,10 +51,13 @@ export function createStageCardManager({ isSystemCardVisible, attention }) {
           const activity = card.getActivity(state);
           if (!activity) continue;
           if (attention?.isDismissed(activity.id)) continue;
-          winner = card;
-          winnerActivity = activity;
-          break;
+          if (!winner || activity.id === requestedId) {
+            winner = card;
+            winnerActivity = activity;
+          }
+          if (activity.id === requestedId) break;
         }
+        if (winnerActivity?.id !== requestedId) requestedId = undefined;
       }
 
       for (const card of cards) {
@@ -60,7 +71,8 @@ export function createStageCardManager({ isSystemCardVisible, attention }) {
           el.hidden = true;
         }
       }
-      return winner?.kind || null;
+      return winnerActivity?.id;
     },
   };
+  return manager;
 }

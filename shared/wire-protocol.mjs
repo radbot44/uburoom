@@ -5,7 +5,7 @@
  */
 // Raised whenever a message changes shape. A client states the version it speaks
 // in `hello`; the server refuses any other with a `protocol` error.
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 4;
 // How often the server sends every lane again, whether or not it changed.
 const RESYNC_MS = 20000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -240,6 +240,17 @@ function serverMessageError(message) {
       return Number.isSafeInteger(m.version) && Array.isArray(m.rooms) && object(m.identity)
         ? undefined
         : 'lobby is incomplete';
+    case 'journal':
+      return uuid(m.roomId) &&
+        uuid(m.journalId) &&
+        typeof m.full === 'boolean' &&
+        id(m.head) &&
+        Array.isArray(m.entries) &&
+        m.entries.every(entry => object(entry) && id(entry.seq) && entry.seq <= m.head) &&
+        Array.isArray(m.removed) &&
+        m.removed.every(seq => id(seq) && seq <= m.head)
+        ? undefined
+        : 'journal is incomplete';
     case 'ack':
     case 'clock':
       return id(m.id) ? undefined : m.type + ' needs an id';

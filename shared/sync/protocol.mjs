@@ -15,6 +15,13 @@ export function createProtocolApi() {
     }
     return { readinessId: a.readinessId };
   };
+  const checkIdentity = (a, { readinessIdPattern }) => {
+    if (a.checkId === undefined) return {};
+    if (typeof a.checkId !== 'string' || !readinessIdPattern.test(a.checkId)) {
+      throw new Error('Readiness check expired.');
+    }
+    return { checkId: a.checkId };
+  };
   // Media-agnostic commands, each declared once with its argument validator.
   // Host applications add their own facts and extension commands on top.
   /** @type {Readonly<Record<string, {management?: boolean, args: (a: any, options: {userIdPattern: RegExp, readinessIdPattern: RegExp}) => Record<string, any>}>>} */
@@ -43,19 +50,13 @@ export function createProtocolApi() {
     'media.ready.wait': { management: true, args: readiness },
     'media.ready.cancel': { management: true, args: readiness },
     'check.ask': { args: none },
-    'check.clear': { args: none },
+    'check.clear': { args: checkIdentity },
     'check.reply': {
-      args(a, { readinessIdPattern }) {
+      args(a, options) {
         if (a.status !== 'ready' && a.status !== 'hold') {
           throw new Error('Choose Ready or Need a moment');
         }
-        if (a.checkId !== undefined) {
-          if (typeof a.checkId !== 'string' || !readinessIdPattern.test(a.checkId)) {
-            throw new Error('Readiness check expired.');
-          }
-          return { status: a.status, checkId: a.checkId };
-        }
-        return { status: a.status };
+        return { status: a.status, ...checkIdentity(a, options) };
       },
     },
     'media.autoplay.set': {

@@ -662,16 +662,21 @@ export function mount(host, deps) {
     void deps.syncRichPresence?.();
     void store.player.sync.synchronize();
   }
-  function sendHumanCheck(action, args = {}) {
+  function sendActivityCommand(anchor, action, args = {}) {
     return deps.execute({ action, args }).catch(error => {
-      deps.fail(error.message);
+      dialogError(anchor, error.message);
     });
   }
-  function clearHumanCheck(checkId = store.room.state?.humanCheck?.id) {
-    return sendHumanCheck('check.clear', checkId ? { checkId } : {});
+  function clearHumanCheck(checkId = store.room.state?.humanCheck?.id, anchor = $('human-check-clear')) {
+    return sendActivityCommand(anchor, 'check.clear', checkId ? { checkId } : {});
   }
-  function replyHumanCheck(status, checkId = store.room.state?.humanCheck?.id) {
-    return sendHumanCheck('check.reply', checkId ? { status, checkId } : { status });
+  function replyHumanCheck(anchor, status) {
+    const checkId = store.room.state?.humanCheck?.id;
+    if (checkId) return sendActivityCommand(anchor, 'check.reply', { status, checkId });
+  }
+  function setActivityText(id, value) {
+    const element = $(id);
+    if (element.textContent !== value) element.textContent = value;
   }
   /**
    * The ready check's card on the video, in the same place and style as the room's other readiness
@@ -695,18 +700,24 @@ export function mount(host, deps) {
     const myAnswer = selfId ? answers[selfId] : undefined;
     const answering = admitted.some(person => person.id === selfId) && check.askedBy !== selfId;
     const busy = !!store.room.pending;
-    $('human-check-prompt-title').textContent = everyone
-      ? 'Everyone is ready'
-      : check.askedByName
-        ? check.askedByName + ' asks: Ready to play?'
-        : 'Ready to play?';
-    $('human-check-prompt-meta').textContent = [
-      ready.length + ' of ' + admitted.length + ' ready',
-      holding.length ? names(holding) + (holding.length === 1 ? ' needs' : ' need') + ' a moment' : '',
-      waiting.length ? 'Waiting for ' + names(waiting) : '',
-    ]
-      .filter(Boolean)
-      .join(' · ');
+    setActivityText(
+      'human-check-prompt-title',
+      everyone
+        ? 'Everyone is ready'
+        : check.askedByName
+          ? check.askedByName + ' asks: Ready to play?'
+          : 'Ready to play?',
+    );
+    setActivityText(
+      'human-check-prompt-meta',
+      [
+        ready.length + ' of ' + admitted.length + ' ready',
+        holding.length ? names(holding) + (holding.length === 1 ? ' needs' : ' need') + ' a moment' : '',
+        waiting.length ? 'Waiting for ' + names(waiting) : '',
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    );
     readyButton.hidden = holdButton.hidden = !answering;
     readyButton.disabled = holdButton.disabled = busy;
     readyButton.setAttribute('aria-pressed', String(myAnswer === 'ready'));
@@ -732,21 +743,24 @@ export function mount(host, deps) {
       const s = Math.max(0, Math.ceil(ms / 1000));
       return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
     };
-    if (brk.resumingAt && brk.resumingAt > now) {
+    let title = 'Intermission';
+    if (now !== undefined && brk.resumingAt > now) {
       const secs = Math.max(1, Math.ceil((brk.resumingAt - now) / 1000));
-      $('break-card-title').textContent = `Resuming in ${secs}s…`;
-    } else if (brk.breakEndsAt > now) {
-      $('break-card-title').textContent = `Intermission · back in ${fmt(brk.breakEndsAt - now)}`;
-    } else {
-      $('break-card-title').textContent = 'Ready to resume?';
+      title = `Resuming in ${secs}s…`;
+    } else if (now !== undefined) {
+      title = brk.breakEndsAt > now ? `Intermission · back in ${fmt(brk.breakEndsAt - now)}` : 'Ready to resume?';
     }
-    $('break-card-meta').textContent = [
-      `${ready.length} of ${admitted.length} ready`,
-      holding.length ? `${holding.map(p => p.name).join(', ')} need${holding.length === 1 ? 's' : ''} a moment` : '',
-      brk.autoResume ? 'Auto-resume on' : '',
-    ]
-      .filter(Boolean)
-      .join(' · ');
+    setActivityText('break-card-title', title);
+    setActivityText(
+      'break-card-meta',
+      [
+        `${ready.length} of ${admitted.length} ready`,
+        holding.length ? `${holding.map(p => p.name).join(', ')} need${holding.length === 1 ? 's' : ''} a moment` : '',
+        brk.autoResume ? 'Auto-resume on' : '',
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    );
     const readyBtn = $('break-ready');
     const holdBtn = $('break-hold');
     const resumeBtn = $('break-resume');
@@ -763,22 +777,18 @@ export function mount(host, deps) {
     endBtn.hidden = !canManage;
     endBtn.disabled = busy;
   }
-  let breakTickTimer;
-  function syncBreakTick() {
-    const brk = store.room.state?.activities?.find(a => a.kind === 'check' && a.mode === 'break');
-    if (brk && !breakTickTimer) {
-      breakTickTimer = deps.time.setInterval(() => {
-        if (!store.room.state?.activities?.some(a => a.kind === 'check' && a.mode === 'break')) {
-          deps.time.clearInterval(breakTickTimer);
-          breakTickTimer = undefined;
-          return;
-        }
-        deps.stageCards?.sync(store.room.state);
-        deps.activityHub?.sync?.();
-      }, 1000);
-    } else if (!brk && breakTickTimer) {
-      deps.time.clearInterval(breakTickTimer);
-      breakTickTimer = undefined;
+  let stopActivityTick;
+  function syncActivityTick() {
+    const hasCountdown = store.room.state?.activities?.some(
+      activity =>
+        (activity.kind === 'check' && activity.mode === 'break') ||
+        (activity.kind === 'poll' && activity.status === 'open' && Number.isFinite(activity.closesAt)),
+    );
+    if (hasCountdown) {
+      stopActivityTick ??= deps.every(1000, renderHumanCheckPrompt);
+    } else if (stopActivityTick) {
+      stopActivityTick();
+      stopActivityTick = undefined;
     }
   }
   /** @type {Map<string, HTMLButtonElement>} */
@@ -801,7 +811,7 @@ export function mount(host, deps) {
       const s = Math.max(0, Math.ceil(ms / 1000));
       return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
     };
-    $('poll-card-title').textContent = poll.question || 'Poll';
+    setActivityText('poll-card-title', poll.question || 'Poll');
     const metaParts = [];
     if (poll.status === 'open') {
       metaParts.push(poll.closesAt && poll.closesAt > now ? `${fmt(poll.closesAt - now)} left` : 'Open');
@@ -813,10 +823,10 @@ export function mount(host, deps) {
       if (poll.tieBrokenBy === 'random') metaParts.push('tie → random');
     }
     metaParts.push(`${total} ${total === 1 ? 'vote' : 'votes'}`);
-    $('poll-card-meta').textContent = metaParts.join(' · ');
+    setActivityText('poll-card-meta', metaParts.join(' · '));
 
     if (errorEl) {
-      errorEl.textContent = poll.actionError || '';
+      setActivityText('poll-card-error', poll.actionError || '');
       errorEl.hidden = !poll.actionError;
     }
 
@@ -869,13 +879,9 @@ export function mount(host, deps) {
           const active = store.room.state?.activities?.find(a => a.kind === 'poll');
           if (!active) return;
           if (active.status === 'open') {
-            void deps
-              .execute({ action: 'poll.vote', args: { pollId: active.id, optionId: opt.id } })
-              .catch(error => deps.fail(error.message));
+            void sendActivityCommand(tile, 'poll.vote', { pollId: active.id, optionId: opt.id });
           } else if (active.status === 'tie' && active.can?.close && active.tiedOptionIds?.includes(opt.id)) {
-            void deps
-              .execute({ action: 'poll.close', args: { pollId: active.id, winnerOptionId: opt.id } })
-              .catch(error => deps.fail(error.message));
+            void sendActivityCommand(tile, 'poll.close', { pollId: active.id, winnerOptionId: opt.id });
           }
         });
         pollTileNodes.set(opt.id, tile);
@@ -1066,6 +1072,7 @@ export function mount(host, deps) {
     setPressed('.poll-timer-chip', 'data-seconds', '');
     setPressed('.poll-action-chip', 'data-action', onClose);
     setPressed('.poll-tie-chip', 'data-tie', tieRule);
+    for (const group of dialog.querySelectorAll('.activity-form-choices')) uburoomControls.segmented(group);
 
     dialog.querySelectorAll('.poll-timer-chip').forEach(btn => {
       btn.onclick = () => {
@@ -1144,12 +1151,13 @@ export function mount(host, deps) {
     uburoomDialogs.open(dialog);
   }
   $('room-poll-btn')?.addEventListener('click', () => openPollDialog());
-  $('poll-close-btn')?.addEventListener('click', () => {
+  $('poll-close-btn')?.addEventListener('click', event => {
     const poll = store.room.state?.activities?.find(a => a.kind === 'poll');
-    if (poll) void deps.execute({ action: 'poll.close', args: { pollId: poll.id } }).catch(e => deps.fail(e.message));
+    if (poll) void sendActivityCommand(event.currentTarget, 'poll.close', { pollId: poll.id });
   });
-  $('poll-clear-btn')?.addEventListener('click', () => {
-    void deps.execute({ action: 'poll.clear', args: {} }).catch(e => deps.fail(e.message));
+  $('poll-clear-btn')?.addEventListener('click', event => {
+    const poll = store.room.state?.activities?.find(a => a.kind === 'poll');
+    if (poll) void sendActivityCommand(event.currentTarget, 'poll.clear', { pollId: poll.id });
   });
   $('poll-minimize')?.addEventListener('click', () => {
     const poll = store.room.state?.activities?.find(a => a.kind === 'poll');
@@ -1185,8 +1193,8 @@ export function mount(host, deps) {
       getActivity: state =>
         Array.isArray(state?.activities) ? state.activities.find(a => a.kind === 'announcement') : null,
       render: (_state, ann) => {
-        $('stage-announcement-sender').textContent = ann.senderName || 'Host';
-        $('stage-announcement-text').textContent = ann.text || '';
+        setActivityText('stage-announcement-sender', ann.senderName || 'Host');
+        setActivityText('stage-announcement-text', ann.text || '');
       },
     });
   }
@@ -1238,18 +1246,22 @@ export function mount(host, deps) {
       }
     }
     deps.activityHub?.sync?.();
-    syncBreakTick();
+    syncActivityTick();
   }
-  $('break-ready')?.addEventListener('click', () => void replyHumanCheck('ready'));
-  $('break-hold')?.addEventListener('click', () => void replyHumanCheck('hold'));
-  $('break-resume')?.addEventListener('click', () =>
-    deps.execute({ action: 'media.play' }).catch(error => deps.fail(error.message)),
+  $('break-ready')?.addEventListener('click', event => void replyHumanCheck(event.currentTarget, 'ready'));
+  $('break-hold')?.addEventListener('click', event => void replyHumanCheck(event.currentTarget, 'hold'));
+  $('break-resume')?.addEventListener('click', event => void sendActivityCommand(event.currentTarget, 'media.play'));
+  $('break-extend')?.addEventListener(
+    'click',
+    event =>
+      void sendActivityCommand(event.currentTarget, 'break.extend', {
+        minutes: 5,
+        checkId: store.room.state?.humanCheck?.id,
+      }),
   );
-  $('break-extend')?.addEventListener('click', () =>
-    deps.execute({ action: 'break.extend', args: { minutes: 5 } }).catch(error => deps.fail(error.message)),
-  );
-  $('break-end')?.addEventListener('click', () =>
-    deps.execute({ action: 'break.end', args: {} }).catch(error => deps.fail(error.message)),
+  $('break-end')?.addEventListener(
+    'click',
+    event => void sendActivityCommand(event.currentTarget, 'break.end', { checkId: store.room.state?.humanCheck?.id }),
   );
   $('break-minimize')?.addEventListener('click', () => {
     const brk = store.room.state?.activities?.find(a => a.kind === 'check' && a.mode === 'break');
@@ -1273,11 +1285,9 @@ export function mount(host, deps) {
       void startBreak($('break-start'), customMinutes.valueAsNumber);
     });
   }
-  $('human-check-ready').addEventListener('click', () => void replyHumanCheck('ready'));
-  $('human-check-hold').addEventListener('click', () => void replyHumanCheck('hold'));
-  $('human-check-play').addEventListener('click', () =>
-    deps.execute({ action: 'media.play' }).catch(error => deps.fail(error.message)),
-  );
+  $('human-check-ready').addEventListener('click', event => void replyHumanCheck(event.currentTarget, 'ready'));
+  $('human-check-hold').addEventListener('click', event => void replyHumanCheck(event.currentTarget, 'hold'));
+  $('human-check-play').addEventListener('click', event => void sendActivityCommand(event.currentTarget, 'media.play'));
   $('human-check-clear').addEventListener('click', () => void clearHumanCheck());
   $('human-check-minimize')?.addEventListener('click', () => {
     const state = store.room.state;

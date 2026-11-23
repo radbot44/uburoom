@@ -398,21 +398,4 @@
   .human-check-prompt > div > button[hidden] {
     display: none;
   }
-  .human-check-choice[data-check-choice='ready'][aria-pressed='true'] {
-    border-color: var(--success);
-    color: var(--success);
-    background: color-mix(in srgb, var(--success) 18%, var(--elevated));
-  }
-  .human-check-choice[data-check-choice='hold'][aria-pressed='true'] {
-    border-color: var(--warning);
-    color: var(--warning);
-    background: color-mix(in srgb, var(--warning) 18%, var(--elevated));
-  }
-  @media (forced-colors: active) {
-    .human-check-choice[aria-pressed='true'] {
-      outline: 2px solid Highlight;
-      background: Highlight;
-      color: HighlightText;
-    }
-  }
 }

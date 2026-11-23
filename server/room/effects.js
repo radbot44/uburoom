@@ -297,28 +297,9 @@ module.exports = {
   roomEffect(room, effect, removed) {
     switch (effect.type) {
       case 'poll-closed': {
-        const poll = effect.poll;
-        const winner = effect.winner;
-        if (poll) {
-          void this.inRoom(
-            room,
-            () => {
-              this.record(room, {
-                kind: 'poll.close',
-                data: {
-                  pollId: poll.id,
-                  question: poll.question,
-                  winner: winner?.label,
-                  ...(poll.tieBrokenBy ? { tieRule: poll.tieBrokenBy } : {}),
-                  action: poll.onClose,
-                },
-              });
-            },
-            undefined,
-          );
-          if (poll.onClose !== 'results' && winner?.media) {
-            void this.executePollWinAction(room, poll, winner);
-          }
+        const { poll, winner } = effect;
+        if (poll.onClose !== 'results' && winner?.media) {
+          void this.executePollWinAction(room, poll, winner);
         }
         return;
       }

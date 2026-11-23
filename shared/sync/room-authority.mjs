@@ -134,7 +134,7 @@ export function promoteGroupReadinessLead(room, now = Date.now()) {
   }
 }
 
-export function settle(room, now = Date.now(), monoNow = defaultMonoNow(), ctx = undefined) {
+export function settle(room, now = Date.now(), monoNow = defaultMonoNow()) {
   if (room.viewers.size === 1) {
     if (room.startAt > now) {
       room.startAt = now;
@@ -170,20 +170,6 @@ export function settle(room, now = Date.now(), monoNow = defaultMonoNow(), ctx =
   ) {
     room.readinessTimedOut = true;
     room.readinessStartAt = undefined;
-    room.revision++;
-  }
-  if (
-    expireActivities(room, now, {
-      onBreakAutoResume: (liveRoom, at) => {
-        if (liveRoom.media && !liveRoom.closed && !liveRoom.frozen && !liveRoom.waitingForHost) {
-          applyTimelineCommand(liveRoom, { action: 'media.play', args: {} }, { now: at, monoNow });
-        }
-      },
-      onPollClosed: (liveRoom, poll, winner, at) => {
-        ctx?.emit?.('poll-closed', { pollId: poll.id, poll, winner, at });
-      },
-    })
-  ) {
     room.revision++;
   }
 }
@@ -865,7 +851,7 @@ function autoStart(room, ctx) {
 function review(room, ctx) {
   if (room.closed || ctx.hold) return { elected: false };
   const { now, monoNow } = ctx;
-  settle(room, now, monoNow, ctx);
+  settle(room, now, monoNow);
   derive(room, now);
   let pruned = false,
     hostTimedOut = false,
@@ -934,6 +920,22 @@ function review(room, ctx) {
     elect(room, ctx);
     elected = true;
   }
+  // Only the lifecycle review settles live activities. A timeline read must not
+  // consume an activity deadline or discard the effects it produces.
+  if (
+    expireActivities(room, now, {
+      onBreakAutoResume: (liveRoom, at) => {
+        applyTimelineCommand(
+          liveRoom,
+          { action: 'media.play', args: {} },
+          { now: at, monoNow, createId: ctx.createId },
+        );
+        ctx.emit('break-auto-resumed', { at });
+      },
+      onPollClosed: (_liveRoom, poll, winner, at) => ctx.emit('poll-closed', { poll, winner, at }),
+    })
+  )
+    room.revision++;
   autoStart(room, ctx);
   if (!room.hadViewers && now - room.lastActivity > IDLE_ROOM_TIMEOUT_MS) close(room, ctx);
   return { elected };
@@ -1657,6 +1659,24 @@ export function createRoomCoordinator(options) {
     const stampChanged = visibleStamp(room) !== visibleStamp(result.state);
     const removed = commitRoomState(room, result.state, keys);
     if (before) observeJournalCommit(journal, before, room, eventNow, event.cause, event, extensions);
+    for (const effect of result.effects) {
+      if (effect.type === 'break-auto-resumed') {
+        journal.append({ at: effect.at, kind: 'break.end', data: { reason: 'auto' } });
+      } else if (effect.type === 'poll-closed') {
+        const { poll, winner, at } = effect;
+        journal.append({
+          at,
+          kind: 'poll.close',
+          data: {
+            pollId: poll.id,
+            question: poll.question,
+            winner: winner?.label,
+            ...(poll.tieBrokenBy ? { tieRule: poll.tieBrokenBy } : {}),
+            action: poll.onClose,
+          },
+        });
+      }
+    }
     const journalChanged = journal.head !== headBefore;
     const quiet =
       !options.onChange ||

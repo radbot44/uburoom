@@ -13,7 +13,7 @@ const {
 } = require('../shared/sync');
 const { PROTOCOL_VERSION, RESYNC_MS, CALLS, clientMessageError } = require('../shared/wire-protocol.mjs');
 /** @typedef {import('ws').WebSocket & {watchKick?: (roomId: string) => void, watchRtts?: Array<{at:number,ms:number}>}} WatchSocket */
-/** @typedef {{roomId: string, viewerId: string, sentRoom: number, stamp: string | undefined, viewerVersion: number, sentSeq?: number, sentJournalId?: string, journalAudienceKey?: string}} Subscription */
+/** @typedef {{roomId: string, viewerId: string, sentRoom: number, stamp: string | undefined, viewerVersion: number, sentSeq?: number, sentJournalId?: string, journalAudienceKey?: string, journalRefresh?: number, sentJournalRefresh?: number}} Subscription */
 
 /**
  * The room connection: typed messages (shared/wire-protocol.mjs) over one authenticated
@@ -197,9 +197,11 @@ function watchSockets({
             hub.authorize(viewer.actor, room, 'roomSettings').ok ? 1 : 0,
           ].join(':')
         : undefined;
+    const journalRefresh = subscription.journalRefresh || 0;
     const journalReset =
       !!journal &&
-      (subscription.sentJournalId !== journal.journalId ||
+      (journalRefresh !== (subscription.sentJournalRefresh || 0) ||
+        subscription.sentJournalId !== journal.journalId ||
         (audienceKey !== undefined && subscription.journalAudienceKey !== audienceKey));
     const journalChanged = !!journal && journal.head > (subscription.sentSeq || 0);
     const wantJournal = journalReset || journalChanged;
@@ -207,7 +209,12 @@ function watchSockets({
       wantViewer = force || stamp !== subscription.stamp;
     if (!wantRoom && !wantViewer && !wantJournal) return;
     const journalRequest = wantJournal
-      ? { full: journalReset || !subscription.sentJournalId, sinceSeq: subscription.sentSeq || 0 }
+      ? {
+          full: journalReset || !subscription.sentJournalId,
+          sinceSeq: subscription.sentSeq || 0,
+          journalId: subscription.sentJournalId,
+          audienceKey: subscription.journalAudienceKey,
+        }
       : false;
     const result = await waitFor(
       perform(client, signal, ctx =>
@@ -241,12 +248,14 @@ function watchSockets({
       subscription.sentSeq = j.head;
       subscription.sentJournalId = j.journalId;
       subscription.journalAudienceKey = j.audienceKey;
+      subscription.sentJournalRefresh = journalRefresh;
       send(client, {
         type: 'journal',
         roomId,
         journalId: j.journalId,
         full: j.full,
         entries: j.entries,
+        removed: j.removed,
         head: j.head,
       });
     }
@@ -427,22 +436,24 @@ function watchSockets({
           sentJournalId: initialJournal?.journalId,
           journalAudienceKey: initialJournal?.audienceKey,
         });
-        if (initialJournal) {
-          send(client, {
-            type: 'journal',
-            roomId,
-            journalId: initialJournal.journalId,
-            full: true,
-            entries: initialJournal.entries,
-            head: initialJournal.head,
-          });
-        }
         const { room: roomLane, viewer: viewerLane, timing } = result.value;
         return {
           roomId,
           viewerId,
           room: { version: subscription.sentRoom, state: roomLane },
           viewer: { version: subscription.viewerVersion, state: viewerLane },
+          ...(initialJournal
+            ? {
+                journal: {
+                  roomId,
+                  journalId: initialJournal.journalId,
+                  full: true,
+                  entries: initialJournal.entries,
+                  removed: [],
+                  head: initialJournal.head,
+                },
+              }
+            : {}),
           timing,
         };
       },
@@ -524,7 +535,7 @@ function watchSockets({
    * a provider and must not hold up a room's state.
    */
   async function resync(client, message) {
-    if (client.room) client.room.sentJournalId = undefined;
+    if (client.room) client.room.journalRefresh = (client.room.journalRefresh || 0) + 1;
     void client.lanes.lobby.request(true);
     await client.lanes.room.request(true);
     send(client, { type: 'ack', id: message.id, value: { serverNow: watch.clock.now() } });

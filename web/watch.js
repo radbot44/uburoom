@@ -192,7 +192,8 @@ Object.assign(deps, tracksMenu.mount($('tracks-dialog'), deps));
 const toasts = uburoomToasts.create($('watch-toasts'), { stage: $('stage') });
 deps.toasts = toasts;
 deps.journal = roomJournal;
-deps.receiveJournal = message => roomJournal.apply(message);
+deps.receiveJournal = message =>
+  message.roomId === store.connection.roomLanes?.roomId ? roomJournal.apply(message) : { gap: false };
 const attention = createAttention({
   onChange: () => {
     stageCards.sync(store.room.state);
@@ -212,34 +213,23 @@ const activityHub = mountActivityHub({
   attention,
   getState: () => store.room.state,
   getSelfId: () => store.room.state?.actorId || store.identity.me?.account?.id || store.identity.me?.userId,
-  onReopenActivity: () => stageCards.sync(store.room.state),
+  getServerNow: time.serverNow,
+  onReopenActivity: id => stageCards.open(id, store.room.state),
 });
 deps.attention = attention;
 deps.stageCards = stageCards;
 deps.activityHub = activityHub;
-{
-  let lastToastKind = '';
-  let lastToastAt = 0;
-  roomJournal.subscribe(change => {
-    if (change.full || !change.added.length) return;
-    const myId = store.identity.me?.userId;
-    const now = time.serverNow();
-    for (const entry of change.added) {
-      if (entry.actor?.id && myId && entry.actor.id === myId) continue;
-      if (now - entry.at >= 3000) continue;
-      const details = uburoomWatchFeedback.journalToastDetails(entry);
-      if (!details) continue;
-      // Combine rapid same-kind toasts within 1 s by reusing the 'participant' slot.
-      if (entry.kind === lastToastKind && now - lastToastAt < 1000) {
-        toasts.show('participant', details);
-      } else {
-        lastToastKind = entry.kind;
-        lastToastAt = now;
-        toasts.show('participant', details);
-      }
-    }
-  });
-}
+roomJournal.subscribe(change => {
+  if (change.full || !change.added.length) return;
+  const myId = store.identity.me?.userId;
+  const now = time.serverNow();
+  if (now === undefined) return;
+  for (const entry of change.added) {
+    if ((myId && entry.actor?.id === myId) || now - entry.at >= 3000) continue;
+    const details = uburoomWatchFeedback.journalToastDetails(entry);
+    if (details) toasts.show('participant', details);
+  }
+});
 function renderNotifications() {
   const button = $('notifications-toggle');
   button.setAttribute('aria-pressed', String(toasts.enabled));
@@ -296,7 +286,7 @@ const roomUI = uburoomRoomUI.mount({
   getMe: () => store.identity.me,
   execute: (...args) => deps.execute(...args),
   share: (invite, name, id) => roomShare.open(id || store.room.selected),
-  onClearHumanCheck: checkId => deps.clearHumanCheck(checkId),
+  onClearHumanCheck: (checkId, anchor) => deps.clearHumanCheck(checkId, anchor),
   join: async id => {
     await deps.selectRoom(id);
     if (!store.room.state) throw new Error('Room unavailable');

@@ -97,6 +97,48 @@ test('journal numbers entries monotonically, enforces cap, and merges with repla
   assert.equal(JOURNAL_LIMIT, 500);
 });
 
+test('journal deltas remove chained replacements and evictions from the subscriber copy', async () => {
+  const { createClientJournal } = await import('../web/watch/journal.js');
+  const client = createClientJournal();
+  const journal = createJournal({ limit: 3 });
+  const merge = { key: 'seek', mergeWithin: 5000 };
+  const seek = at => journal.append({ kind: 'playback.seek', at }, merge);
+  journal.append({ kind: 'people.join', at: 500 });
+  const original = seek(1000);
+  const project = () => {
+    const delta = journal.changesSince(client.journalId ? client.head : undefined);
+    client.apply({
+      roomId: 'room',
+      journalId: journal.journalId,
+      head: journal.head,
+      ...delta,
+      removed: delta.removed.map(entry => entry.seq),
+    });
+    assert.deepEqual(client.entries, journal.since());
+    return delta;
+  };
+  project();
+  seek(1100);
+  seek(1200);
+  assert.deepEqual(
+    project().removed.map(entry => entry.seq),
+    [original.seq],
+  );
+  journal.append({ kind: 'playback.play', at: 2000 });
+  journal.append({ kind: 'playback.pause', at: 3000 });
+  assert.deepEqual(
+    project().removed.map(entry => entry.seq),
+    [1],
+  );
+  seek(3100);
+  seek(3200);
+  seek(3300);
+  seek(3400);
+  assert.equal(journal.changesSince(2).full, true);
+  assert.equal(journal.pendingWrite(0).trimThrough, journal.since()[0].seq - 1);
+  project();
+});
+
 test('coordinator observer logs play/pause, seek merges, buffering, presence grace, host handoff, and media transitions', async () => {
   let clock = 100_000;
   let mono = 1000;

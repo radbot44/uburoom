@@ -755,7 +755,7 @@
                 <h2 id="break-card-title">Intermission</h2>
                 <p id="break-card-meta"></p>
                 <div>
-                  <button id="break-ready" class="primary human-check-choice" type="button" aria-pressed="false">
+                  <button id="break-ready" class="quiet human-check-choice" type="button" aria-pressed="false">
                     I’m back</button
                   ><button id="break-hold" class="quiet human-check-choice" type="button" aria-pressed="false">
                     Need a moment</button
@@ -778,21 +778,9 @@
                 <p id="human-check-prompt-meta"></p>
                 <div>
                   <button id="human-check-play" class="primary" type="button" hidden>Play</button
-                  ><button
-                    id="human-check-ready"
-                    class="quiet human-check-choice"
-                    type="button"
-                    data-check-choice="ready"
-                    aria-pressed="false"
-                  >
+                  ><button id="human-check-ready" class="quiet human-check-choice" type="button" aria-pressed="false">
                     Ready</button
-                  ><button
-                    id="human-check-hold"
-                    class="quiet human-check-choice"
-                    type="button"
-                    data-check-choice="hold"
-                    aria-pressed="false"
-                  >
+                  ><button id="human-check-hold" class="quiet human-check-choice" type="button" aria-pressed="false">
                     Need a moment</button
                   ><button id="human-check-clear" class="quiet" type="button" hidden>Cancel</button
                   ><button
@@ -2591,7 +2579,7 @@
           <span class="dialog-field-label" id="poll-winner-label">When it ends</span>
           <div class="button-group activity-form-choices" role="group" aria-labelledby="poll-winner-label">
             <button type="button" class="group-button poll-action-chip" data-action="queueNext" aria-pressed="true">
-              Queue next
+              Add to queue
             </button>
             <button type="button" class="group-button poll-action-chip" data-action="playNow" aria-pressed="false">
               Play now

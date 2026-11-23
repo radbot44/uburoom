@@ -1124,7 +1124,7 @@ class WatchRooms {
         /* Skip malformed persisted journal rows. */
       }
     }
-    journal.hydrate({ journalId: room.roomId, entries });
+    journal.hydrate({ entries });
     room.journalSavedSeq = journal.head;
   }
   save(room, { closing = false, final = false } = {}) {
@@ -1154,7 +1154,7 @@ class WatchRooms {
             for (const entry of pendingJournal.entries) {
               roomsRepo.insertRoomJournalEntry(record.id, entry.seq, entry.at, JSON.stringify(entry));
             }
-            const cutoff = pendingJournal.head - journal.limit;
+            const cutoff = pendingJournal.trimThrough;
             if (cutoff > 0) roomsRepo.trimRoomJournal(record.id, cutoff);
           }
           if (active) this.store.touch(record.id);
@@ -1163,7 +1163,7 @@ class WatchRooms {
           return this.store.writeCheckpoint(record.id, record.checkpointRevision, bookmark);
         });
         const committed = await this.store.commit(saved);
-        if (pendingJournal && journal) {
+        if (pendingJournal && journal?.journalId === pendingJournal.journalId) {
           room.journalSavedSeq = Math.max(room.journalSavedSeq || 0, pendingJournal.head);
           journal.acknowledgeDeletes(pendingJournal.deletes);
         }

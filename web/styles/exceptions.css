@@ -260,6 +260,7 @@
       .mobile-nav button,
       .transport button,
       .watch-toast,
+      .poll-option-tile,
       .room-share-dock-btn,
       .room-permission-button
     ) {
@@ -269,6 +270,8 @@
     :is(
       .card,
       .watch-dialog,
+      .readiness-choice,
+      .stage-announcement-banner,
       .player-settings-menu,
       .volume-panel,
       .library-home-card,
@@ -289,11 +292,15 @@
       [aria-current='page'],
       .admin-toggle[aria-checked='true'],
       .room-permission-button[aria-pressed='true'],
+      .poll-option-winner,
       .library-tile.selected
     ) {
       forced-color-adjust: none;
       background: Highlight;
       color: HighlightText;
+      border-color: Highlight;
+    }
+    .activity-now-item.needs-me {
       border-color: Highlight;
     }
     :is(input.watch-switch:not(.watch-switch-small)::before, input.watch-switch.watch-switch-small, .appearance-track) {

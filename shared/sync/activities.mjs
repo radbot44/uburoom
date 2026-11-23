@@ -263,6 +263,9 @@ function canAutoResumeBreak(room, check, now) {
     !room.closed &&
     !room.frozen &&
     !room.waitingForHost &&
+    !room.recovery &&
+    !room.bufferingViewerId &&
+    !room.readinessTimedOut &&
     !!room.media &&
     allPresentReady(room, check)
   );
@@ -426,8 +429,8 @@ export const CHECK_ACTIVITY = registerActivity({
     }
     if (action === 'break.extend') {
       const current = activities.get('check');
-      if (!current || current.mode !== 'break') {
-        return { status: 'unavailable', message: 'No active break to extend.' };
+      if (current?.mode !== 'break' || (args.checkId !== undefined && current.id !== args.checkId)) {
+        return { status: 'expired', message: 'This break has ended.' };
       }
       const addMinutes = args.minutes === undefined ? 5 : Number(args.minutes);
       if (!Number.isInteger(addMinutes) || addMinutes < 1 || addMinutes > 60) {
@@ -446,6 +449,12 @@ export const CHECK_ACTIVITY = registerActivity({
     if (action === 'break.end' || action === 'check.clear') {
       if (room.closed) return { status: 'unavailable', message: 'Room unavailable' };
       const current = activities.get('check');
+      if (
+        (action === 'break.end' && current?.mode !== 'break') ||
+        (args.checkId !== undefined && current?.id !== args.checkId)
+      ) {
+        return { status: 'expired', message: 'This readiness check has ended.' };
+      }
       const changed = activities.delete('check');
       const wasBreak = current?.mode === 'break';
       return {
@@ -592,7 +601,7 @@ export const POLL_ACTIVITY = registerActivity({
     };
   },
   deadline(_room, poll, now) {
-    if (poll.status === 'open' && Number.isFinite(poll.closesAt) && now < poll.closesAt) {
+    if (poll.status === 'open' && Number.isFinite(poll.closesAt)) {
       return { due: poll.closesAt, exact: true };
     }
     if (Number.isFinite(poll.expiresAt)) return poll.expiresAt;
@@ -629,14 +638,9 @@ export const POLL_ACTIVITY = registerActivity({
     if (poll.status !== 'open' && Number.isFinite(poll.expiresAt) && now >= poll.expiresAt) return undefined;
     const { byOption } = tallyPoll(poll);
     /** @type {Record<string, string[]>} */
-    const votes = {};
+    const votes = Object.fromEntries(poll.options.map(opt => [opt.id, (byOption.get(opt.id) || []).map(v => v.id)]));
     /** @type {Record<string, Array<{id: string, name: string}>>} */
-    const voters = {};
-    for (const opt of poll.options) {
-      const list = byOption.get(opt.id) || [];
-      votes[opt.id] = list.map(v => v.id);
-      voters[opt.id] = list;
-    }
+    const voters = Object.fromEntries(byOption);
     const canManage = can ? !!can('poll.close') : undefined;
     const myVote = actor?.userId ? poll.votes.get(actor.userId)?.optionId || null : null;
     return {
@@ -676,6 +680,8 @@ export const POLL_ACTIVITY = registerActivity({
 
     if (action === 'poll.clear') {
       if (room.closed) return { status: 'unavailable', message: 'Room unavailable' };
+      if (args.pollId !== undefined && activities.get('poll')?.id !== args.pollId)
+        return { status: 'expired', message: 'Poll expired.' };
       const changed = activities.delete('poll');
       return { status: 'applied', message: 'Poll cleared.', changed };
     }
@@ -725,7 +731,8 @@ export const POLL_ACTIVITY = registerActivity({
         return { status: 'unavailable', message: 'No viewer is connected.' };
       }
       const poll = activities.get('poll');
-      if (!poll || poll.status !== 'open') return { status: 'expired', message: 'Poll is closed.' };
+      if (!poll || poll.status !== 'open' || (Number.isFinite(poll.closesAt) && now >= poll.closesAt))
+        return { status: 'expired', message: 'Poll is closed.' };
       if (args.pollId && args.pollId !== poll.id) return { status: 'expired', message: 'Poll expired.' };
       const userId = actor?.userId;
       if (typeof userId !== 'string' || ![...room.viewers.values()].some(v => v.userId === userId)) {
@@ -743,7 +750,8 @@ export const POLL_ACTIVITY = registerActivity({
 
     if (action === 'poll.close') {
       const poll = activities.get('poll');
-      if (!poll) return { status: 'expired', message: 'No active poll.' };
+      if (!poll || (Number.isFinite(poll.expiresAt) && now >= poll.expiresAt))
+        return { status: 'expired', message: 'No active poll.' };
       if (args.pollId && args.pollId !== poll.id) return { status: 'expired', message: 'Poll expired.' };
       if (poll.status === 'closed') return { status: 'applied', message: 'Poll already closed.', changed: false };
       const res = resolvePollClose(poll, now, {

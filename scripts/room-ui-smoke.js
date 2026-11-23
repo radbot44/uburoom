@@ -104,6 +104,31 @@ async function main() {
         true,
         'Tools column sits right of Viewers with Schedule, Readiness check, Announce, Poll, Room sync order',
       );
+      await run(pressId('room-human-check-ask'));
+      await until(isOpen('#break-dialog'), 'Readiness check dialog opens');
+      await run(press('#break-dialog [data-minutes="5"]'));
+      await until(
+        '!' +
+          isOpen('#break-dialog') +
+          ' && ' +
+          shown('#break-card') +
+          ' && ' +
+          hasText('#break-card-title', 'Intermission'),
+        'Break starts and closes the readiness dialog',
+      );
+      const initialBreakTitle = await run(text('#break-card-title'));
+      await until(text('#break-card-title') + ' !== ' + JSON.stringify(initialBreakTitle), 'Break countdown advances');
+      await run(pressId('break-end'));
+      await until(hidden('#break-card'), 'Ending the break clears its stage card');
+      await run(pressId('room-human-check-ask'));
+      await until(isOpen('#break-dialog'), 'Readiness check can reopen after a break');
+      await run(pressId('break-ask-now'));
+      await until(
+        '!' + isOpen('#break-dialog') + ' && ' + shown('#human-check-prompt'),
+        'Ask now starts a readiness check',
+      );
+      await run(pressId('human-check-clear'));
+      await until(hidden('#human-check-prompt'), 'Readiness check cleared');
       await run(pressId('room-poll-btn'));
       await until(isOpen('#poll-dialog'), 'Poll composer opens');
       await run(pressId('poll-submit'));
@@ -939,6 +964,7 @@ async function main() {
       );
       await browser.evaluate(admin, press('#lobby-rooms .room-actions :is(a,button)'));
       await browser.until(admin, text('#options-title') + '==="Friday room"', 'Admin joins private room');
+      await browser.until(admin, enabled('#admin-mode'), 'Admin mode control finishes its preceding update');
       await browser.evaluate(admin, pressId('admin-mode'));
       await browser.until(
         admin,
@@ -1172,7 +1198,6 @@ function seedRoomSyncHistory(watch, room) {
     for (let index = 0; index <= 56; index++) {
       const at = now - (56 - index) * 5000;
       room.state = { ...state, paused: index >= 16 && index <= 18 };
-      if (index === 36) room.feedback = { action: 'media.seek.absolute' };
       if (index === 48) tabs[3].watchSocket = { readyState: 1 };
       if (index === 47) tabs[3].watchSocket.readyState = 3;
       for (const [number, tab] of tabs.entries()) {

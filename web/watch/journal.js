@@ -26,7 +26,7 @@ export function createClientJournal() {
   let head = 0;
   /** @type {JournalEntry[]} */
   let entries = [];
-  /** @type {Set<(change: { full: boolean, roomId?: string, journalId?: string, head: number, added: JournalEntry[], replaced: number[], entries: JournalEntry[] }) => void>} */
+  /** @type {Set<(change: { full: boolean, roomId?: string, journalId?: string, head: number, added: JournalEntry[], removed: number[], entries: JournalEntry[] }) => void>} */
   const listeners = new Set();
 
   function notify(change) {
@@ -59,20 +59,21 @@ export function createClientJournal() {
     /**
      * Applies a server `journal` lane message.
      * Returns `{ gap: boolean }` so the caller can trigger a resync if needed.
-     * @param {{ roomId?: string, journalId?: string, full?: boolean, head?: number, entries?: JournalEntry[] }} message
+     * @param {{ roomId?: string, journalId?: string, full?: boolean, head?: number, entries?: JournalEntry[], removed?: number[] }} message
      */
     apply(message) {
       if (!message || typeof message.roomId !== 'string') return { gap: false };
       const incoming = Array.isArray(message.entries) ? message.entries : [];
       const nextHead = Number.isInteger(message.head) && message.head >= 0 ? message.head : head;
-      const reset = !!message.full || message.roomId !== roomId || message.journalId !== journalId;
+      const reset = !!message.full;
+      if (!reset && (message.roomId !== roomId || message.journalId !== journalId)) return { gap: true };
 
       if (reset) {
         roomId = message.roomId;
         journalId = message.journalId;
         entries = incoming.slice(-JOURNAL_LIMIT);
         head = Math.max(nextHead, entries.length ? entries[entries.length - 1].seq : 0);
-        notify({ full: true, roomId, journalId, head, added: entries.slice(), replaced: [], entries });
+        notify({ full: true, roomId, journalId, head, added: entries.slice(), removed: [], entries });
         return { gap: false };
       }
 
@@ -82,32 +83,35 @@ export function createClientJournal() {
 
       /** @type {JournalEntry[]} */
       const added = [];
-      /** @type {number[]} */
-      const replaced = [];
+      const removed = new Set(message.removed || []);
+      for (const entry of incoming) {
+        if (entry?.replaces !== undefined) removed.add(entry.replaces);
+      }
+      if (removed.size) entries = entries.filter(entry => !removed.has(entry.seq));
       const existingSeqs = new Set(entries.map(entry => entry.seq));
 
       for (const entry of incoming) {
         if (!entry || !Number.isInteger(entry.seq)) continue;
-        if (entry.replaces !== undefined) {
-          const idx = entries.findIndex(item => item.seq === entry.replaces);
-          if (idx !== -1) {
-            entries.splice(idx, 1);
-            existingSeqs.delete(entry.replaces);
-            replaced.push(entry.replaces);
-          }
-        }
-        if (existingSeqs.has(entry.seq)) continue;
+        if (removed.has(entry.seq) || existingSeqs.has(entry.seq)) continue;
         entries.push(entry);
         existingSeqs.add(entry.seq);
         added.push(entry);
       }
 
       if (entries.length > JOURNAL_LIMIT) {
-        entries.splice(0, entries.length - JOURNAL_LIMIT);
+        for (const entry of entries.splice(0, entries.length - JOURNAL_LIMIT)) removed.add(entry.seq);
       }
       head = Math.max(head, nextHead, entries.length ? entries[entries.length - 1].seq : 0);
-      if (added.length || replaced.length) {
-        notify({ full: false, roomId, journalId, head, added, replaced, entries });
+      if (added.length || removed.size) {
+        notify({
+          full: false,
+          roomId,
+          journalId,
+          head,
+          added: added.filter(entry => !removed.has(entry.seq)),
+          removed: [...removed],
+          entries,
+        });
       }
       return { gap: false };
     },
@@ -117,7 +121,7 @@ export function createClientJournal() {
       journalId = undefined;
       head = 0;
       entries = [];
-      notify({ full: true, roomId, journalId, head, added: [], replaced: [], entries });
+      notify({ full: true, roomId, journalId, head, added: [], removed: [], entries });
     },
     subscribe(listener) {
       listeners.add(listener);

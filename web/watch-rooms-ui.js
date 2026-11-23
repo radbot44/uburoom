@@ -458,7 +458,7 @@ function mount({
     const active =
       (Array.isArray(state?.activities) ? state.activities.find(a => a.kind === 'check') : null) || state?.humanCheck;
     if (active) {
-      void runHumanCheckAction(() => onClearHumanCheck?.(active.id));
+      void runHumanCheckAction(() => onClearHumanCheck?.(active.id, humanCheckButton));
       return;
     }
     uburoomDialogs.open($('break-dialog'), humanCheckButton);
@@ -981,13 +981,6 @@ function mount({
     renderPeople($('room-participants'), state?.participants || [], state || {});
     if (dialog.open && details && !details.draft && details.id === state?.id) renderSettingsPeople(details, state);
     roomSync.render(state);
-    if (announceButton) {
-      announceButton.hidden = !state?.capabilities?.announce;
-    }
-    if (pollButton) {
-      pollButton.hidden = !state?.capabilities?.runPolls;
-    }
-    syncToolsVisibility();
     updateRosterSize();
   }
   let openedFromSaved = false,

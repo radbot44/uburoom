@@ -4,7 +4,7 @@ Private pre-release layouts have no supported automatic upgrade path. Published 
 
 ## Current storage contract
 
-SQLite baseline **13** adds `uburoom_accounts` on top of baseline 12's nullable per-room buffering override alongside the existing account, room, queue, and scheduled-event schema. An unset override follows the server configuration. The runtime creates this layout for an empty installation and reopens compatible databases with their existing UUIDs and ciphertext. Existing earlier private pre-release installations require an explicit offline transfer or reset.
+SQLite baseline **14** adds `watch_room_journal` for the bounded room activity history. Baseline 13 added `uburoom_accounts` and baseline 12 added the nullable per-room buffering override, which follows server configuration when unset. The runtime creates the current layout for an empty installation and reopens compatible databases with their existing UUIDs and ciphertext. Earlier private pre-release installations require an explicit offline transfer or reset.
 
 Older private, incomplete, unversioned or newer layouts fail unchanged. Legacy JSON is not imported. Startup and deployment neither reset state nor run private migrations.
 

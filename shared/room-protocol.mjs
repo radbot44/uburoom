@@ -250,10 +250,16 @@ const COMMANDS = Object.freeze({
       if (!Number.isFinite(minutes) || !Number.isInteger(minutes) || minutes < 1 || minutes > 60) {
         throw new Error('Choose an extension between 1 and 60 minutes');
       }
-      return { minutes };
+      return { minutes, ...validateSyncCommand({ action: 'check.clear', args: a }).args };
     },
   },
-  'break.end': { scope: 'room', capability: 'playPause', roomLocal: true, liveOnly: true, args: none },
+  'break.end': {
+    scope: 'room',
+    capability: 'playPause',
+    roomLocal: true,
+    liveOnly: true,
+    args: a => validateSyncCommand({ action: 'check.clear', args: a }).args,
+  },
   'announce.send': {
     scope: 'room',
     capability: 'announce',
@@ -285,11 +291,14 @@ const COMMANDS = Object.freeze({
       if (!Array.isArray(a.options) || a.options.length < 2 || a.options.length > 6) {
         throw new Error('Provide between 2 and 6 poll options');
       }
+      const optionIds = new Set();
       const options = a.options.map((opt, idx) => {
         if (!opt || typeof opt !== 'object') throw new Error('Invalid poll option');
         const label = typeof opt.label === 'string' ? opt.label.replace(/\s+/g, ' ').trim() : '';
         if (!label || label.length > 100) throw new Error('Each option must be 1–100 characters');
         const id = typeof opt.id === 'string' && opt.id.trim() ? opt.id.trim().slice(0, 40) : `opt-${idx + 1}`;
+        if (optionIds.has(id)) throw new Error('Poll option IDs must be unique');
+        optionIds.add(id);
         let media;
         if (opt.media && typeof opt.media === 'object') {
           const mediaId = mediaIdentity(opt.media.mediaId || opt.media.id)?.id;
@@ -360,7 +369,17 @@ const COMMANDS = Object.freeze({
       return out;
     },
   },
-  'poll.clear': { scope: 'room', capability: 'runPolls', roomLocal: true, liveOnly: true, args: none },
+  'poll.clear': {
+    scope: 'room',
+    capability: 'runPolls',
+    roomLocal: true,
+    liveOnly: true,
+    args(a) {
+      if (a.pollId === undefined) return {};
+      if (typeof a.pollId !== 'string' || !a.pollId.trim()) throw new Error('Invalid poll');
+      return { pollId: a.pollId.trim() };
+    },
+  },
   'media.autoplay.set': { scope: 'room', capability: 'autoplay', roomLocal: true },
   'media.autoplay.cancel': { scope: 'room', capability: 'autoplay', roomLocal: true },
   'media.load': {

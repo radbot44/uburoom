@@ -3,12 +3,14 @@
  * Preserves DOM identity, scroll position, and focus on live journal appends.
  */
 import * as uburoomIcons from './icons.js';
+import * as controls from './watch-controls.js';
 import * as dialogs from './watch-dialogs.js';
+import * as popover from './watch-popover.js';
 
 const FILTERS = Object.freeze([
   { id: 'all', label: 'All' },
   { id: 'playback', label: 'Playback' },
-  { id: 'people', label: 'People' },
+  { id: 'people', label: 'Viewers' },
   { id: 'queue', label: 'Queue' },
   { id: 'tools', label: 'Tools' },
   { id: 'room', label: 'Room', hostOnly: true },
@@ -177,7 +179,8 @@ export function formatJournalEntry(entry) {
  *   attention: ReturnType<import('./watch-attention.js').createAttention>,
  *   getState: () => any,
  *   getSelfId: () => string | undefined,
- *   onReopenActivity?: (id: string) => void,
+ *   getServerNow: () => number | undefined,
+ *   onReopenActivity: (id: string) => boolean,
  * }} options
  */
 export function mountActivityHub({
@@ -189,6 +192,7 @@ export function mountActivityHub({
   attention,
   getState,
   getSelfId,
+  getServerNow,
   onReopenActivity,
 }) {
   let activeFilter = 'all';
@@ -211,7 +215,7 @@ export function mountActivityHub({
   nowSection.append(nowList);
 
   const filterBar = document.createElement('div');
-  filterBar.className = 'activity-filters';
+  filterBar.className = 'button-group activity-filters';
   filterBar.setAttribute('role', 'group');
   filterBar.setAttribute('aria-label', 'Filter activity');
 
@@ -220,7 +224,7 @@ export function mountActivityHub({
   for (const filter of FILTERS) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'activity-filter-chip';
+    btn.className = 'group-button activity-filter-chip';
     btn.dataset.filter = filter.id;
     btn.textContent = filter.label;
     btn.setAttribute('aria-pressed', String(filter.id === activeFilter));
@@ -234,9 +238,10 @@ export function mountActivityHub({
     filterButtons.set(filter.id, btn);
     filterBar.append(btn);
   }
+  controls.segmented(filterBar);
   const newPill = document.createElement('button');
   newPill.type = 'button';
-  newPill.className = 'activity-new-pill';
+  newPill.className = 'primary activity-new-pill';
   newPill.hidden = true;
   newPill.addEventListener('click', () => {
     viewport.scrollTop = 0;
@@ -357,10 +362,15 @@ export function mountActivityHub({
       return;
     }
     const wasScrolledDown = panel.open && viewport.scrollTop > 24;
-    const prevScrollTop = viewport.scrollTop;
-    const prevScrollHeight = viewport.scrollHeight;
-
-    for (const oldSeq of change.replaced || []) {
+    const removed = new Set(change.removed);
+    const viewportTop = wasScrolledDown ? viewport.getBoundingClientRect().top : 0;
+    const anchor = wasScrolledDown
+      ? [...listEl.children].find(
+          row => !removed.has(Number(row.dataset.seq)) && row.getBoundingClientRect().bottom > viewportTop,
+        )
+      : undefined;
+    const anchorTop = anchor?.getBoundingClientRect().top;
+    for (const oldSeq of removed) {
       const oldNode = rowNodes.get(oldSeq);
       if (oldNode) {
         oldNode.remove();
@@ -380,9 +390,10 @@ export function mountActivityHub({
 
     emptyEl.hidden = listEl.children.length > 0;
     viewport.hidden = !emptyEl.hidden;
+    if (anchor && anchorTop !== undefined) {
+      viewport.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+    }
     if (prepended > 0 && wasScrolledDown) {
-      const addedHeight = viewport.scrollHeight - prevScrollHeight;
-      if (addedHeight > 0) viewport.scrollTop = prevScrollTop + addedHeight;
       unseenWhileScrolled += prepended;
       newPill.textContent = `${unseenWhileScrolled} new`;
       newPill.hidden = false;
@@ -392,7 +403,7 @@ export function mountActivityHub({
   function renderNowAndBadge() {
     const state = getState();
     const selfId = getSelfId();
-    const { items, badgeCount } = attention.compute(state, selfId, Date.now());
+    const { items, badgeCount } = attention.compute(state, selfId, getServerNow());
     badge.textContent = badgeCount > 0 ? String(badgeCount) : '';
     badge.hidden = badgeCount === 0;
     if (menuDot) menuDot.hidden = badgeCount === 0;
@@ -410,7 +421,7 @@ export function mountActivityHub({
       if (!btn) {
         btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'activity-now-item';
+        btn.className = 'quiet activity-now-item';
         btn.dataset.activityId = item.id;
         const iconSpan = document.createElement('span');
         iconSpan.className = 'activity-now-icon';
@@ -423,9 +434,8 @@ export function mountActivityHub({
         body.append(titleEl, metaEl);
         btn.append(iconSpan, body);
         btn.addEventListener('click', () => {
-          attention.reopen(item.id);
-          onReopenActivity?.(item.id);
-          dialogs.close(panel);
+          if (onReopenActivity(item.id)) dialogs.close(panel);
+          else popover.show(btn, { state: 'error', text: 'This activity can’t open right now.' });
         });
       }
       btn.classList.toggle('needs-me', item.needsMe);

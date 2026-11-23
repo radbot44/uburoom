@@ -129,6 +129,7 @@ export function mount(host, deps) {
           room,
           viewer,
         };
+        if (joined.journal) deps.receiveJournal(joined.journal);
         return { ...uburoomWire.mergeView(room.state, viewer.state), timing: joined.timing };
       });
     },

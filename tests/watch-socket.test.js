@@ -1210,6 +1210,32 @@ for (const failure of ['cancel', 'disconnect', 'stream-failure']) {
   );
 }
 
+test('joining returns existing activity as the initial journal lane', tls, async t => {
+  const f = await fixture(t);
+  const host = await f.connect(await f.login('host'));
+  const guest = await f.connect(await f.login('guest'));
+  t.after(() => {
+    host.ws.terminate();
+    guest.ws.terminate();
+  });
+  const roomId = (await host.call('/api/watch/rooms', { visibility: 'public' })).value.id;
+  const hostViewerId = randomUUID();
+  const target = '/api/watch/rooms/' + roomId;
+  const room = (await host.call(target + '?viewer=' + hostViewerId)).value;
+  const sent = await host.call(target + '/command', {
+    epoch: room.epoch,
+    expiresAt: Date.now() + 2500,
+    viewerId: hostViewerId,
+    command: { action: 'announce.send', args: { text: 'Already in the journal' } },
+  });
+  assert.equal(sent.value.status, 'applied');
+  const joined = await guest.send({ type: 'join', roomId, viewerId: randomUUID() });
+  assert.equal(joined.type, 'ack');
+  assert.equal(joined.value.journal.roomId, roomId);
+  assert.equal(joined.value.journal.full, true);
+  assert.ok(joined.value.journal.entries.some(entry => entry.data?.text === 'Already in the journal'));
+});
+
 test('a socket switching rooms or viewer IDs detaches its superseded viewer immediately', tls, async t => {
   const f = await fixture(t),
     client = await f.connect(await f.login('host'));
