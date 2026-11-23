@@ -157,8 +157,8 @@ server:
   # Optional LAN HTTPS access alongside public_url:
   # '' (off), 'auto' (trust this machine's LAN IP/hostname on server.port in https mode),
   # or an explicit HTTPS origin (e.g. 'https://192.168.1.10:5756' for Docker or a local proxy).
-  # Native uburoom accounts, Jellyfin sign-in, guests, rooms and playback work on LAN;
-  # shared invite links and Discord/Plex sign-in continue to use public_url.
+  # Discord and Plex sign-in bounce through public_url's single callback via a one-time handoff;
+  # shared invite links and password-set links continue to use public_url.
   lan_url: ''
   public_web_app: true # set false for Discord Activity only
   max_connections: 256 # Open room connections (one per browser tab or app) the server accepts at once.

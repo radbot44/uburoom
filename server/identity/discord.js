@@ -10,7 +10,7 @@ const { hash } = require('../core');
 function createDiscordSignIn({ config, demo = () => undefined, sessions, authorizeUrl }) {
   const { COOKIES, cookie, cookies, json } = sessions;
   const states = new Map();
-  async function start(req, res, linkLogin, ownerOnly = false, returnTo = undefined) {
+  async function start(req, res, linkLogin, ownerOnly = false, returnTo = undefined, lan = undefined) {
     if (config.accessPolicy && !config.accessPolicy.discord && !ownerOnly)
       throw new Error('Discord authorization is disabled');
     const state = randomBytes(32).toString('hex');
@@ -18,6 +18,7 @@ function createDiscordSignIn({ config, demo = () => undefined, sessions, authori
       expires: Date.now() + 300000,
       ownerOnly,
       returnTo,
+      ...(lan ? { lan } : {}),
       ...(linkLogin
         ? {
             linkUserId: linkLogin.userId,

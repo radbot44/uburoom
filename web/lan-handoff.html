@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Signing in to uburoom</title>
+    <script src="/theme.js"></script>
+    <link rel="stylesheet" href="/styles/all.css" />
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
+  </head>
+  <body>
+    <main class="handoff-page">
+      <header class="account">
+        <a href="/" aria-label="uburoom watch"
+          ><img class="brand" src="/assets/branding/uburoom-wordmark-brand.svg" alt="uburoom" width="164" height="51"
+        /></a>
+      </header>
+      <section class="card">
+        <h1>Signing you in</h1>
+        <p id="handoff-status" role="status">Finishing sign-in on this address…</p>
+        <a class="quiet handoff-login" id="handoff-open" href="/" hidden>Back to uburoom</a>
+      </section>
+    </main>
+    <script type="module" src="/lan-handoff.js"></script>
+  </body>
+</html>

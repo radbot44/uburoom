@@ -9,6 +9,7 @@ const COOKIES = Object.freeze({
   plex: '__Host-uburoom_plex',
   jellyfin: '__Host-uburoom_jellyfin',
   handoff: '__Host-uburoom_handoff',
+  lanHandoff: '__Host-uburoom_lan_handoff',
   device: '__Host-uburoom_device',
   authError: '__Host-uburoom_auth_error',
 });

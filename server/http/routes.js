@@ -13,7 +13,8 @@ const version = require('../../package.json').version;
  * @param {{config: any, registry: any, accounts: any, sessions: any, access: any, hub: any, rooms: () => any,
  *   files: any, signIn: any, setOwnerName: (name: string) => void, watchRoutes: any, accountRoutes: any,
  *   operatorRoutes: any, uburoomAccountRoutes: import('./router').Route[],
- *   sourceSettingsRoutes?: import('./router').Route[], setupRoutes?: import('./router').Route[]}} services
+ *   sourceSettingsRoutes?: import('./router').Route[], setupRoutes?: import('./router').Route[],
+ *   lanHandoff?: () => any, lanHandoffRoutes?: import('./router').Route[]}} services
  */
 function createRoutes({
   config,
@@ -32,6 +33,8 @@ function createRoutes({
   uburoomAccountRoutes,
   sourceSettingsRoutes = [],
   setupRoutes = [],
+  lanHandoff,
+  lanHandoffRoutes = [],
 }) {
   const { json, throttle } = sessions;
   const pages = pageRoutes({ config, rooms, watchRoutes: () => watchRoutes, sessions, files });
@@ -60,6 +63,7 @@ function createRoutes({
     uburoomAccountRoutes,
     sourceSettingsRoutes,
     setupRoutes,
+    lanHandoffRoutes,
     pages.documents,
     files.routes(),
     mediaRoutes({ config, hub, watchRoutes: () => watchRoutes }),
@@ -82,6 +86,7 @@ function createRoutes({
       signIn,
       accountRoutes: () => accountRoutes,
       watchRoutes: () => watchRoutes,
+      lanHandoff,
       setOwnerName,
       files,
     }),

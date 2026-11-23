@@ -150,57 +150,129 @@ test('server.lan_url allows native uburoom account sign-in, room creation, WebSo
   assert.equal((await lan.request('/api/me')).body.loggedIn, false);
 });
 
-test('Discord and Plex sign-in and linking fail clearly on server.lan_url while still working on server.public_url', async t => {
+test('Discord and Plex sign-in and linking work on server.lan_url via one-time handoff and enforce ticket/nonce binding', async t => {
   const { app, config, provider, browser } = await fixture(t, undefined, {
     lanUrl: LAN_ORIGIN,
     accessPolicy: accessPolicy({ discordServer: true, accounts: true }),
   });
   config.serverOperator = { identities: [{ provider: 'discord', subject: provider.subjects.host }] };
   const port = app.server.address().port;
+  const pubHost = new URL(config.publicUrl).host;
 
-  // Create a native account so we can also test account-linking routes on LAN.
+  // Separate cookie jars simulate the browser's per-origin __Host- cookie isolation.
+  const lan = makeClient(port, LAN_ORIGIN, LAN_HOST);
+  const pub = makeClient(port, config.publicUrl, pubHost);
+
+  // 1. Discord sign-in started on LAN with a return target bounces through public_url and signs in on LAN only.
+  const dStart = await lan.request('/auth/discord?return=%2Froom%2Fmovie-night');
+  assert.equal(dStart.status, 302);
+  assert.ok(dStart.headers.location.startsWith(config.publicUrl + '/auth/lan-start?t='));
+  assert.ok(lan.jar.has('__Host-uburoom_lan_handoff'));
+
+  const startUrl = new URL(dStart.headers.location);
+  const dPubStart = await pub.request(startUrl.pathname + startUrl.search);
+  assert.equal(dPubStart.status, 302);
+  assert.ok(pub.jar.has('__Host-uburoom_oauth'));
+  // Start token is single-use.
+  const reusedStart = await pub.request(startUrl.pathname + startUrl.search);
+  assert.equal(reusedStart.status, 302);
+  assert.equal(reusedStart.headers.location, '/auth/error');
+
+  const dState = new URL(dPubStart.headers.location, config.publicUrl).searchParams.get('state');
+  const dCallback = await pub.request('/auth/callback?' + new URLSearchParams({ state: dState, code: 'host' }));
+  assert.equal(dCallback.status, 302);
+  assert.ok(dCallback.headers.location.startsWith(LAN_ORIGIN + '/auth/lan#ticket='));
+  assert.equal(pub.jar.has('__Host-uburoom'), false, 'public_url must not receive a session cookie for a LAN sign-in');
+
+  const dTicket = new URL(dCallback.headers.location).hash.slice('#ticket='.length);
+
+  // A different LAN browser without the matching LAN handoff nonce cookie cannot steal the ticket.
+  const thief = makeClient(port, LAN_ORIGIN, LAN_HOST);
+  // First verify wrong origin (public_url) is rejected 403 without consuming the ticket.
+  assert.equal((await pub.request('/api/auth/lan-handoff', { ticket: dTicket })).status, 403);
+  // Verify the /auth/lan page is served with no-referrer.
+  const lanPage = await lan.request('/auth/lan');
+  assert.equal(lanPage.status, 200);
+  assert.equal(lanPage.headers['referrer-policy'], 'no-referrer');
+
+  // Redeem on the originating LAN browser.
+  const dRedeem = await lan.request('/api/auth/lan-handoff', { ticket: dTicket });
+  assert.equal(dRedeem.status, 200);
+  assert.equal(dRedeem.body.destination, '/room/movie-night');
+  assert.equal((await lan.request('/api/me')).body.loggedIn, true);
+  assert.equal((await pub.request('/api/me')).body.loggedIn, false);
+  // Ticket is single-use.
+  assert.equal((await lan.request('/api/auth/lan-handoff', { ticket: dTicket })).status, 400);
+
+  // 2. Plex sign-in started on LAN completes on LAN via handoff, and missing nonce fails.
+  const lan2 = makeClient(port, LAN_ORIGIN, LAN_HOST);
+  const pub2 = makeClient(port, config.publicUrl, pubHost);
+  const pStart = await lan2.request('/auth/plex');
+  assert.equal(pStart.status, 302);
+  assert.ok(pStart.headers.location.startsWith(config.publicUrl + '/auth/lan-start?t='));
+
+  const pStartUrl = new URL(pStart.headers.location);
+  const pPubStart = await pub2.request(pStartUrl.pathname + pStartUrl.search);
+  assert.equal(pPubStart.status, 302);
+  const pState = new URL(pPubStart.headers.location, config.publicUrl).searchParams.get('state');
+  const pDemo = await pub2.request('/auth/plex/demo?' + new URLSearchParams({ state: pState, persona: 'alice' }));
+  assert.equal(pDemo.status, 302);
+  const pCallback = await pub2.request(pDemo.headers.location);
+  assert.equal(pCallback.status, 302);
+  assert.ok(pCallback.headers.location.startsWith(LAN_ORIGIN + '/auth/lan#ticket='));
+
+  const pTicket = new URL(pCallback.headers.location).hash.slice('#ticket='.length);
+  // Thief without the LAN nonce cookie fails (and consumes the ticket).
+  assert.equal((await thief.request('/api/auth/lan-handoff', { ticket: pTicket })).status, 400);
+
+  // Fresh Plex sign-in succeeds on the originating LAN browser.
+  const pStart2 = await lan2.request('/auth/plex');
+  const pPubStart2 = await pub2.request(
+    new URL(pStart2.headers.location).pathname + new URL(pStart2.headers.location).search,
+  );
+  const pState2 = new URL(pPubStart2.headers.location, config.publicUrl).searchParams.get('state');
+  const pDemo2 = await pub2.request('/auth/plex/demo?' + new URLSearchParams({ state: pState2, persona: 'alice' }));
+  const pCallback2 = await pub2.request(pDemo2.headers.location);
+  const pTicket2 = new URL(pCallback2.headers.location).hash.slice('#ticket='.length);
+  const pRedeem = await lan2.request('/api/auth/lan-handoff', { ticket: pTicket2 });
+  assert.equal(pRedeem.status, 200);
+  assert.equal(pRedeem.body.destination, '/');
+  assert.equal((await lan2.request('/api/me')).body.loggedIn, true);
+
+  // 3. Linking Plex to an existing native uburoom account on LAN works via handoff.
   const operator = browser();
   assert.equal((await operator.request('/api/account/demo-login', { persona: 'host' })).status, 200);
   const created = (await operator.post('/api/operator/accounts', { username: 'bob' })).body;
 
-  const lan = makeClient(port, LAN_ORIGIN, LAN_HOST);
-
-  // GET /auth/discord on LAN redirects to /auth/error with a clear message pointing to public_url.
-  const discordStart = await lan.request('/auth/discord');
-  assert.equal(discordStart.status, 302);
-  assert.equal(discordStart.headers.location, '/auth/error');
-  const discordErr = await lan.request('/api/account/auth-error');
-  assert.equal(discordErr.status, 200);
-  assert.match(discordErr.body.error, new RegExp(config.publicUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-
-  // GET /auth/plex on LAN redirects to /auth/error with a clear message pointing to public_url.
-  const plexStart = await lan.request('/auth/plex');
-  assert.equal(plexStart.status, 302);
-  assert.equal(plexStart.headers.location, '/auth/error');
-  const plexErr = await lan.request('/api/account/auth-error');
-  assert.equal(plexErr.status, 200);
-  assert.match(plexErr.body.error, new RegExp(config.publicUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-
-  // Signed-in LAN user trying to link Discord or Plex gets a clear 400 JSON error.
-  await lan.request('/api/uburoom-accounts/password', {
+  const lanBob = makeClient(port, LAN_ORIGIN, LAN_HOST);
+  const pubBob = makeClient(port, config.publicUrl, pubHost);
+  await lanBob.request('/api/uburoom-accounts/password', {
     token: tokenOf(created.link.url),
     password: 'bob lan password',
   });
-  const csrf = (await lan.request('/api/watch/me')).body.csrf;
+  const bobCsrf = (await lanBob.request('/api/watch/me')).body.csrf;
 
-  const linkDiscord = await lan.request('/api/account/discord/connect', {}, { 'X-CSRF-Token': csrf });
-  assert.equal(linkDiscord.status, 400);
-  assert.match(linkDiscord.body.error, /only available at/);
-
-  const linkPlex = await lan.request('/api/account/plex/connect', {}, { 'X-CSRF-Token': csrf });
-  assert.equal(linkPlex.status, 400);
-  assert.match(linkPlex.body.error, /only available at/);
+  const linkPlex = await lanBob.request('/api/account/plex/connect', {}, { 'X-CSRF-Token': bobCsrf });
+  assert.equal(linkPlex.status, 200);
+  assert.ok(linkPlex.body.url.startsWith(config.publicUrl + '/auth/lan-start?t='));
+  const lpStart = await pubBob.request(new URL(linkPlex.body.url).pathname + new URL(linkPlex.body.url).search);
+  const lpState = new URL(lpStart.headers.location, config.publicUrl).searchParams.get('state');
+  const lpDemo = await pubBob.request('/auth/plex/demo?' + new URLSearchParams({ state: lpState, persona: 'bob' }));
+  const lpCallback = await pubBob.request(lpDemo.headers.location);
+  assert.equal(lpCallback.status, 302);
+  assert.ok(lpCallback.headers.location.startsWith(LAN_ORIGIN + '/auth/lan#ticket='));
+  const lpTicket = new URL(lpCallback.headers.location).hash.slice('#ticket='.length);
+  const lpRedeem = await lanBob.request('/api/auth/lan-handoff', { ticket: lpTicket });
+  assert.equal(lpRedeem.status, 200);
+  assert.equal(lpRedeem.body.destination, '/?account=1');
+  const bobAccount = (await lanBob.request('/api/account')).body.account;
+  assert.ok(bobAccount.identities.some(id => id.provider === 'plex' && id.verified));
 
   // Public URL OAuth still works normally.
-  const pub = browser();
-  const pubDiscord = await pub.discord('host');
+  const pubDirect = browser();
+  const pubDiscord = await pubDirect.discord('host');
   assert.equal(pubDiscord.status, 302);
-  assert.equal((await pub.request('/api/me')).body.loggedIn, true);
+  assert.equal((await pubDirect.request('/api/me')).body.loggedIn, true);
 });
 
 test('server.lan_url: auto detects local private IPs and hostname on server.port and enforces local peers', async t => {

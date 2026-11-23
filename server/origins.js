@@ -131,14 +131,39 @@ function requestHostOrigin(req) {
 }
 
 /**
- * Whether a request arrived on a configured LAN origin rather than `server.public_url`.
- * @param {{publicUrl?: string, lanUrl?: string, listen?: string, port?: number, lanAutoOrigins?: string[]}} config
- * @param {{headers?: Record<string, any>}} req
+ * Returns the validated LAN origin for a request, or `undefined` if the request is not on an
+ * allowed LAN origin (or is from a non-local peer under `lan_url: 'auto'`).
+ * @param {{publicUrl?: string, lanUrl?: string, listen?: string, port?: number, trustedProxies?: string[], trustedProxyHeader?: string, lanAutoOrigins?: string[]}} config
+ * @param {{headers?: Record<string, any>, socket?: {remoteAddress?: string}, remoteAddress?: string}} req
  */
-function isLanRequest(config, req) {
-  if (!config.lanUrl) return false;
-  if (isLanOrigin(config, req?.headers?.origin)) return true;
-  return isLanOrigin(config, requestHostOrigin(req));
+function requestLanOrigin(config, req) {
+  if (!config.lanUrl) return undefined;
+  const candidate = isLanOrigin(config, req?.headers?.origin)
+    ? req.headers.origin
+    : isLanOrigin(config, requestHostOrigin(req))
+      ? requestHostOrigin(req)
+      : undefined;
+  if (!candidate) return undefined;
+  if (config.lanUrl === 'auto' && req && (req.socket?.remoteAddress || req.remoteAddress)) {
+    if (!isLocalAddress(clientAddress(req, config))) return undefined;
+  }
+  return candidate;
 }
 
-module.exports = { detectLanOrigins, isLanOrigin, isAllowedBrowserOrigin, requestHostOrigin, isLanRequest };
+/**
+ * Whether a request arrived on a configured LAN origin rather than `server.public_url`.
+ * @param {{publicUrl?: string, lanUrl?: string, listen?: string, port?: number, trustedProxies?: string[], trustedProxyHeader?: string, lanAutoOrigins?: string[]}} config
+ * @param {{headers?: Record<string, any>, socket?: {remoteAddress?: string}, remoteAddress?: string}} req
+ */
+function isLanRequest(config, req) {
+  return !!requestLanOrigin(config, req);
+}
+
+module.exports = {
+  detectLanOrigins,
+  isLanOrigin,
+  isAllowedBrowserOrigin,
+  requestHostOrigin,
+  requestLanOrigin,
+  isLanRequest,
+};

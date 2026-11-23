@@ -33,6 +33,7 @@ function authRoutes({
   signIn,
   accountRoutes,
   watchRoutes,
+  lanHandoff,
   setOwnerName,
   files,
 }) {
@@ -114,17 +115,24 @@ function authRoutes({
       path: route => ['/auth/discord', '/auth/owner'].includes(route),
       async handle({ req, res, route, url }) {
         if (!oauthReady) return json(res, 503, { error: 'Configure Discord OAuth on the server first' });
+        const returnTo = safeReturn(url.searchParams.get('return'));
         if (isLanRequest(config, req)) {
-          const message =
-            'Discord sign-in is only available at ' +
-            config.publicUrl +
-            ' for now. Sign in with a uburoom account here or open ' +
-            config.publicUrl +
-            '.';
-          if (accountRoutes()?.failAuth) return accountRoutes().failAuth(res, message);
-          return json(res, 400, { error: message });
+          if (config.accessPolicy && !config.accessPolicy.discord && route !== '/auth/owner') {
+            return accountRoutes().failAuth(res, 'Discord authorization is disabled');
+          }
+          try {
+            const destination = lanHandoff().begin(req, res, {
+              provider: 'discord',
+              ownerOnly: route === '/auth/owner',
+              returnTo,
+            });
+            res.writeHead(302, { Location: destination });
+            return res.end();
+          } catch (error) {
+            return accountRoutes().failAuth(res, error.message || 'Sign-in unavailable');
+          }
         }
-        return signIn.start(req, res, undefined, route === '/auth/owner', safeReturn(url.searchParams.get('return')));
+        return signIn.start(req, res, undefined, route === '/auth/owner', returnTo);
       },
     },
     {
@@ -157,6 +165,21 @@ function authRoutes({
         const { name, oauth, ...identity } = await signIn.exchange(code, discordFetch);
         if (attempt.ownerOnly && identity.id !== config.ownerId)
           return json(res, 403, { error: 'This sign-in is reserved for the configured installation owner' });
+        if (attempt.lan) {
+          const location = lanHandoff().issueTicket({
+            lanOrigin: attempt.lan.lanOrigin,
+            lanNonceHash: attempt.lan.lanNonceHash,
+            returnTo: attempt.returnTo,
+            payload: attempt.lan.link
+              ? { kind: 'link', provider: 'discord', subject: identity.id, name, oauth, link: attempt.lan.link }
+              : { kind: 'discord-signin', id: identity.id, name, oauth },
+          });
+          res.writeHead(302, {
+            Location: location,
+            'Set-Cookie': cookie(COOKIES.oauth, '', 0),
+          });
+          return res.end();
+        }
         if (linking) {
           if ((await user(req)) !== linking) return json(res, 403, { error: 'Account sign-in expired during linking' });
           await accountRoutes().verifiedLink(req, res, linking, 'discord', identity.id, name, undefined, oauth);

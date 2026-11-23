@@ -28,6 +28,7 @@ const { createUburoomAccounts } = require('./identity/accounts');
 const { uburoomAccountRoutes } = require('./http/uburoom-accounts');
 const { sourceSettings } = require('./source-settings');
 const { setupHandoff } = require('./http/setup-handoff');
+const { createLanHandoff } = require('./http/lan-handoff');
 
 const DEMO_MEDIA = path.join(__dirname, '../assets/demo/sync-test.mp4');
 
@@ -214,6 +215,7 @@ function createApp(config, options = {}) {
     const web = { config, registry, plexAuth, plexIdentity, uburoomAccounts, hub, watch, ...sessions };
     watchRoutes = watchHttp({ ...web, oauthFetch, entryPolicy, diagnosticLog, accounts });
     const signIn = createDiscordSignIn({ config, demo: () => plexIdentity.demo, sessions, authorizeUrl });
+    let lanHandoff;
     accountRoutes = accountHttp({
       ...web,
       entryPolicy,
@@ -222,9 +224,18 @@ function createApp(config, options = {}) {
       loginStore: accounts,
       revokeAccountSessions,
       discordStart: signIn.start,
+      lanHandoff: () => lanHandoff,
     });
     const editor = config.configFile ? createConfigEditor(config.configFile) : undefined;
     const files = createStaticFiles({ config });
+    lanHandoff = createLanHandoff({
+      config,
+      sessions,
+      signIn,
+      accountRoutes: () => accountRoutes,
+      setOwnerName,
+      files,
+    });
     const uburoomAccountsHttp = uburoomAccountRoutes({
       ...{ config, registry, uburoomAccounts, sessions, loginStore: accounts, hub, revokeAccountSessions, files },
     });
@@ -264,6 +275,8 @@ function createApp(config, options = {}) {
       uburoomAccountRoutes: uburoomAccountsHttp.routes,
       sourceSettingsRoutes: sourceSettingsHttp.routes,
       setupRoutes: setupHttp.routes,
+      lanHandoff: () => lanHandoff,
+      lanHandoffRoutes: lanHandoff.routes,
     });
     const server = createHttpServer({ config, logger, tls, json: sessions.json, route });
     sockets = watchSockets({
@@ -274,7 +287,15 @@ function createApp(config, options = {}) {
     });
     const sweep = setInterval(() => {
       watch.maintainProviderSessions();
-      for (const service of [watchRoutes, accountRoutes, signIn, sessions, uburoomAccountsHttp, sourceSettingsHttp])
+      for (const service of [
+        watchRoutes,
+        accountRoutes,
+        signIn,
+        sessions,
+        uburoomAccountsHttp,
+        sourceSettingsHttp,
+        lanHandoff,
+      ])
         service.sweep();
       void guests.sweep();
     }, 1000);

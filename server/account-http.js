@@ -32,6 +32,7 @@ function accountHttp({
   logins,
   loginStore,
   discordStart,
+  lanHandoff,
   throttle,
 }) {
   const attempts = new Map(),
@@ -159,18 +160,29 @@ function accountHttp({
       (!!config.guests?.enabled && !!config.guests?.requireSignIn)
     );
   }
-  async function startPlex(req, res, login, returnTo) {
+  async function startPlex(req, res, login, returnTo, lan = undefined) {
     if (attempts.size >= 200) throw new Error('Plex sign-in is busy');
     const state = secret(),
       attempt = await plexIdentity.start(config.publicUrl + '/auth/plex/callback?state=' + state);
     attempts.set(state, {
       ...attempt,
       expires: Date.now() + 300000,
+      ...(lan ? { lan } : {}),
       ...(login ? { sourceId: login.userId, sourceHash: sourceHash(req), revision: login.accountRevision } : {}),
       ...(returnTo ? { returnTo } : {}),
     });
     res.setHeader('Set-Cookie', cookie(COOKIES.plex, state, 300));
     return config.demo && plexIdentity.demo ? config.publicUrl + '/demo-plex?state=' + state : attempt.url;
+  }
+  async function startLanPlex(req, res, start) {
+    if (!plexOffered()) throw new Error('Plex sign-in is not offered on this server');
+    const destination = await startPlex(req, res, undefined, start.returnTo, {
+      lanOrigin: start.lanOrigin,
+      lanNonceHash: start.lanNonceHash,
+      link: start.link,
+    });
+    res.writeHead(302, { Location: destination });
+    res.end();
   }
   function pending(req, login) {
     const merge = merges.get(sourceHash(req));
@@ -207,18 +219,16 @@ function accountHttp({
       }
       if (req.method === 'GET' && route === '/auth/plex') {
         if (!plexOffered()) throw new Error('Plex sign-in is not offered on this server');
-        if (isLanRequest(config, req))
-          throw new Error(
-            'Plex sign-in is only available at ' +
-              config.publicUrl +
-              ' for now. Sign in with a uburoom account here or open ' +
-              config.publicUrl +
-              '.',
-          );
         // A guest signing in starts a separate account; guests never link providers.
         const current = await user(req);
         const linking = current && !registry.isGuest(current.userId) ? current : undefined;
         const returnTo = safeReturn(url.searchParams.get('return'));
+        if (isLanRequest(config, req)) {
+          const destination = lanHandoff().begin(req, res, { provider: 'plex', returnTo, linkLogin: linking });
+          res.writeHead(302, { Location: destination });
+          res.end();
+          return true;
+        }
         const destination = await startPlex(req, res, linking, returnTo);
         res.writeHead(302, { Location: destination });
         res.end();
@@ -278,6 +288,34 @@ function accountHttp({
         // Plex sign-in proves which Plex account this is; admission decides whether it gets in.
         const identity = await plexIdentity.identify(attempt);
         await plexAuth.prime(identity.credential);
+        if (attempt.lan) {
+          const location = lanHandoff().issueTicket({
+            lanOrigin: attempt.lan.lanOrigin,
+            lanNonceHash: attempt.lan.lanNonceHash,
+            returnTo: attempt.returnTo,
+            payload: attempt.lan.link
+              ? {
+                  kind: 'link',
+                  provider: 'plex',
+                  subject: identity.subject,
+                  name: identity.name,
+                  credential: identity.credential,
+                  link: attempt.lan.link,
+                }
+              : {
+                  kind: 'plex-signin',
+                  subject: identity.subject,
+                  name: identity.name,
+                  credential: identity.credential,
+                },
+          });
+          res.writeHead(302, {
+            Location: location,
+            'Set-Cookie': cookie(COOKIES.plex, '', 0),
+          });
+          res.end();
+          return true;
+        }
         let pendingMerge = false;
         if (login) {
           if ((await user(req)) !== login) throw new Error('Account sign-in expired during linking');
@@ -378,14 +416,19 @@ function accountHttp({
       if (req.method === 'POST' && route === '/api/account/plex/connect') {
         if (registry.isGuest(login.userId) || !plexOffered())
           throw new Error('Plex sign-in is not offered on this server');
-        if (isLanRequest(config, req))
-          throw new Error('Linking Plex is only available at ' + config.publicUrl + ' for now.');
+        if (isLanRequest(config, req)) {
+          json(res, 200, { url: lanHandoff().begin(req, res, { provider: 'plex', linkLogin: login }) });
+          return true;
+        }
         json(res, 200, { url: await startPlex(req, res, login) });
         return true;
       }
       if (req.method === 'POST' && route === '/api/account/discord/connect') {
-        if (isLanRequest(config, req))
-          throw new Error('Linking Discord is only available at ' + config.publicUrl + ' for now.');
+        if (isLanRequest(config, req)) {
+          if (config.accessPolicy && !config.accessPolicy.discord) throw new Error('Discord authorization is disabled');
+          json(res, 200, { url: lanHandoff().begin(req, res, { provider: 'discord', linkLogin: login }) });
+          return true;
+        }
         await discordStart(req, res, login);
         return true;
       }
@@ -535,6 +578,7 @@ function accountHttp({
     route,
     sweep,
     failAuth,
+    startLanPlex,
     verifiedLink,
     completeSignIn,
     close() {
