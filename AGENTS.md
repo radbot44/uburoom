@@ -32,6 +32,12 @@ Follow the owner's current task and the repo's approved boundaries. [README.md](
 
 ## Verification and repository hygiene
 
+**Versioning and releases**
+- `package.json` is the application version source of truth; development builds must also identify their Git commit.
+- Do not bump application versions, create release tags, or publish releases without explicit owner authorization. Ordinary commits and PR merges never trigger version bumps.
+- Consult [`docs/releases.md`](docs/releases.md) for version numbering, release preparation, compatibility, and verification requirements; read it when working on these tasks, not during unrelated feature work.
+
+
 - Write or extend **focused regression tests when a meaningful failure could recur**, especially authorization, consent, credentials, durability, protocol, playback and synchronization. Avoid tests for trivial markup, label/class spelling, mock self-confirmation, source-text matching and brittle visual snapshots. No coverage quotas or exhaustive matrices. New permanent smoke runners need a distinct high-risk boundary and owner approval.
 - For UI fed by background updates, trace its subscriptions, resyncs and timers during review. Exercise the actual refresh path while the affected view is scrolled, a control is focused or a draft is being edited; verify that unchanged data preserves DOM identity, focus, scroll and drafts, and that changed data updates only the affected content. Initial-load screenshots alone do not verify refresh behavior. Extend an existing browser runner when this boundary needs a regression test.
 - Run focused checks for affected behavior; full suite for broad regression/release claims, not documentation-only changes. Use Chrome and Firefox when rendered/browser checks matter. Report exact commands and failures/skips, distinguishing source review (A), isolated execution (B), real integration (C) and human acceptance (D). Live C requires permission. Keep current evidence and open gates in [testing](docs/testing.md); archive historical evidence.
