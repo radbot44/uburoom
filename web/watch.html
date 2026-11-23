@@ -27,6 +27,7 @@
     <link rel="stylesheet" href="/styles/popover.css" />
     <link rel="stylesheet" href="/styles/ending.css" />
     <link rel="stylesheet" href="/styles/room.css" />
+    <link rel="stylesheet" href="/styles/activity.css" />
     <link rel="stylesheet" href="/styles/rooms.css" />
     <link rel="stylesheet" href="/styles/events.css" />
     <link rel="stylesheet" href="/styles/lobby.css" />
@@ -405,7 +406,8 @@
                         data-tabler-icon="layout-sidebar-right"
                       >
                         <use href="#icon-layout-sidebar-right"></use></svg></span
-                    ><span>Menu</span>
+                    ><span>Menu</span
+                    ><span id="drawer-open-badge" class="drawer-open-badge" hidden aria-hidden="true"></span>
                   </button>
                 </div>
               </div>
@@ -698,6 +700,62 @@
               </div>
               <p id="seek-feedback" class="seek-feedback" role="status" hidden></p>
               <div id="watch-toasts" class="watch-toast-region" aria-live="polite"></div>
+              <section id="stage-announcement-banner" class="stage-announcement-banner" aria-live="polite" hidden>
+                <div class="stage-announcement-body">
+                  <span id="stage-announcement-sender" class="stage-announcement-sender"></span>
+                  <span id="stage-announcement-text" class="stage-announcement-text"></span>
+                </div>
+                <button id="stage-announcement-clear" class="quiet" type="button" hidden>Clear</button>
+                <button
+                  id="stage-announcement-dismiss"
+                  class="quiet stage-card-minimize"
+                  type="button"
+                  aria-label="Dismiss"
+                >
+                  Hide
+                </button>
+              </section>
+              <section
+                id="poll-card"
+                class="readiness-choice human-check-prompt"
+                aria-labelledby="poll-card-title"
+                aria-live="polite"
+                hidden
+              >
+                <h2 id="poll-card-title">Poll</h2>
+                <p id="poll-card-meta"></p>
+                <div id="poll-card-options" class="poll-options-grid"></div>
+                <p id="poll-card-error" class="hint" hidden></p>
+                <div>
+                  <button id="poll-close-btn" class="primary" type="button" hidden>Close poll</button
+                  ><button id="poll-clear-btn" class="quiet" type="button" hidden>Dismiss</button
+                  ><button id="poll-minimize" class="quiet stage-card-minimize" type="button" aria-label="Minimize">
+                    Hide
+                  </button>
+                </div>
+              </section>
+              <section
+                id="break-card"
+                class="readiness-choice human-check-prompt"
+                aria-labelledby="break-card-title"
+                aria-live="polite"
+                hidden
+              >
+                <h2 id="break-card-title">Intermission</h2>
+                <p id="break-card-meta"></p>
+                <div>
+                  <button id="break-ready" class="primary human-check-choice" type="button" aria-pressed="false">
+                    I’m back</button
+                  ><button id="break-hold" class="quiet human-check-choice" type="button" aria-pressed="false">
+                    Need a moment</button
+                  ><button id="break-resume" class="primary" type="button" hidden>Resume now</button
+                  ><button id="break-extend" class="quiet" type="button" hidden>+5 min</button
+                  ><button id="break-end" class="quiet" type="button" hidden>End break</button
+                  ><button id="break-minimize" class="quiet stage-card-minimize" type="button" aria-label="Minimize">
+                    Hide
+                  </button>
+                </div>
+              </section>
               <section
                 id="human-check-prompt"
                 class="readiness-choice human-check-prompt"
@@ -725,7 +783,15 @@
                     aria-pressed="false"
                   >
                     Need a moment</button
-                  ><button id="human-check-clear" class="quiet" type="button" hidden>Cancel</button>
+                  ><button id="human-check-clear" class="quiet" type="button" hidden>Cancel</button
+                  ><button
+                    id="human-check-minimize"
+                    class="quiet stage-card-minimize"
+                    type="button"
+                    aria-label="Minimize"
+                  >
+                    Hide
+                  </button>
                 </div>
               </section>
               <section id="room-recovery" class="readiness-choice" aria-live="polite" hidden>
@@ -1418,6 +1484,22 @@
                       hidden
                     ></button
                     ><button
+                      id="room-announce-btn"
+                      class="quiet watch-control"
+                      type="button"
+                      aria-label="Send announcement"
+                      title="Send announcement"
+                      hidden
+                    ></button
+                    ><button
+                      id="room-poll-btn"
+                      class="quiet watch-control"
+                      type="button"
+                      aria-label="Start a poll"
+                      title="Start a poll"
+                      hidden
+                    ></button
+                    ><button
                       id="room-sync-spread"
                       class="room-sync-spread quiet watch-control"
                       type="button"
@@ -1433,6 +1515,29 @@
                 role="navigation"
                 aria-label="Workspace"
               >
+                <button
+                  id="room-activity-btn"
+                  class="quiet watch-control watch-control-responsive room-activity-btn"
+                  type="button"
+                  aria-label="Activity"
+                  title="Activity"
+                  aria-expanded="false"
+                  aria-controls="activity-panel"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    data-tabler-icon="history"
+                  >
+                    <use href="#icon-history"></use></svg
+                  ><span class="watch-control-label">Activity</span
+                  ><span id="room-activity-badge" class="activity-badge" hidden></span>
+                </button>
                 <div id="rooms" class="chips" role="group" aria-label="Active rooms" hidden></div>
                 <button
                   id="refresh"
@@ -2405,6 +2510,100 @@
       </dialog>
     </main>
     <script src="/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js"></script>
+    <dialog id="poll-dialog" class="watch-dialog" aria-labelledby="poll-dialog-title">
+      <form id="poll-form" method="dialog" class="dialog-body">
+        <h2 id="poll-dialog-title">Start a poll</h2>
+        <label for="poll-question">Question</label>
+        <input
+          id="poll-question"
+          type="text"
+          maxlength="140"
+          required
+          autocomplete="off"
+          placeholder="What should we watch next?"
+        />
+        <div class="break-duration-chips" role="group" aria-label="Fill poll options">
+          <button id="poll-fill-suggestions" class="quiet" type="button">From suggestions</button>
+          <button id="poll-fill-queue" class="quiet" type="button">From queue</button>
+          <button id="poll-add-option" class="quiet" type="button">+ Option</button>
+        </div>
+        <div id="poll-options-inputs" class="poll-options-grid"></div>
+        <div class="break-duration-chips" role="group" aria-label="Poll timer">
+          <button type="button" class="quiet poll-timer-chip" data-seconds="" aria-pressed="true">Manual close</button>
+          <button type="button" class="quiet poll-timer-chip" data-seconds="60" aria-pressed="false">1 min</button>
+          <button type="button" class="quiet poll-timer-chip" data-seconds="120" aria-pressed="false">2 min</button>
+          <button type="button" class="quiet poll-timer-chip" data-seconds="300" aria-pressed="false">5 min</button>
+        </div>
+        <div id="poll-on-close-group" hidden>
+          <div class="activity-section-label">When it ends</div>
+          <div class="break-duration-chips" role="group" aria-label="Winner action">
+            <button type="button" class="quiet poll-action-chip" data-action="queueNext" aria-pressed="true">
+              Queue next
+            </button>
+            <button type="button" class="quiet poll-action-chip" data-action="playNow" aria-pressed="false">
+              Play now
+            </button>
+            <button type="button" class="quiet poll-action-chip" data-action="results" aria-pressed="false">
+              Just show results
+            </button>
+          </div>
+          <p id="poll-play-now-note" class="hint" hidden>Play now replaces what is currently playing.</p>
+        </div>
+        <div>
+          <div class="activity-section-label">Tie rule</div>
+          <div class="break-duration-chips" role="group" aria-label="Tie rule">
+            <button type="button" class="quiet poll-tie-chip" data-tie="host" aria-pressed="true">Host picks</button>
+            <button type="button" class="quiet poll-tie-chip" data-tie="random" aria-pressed="false">Random</button>
+          </div>
+        </div>
+        <div class="dialog-actions">
+          <button id="poll-cancel" class="quiet" type="button">Cancel</button>
+          <button id="poll-submit" class="primary" type="submit">Start poll</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="announce-dialog" class="watch-dialog" aria-labelledby="announce-dialog-title">
+      <form id="announce-form" method="dialog" class="dialog-body">
+        <h2 id="announce-dialog-title">Send announcement</h2>
+        <label for="announce-text">Message</label>
+        <input
+          id="announce-text"
+          type="text"
+          maxlength="140"
+          required
+          autocomplete="off"
+          placeholder="Short message for everyone in the room"
+        />
+        <p id="announce-count" class="hint">0 / 140</p>
+        <label class="checkbox-row">
+          <input id="announce-pin" type="checkbox" />
+          <span>Pin until dismissed</span>
+        </label>
+        <div class="dialog-actions">
+          <button id="announce-cancel" class="quiet" type="button">Cancel</button>
+          <button id="announce-submit" class="primary" type="submit">Send</button>
+        </div>
+      </form>
+    </dialog>
+    <section id="break-popover" class="break-popover" aria-label="Readiness check or break" hidden>
+      <button id="break-ask-now" class="primary" type="button">Ask now</button>
+      <div class="activity-section-label">Break first</div>
+      <div class="break-duration-chips" role="group" aria-label="Break length">
+        <button type="button" class="quiet break-chip" data-minutes="5">5 min</button>
+        <button type="button" class="quiet break-chip" data-minutes="10">10 min</button>
+        <button type="button" class="quiet break-chip" data-minutes="15">15 min</button>
+      </div>
+      <label class="checkbox-row">
+        <span>Custom (min)</span>
+        <input id="break-custom-minutes" type="number" min="1" max="120" value="10" style="width: 72px" />
+      </label>
+      <label class="checkbox-row">
+        <input id="break-auto-resume" type="checkbox" />
+        <span>Auto-resume when everyone is back</span>
+      </label>
+      <button id="break-start-custom" class="quiet" type="button">Start break</button>
+    </section>
+    <section id="activity-panel" class="activity-panel" aria-label="Room activity" hidden></section>
     <script type="module" src="/watch.js"></script>
   </body>
 </html>

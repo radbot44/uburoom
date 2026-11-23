@@ -49,7 +49,6 @@ export const store = {
     state: undefined,
     receivedAt: undefined,
     pending: false,
-    lastFeedback: undefined,
     seekPendingValue: undefined,
     seekPendingUntil: 0,
     seekPendingToken: 0,

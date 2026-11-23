@@ -222,6 +222,145 @@ const COMMANDS = Object.freeze({
   'check.ask': { scope: 'room', capability: 'playPause', roomLocal: true, liveOnly: true },
   'check.clear': { scope: 'room', capability: 'playPause', roomLocal: true, liveOnly: true },
   'check.reply': { scope: 'room', capability: null, roomLocal: true, liveOnly: true },
+  'break.start': {
+    scope: 'room',
+    capability: 'playPause',
+    roomLocal: true,
+    liveOnly: true,
+    args(a) {
+      const minutes = Number(a.minutes);
+      if (!Number.isFinite(minutes) || !Number.isInteger(minutes) || minutes < 1 || minutes > 120) {
+        throw new Error('Choose a break length between 1 and 120 minutes');
+      }
+      const out = { minutes };
+      if (a.autoResume !== undefined) {
+        if (typeof a.autoResume !== 'boolean') throw new Error('Invalid auto-resume option');
+        out.autoResume = a.autoResume;
+      }
+      return out;
+    },
+  },
+  'break.extend': {
+    scope: 'room',
+    capability: 'playPause',
+    roomLocal: true,
+    liveOnly: true,
+    args(a) {
+      const minutes = a.minutes === undefined ? 5 : Number(a.minutes);
+      if (!Number.isFinite(minutes) || !Number.isInteger(minutes) || minutes < 1 || minutes > 60) {
+        throw new Error('Choose an extension between 1 and 60 minutes');
+      }
+      return { minutes };
+    },
+  },
+  'break.end': { scope: 'room', capability: 'playPause', roomLocal: true, liveOnly: true, args: none },
+  'announce.send': {
+    scope: 'room',
+    capability: 'announce',
+    roomLocal: true,
+    liveOnly: true,
+    args(a) {
+      if (typeof a.text !== 'string') throw new Error('Enter an announcement');
+      const text = a.text.replace(/\s+/g, ' ').trim();
+      if (!text) throw new Error('Enter an announcement');
+      if (text.length > 140) throw new Error('Announcement must be 140 characters or fewer');
+      const out = { text };
+      if (a.pinned !== undefined) {
+        if (typeof a.pinned !== 'boolean') throw new Error('Invalid pin option');
+        out.pinned = a.pinned;
+      }
+      return out;
+    },
+  },
+  'announce.clear': { scope: 'room', capability: 'announce', roomLocal: true, liveOnly: true, args: none },
+  'poll.start': {
+    scope: 'room',
+    capability: 'runPolls',
+    roomLocal: true,
+    liveOnly: true,
+    args(a) {
+      if (typeof a.question !== 'string') throw new Error('Enter a poll question');
+      const question = a.question.replace(/\s+/g, ' ').trim();
+      if (!question || question.length > 140) throw new Error('Poll question must be 1–140 characters');
+      if (!Array.isArray(a.options) || a.options.length < 2 || a.options.length > 6) {
+        throw new Error('Provide between 2 and 6 poll options');
+      }
+      const options = a.options.map((opt, idx) => {
+        if (!opt || typeof opt !== 'object') throw new Error('Invalid poll option');
+        const label = typeof opt.label === 'string' ? opt.label.replace(/\s+/g, ' ').trim() : '';
+        if (!label || label.length > 100) throw new Error('Each option must be 1–100 characters');
+        const id = typeof opt.id === 'string' && opt.id.trim() ? opt.id.trim().slice(0, 40) : `opt-${idx + 1}`;
+        let media;
+        if (opt.media && typeof opt.media === 'object') {
+          const mediaId = mediaIdentity(opt.media.mediaId || opt.media.id)?.id;
+          const serverId = typeof opt.media.serverId === 'string' ? opt.media.serverId.trim() : '';
+          if (!mediaId || !serverId) throw new Error('Invalid media option');
+          media = {
+            serverId,
+            mediaId,
+            type: opt.media.type === 'episode' ? 'episode' : 'movie',
+            title:
+              typeof opt.media.title === 'string' && opt.media.title.trim()
+                ? opt.media.title.trim().slice(0, 200)
+                : label,
+            ...(typeof opt.media.subtitle === 'string' && opt.media.subtitle.trim()
+              ? { subtitle: opt.media.subtitle.trim().slice(0, 200) }
+              : {}),
+            ...(Number.isSafeInteger(opt.media.year) ? { year: opt.media.year } : {}),
+            ...(typeof opt.media.suggestionId === 'string' && opt.media.suggestionId.trim()
+              ? { suggestionId: opt.media.suggestionId.trim().slice(0, 64) }
+              : {}),
+          };
+        }
+        return { id, label, ...(media ? { media } : {}) };
+      });
+      const allMedia = options.every(opt => !!opt.media);
+      let durationSeconds = null;
+      if (a.durationSeconds !== undefined && a.durationSeconds !== null) {
+        const secs = Number(a.durationSeconds);
+        if (!Number.isInteger(secs) || secs < 30 || secs > 600) {
+          throw new Error('Poll duration must be between 30 and 600 seconds');
+        }
+        durationSeconds = secs;
+      }
+      const onClose = a.onClose === undefined ? (allMedia ? 'queueNext' : 'results') : a.onClose;
+      if (!['results', 'queueNext', 'playNow'].includes(onClose)) throw new Error('Invalid poll close action');
+      if (onClose !== 'results' && !allMedia) throw new Error('Queue and play actions require media options');
+      const tieRule = a.tieRule === undefined ? 'host' : a.tieRule;
+      if (!['host', 'random'].includes(tieRule)) throw new Error('Invalid tie rule');
+      return { question, options, durationSeconds, onClose, tieRule };
+    },
+  },
+  'poll.vote': {
+    scope: 'room',
+    capability: null,
+    roomLocal: true,
+    liveOnly: true,
+    args(a) {
+      if (typeof a.pollId !== 'string' || !a.pollId.trim()) throw new Error('Invalid poll');
+      if (typeof a.optionId !== 'string' || !a.optionId.trim()) throw new Error('Choose a poll option');
+      return { pollId: a.pollId.trim(), optionId: a.optionId.trim() };
+    },
+  },
+  'poll.close': {
+    scope: 'room',
+    capability: 'runPolls',
+    roomLocal: true,
+    liveOnly: true,
+    args(a) {
+      const out = {};
+      if (a.pollId !== undefined) {
+        if (typeof a.pollId !== 'string' || !a.pollId.trim()) throw new Error('Invalid poll');
+        out.pollId = a.pollId.trim();
+      }
+      if (a.winnerOptionId !== undefined) {
+        if (typeof a.winnerOptionId !== 'string' || !a.winnerOptionId.trim()) throw new Error('Invalid winner option');
+        out.winnerOptionId = a.winnerOptionId.trim();
+      }
+      return out;
+    },
+  },
+  'poll.clear': { scope: 'room', capability: 'runPolls', roomLocal: true, liveOnly: true, args: none },
   'media.autoplay.set': { scope: 'room', capability: 'autoplay', roomLocal: true },
   'media.autoplay.cancel': { scope: 'room', capability: 'autoplay', roomLocal: true },
   'media.load': {

@@ -467,6 +467,12 @@ module.exports = {
       pauseOnBuffering: !!(room.saved.pauseOnBuffering ?? this.hub.config.pauseOnBuffering),
       waitingForReady,
       readiness,
+      activities: RoomAuthority.snapshotActivities(
+        timeline,
+        now,
+        action => this.hub.authorize(actor, room, action).ok,
+        actor,
+      ),
       humanCheck: RoomAuthority.snapshotHumanCheck(timeline, now) || null,
       canCheck: this.hub.authorize(actor, room, 'check.ask').ok,
       recovery: this.roomState.recoveryState(room),
@@ -501,7 +507,6 @@ module.exports = {
       suggestions: (room.suggestions || [])
         .filter(entry => entry.status === 'pending' || entry.status === 'accepting')
         .map(entry => this.suggestionView(entry, this.roomState.queue.account(actor.userId))),
-      feedback: room.feedback,
     };
   },
 };

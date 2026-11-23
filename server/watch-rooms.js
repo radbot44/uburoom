@@ -116,6 +116,7 @@ class WatchRooms {
             throw failure('Room changed during recovery', 409);
           this.watch.create(actor, latest.visibility, latest);
           const room = this.watch.rooms.get(id);
+          this.watch.journal(room)?.append({ at: this.watch.clock.now(), kind: 'room.recovered' });
           room.media = media || null;
           media = undefined;
           room.position = saved?.position || 0;
@@ -620,6 +621,7 @@ class WatchRooms {
           room,
           () => {
             this.apply(room, record);
+            this.recordEdit(room, actor, change);
             room.revision++;
             if (room.bufferingViewerId && !(room.saved.pauseOnBuffering ?? this.watch.hub.config.pauseOnBuffering)) {
               const action = room.waitingForHost ? 'media.pause' : 'media.play';
@@ -637,6 +639,7 @@ class WatchRooms {
           room,
           () => {
             this.apply(room, record);
+            this.recordEdit(room, actor, change);
             room.revision++;
             this.watch.changed(room, { lobby: true });
             if (change.action === 'autoplay') this.watch.cancelAutoplay(room);
@@ -656,6 +659,73 @@ class WatchRooms {
       return this.summary(id, actor);
     };
     return room ? runEdit() : this.withClosedLock(id, runEdit);
+  }
+  /** Records a declared journal entry for a room settings or role edit inside the mailbox. */
+  recordEdit(room, actor, change) {
+    if (!room || !change?.action) return;
+    const action = change.action;
+    if (action === 'visibility') {
+      this.watch.record(room, {
+        kind: 'room.visibility',
+        actor,
+        audience: 'roomSettings',
+        data: { visibility: change.visibility },
+      });
+    } else if (action === 'guests.allow') {
+      this.watch.record(room, {
+        kind: 'room.guests',
+        actor,
+        audience: 'roomSettings',
+        data: { allowGuests: !!change.allowGuests },
+      });
+    } else if (action === 'guests.removeAll') {
+      this.watch.record(room, {
+        kind: 'room.guests',
+        actor,
+        audience: 'roomSettings',
+        data: { removedAll: true },
+      });
+    } else if (action === 'invite.reroll') {
+      this.watch.record(room, {
+        kind: 'room.invite',
+        actor,
+        audience: 'roomSettings',
+        data: { rerolled: true },
+      });
+    } else if (action === 'invite.revoke') {
+      const targetName = this.registry.canonical(change.userId)?.name || 'Participant';
+      this.watch.record(room, {
+        kind: 'room.invite',
+        actor,
+        audience: 'roomSettings',
+        data: { revoked: { id: change.userId, name: targetName } },
+      });
+    } else if (action === 'permissions') {
+      this.watch.record(room, {
+        kind: 'room.permissions',
+        actor,
+        audience: 'roomSettings',
+        data: { ...(change.preset ? { preset: change.preset } : {}) },
+      });
+    } else if (['rename', 'keepEmpty', 'maxMembers', 'pauseOnBuffering', 'autoplay', 'auto.reset'].includes(action)) {
+      this.watch.record(room, {
+        kind: 'room.settings',
+        actor,
+        audience: 'roomSettings',
+        data: { setting: action },
+      });
+    } else if (['host.add', 'host.remove', 'host.relinquish', 'creator.transfer'].includes(action)) {
+      const targetId = change.userId || (action === 'host.relinquish' ? actor.userId : undefined);
+      const targetName = targetId ? this.registry.canonical(targetId)?.name || 'Participant' : undefined;
+      this.watch.record(room, {
+        kind: 'people.role',
+        actor,
+        data: {
+          change: action,
+          ...(targetId ? { target: { id: targetId, name: targetName } } : {}),
+        },
+      });
+    }
   }
   // Removes these accounts' viewers from a live room with the ordinary kick notice.
   async removeFromRoom(id, userIds) {
@@ -870,6 +940,7 @@ class WatchRooms {
         repos.queue.deleteQueueEntriesByRoomId(id);
         repos.rooms.deleteRoomHostsByRoomId(id);
         repos.rooms.deleteRoomHostGrantsByRoomId(id);
+        repos.rooms.deleteRoomJournalByRoomId(id);
         for (const host of hosts) repos.rooms.insertRoomHosts(id, host);
         this.registry.meta('singleRoomDefaultHosts', JSON.stringify(hosts));
         repos.rooms.resetRoom(JSON.stringify(this.store.defaults), 'Room', newInviteCode(this.store.db), id);
@@ -904,6 +975,8 @@ class WatchRooms {
     room.autoplayError = undefined;
     room.autoQueueError = undefined;
     room.saveError = undefined;
+    this.watch.journal(room)?.clear();
+    room.journalSavedSeq = 0;
     this.apply(room, this.store.get(id));
     void this.watch.coordinator.dispatch(room, { type: 'roles', invalidate: false });
   }
@@ -1038,6 +1111,22 @@ class WatchRooms {
       active: !!room.viewers.size,
     };
   }
+  hydrateJournal(room) {
+    const journal = this.watch.journal(room);
+    if (!journal) return;
+    const rows = repositories(this.store.db).rooms.listRoomJournal(room.roomId, journal.limit);
+    const entries = [];
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(row.entry);
+        if (parsed && typeof parsed === 'object') entries.push({ ...parsed, seq: row.seq, at: row.at });
+      } catch {
+        /* Skip malformed persisted journal rows. */
+      }
+    }
+    journal.hydrate({ journalId: room.roomId, entries });
+    room.journalSavedSeq = journal.head;
+  }
   save(room, { closing = false, final = false } = {}) {
     if (room.transition?.commit)
       return this.track(room.transition?.commit.then(() => this.save(room, { closing, final })));
@@ -1048,19 +1137,36 @@ class WatchRooms {
         if (!final && this.watch.rooms.get(room.roomId) !== room) return;
         const { bookmark, preserveSelection, live, active } = captured || this.capture(room, { closing });
         const record = this.store.get(room.roomId);
+        const journal = this.watch.journal(room);
+        const pendingJournal = journal ? journal.pendingWrite(room.journalSavedSeq || 0) : null;
         const saved = this.registry.transaction(() => {
-          repositories(this.store.db).rooms.saveLiveState(
+          const roomsRepo = repositories(this.store.db).rooms;
+          roomsRepo.saveLiveState(
             live
               ? JSON.stringify({ viewers: live.viewers.map(id => this.store.account(id)), wasPlaying: live.wasPlaying })
               : null,
             record.id,
           );
+          if (pendingJournal && (pendingJournal.entries.length || pendingJournal.deletes.length)) {
+            for (const seq of pendingJournal.deletes) {
+              roomsRepo.deleteRoomJournalEntry(record.id, seq);
+            }
+            for (const entry of pendingJournal.entries) {
+              roomsRepo.insertRoomJournalEntry(record.id, entry.seq, entry.at, JSON.stringify(entry));
+            }
+            const cutoff = pendingJournal.head - journal.limit;
+            if (cutoff > 0) roomsRepo.trimRoomJournal(record.id, cutoff);
+          }
           if (active) this.store.touch(record.id);
           if (preserveSelection) return this.store.get(record.id);
           if (bookmark) this.queue.checkpoint(record.id, bookmark.position);
           return this.store.writeCheckpoint(record.id, record.checkpointRevision, bookmark);
         });
         const committed = await this.store.commit(saved);
+        if (pendingJournal && journal) {
+          room.journalSavedSeq = Math.max(room.journalSavedSeq || 0, pendingJournal.head);
+          journal.acknowledgeDeletes(pendingJournal.deletes);
+        }
         this.apply(room, committed);
         if (room.saveError) {
           room.saveError = undefined;

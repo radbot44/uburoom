@@ -175,6 +175,15 @@ class RoomsRepo {
     this.statements.updateRoomHostGrantsIssuerIdOnMerge = db.prepare(
       'UPDATE watch_room_host_grants SET issuerId=? WHERE issuerId=?',
     );
+    this.statements.listRoomJournal = db.prepare(
+      'SELECT seq, at, entry FROM (SELECT seq, at, entry FROM watch_room_journal WHERE roomId=? ORDER BY seq DESC LIMIT ?) ORDER BY seq ASC',
+    );
+    this.statements.insertRoomJournalEntry = db.prepare(
+      'INSERT OR REPLACE INTO watch_room_journal(roomId,seq,at,entry) VALUES(?,?,?,?)',
+    );
+    this.statements.deleteRoomJournalEntry = db.prepare('DELETE FROM watch_room_journal WHERE roomId=? AND seq=?');
+    this.statements.trimRoomJournal = db.prepare('DELETE FROM watch_room_journal WHERE roomId=? AND seq<=?');
+    this.statements.deleteRoomJournalByRoomId = db.prepare('DELETE FROM watch_room_journal WHERE roomId=?');
   }
   exists(...values) {
     return this.statements.exists.get(...values);
@@ -402,6 +411,21 @@ class RoomsRepo {
   }
   updateRoomHostGrantsIssuerIdOnMerge(...values) {
     return this.statements.updateRoomHostGrantsIssuerIdOnMerge.run(...values);
+  }
+  listRoomJournal(...values) {
+    return this.statements.listRoomJournal.all(...values);
+  }
+  insertRoomJournalEntry(...values) {
+    return this.statements.insertRoomJournalEntry.run(...values);
+  }
+  deleteRoomJournalEntry(...values) {
+    return this.statements.deleteRoomJournalEntry.run(...values);
+  }
+  trimRoomJournal(...values) {
+    return this.statements.trimRoomJournal.run(...values);
+  }
+  deleteRoomJournalByRoomId(...values) {
+    return this.statements.deleteRoomJournalByRoomId.run(...values);
   }
 }
 module.exports = { RoomsRepo };

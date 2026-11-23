@@ -77,4 +77,61 @@ function badgeDetails(command, state = {}) {
     ...(action === 'media.seek.relative' ? { seekSeconds: Math.abs(args.seconds) } : {}),
   };
 }
-export { badgeDetails };
+
+function formatClock(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+    : `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+/**
+ * Formats a live room journal entry for a participant toast, or returns undefined
+ * when the entry does not produce a participant toast.
+ * @param {any} entry
+ */
+function journalToastDetails(entry) {
+  if (!entry || typeof entry.kind !== 'string') return;
+  const actorName = entry.actor?.name;
+  const data = entry.data || {};
+  switch (entry.kind) {
+    case 'playback.play':
+      if (!actorName) return;
+      return { symbol: 'play', title: 'Play', hint: actorName, duration: 2500 };
+    case 'playback.pause':
+      if (!actorName) return;
+      return { symbol: 'pause', title: 'Pause', hint: actorName, duration: 2500 };
+    case 'playback.seek': {
+      if (!actorName) return;
+      const to = Number.isFinite(data.to) ? formatClock(data.to) : '';
+      const delta = Number.isFinite(data.from) && Number.isFinite(data.to) ? data.to - data.from : 0;
+      const symbol = delta < 0 ? 'back' : delta > 0 ? 'forward' : 'end';
+      return {
+        symbol,
+        title: to ? `Seek ${to}` : 'Seek',
+        hint: actorName,
+        duration: 2500,
+      };
+    }
+    case 'media.start': {
+      const title = data.media?.title ? `Playing ${data.media.title}` : 'Video selected';
+      return { symbol: 'play', title, hint: actorName || '', duration: 2500 };
+    }
+    case 'room.visibility': {
+      const priv = data.visibility === 'private';
+      return {
+        symbol: priv ? 'lock' : 'users',
+        title: priv ? 'Private room' : 'Public room',
+        hint: actorName || '',
+        duration: 2500,
+      };
+    }
+    default:
+      return;
+  }
+}
+
+export { badgeDetails, journalToastDetails };

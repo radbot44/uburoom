@@ -27,14 +27,19 @@ module.exports = {
    * @param {Room} room
    * @param {(room: Room) => any} step
    * @param {any} [gone]
+   * @param {{actor?: any, action?: string, how?: string, reason?: string, mediaEndReason?: string}} [cause]
    * @returns {Promise<any>}
    */
-  async inRoom(room, step, gone = expired()) {
+  async inRoom(room, step, gone = expired(), cause = undefined) {
     let ran = false;
-    const result = await this.coordinator.step(room, live => {
-      ran = true;
-      return step(live);
-    });
+    const result = await this.coordinator.step(
+      room,
+      live => {
+        ran = true;
+        return step(live);
+      },
+      cause ? { cause } : undefined,
+    );
     if (!ran) return gone;
     if (result.error) throw result.error;
     return result.value;
@@ -57,7 +62,10 @@ module.exports = {
     if (declared.service === 'publish' || declared.service === 'unpublish')
       return this.publications.command(room, command.action, actor, ticket);
     if (command.action === 'room.kick') return this.kick(room, command.args.userId, actor, ticket);
-    const admitted = await this.inRoom(room, () => this.admit(room, command, declared, actor, ticket));
+    const admitted = await this.inRoom(room, () => this.admit(room, command, declared, actor, ticket), expired(), {
+      actor,
+      action: command.action,
+    });
     return typeof admitted === 'function' ? admitted() : admitted;
   },
   async kick(room, userId, actor, ticket) {
@@ -74,6 +82,13 @@ module.exports = {
         return { status: 'forbidden', message: 'You cannot kick this participant.' };
       const viewers = [...room.viewers.entries()].filter(([, viewer]) => viewer.userId === userId);
       if (!viewers.length) return { status: 'unavailable', message: 'This participant has already left.' };
+      const targetName = viewers[0][1].name || 'Participant';
+      this.record(room, {
+        kind: 'people.removed',
+        actor,
+        audience: 'kickParticipants',
+        data: { target: { id: userId, name: targetName } },
+      });
       void this.coordinator.dispatch(room, { type: 'kick', userId });
       return { record, viewers };
     });
@@ -240,11 +255,22 @@ module.exports = {
           action: 'visibility',
           visibility: args.visibility,
         });
-        const reply = await this.inRoom(room, () => {
-          this.roomState.apply(room, record);
-          void this.coordinator.dispatch(room, { type: 'visibility' });
-          return this.applyCommand(room, command, actor);
-        });
+        const reply = await this.inRoom(
+          room,
+          () => {
+            this.roomState.apply(room, record);
+            this.record(room, {
+              kind: 'room.visibility',
+              actor,
+              audience: 'roomSettings',
+              data: { visibility: args.visibility },
+            });
+            void this.coordinator.dispatch(room, { type: 'visibility' });
+            return this.applyCommand(room, command, actor);
+          },
+          expired(),
+          { actor, action: command.action },
+        );
         return this.acknowledge(room, declared, reply);
       };
     if (
@@ -272,10 +298,14 @@ module.exports = {
           (!unconfirmed && (await this.streamScope(actor, media)).principal !== provider.principal)
         )
           return expired();
-        const reply = await this.inRoom(room, () =>
-          !this.hub.current(ticket) || room.mediaVersion !== version
-            ? expired()
-            : this.applyCommand(room, command, actor),
+        const reply = await this.inRoom(
+          room,
+          () =>
+            !this.hub.current(ticket) || room.mediaVersion !== version
+              ? expired()
+              : this.applyCommand(room, command, actor),
+          expired(),
+          { actor, action: command.action },
         );
         return this.acknowledge(room, declared, reply);
       };
@@ -285,10 +315,22 @@ module.exports = {
   },
   /** Applies an admitted timeline or room command to the live room, inside its mailbox. */
   applyCommand(room, command, actor) {
-    const { action, args } = command;
+    const { action } = command;
     const now = this.clock.now();
-    if (action.startsWith('check.')) {
-      const outcome = RoomAuthority.applyHumanCheckCommand(room, command, actor, { now });
+    if (RoomAuthority.activityForCommand(action)) {
+      /** @type {{poll: any, winner: any} | undefined} */
+      let closedPoll;
+      const outcome = RoomAuthority.applyActivityCommand(room, command, actor, {
+        now,
+        onBreakPause: (liveRoom, at) => {
+          if (liveRoom.media && (!liveRoom.state?.paused || !liveRoom.manualPaused)) {
+            applyTimelineCommand(liveRoom, { action: 'media.pause', args: {} }, { now: at });
+          }
+        },
+        onPollClosed: (_liveRoom, poll, winner) => {
+          if (poll?.onClose !== 'results' && winner?.media) closedPoll = { poll, winner };
+        },
+      });
       if (outcome.status !== 'applied') {
         if (outcome.status === 'expired') this.review(room);
         return {
@@ -296,15 +338,20 @@ module.exports = {
           message: outcome.message,
         };
       }
+      if (outcome.journal?.length) {
+        for (const entry of outcome.journal) this.record(room, entry);
+      }
       if (outcome.changed) {
         room.revision++;
         room.lastActivity = now;
         this.review(room);
       }
+      if (closedPoll) {
+        void this.executePollWinAction(room, closedPoll.poll, closedPoll.winner);
+      }
       return {
         status: 'applied',
         changed: outcome.changed,
-        feedback: outcome.changed ? { action, args, sender: Engine.senderName(actor.name), at: now } : undefined,
       };
     }
     if (
@@ -321,15 +368,69 @@ module.exports = {
     room.lastActivity = now;
     // The review is the room's next event; the acknowledgement reads the room after it.
     this.review(room);
-    return { status: 'applied', feedback: { action, args, sender: Engine.senderName(actor.name), at: now } };
+    return { status: 'applied' };
   },
   /**
-   * Once the command's review has run: records its feedback and, for a command the
-   * table marks `persists`, acknowledges only after the room's save is confirmed.
+   * Executes a media poll's winning queue/play action as the poll's creator,
+   * re-authorizing at close time. On failure, records a truthful `actionError` on the poll.
+   * @param {Room} room
+   * @param {any} poll
+   * @param {any} winner
+   */
+  async executePollWinAction(room, poll, winner) {
+    const setError = async message => {
+      await this.inRoom(
+        room,
+        () => {
+          const active = room.activities?.get('poll');
+          if (active && active.id === poll.id) {
+            active.actionError = message;
+            room.revision++;
+            this.changed(room);
+          }
+        },
+        undefined,
+      );
+    };
+    try {
+      if (this.rooms.get(room.roomId) !== room || room.closed) return;
+      const creator =
+        poll.creatorActor || (poll.creatorId ? { userId: poll.creatorId, name: poll.creatorName || 'Host' } : null);
+      if (!creator?.userId) return setError('Poll creator is unavailable.');
+      const canView = this.hub.authorize(creator, room, 'room.view').ok;
+      const neededCapability = poll.onClose === 'playNow' ? 'chooseMedia' : 'addQueue';
+      const canAct = canView && this.hub.authorize(creator, room, neededCapability).ok;
+      if (!canAct) {
+        return setError('Poll creator no longer has permission to run this action.');
+      }
+      const playNow = poll.onClose === 'playNow';
+      const suggestionId = winner.media?.suggestionId;
+      const hasPendingSuggestion =
+        !!suggestionId && (room.suggestions || []).some(s => s.id === suggestionId && s.status === 'pending');
+      const command = hasPendingSuggestion
+        ? {
+            action: playNow ? 'queue.suggestion.playNow' : 'queue.suggestion.accept',
+            args: { suggestionId },
+          }
+        : {
+            action: playNow ? 'queue.playNow' : 'queue.add',
+            args: { item: winner.media },
+          };
+      const ticket = this.hub.ticket(creator, room, command.action);
+      const outcome = await this.queueCommand(room.roomId, command, creator, ticket);
+      if (outcome?.status && outcome.status !== 'applied') {
+        await setError(outcome.message || 'Could not apply poll winner.');
+      }
+    } catch (error) {
+      await setError(error?.message || 'Could not apply poll winner.');
+    }
+  },
+  /**
+   * Once the command's review has run: for a command the table marks `persists`,
+   * acknowledges only after the room's save is confirmed.
    */
   async acknowledge(room, declared, reply) {
     if (reply.status !== 'applied') return reply;
-    if (reply.feedback) room.feedback = { revision: room.revision, ...reply.feedback };
     if (declared.persists) await this.roomState.save(room);
     return { status: 'applied', message: 'Viewing room updated.', state: Engine.snapshot(room.state) };
   },

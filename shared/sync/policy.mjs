@@ -17,6 +17,8 @@ export const CAPABILITIES = Object.freeze([
   'continueWithoutHost',
   'addHosts',
   'kickParticipants',
+  'announce',
+  'runPolls',
 ]);
 
 export const VIEWER_BLOCKED = Object.freeze([

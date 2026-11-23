@@ -3,7 +3,7 @@ const { repositories } = require('./repositories');
 // First-release baseline. Future published schemas add explicit forward migrations.
 // Never repair or upgrade an unpublished layout implicitly: earlier pre-release
 // layouts move forward only through reviewed, explicitly run transfer scripts.
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 const COLUMNS = Object.freeze({
   users: ['id', 'name', 'revision', 'retiredInto', 'signedInAt', 'guest'],
   identities: ['provider', 'subject', 'userId', 'name', 'verified', 'assigned'],
@@ -89,6 +89,7 @@ const COLUMNS = Object.freeze({
     'updatedAt',
     'discord',
   ],
+  watch_room_journal: ['roomId', 'seq', 'at', 'entry'],
 });
 // Each room has one invite code. Signed-in people who join a private room by
 // invite are remembered until someone revokes them; revoked people and guest
@@ -108,6 +109,7 @@ const EVENTS_SQL = `CREATE TABLE watch_room_events(id TEXT PRIMARY KEY,roomId TE
 // password is a scrypt hash with its own salt and parameters; the link is stored
 // only as a SHA-256 hash and lasts until linkExpires or its first use.
 const UBUROOM_ACCOUNTS_SQL = `CREATE TABLE uburoom_accounts(subject TEXT PRIMARY KEY,username TEXT NOT NULL COLLATE NOCASE UNIQUE,passwordHash TEXT,passwordSalt TEXT,passwordParams TEXT,linkHash TEXT UNIQUE,linkExpires INTEGER,linkPurpose TEXT CHECK(linkPurpose IN ('set','reset')),disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0,1)),createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL);`;
+const JOURNAL_SQL = `CREATE TABLE watch_room_journal(roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,seq INTEGER NOT NULL,at INTEGER NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(roomId,seq));`;
 function initializeSchema(db, { checkOnly = false } = {}) {
   const version = db.prepare('PRAGMA user_version').get().user_version;
   if (version > SCHEMA_VERSION) throw new Error('Account database requires a newer uburoom version');
@@ -156,6 +158,7 @@ function initializeSchema(db, { checkOnly = false } = {}) {
     CREATE UNIQUE INDEX watch_queue_current ON watch_queue_entries(roomId) WHERE state='current';
     ${INVITE_SQL}
     ${EVENTS_SQL}
+    ${JOURNAL_SQL}
     PRAGMA user_version=${SCHEMA_VERSION};
     COMMIT;`);
 }
@@ -220,4 +223,5 @@ module.exports = {
   INVITE_SQL,
   EVENTS_SQL,
   UBUROOM_ACCOUNTS_SQL,
+  JOURNAL_SQL,
 };

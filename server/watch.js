@@ -158,15 +158,25 @@ class Watch extends WatchParts {
       manualPaused: false,
       initialViewers: new Set(),
       hadViewers: false,
+      activities: new Map(),
       humanCheck: undefined,
       suggestions: [],
     };
     room.execute = (command, actor, ticket) => this.execute(room, command, actor, ticket);
     this.roomState.apply(room, saved);
     this.coordinator.add(room);
+    this.roomState.hydrateJournal(room);
     this.hub.rooms.set(id, room);
     this.hub.logger.info('Room', `Room created (${id}) by ${actor.name || actor.userId}`);
     return id;
+  }
+  /** Returns the room's bounded journal. @param {Room | string} room */
+  journal(room) {
+    return this.coordinator.journal(room);
+  }
+  /** Records a declared journal entry inside the room's mailbox. @param {Room} room @param {any} entry @param {any} [mergeOptions] */
+  record(room, entry, mergeOptions = undefined) {
+    return this.coordinator.record(room, entry, mergeOptions);
   }
   /**
    * Withdraws the agreement of viewers who have left beyond reconnect grace, and the suggestions

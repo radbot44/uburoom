@@ -3,7 +3,6 @@ import { uburoomAV1 } from '../watch-av1.js';
 import * as uburoomControls from '../watch-controls.js';
 import * as uburoomPlayback from '../playback-policy.js';
 import * as uburoomPopover from '../watch-popover.js';
-import * as uburoomWatchFeedback from '../watch-feedback.js';
 import { $ } from './page.js';
 import { store } from './store.js';
 
@@ -660,23 +659,6 @@ export function mount(host, deps) {
         connectionAttempt: store.connection.transport?.connectionAttempt,
       });
     }
-    if (
-      next.feedback &&
-      next.feedback.revision !== store.room.lastFeedback &&
-      deps.time.serverNow() - next.feedback.at < 3000
-    ) {
-      store.room.lastFeedback = next.feedback.revision;
-      const details = uburoomWatchFeedback.badgeDetails(next.feedback, next.state);
-      if (details) {
-        deps.toasts.show('participant', {
-          title: details.label + (details.value && details.value !== details.label ? ' ' + details.value : ''),
-          hint: next.feedback.sender,
-          symbol: details.symbol,
-          seekSeconds: details.seekSeconds,
-          duration: 2500,
-        });
-      }
-    }
     store.player.observing = !!next.mediaUrl;
     void deps.syncRichPresence?.();
     void store.player.sync.synchronize();
@@ -699,18 +681,11 @@ export function mount(host, deps) {
    * The ready check's card on the video, in the same place and style as the room's other readiness
    * choices (which take precedence over it). Viewers answer here; people who can play start or cancel here.
    */
-  function renderHumanCheckPrompt() {
-    const prompt = $('human-check-prompt');
+  function renderHumanCheckCard(state, check) {
     const readyButton = $('human-check-ready');
     const holdButton = $('human-check-hold');
     const playButton = $('human-check-play');
     const clearButton = $('human-check-clear');
-    const state = store.room.state;
-    const check = state?.humanCheck || null;
-    if (!state || !check) {
-      prompt.hidden = true;
-      return;
-    }
     const selfId = state.actorId || store.identity.me?.account?.id || store.identity.me?.userId;
     const admitted = (Array.isArray(state.participants) ? state.participants : []).filter(
       person => person.present && !person.pending,
@@ -745,7 +720,485 @@ export function mount(host, deps) {
     playButton.disabled = busy || !!state.waitingForReady;
     clearButton.hidden = !state.canCheck;
     clearButton.disabled = busy;
-    prompt.hidden = false;
+  }
+  function renderBreakCard(state, brk) {
+    const now = deps.time.serverNow();
+    const selfId = state.actorId || store.identity.me?.account?.id || store.identity.me?.userId;
+    const admitted = (Array.isArray(state.participants) ? state.participants : []).filter(
+      person => person.present && !person.pending,
+    );
+    const answers = brk.answers && typeof brk.answers === 'object' ? brk.answers : {};
+    const ready = admitted.filter(person => answers[person.id] === 'ready');
+    const holding = admitted.filter(person => answers[person.id] === 'hold');
+    const myAnswer = selfId ? answers[selfId] : undefined;
+    const busy = !!store.room.pending;
+    const fmt = ms => {
+      const s = Math.max(0, Math.ceil(ms / 1000));
+      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    };
+    if (brk.resumingAt && brk.resumingAt > now) {
+      const secs = Math.max(1, Math.ceil((brk.resumingAt - now) / 1000));
+      $('break-card-title').textContent = `Resuming in ${secs}s…`;
+    } else if (brk.breakEndsAt > now) {
+      $('break-card-title').textContent = `Intermission · back in ${fmt(brk.breakEndsAt - now)}`;
+    } else {
+      $('break-card-title').textContent = 'Ready to resume?';
+    }
+    $('break-card-meta').textContent = [
+      `${ready.length} of ${admitted.length} ready`,
+      holding.length ? `${holding.map(p => p.name).join(', ')} need${holding.length === 1 ? 's' : ''} a moment` : '',
+      brk.autoResume ? 'Auto-resume on' : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    const readyBtn = $('break-ready');
+    const holdBtn = $('break-hold');
+    const resumeBtn = $('break-resume');
+    const extendBtn = $('break-extend');
+    const endBtn = $('break-end');
+    readyBtn.disabled = holdBtn.disabled = busy;
+    readyBtn.setAttribute('aria-pressed', String(myAnswer === 'ready'));
+    holdBtn.setAttribute('aria-pressed', String(myAnswer === 'hold'));
+    const canManage = !!brk.can?.play || !!state.canCheck;
+    resumeBtn.hidden = !canManage || !state.canPlayback || !state.mediaUrl;
+    resumeBtn.disabled = busy;
+    extendBtn.hidden = !canManage;
+    extendBtn.disabled = busy;
+    endBtn.hidden = !canManage;
+    endBtn.disabled = busy;
+  }
+  let breakTickTimer;
+  function syncBreakTick() {
+    const brk = store.room.state?.activities?.find(a => a.kind === 'check' && a.mode === 'break');
+    if (brk && !breakTickTimer) {
+      breakTickTimer = deps.time.setInterval(() => {
+        if (!store.room.state?.activities?.some(a => a.kind === 'check' && a.mode === 'break')) {
+          deps.time.clearInterval(breakTickTimer);
+          breakTickTimer = undefined;
+          return;
+        }
+        deps.stageCards?.sync(store.room.state);
+        deps.activityHub?.sync?.();
+      }, 1000);
+    } else if (!brk && breakTickTimer) {
+      deps.time.clearInterval(breakTickTimer);
+      breakTickTimer = undefined;
+    }
+  }
+  /** @type {Map<string, HTMLButtonElement>} */
+  const pollTileNodes = new Map();
+  let renderedPollId = '';
+  function renderPollCard(state, poll) {
+    const now = deps.time.serverNow();
+    const optionsEl = $('poll-card-options');
+    const closeBtn = $('poll-close-btn');
+    const clearBtn = $('poll-clear-btn');
+    const errorEl = $('poll-card-error');
+    const total = Number(poll.totalVotes || 0);
+    const fmt = ms => {
+      const s = Math.max(0, Math.ceil(ms / 1000));
+      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    };
+    $('poll-card-title').textContent = poll.question || 'Poll';
+    const metaParts = [];
+    if (poll.status === 'open') {
+      metaParts.push(poll.closesAt && poll.closesAt > now ? `${fmt(poll.closesAt - now)} left` : 'Open');
+    } else if (poll.status === 'tie') {
+      metaParts.push('Tie — host chooses winner');
+    } else {
+      const winner = poll.options.find(o => o.id === poll.winnerOptionId);
+      metaParts.push(winner ? `Winner: ${winner.label}` : 'Closed');
+      if (poll.tieBrokenBy === 'random') metaParts.push('tie → random');
+    }
+    metaParts.push(`${total} ${total === 1 ? 'vote' : 'votes'}`);
+    $('poll-card-meta').textContent = metaParts.join(' · ');
+
+    if (errorEl) {
+      errorEl.textContent = poll.actionError || '';
+      errorEl.hidden = !poll.actionError;
+    }
+
+    // Preserve tile DOM nodes by option.id for the same poll so live vote updates never steal focus!
+    if (renderedPollId !== poll.id) {
+      renderedPollId = poll.id;
+      pollTileNodes.clear();
+      optionsEl.replaceChildren();
+    }
+    const canManage = !!poll.can?.close;
+    const isTiePick = poll.status === 'tie' && canManage;
+    for (const opt of poll.options) {
+      let tile = pollTileNodes.get(opt.id);
+      if (!tile) {
+        tile = document.createElement('button');
+        tile.type = 'button';
+        tile.className = 'poll-option-tile';
+        tile.dataset.optionId = opt.id;
+        const bar = document.createElement('span');
+        bar.className = 'poll-option-bar';
+        const head = document.createElement('span');
+        head.className = 'poll-option-head';
+        const label = document.createElement('span');
+        label.className = 'poll-option-label';
+        const count = document.createElement('span');
+        count.className = 'poll-option-count';
+        head.append(label, count);
+        const votersEl = document.createElement('span');
+        votersEl.className = 'poll-option-voters';
+        tile.append(bar, head, votersEl);
+        tile.addEventListener('click', () => {
+          const active = store.room.state?.activities?.find(a => a.kind === 'poll');
+          if (!active) return;
+          if (active.status === 'open') {
+            void deps
+              .execute({ action: 'poll.vote', args: { pollId: active.id, optionId: opt.id } })
+              .catch(error => deps.fail(error.message));
+          } else if (active.status === 'tie' && active.can?.close && active.tiedOptionIds?.includes(opt.id)) {
+            void deps
+              .execute({ action: 'poll.close', args: { pollId: active.id, winnerOptionId: opt.id } })
+              .catch(error => deps.fail(error.message));
+          }
+        });
+        pollTileNodes.set(opt.id, tile);
+        optionsEl.append(tile);
+      }
+      const list = Array.isArray(poll.voters?.[opt.id]) ? poll.voters[opt.id] : [];
+      const pct = total > 0 ? Math.round((list.length / total) * 100) : 0;
+      const bar = /** @type {HTMLElement} */ (tile.querySelector('.poll-option-bar'));
+      const labelEl = tile.querySelector('.poll-option-label');
+      const countEl = tile.querySelector('.poll-option-count');
+      const votersEl = tile.querySelector('.poll-option-voters');
+      bar.style.width = `${pct}%`;
+      if (labelEl) {
+        const prefix = poll.winnerOptionId === opt.id ? '★ ' : '';
+        const text = prefix + opt.label;
+        if (labelEl.textContent !== text) labelEl.textContent = text;
+      }
+      if (countEl) {
+        const countText =
+          isTiePick && poll.tiedOptionIds?.includes(opt.id) ? `Pick (${list.length})` : `${list.length}`;
+        if (countEl.textContent !== countText) countEl.textContent = countText;
+      }
+      if (votersEl) {
+        const namesText = list.map(v => v.name).join(', ');
+        if (votersEl.textContent !== namesText) votersEl.textContent = namesText;
+      }
+      tile.setAttribute('aria-pressed', String(poll.myVote === opt.id));
+      tile.disabled =
+        !!store.room.pending ||
+        poll.status === 'closed' ||
+        (poll.status === 'tie' && (!isTiePick || !poll.tiedOptionIds?.includes(opt.id)));
+    }
+    if (closeBtn) {
+      closeBtn.hidden = !canManage || poll.status !== 'open';
+      closeBtn.disabled = !!store.room.pending;
+    }
+    if (clearBtn) {
+      clearBtn.hidden = !canManage;
+      clearBtn.disabled = !!store.room.pending;
+    }
+  }
+  function openPollDialog(prefill = undefined) {
+    const dialog = $('poll-dialog');
+    const questionInput = $('poll-question');
+    const optionsWrap = $('poll-options-inputs');
+    const onCloseGroup = $('poll-on-close-group');
+    const playNowNote = $('poll-play-now-note');
+    if (!dialog || !questionInput || !optionsWrap) return;
+
+    /** @type {Array<{label: string, media?: any}>} */
+    let draftOptions =
+      Array.isArray(prefill?.options) && prefill.options.length >= 2
+        ? prefill.options.slice(0, 6)
+        : [{ label: '' }, { label: '' }];
+    let durationSeconds = null;
+    let onClose = 'queueNext';
+    let tieRule = 'host';
+
+    questionInput.value = prefill?.question || (draftOptions.every(o => o.media) ? 'What should we watch next?' : '');
+
+    const syncOnCloseVisibility = () => {
+      const allMedia = draftOptions.length >= 2 && draftOptions.every(o => !!o.media);
+      if (onCloseGroup) onCloseGroup.hidden = !allMedia;
+      if (playNowNote) playNowNote.hidden = !allMedia || onClose !== 'playNow';
+    };
+
+    const renderDraftOptions = () => {
+      optionsWrap.replaceChildren();
+      draftOptions.forEach((opt, idx) => {
+        const row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.gap = '6px';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.maxLength = 100;
+        input.required = true;
+        input.placeholder = `Option ${idx + 1}`;
+        input.value = opt.label || '';
+        input.style.flex = '1';
+        input.addEventListener('input', () => {
+          opt.label = input.value;
+        });
+        row.append(input);
+        if (draftOptions.length > 2) {
+          const rm = document.createElement('button');
+          rm.type = 'button';
+          rm.className = 'quiet';
+          rm.textContent = '×';
+          rm.setAttribute('aria-label', 'Remove option');
+          rm.addEventListener('click', () => {
+            draftOptions.splice(idx, 1);
+            renderDraftOptions();
+          });
+          row.append(rm);
+        }
+        optionsWrap.append(row);
+      });
+      syncOnCloseVisibility();
+    };
+
+    const form = $('poll-form');
+    const setPressed = (selector, attr, val) => {
+      dialog.querySelectorAll(selector).forEach(el => {
+        el.setAttribute('aria-pressed', String(el.getAttribute(attr) === String(val ?? '')));
+      });
+    };
+    setPressed('.poll-timer-chip', 'data-seconds', '');
+    setPressed('.poll-action-chip', 'data-action', onClose);
+    setPressed('.poll-tie-chip', 'data-tie', tieRule);
+
+    dialog.querySelectorAll('.poll-timer-chip').forEach(btn => {
+      btn.onclick = () => {
+        const raw = btn.getAttribute('data-seconds');
+        durationSeconds = raw ? Number(raw) : null;
+        setPressed('.poll-timer-chip', 'data-seconds', raw || '');
+      };
+    });
+    dialog.querySelectorAll('.poll-action-chip').forEach(btn => {
+      btn.onclick = () => {
+        onClose = btn.getAttribute('data-action') || 'queueNext';
+        setPressed('.poll-action-chip', 'data-action', onClose);
+        syncOnCloseVisibility();
+      };
+    });
+    dialog.querySelectorAll('.poll-tie-chip').forEach(btn => {
+      btn.onclick = () => {
+        tieRule = btn.getAttribute('data-tie') || 'host';
+        setPressed('.poll-tie-chip', 'data-tie', tieRule);
+      };
+    });
+    $('poll-add-option').onclick = () => {
+      if (draftOptions.length >= 6) return;
+      draftOptions.push({ label: '' });
+      renderDraftOptions();
+    };
+    $('poll-fill-suggestions').onclick = () => {
+      const suggestions = (store.room.state?.suggestions || []).slice(0, 6);
+      if (suggestions.length < 2) {
+        deps.fail('At least 2 suggestions are needed to fill a poll.');
+        return;
+      }
+      draftOptions = suggestions.map(s => ({
+        label: s.title || s.item?.title || 'Suggestion',
+        media: {
+          serverId: s.serverId || s.item?.serverId,
+          mediaId: s.mediaId || s.item?.mediaId,
+          type: s.type || s.item?.type || 'movie',
+          title: s.title || s.item?.title || 'Suggestion',
+          suggestionId: s.id,
+        },
+      }));
+      if (!questionInput.value.trim()) questionInput.value = 'Which suggestion should we watch next?';
+      renderDraftOptions();
+    };
+    $('poll-fill-queue').onclick = async () => {
+      try {
+        const summary = await deps.call('room.queue', { roomId: store.room.selected });
+        const pending = (summary?.pending || []).slice(0, 6);
+        if (pending.length < 2) {
+          deps.fail('At least 2 queued items are needed to fill a poll.');
+          return;
+        }
+        draftOptions = pending.map(item => ({
+          label: item.title || 'Queued item',
+          media: {
+            serverId: item.serverId,
+            mediaId: item.mediaId,
+            type: item.type || 'movie',
+            title: item.title || 'Queued item',
+          },
+        }));
+        if (!questionInput.value.trim()) questionInput.value = 'Which queued video next?';
+        renderDraftOptions();
+      } catch (error) {
+        deps.fail(error.message);
+      }
+    };
+    $('poll-cancel').onclick = () => dialog.close();
+    form.onsubmit = event => {
+      event.preventDefault();
+      const question = questionInput.value.replace(/\s+/g, ' ').trim();
+      const options = draftOptions
+        .map((opt, idx) => ({
+          id: `opt-${idx + 1}`,
+          label: (opt.label || '').replace(/\s+/g, ' ').trim(),
+          ...(opt.media ? { media: opt.media } : {}),
+        }))
+        .filter(opt => opt.label);
+      if (!question || options.length < 2) return;
+      const allMedia = options.every(o => !!o.media);
+      dialog.close();
+      void deps
+        .execute({
+          action: 'poll.start',
+          args: {
+            question,
+            options,
+            durationSeconds,
+            onClose: allMedia ? onClose : 'results',
+            tieRule,
+          },
+        })
+        .catch(error => deps.fail(error.message));
+    };
+
+    renderDraftOptions();
+    if (!dialog.open) dialog.showModal();
+    questionInput.focus();
+  }
+  $('room-poll-btn')?.addEventListener('click', () => openPollDialog());
+  $('poll-close-btn')?.addEventListener('click', () => {
+    const poll = store.room.state?.activities?.find(a => a.kind === 'poll');
+    if (poll) void deps.execute({ action: 'poll.close', args: { pollId: poll.id } }).catch(e => deps.fail(e.message));
+  });
+  $('poll-clear-btn')?.addEventListener('click', () => {
+    void deps.execute({ action: 'poll.clear', args: {} }).catch(e => deps.fail(e.message));
+  });
+  $('poll-minimize')?.addEventListener('click', () => {
+    const poll = store.room.state?.activities?.find(a => a.kind === 'poll');
+    if (poll?.id) deps.attention?.dismiss(poll.id);
+  });
+  if (deps.stageCards) {
+    deps.stageCards.register({
+      kind: 'poll',
+      element: () => $('poll-card'),
+      getActivity: state => (Array.isArray(state?.activities) ? state.activities.find(a => a.kind === 'poll') : null),
+      render: renderPollCard,
+    });
+    deps.stageCards.register({
+      kind: 'break',
+      element: () => $('break-card'),
+      getActivity: state =>
+        Array.isArray(state?.activities) ? state.activities.find(a => a.kind === 'check' && a.mode === 'break') : null,
+      render: renderBreakCard,
+    });
+    deps.stageCards.register({
+      kind: 'check',
+      element: () => $('human-check-prompt'),
+      getActivity: state =>
+        (Array.isArray(state?.activities)
+          ? state.activities.find(a => a.kind === 'check' && a.mode !== 'break')
+          : null) || (state?.humanCheck && state.humanCheck.mode !== 'break' ? state.humanCheck : null),
+      render: renderHumanCheckCard,
+    });
+    deps.stageCards.register({
+      kind: 'announcement',
+      element: () => $('stage-announcement-banner'),
+      getActivity: state =>
+        Array.isArray(state?.activities) ? state.activities.find(a => a.kind === 'announcement') : null,
+      render: (_state, ann) => {
+        $('stage-announcement-sender').textContent = ann.senderName || 'Host';
+        $('stage-announcement-text').textContent = ann.text || '';
+        const clearBtn = $('stage-announcement-clear');
+        if (clearBtn) clearBtn.hidden = !ann.can?.clear;
+      },
+    });
+  }
+  $('stage-announcement-dismiss')?.addEventListener('click', () => {
+    const ann = store.room.state?.activities?.find(a => a.kind === 'announcement');
+    if (ann?.id) deps.attention?.dismiss(ann.id);
+  });
+  $('stage-announcement-clear')?.addEventListener('click', () => {
+    void deps.execute({ action: 'announce.clear', args: {} }).catch(error => deps.fail(error.message));
+  });
+  {
+    const announceBtn = $('room-announce-btn');
+    const dialog = $('announce-dialog');
+    const form = $('announce-form');
+    const input = $('announce-text');
+    const count = $('announce-count');
+    const pin = $('announce-pin');
+    const cancel = $('announce-cancel');
+    if (announceBtn && dialog && form && input) {
+      const updateCount = () => {
+        if (count) count.textContent = `${input.value.length} / 140`;
+      };
+      input.addEventListener('input', updateCount);
+      announceBtn.addEventListener('click', () => {
+        input.value = '';
+        if (pin) pin.checked = false;
+        updateCount();
+        if (!dialog.open) dialog.showModal();
+        input.focus();
+      });
+      cancel?.addEventListener('click', () => dialog.close());
+      form.addEventListener('submit', event => {
+        event.preventDefault();
+        const text = input.value.replace(/\s+/g, ' ').trim();
+        if (!text) return;
+        dialog.close();
+        void deps
+          .execute({ action: 'announce.send', args: { text, pinned: !!pin?.checked } })
+          .catch(error => deps.fail(error.message));
+      });
+    }
+  }
+  function renderHumanCheckPrompt() {
+    const state = store.room.state;
+    if (deps.stageCards) {
+      deps.stageCards.sync(state);
+    } else {
+      const prompt = $('human-check-prompt');
+      const check = state?.humanCheck || null;
+      if (!state || !check) {
+        prompt.hidden = true;
+      } else {
+        renderHumanCheckCard(state, check);
+        prompt.hidden = false;
+      }
+    }
+    deps.activityHub?.sync?.();
+    syncBreakTick();
+  }
+  $('break-ready')?.addEventListener('click', () => void replyHumanCheck('ready'));
+  $('break-hold')?.addEventListener('click', () => void replyHumanCheck('hold'));
+  $('break-resume')?.addEventListener('click', () =>
+    deps.execute({ action: 'media.play' }).catch(error => deps.fail(error.message)),
+  );
+  $('break-extend')?.addEventListener('click', () =>
+    deps.execute({ action: 'break.extend', args: { minutes: 5 } }).catch(error => deps.fail(error.message)),
+  );
+  $('break-end')?.addEventListener('click', () =>
+    deps.execute({ action: 'break.end', args: {} }).catch(error => deps.fail(error.message)),
+  );
+  $('break-minimize')?.addEventListener('click', () => {
+    const brk = store.room.state?.activities?.find(a => a.kind === 'check' && a.mode === 'break');
+    if (brk?.id) deps.attention?.dismiss(brk.id);
+  });
+  {
+    const popover = $('break-popover');
+    const autoResumeEl = $('break-auto-resume');
+    const customInput = $('break-custom-minutes');
+    const startBreak = minutes => {
+      if (popover) popover.hidden = true;
+      const mins = Math.max(1, Math.min(120, Math.round(Number(minutes) || 5)));
+      void deps
+        .execute({ action: 'break.start', args: { minutes: mins, autoResume: !!autoResumeEl?.checked } })
+        .catch(error => deps.fail(error.message));
+    };
+    popover?.querySelectorAll('.break-chip').forEach(btn => {
+      btn.addEventListener('click', () => startBreak(btn.dataset.minutes));
+    });
+    $('break-start-custom')?.addEventListener('click', () => startBreak(customInput?.value));
   }
   $('human-check-ready').addEventListener('click', () => void replyHumanCheck('ready'));
   $('human-check-hold').addEventListener('click', () => void replyHumanCheck('hold'));
@@ -753,6 +1206,12 @@ export function mount(host, deps) {
     deps.execute({ action: 'media.play' }).catch(error => deps.fail(error.message)),
   );
   $('human-check-clear').addEventListener('click', () => void clearHumanCheck());
+  $('human-check-minimize')?.addEventListener('click', () => {
+    const state = store.room.state;
+    const check =
+      (Array.isArray(state?.activities) ? state.activities.find(a => a.kind === 'check') : null) || state?.humanCheck;
+    if (check?.id) deps.attention?.dismiss(check.id);
+  });
   return {
     applyState,
     askHumanCheck,
@@ -760,6 +1219,7 @@ export function mount(host, deps) {
     renderHumanCheckPrompt,
     renderVisibility,
     replyHumanCheck,
+    openPollDialog,
     shareInvite,
     unavailableToasts,
   };

@@ -43,6 +43,8 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
         continueWithoutHost: true,
         addHosts: true,
         kickParticipants: true,
+        announce: true,
+        runPolls: true,
         unlistedPermission: true,
       },
       viewer: {
@@ -59,6 +61,8 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
         continueWithoutHost: false,
         addHosts: false,
         kickParticipants: false,
+        announce: false,
+        runPolls: false,
       },
     },
     directory: {
@@ -121,6 +125,8 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
     continueWithoutHost: true,
     addHosts: true,
     kickParticipants: true,
+    announce: true,
+    runPolls: true,
   });
   assert.deepEqual(result.settings.rooms.viewerPermissions, {
     playPause: false,
@@ -136,6 +142,8 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
     continueWithoutHost: false,
     addHosts: false,
     kickParticipants: false,
+    announce: false,
+    runPolls: false,
   });
   assert.deepEqual(result.settings.directory, { discord: true }, 'there is no Plex member directory');
   assert.equal(result.settings.transcoding.policy, 'auto');

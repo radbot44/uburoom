@@ -461,6 +461,8 @@ function mount({ request, trigger }) {
     continueWithoutHost: 'Continue without hosts',
     addHosts: 'Add hosts',
     kickParticipants: 'Kick viewers',
+    announce: 'Send announcements',
+    runPolls: 'Run polls',
   };
   const body = node('tbody', table),
     blocked = VIEWER_BLOCKED;

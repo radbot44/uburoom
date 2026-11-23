@@ -69,6 +69,14 @@ module.exports = {
       roomKeys: ROOM_KEYS,
       viewerKeys: PERSONAL_KEYS,
       displayName: actor => Engine.senderName(actor.name),
+      describeMedia: media =>
+        media
+          ? {
+              title: media.title || 'Untitled',
+              subtitle: media.subtitle || '',
+              ...(media.entryId || media.id ? { entryId: media.entryId || media.id } : {}),
+            }
+          : null,
       // Only personal playback settings survive a short reconnect; streams and observations never do.
       retain: viewer => ({
         trackChoice: viewer.trackChoice && { ...viewer.trackChoice },

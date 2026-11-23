@@ -10,6 +10,11 @@ import * as uburoomQueueUI from './watch-queue-ui.js';
 import * as uburoomRoomUI from './watch-rooms-ui.js';
 import * as uburoomShare from './watch-share.js';
 import * as uburoomToasts from './watch-toasts.js';
+import * as uburoomWatchFeedback from './watch-feedback.js';
+import { createAttention } from './watch-attention.js';
+import { createStageCardManager } from './watch-stage-cards.js';
+import { mountActivityHub } from './watch-activity.js';
+import { roomJournal } from './watch/journal.js';
 import { $ } from './watch/page.js';
 import { store } from './watch/store.js';
 import * as preferences from './watch/preferences.js';
@@ -186,6 +191,55 @@ Object.assign(deps, diagnostics.mount($('stage'), deps));
 Object.assign(deps, tracksMenu.mount($('tracks-dialog'), deps));
 const toasts = uburoomToasts.create($('watch-toasts'), { stage: $('stage') });
 deps.toasts = toasts;
+deps.journal = roomJournal;
+deps.receiveJournal = message => roomJournal.apply(message);
+const attention = createAttention({
+  onChange: () => {
+    stageCards.sync(store.room.state);
+    activityHub.sync();
+  },
+});
+const stageCards = createStageCardManager({
+  isSystemCardVisible: () => !$('room-recovery')?.hidden || !$('readiness-choice')?.hidden,
+  attention,
+});
+const activityHub = mountActivityHub({
+  button: $('room-activity-btn'),
+  badge: $('room-activity-badge'),
+  menuDot: $('drawer-open-badge'),
+  panel: $('activity-panel'),
+  journal: roomJournal,
+  attention,
+  getState: () => store.room.state,
+  getSelfId: () => store.room.state?.actorId || store.identity.me?.account?.id || store.identity.me?.userId,
+  onReopenActivity: () => stageCards.sync(store.room.state),
+});
+deps.attention = attention;
+deps.stageCards = stageCards;
+deps.activityHub = activityHub;
+{
+  let lastToastKind = '';
+  let lastToastAt = 0;
+  roomJournal.subscribe(change => {
+    if (change.full || !change.added.length) return;
+    const myId = store.identity.me?.userId;
+    const now = time.serverNow();
+    for (const entry of change.added) {
+      if (entry.actor?.id && myId && entry.actor.id === myId) continue;
+      if (now - entry.at >= 3000) continue;
+      const details = uburoomWatchFeedback.journalToastDetails(entry);
+      if (!details) continue;
+      // Combine rapid same-kind toasts within 1 s by reusing the 'participant' slot.
+      if (entry.kind === lastToastKind && now - lastToastAt < 1000) {
+        toasts.show('participant', details);
+      } else {
+        lastToastKind = entry.kind;
+        lastToastAt = now;
+        toasts.show('participant', details);
+      }
+    }
+  });
+}
 function renderNotifications() {
   const button = $('notifications-toggle');
   button.setAttribute('aria-pressed', String(toasts.enabled));
@@ -281,6 +335,7 @@ const queueUI = uburoomQueueUI.mount($('queue-content'), {
   getSettingsState: () => roomUI.playbackContext(),
   saveSettings: change => roomUI.savePlayback(change),
   openSettings: () => roomUI.open(store.room.state.id, 'playback'),
+  openPoll: prefill => deps.openPollDialog?.(prefill),
   browseMedia: (...args) => deps.browseMedia(...args),
   openLibraryItem: item => {
     deps.selectSection('media');

@@ -28,6 +28,7 @@ function mount(
     artwork,
     openSettings,
     browseMedia,
+    openPoll,
     getSettingsState = getState,
     saveSettings,
     // The page's scheduler (web/watch/scheduler.js); a plain interval elsewhere.
@@ -163,6 +164,32 @@ function mount(
   );
   suggestionsToggle.id = 'queue-suggestions-toggle';
   suggestionsToggle.setAttribute('aria-controls', 'queue-suggestions-list');
+  const suggestionsPollBtn = button(
+    suggestionsView,
+    'Poll these',
+    undefined,
+    () => {
+      const suggestions = rankedSuggestions(getState()).slice(0, 6);
+      if (suggestions.length < 2) return;
+      openPoll?.({
+        question: 'Which suggestion should we watch next?',
+        options: suggestions.map(s => ({
+          label: s.title || s.item?.title || 'Suggestion',
+          media: {
+            serverId: s.serverId || s.item?.serverId,
+            mediaId: s.mediaId || s.item?.mediaId,
+            type: s.type || s.item?.type || 'movie',
+            title: s.title || s.item?.title || 'Suggestion',
+            suggestionId: s.id,
+          },
+        })),
+      });
+    },
+    false,
+    'quiet queue-suggestions-poll',
+  );
+  suggestionsPollBtn.id = 'queue-suggestions-poll';
+  suggestionsPollBtn.hidden = true;
   const suggestionsList = node('div', suggestionsView, undefined, 'queue-list queue-suggestions-list');
   suggestionsList.id = 'queue-suggestions-list';
   const upcomingView = node('section', layout, undefined, 'queue-view queue-upcoming-view');
@@ -1800,6 +1827,7 @@ function mount(
     suggestionsToggle.setAttribute('aria-expanded', String(suggestionsExpanded));
     suggestionsToggle.setAttribute('aria-label', (suggestionsExpanded ? 'Hide ' : 'Show ') + label);
     suggestionsToggle.title = suggestionsExpanded ? 'Hide suggestions' : 'Show suggestions';
+    suggestionsPollBtn.hidden = !(openPoll && suggestions.length >= 2 && state?.capabilities?.runPolls);
     suggestionsList.hidden = !suggestionsExpanded;
     if (!suggestionsExpanded) {
       suggestionsList.replaceChildren();

@@ -214,7 +214,7 @@ class Hub {
     if (!isHost(room, actor) && !admin && !watching(room, actor, this.clock.now())) return NO_ROOM;
     if (command.host) return this.authorize(actor, room, 'room.host').ok ? ALLOW : NO_PERMISSION;
     const can = capability => this.authorize(actor, room, capability).ok;
-    if (action === 'check.reply') return ALLOW;
+    if (action === 'check.reply' || action === 'poll.vote') return ALLOW;
     if (action === 'check.ask' || action === 'check.clear')
       return can('room.host') || can('playPause') ? ALLOW : NO_PERMISSION;
     if (

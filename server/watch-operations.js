@@ -332,9 +332,15 @@ function watchOperations({
    * @param {any} auth
    * @param {any} room
    * @param {any} viewer
-   * @param {{room?: boolean, viewer?: boolean, renew: boolean}} want
+   * @param {{room?: boolean, viewer?: boolean, journal?: {full?: boolean, sinceSeq?: number} | false, renew: boolean}} want
    */
-  async function project(context, auth, room, viewer, { room: wantRoom = true, viewer: wantViewer = true, renew }) {
+  async function project(
+    context,
+    auth,
+    room,
+    viewer,
+    { room: wantRoom = true, viewer: wantViewer = true, journal: wantJournal = false, renew },
+  ) {
     const viewerId = viewer.viewerId;
     // What this projection is a picture of, for the publisher's lane versions.
     const version = watch.roomVersion(room),
@@ -440,11 +446,33 @@ function watchOperations({
       }
     }
     const lanes = splitView(state);
+    let journalPayload;
+    if (wantJournal) {
+      const journal = watch.journal(room);
+      if (journal) {
+        const full = !!wantJournal.full;
+        const sinceSeq = full ? 0 : wantJournal.sinceSeq || 0;
+        const raw = journal.since(sinceSeq);
+        const entries = raw.filter(entry => !entry.audience || hub.authorize(auth.actor, room, entry.audience).ok);
+        const audienceKey = [
+          hub.authorize(auth.actor, room, 'kickParticipants').ok ? 1 : 0,
+          hub.authorize(auth.actor, room, 'roomSettings').ok ? 1 : 0,
+        ].join(':');
+        journalPayload = {
+          journalId: journal.journalId,
+          full,
+          head: journal.head,
+          entries,
+          audienceKey,
+        };
+      }
+    }
     return result(200, {
       version,
       stamp,
       ...(wantRoom ? { room: lanes.room } : {}),
       ...(wantViewer ? { viewer: lanes.viewer } : {}),
+      ...(journalPayload ? { journal: journalPayload } : {}),
     });
   }
 
@@ -480,7 +508,7 @@ function watchOperations({
               if (viewer.streamFailure) throw viewer.streamFailure;
               if (!(await watch.canView(room, auth.actor)) || !(await alive()) || room.viewers.get(viewerId) !== viewer)
                 return result(403, { error: 'Viewing access was revoked' });
-              const view = await project(context, auth, room, viewer, { renew: true });
+              const view = await project(context, auth, room, viewer, { renew: true, journal: { full: true } });
               if (view.status !== 200) return view;
               if (!(await alive()) || room.viewers.get(viewerId) !== viewer || joining.get(viewer) !== attempt)
                 return result(403, { error: 'Room connection changed' });
@@ -515,7 +543,7 @@ function watchOperations({
    * @param {Context} context
    * @param {string} roomId
    * @param {string} viewerId
-   * @param {{room?: boolean, viewer?: boolean}} [want] The lanes to project.
+   * @param {{room?: boolean, viewer?: boolean, journal?: {full?: boolean, sinceSeq?: number} | false}} [want] The lanes to project.
    */
   async function lanes(context, roomId, viewerId, want = {}) {
     try {
@@ -940,7 +968,7 @@ function watchOperations({
         if (!throttle('room-sync:' + auth.actor.userId, 60))
           return result(429, { error: 'Wait a moment before refreshing room sync' });
         const minutes = [1, 5, 15].includes(args.minutes) ? args.minutes : 5;
-        return result(200, roomSyncHistory(room, watch.clock.now(), minutes));
+        return result(200, roomSyncHistory(room, watch.clock.now(), minutes, watch.journal(room)));
       }),
     async 'room.settings'({ auth, current, roomId }) {
       await savedRoom(roomId, auth, current);

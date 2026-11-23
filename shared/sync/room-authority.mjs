@@ -9,6 +9,21 @@
 import { senderName, validateSyncCommand } from './protocol.mjs';
 import * as Policy from './policy.mjs';
 import { PRESENCE_TIMEOUT_MS, RECONNECT_GRACE_MS, COMMAND_TTL_MS } from './envelope.mjs';
+import { createJournal, normalizeActor, SEEK_MERGE_MS, PRESENCE_MERGE_MS } from './journal.mjs';
+import {
+  HUMAN_CHECK_TTL_MS,
+  activityForCommand,
+  syncLegacyHumanCheck,
+  cloneActivities,
+  nextActivityDeadline,
+  expireActivities,
+  onActivitiesPlayback,
+  onActivitiesLeave,
+  activitiesStamp,
+  snapshotActivities,
+  applyActivityCommand,
+  createCheck,
+} from './activities.mjs';
 
 export const INITIAL_START_LEAD_MS = 1750;
 export const READY_START_MARGIN_MS = 400;
@@ -16,10 +31,17 @@ export const MAX_CONTROL_LEAD_MS = 1000;
 export const READINESS_WAIT_MS = 10000;
 export const READINESS_EXTEND_MS = 15000;
 export const READINESS_BLOCKER_REVEAL_MS = 3000;
-export const HUMAN_CHECK_TTL_MS = 120000;
 export const IDLE_ROOM_TIMEOUT_MS = 30000;
 export const MAX_DISCONNECTED_VIEWERS = 128;
-export { PRESENCE_TIMEOUT_MS, RECONNECT_GRACE_MS, COMMAND_TTL_MS };
+export {
+  HUMAN_CHECK_TTL_MS,
+  PRESENCE_TIMEOUT_MS,
+  RECONNECT_GRACE_MS,
+  COMMAND_TTL_MS,
+  snapshotActivities,
+  applyActivityCommand,
+  activityForCommand,
+};
 
 const defaultCreateId = () => globalThis.crypto.randomUUID();
 const defaultMonoNow = () => globalThis.performance.now();
@@ -112,7 +134,7 @@ export function promoteGroupReadinessLead(room, now = Date.now()) {
   }
 }
 
-export function settle(room, now = Date.now(), monoNow = defaultMonoNow()) {
+export function settle(room, now = Date.now(), monoNow = defaultMonoNow(), ctx = undefined) {
   if (room.viewers.size === 1) {
     if (room.startAt > now) {
       room.startAt = now;
@@ -150,20 +172,20 @@ export function settle(room, now = Date.now(), monoNow = defaultMonoNow()) {
     room.readinessStartAt = undefined;
     room.revision++;
   }
-  expireHumanCheckIfStale(room, now);
-}
-
-function isHumanCheckStale(room, now = Date.now()) {
-  const check = room.humanCheck;
-  if (!check) return false;
-  return now >= check.expiresAt || check.mediaVersion !== room.mediaVersion || check.hadMedia !== !!room.media;
-}
-
-function expireHumanCheckIfStale(room, now = Date.now()) {
-  if (!isHumanCheckStale(room, now)) return false;
-  room.humanCheck = undefined;
-  room.revision++;
-  return true;
+  if (
+    expireActivities(room, now, {
+      onBreakAutoResume: (liveRoom, at) => {
+        if (liveRoom.media && !liveRoom.closed && !liveRoom.frozen && !liveRoom.waitingForHost) {
+          applyTimelineCommand(liveRoom, { action: 'media.play', args: {} }, { now: at, monoNow });
+        }
+      },
+      onPollClosed: (liveRoom, poll, winner, at) => {
+        ctx?.emit?.('poll-closed', { pollId: poll.id, poll, winner, at });
+      },
+    })
+  ) {
+    room.revision++;
+  }
 }
 
 /**
@@ -174,24 +196,7 @@ function expireHumanCheckIfStale(room, now = Date.now()) {
  * @param {{now?: number, createId?: () => string}} [options]
  */
 export function beginHumanCheck(room, actor = undefined, options = {}) {
-  const now = options.now ?? Date.now();
-  const createId = options.createId || defaultCreateId;
-  const askedBy = actor?.userId || room.hostId;
-  const viewerName = askedBy && [...room.viewers.values()].find(viewer => viewer.userId === askedBy)?.name;
-  const askedByName = senderName(actor?.name || viewerName || (askedBy === room.hostId ? room.hostName : ''), 'Host');
-  const answers = new Map();
-  if (askedBy) answers.set(askedBy, 'ready');
-  room.humanCheck = {
-    id: createId(),
-    askedBy,
-    askedByName,
-    askedAt: now,
-    expiresAt: now + HUMAN_CHECK_TTL_MS,
-    mediaVersion: room.mediaVersion,
-    hadMedia: !!room.media,
-    answers,
-  };
-  return room.humanCheck;
+  return createCheck(room, actor, options);
 }
 
 /**
@@ -199,24 +204,14 @@ export function beginHumanCheck(room, actor = undefined, options = {}) {
  * @param {any} room
  * @param {{userId?: string, status?: 'ready'|'hold', checkId?: string}} reply
  * @param {{now?: number}} [options]
- * @returns {{status: 'applied'|'expired'|'unavailable', message: string, changed?: boolean}}
  */
 export function recordHumanCheckReply(room, { userId, status, checkId = undefined }, options = {}) {
-  const now = options.now ?? Date.now();
-  expireHumanCheckIfStale(room, now);
-  if (!room.humanCheck) return { status: 'expired', message: 'Readiness check expired.' };
-  if (checkId !== undefined && checkId !== room.humanCheck.id) {
-    return { status: 'expired', message: 'Readiness check expired.' };
-  }
-  if (typeof userId !== 'string' || ![...room.viewers.values()].some(viewer => viewer.userId === userId)) {
-    return { status: 'unavailable', message: 'Join the room first.' };
-  }
-  if (status !== 'ready' && status !== 'hold') {
-    return { status: 'unavailable', message: 'Choose Ready or Need a moment.' };
-  }
-  const previous = room.humanCheck.answers.get(userId);
-  room.humanCheck.answers.set(userId, status);
-  return { status: 'applied', message: 'Readiness reply recorded.', changed: previous !== status };
+  return applyActivityCommand(
+    room,
+    { action: 'check.reply', args: { status, checkId } },
+    userId ? { userId } : undefined,
+    options,
+  );
 }
 
 /**
@@ -225,9 +220,14 @@ export function recordHumanCheckReply(room, { userId, status, checkId = undefine
  * @returns {boolean}
  */
 export function clearHumanCheck(room) {
-  if (!room.humanCheck) return false;
-  room.humanCheck = undefined;
-  return true;
+  if (!(room.activities instanceof Map)) {
+    if (!room.humanCheck) return false;
+    room.humanCheck = undefined;
+    return true;
+  }
+  const removed = room.activities.delete('check');
+  syncLegacyHumanCheck(room);
+  return removed;
 }
 
 /**
@@ -236,19 +236,15 @@ export function clearHumanCheck(room) {
  * @param {number} [now]
  */
 export function snapshotHumanCheck(room, now = Date.now()) {
-  if (!room.humanCheck || isHumanCheckStale(room, now)) return undefined;
-  const answers = {};
-  for (const [userId, status] of room.humanCheck.answers) {
-    if (userId === '__proto__' || userId === 'constructor' || userId === 'prototype') continue;
-    answers[userId] = status;
-  }
+  const check = snapshotActivities(room, now).find(activity => activity.kind === 'check');
+  if (!check) return undefined;
   return {
-    id: room.humanCheck.id,
-    askedBy: room.humanCheck.askedBy,
-    askedByName: room.humanCheck.askedByName,
-    askedAt: room.humanCheck.askedAt,
-    expiresAt: room.humanCheck.expiresAt,
-    answers,
+    id: check.id,
+    askedBy: check.askedBy,
+    askedByName: check.askedByName,
+    askedAt: check.askedAt,
+    expiresAt: check.expiresAt,
+    answers: check.answers,
   };
 }
 
@@ -258,32 +254,9 @@ export function snapshotHumanCheck(room, now = Date.now()) {
  * @param {{action: string, args?: {status?: 'ready'|'hold', checkId?: string}}} command
  * @param {{userId?: string, name?: string}} [actor]
  * @param {{now?: number, createId?: () => string}} [options]
- * @returns {{status: 'applied'|'expired'|'unavailable'|'unsupported', message: string, changed?: boolean}}
  */
 export function applyHumanCheckCommand(room, command, actor = undefined, options = {}) {
-  const now = options.now ?? Date.now();
-  const createId = options.createId || defaultCreateId;
-  const { action, args = {} } = command || {};
-  expireHumanCheckIfStale(room, now);
-  if (action === 'check.ask') {
-    if (room.closed || !room.viewers.size) {
-      return { status: 'unavailable', message: 'No viewer is connected.' };
-    }
-    beginHumanCheck(room, actor, { now, createId });
-    return { status: 'applied', message: 'Readiness check started.', changed: true };
-  }
-  if (action === 'check.clear') {
-    if (room.closed) return { status: 'unavailable', message: 'Room unavailable' };
-    const changed = clearHumanCheck(room);
-    return { status: 'applied', message: 'Readiness check cleared.', changed };
-  }
-  if (action === 'check.reply') {
-    if (room.closed || !room.viewers.size) {
-      return { status: 'unavailable', message: 'No viewer is connected.' };
-    }
-    return recordHumanCheckReply(room, { userId: actor?.userId, status: args.status, checkId: args.checkId }, { now });
-  }
-  return { status: 'unsupported', message: 'Unsupported command or value.' };
+  return applyActivityCommand(room, command, actor, options);
 }
 
 /**
@@ -398,7 +371,7 @@ export function applyReadinessDecision(room, action, readinessId, options = {}) 
     room.initialGate = false;
     room.readinessTimedOut = false;
     room.readinessStartAt = undefined;
-    clearHumanCheck(room);
+    onActivitiesPlayback(room, 'play', now);
     room.changedAt = now;
     setPaused(room, false);
     room.startAt = room.changedAt + controlLead(room, monoNow);
@@ -468,7 +441,7 @@ export function applyTimelineCommand(room, command, options = {}) {
       if (room.position >= duration - 0.1) room.position = 0;
       if (room.manualPaused && room.initialGate) beginReadiness(room, now, READINESS_WAIT_MS, { monoNow, createId });
       room.manualPaused = false;
-      clearHumanCheck(room);
+      onActivitiesPlayback(room, 'play', now);
       setPaused(room, room.initialGate);
       if (options.autoplayVersion === room.mediaVersion && !room.initialGate) {
         room.startAt = Math.max(
@@ -486,7 +459,7 @@ export function applyTimelineCommand(room, command, options = {}) {
         room.position = 0;
         setPaused(room, true);
       }
-      if (!room.manualPaused) clearHumanCheck(room);
+      if (!room.manualPaused) onActivitiesPlayback(room, 'play', now);
       if (room.initialGate) {
         if (room.manualPaused) room.readinessStartAt = undefined;
         else beginReadiness(room, now, READINESS_WAIT_MS, { monoNow, createId });
@@ -566,7 +539,7 @@ export const ROOM_STATE_KEYS = Object.freeze([
   'readinessTimedOut',
   'blockerRevealed',
   'readinessStartAt',
-  'humanCheck',
+  'activities',
   'position',
   'changedAt',
   'startAt',
@@ -657,6 +630,7 @@ export function createRoomState({
     kickedViewers: new Map(),
     hadViewers: false,
     lastActivity: now,
+    activities: new Map(),
     humanCheck: undefined,
   };
 }
@@ -668,12 +642,8 @@ export function createRoomState({
 export function cloneRoomState(room, keys = DEFAULT_KEYS) {
   const draft = pick(room, keys.room);
   draft.state = { ...room.state };
-  if (room.humanCheck) {
-    draft.humanCheck = {
-      ...room.humanCheck,
-      answers: new Map(room.humanCheck.answers),
-    };
-  }
+  draft.activities = cloneActivities(room.activities);
+  syncLegacyHumanCheck(draft);
   draft.viewers = new Map();
   for (const [id, viewer] of room.viewers) {
     const copy = pick(viewer, keys.viewer);
@@ -693,6 +663,7 @@ export function cloneRoomState(room, keys = DEFAULT_KEYS) {
  */
 export function commitRoomState(room, draft, keys = DEFAULT_KEYS) {
   for (const key of keys.room) if (key !== 'viewers' && key in draft) room[key] = draft[key];
+  syncLegacyHumanCheck(room);
   const next = [];
   for (const [id, viewer] of draft.viewers) {
     const live = ORIGIN.get(viewer);
@@ -732,7 +703,7 @@ export function policyAuthorize(actor, room, action) {
   if (action === 'room.view' || action === 'room.remain') return view ? ALLOW : NO_ROOM;
   if (!view) return NO_ROOM;
   if (action === 'room.host') return Policy.role(room, actor.userId) !== 'viewer' ? ALLOW : NO_PERMISSION;
-  if (action === 'check.reply') return ALLOW;
+  if (action === 'check.reply' || action === 'poll.vote') return ALLOW;
   if (action === 'check.ask' || action === 'check.clear') {
     return Policy.role(room, actor.userId) !== 'viewer' || Policy.allowed(room, actor.userId, 'playPause')
       ? ALLOW
@@ -763,7 +734,7 @@ function derive(room, now) {
 function close(room, ctx, save = true) {
   if (room.closed) return;
   room.closed = true;
-  clearHumanCheck(room);
+  onActivitiesPlayback(room, 'close', ctx.now);
   ctx.emit('remove', { save });
 }
 
@@ -775,13 +746,7 @@ function hasUserPresence(room, userId) {
 }
 
 function pruneHumanCheckUsers(room, userIds) {
-  const answers = room.humanCheck?.answers;
-  if (!answers?.size) return false;
-  let removed = false;
-  for (const userId of userIds) {
-    if (userId && !hasUserPresence(room, userId) && answers.delete(userId)) removed = true;
-  }
-  return removed;
+  return onActivitiesLeave(room, userIds, userId => hasUserPresence(room, userId));
 }
 
 function invalidateControls(room, ctx) {
@@ -808,6 +773,7 @@ function disconnectedRecord(room, viewer, ctx) {
   const now = ctx.now;
   return {
     userId: viewer.userId,
+    name: viewer.name,
     mediaVersion: room.mediaVersion,
     streamVersion: viewer.streamVersion,
     expires: now + RECONNECT_GRACE_MS,
@@ -899,7 +865,7 @@ function autoStart(room, ctx) {
 function review(room, ctx) {
   if (room.closed || ctx.hold) return { elected: false };
   const { now, monoNow } = ctx;
-  settle(room, now, monoNow);
+  settle(room, now, monoNow, ctx);
   derive(room, now);
   let pruned = false,
     hostTimedOut = false,
@@ -1120,8 +1086,16 @@ function command(room, event, ctx) {
       createId: ctx.createId,
     });
     if (outcome.status !== 'applied') return ctx.fail(outcome.message, 409);
-  } else if (parsed.action.startsWith('check.')) {
-    const outcome = applyHumanCheckCommand(room, parsed, actor, { now, createId: ctx.createId });
+  } else if (activityForCommand(parsed.action)) {
+    const outcome = applyActivityCommand(room, parsed, actor, {
+      now,
+      createId: ctx.createId,
+      onBreakPause: (liveRoom, at) => {
+        if (liveRoom.media && (!liveRoom.state?.paused || !liveRoom.manualPaused)) {
+          applyTimelineCommand(liveRoom, { action: 'media.pause', args: {} }, { now: at, monoNow });
+        }
+      },
+    });
     if (outcome.status !== 'applied') return ctx.fail(outcome.message, 409);
     if (outcome.changed) {
       room.revision++;
@@ -1299,7 +1273,8 @@ function nextTimerDeadline(room, now, monoNow) {
       consider(now + (room.readinessSince + READINESS_BLOCKER_REVEAL_MS - monoNow), true);
     if (Number.isFinite(room.readinessDeadline)) consider(now + (room.readinessDeadline - monoNow));
   }
-  if (room.humanCheck && Number.isFinite(room.humanCheck.expiresAt)) consider(room.humanCheck.expiresAt);
+  const actDeadline = nextActivityDeadline(room, now);
+  if (actDeadline.due !== undefined) consider(actDeadline.due, actDeadline.exact);
   for (const viewer of room.viewers.values()) consider(viewer.at + PRESENCE_TIMEOUT_MS + 1);
   for (const saved of room.disconnectedViewers.values()) consider(saved.expires);
   if (!room.hadViewers) consider(room.lastActivity + IDLE_ROOM_TIMEOUT_MS + 1);
@@ -1315,13 +1290,6 @@ export function nextDeadline(room, now, monoNow) {
 // ---------------------------------------------------------------------------
 
 const EVENT_ACTIONS = Object.freeze({ join: 'room.view', ready: 'room.view' });
-const humanCheckStamp = check =>
-  check
-    ? `${check.id}:${check.expiresAt}:${[...check.answers.entries()]
-        .map(([userId, status]) => `${userId}=${status}`)
-        .sort()
-        .join(',')}`
-    : '';
 // What a timer's lifecycle review can move that a subscriber would see: the timeline,
 // the readiness gate, who is in the room and who hosts it.
 const visibleStamp = room =>
@@ -1342,12 +1310,234 @@ const visibleStamp = room =>
     room.recovery ? 1 : 0,
     room.viewers.size,
     room.disconnectedViewers.size,
-    humanCheckStamp(room.humanCheck),
+    activitiesStamp(room.activities),
   ].join('|');
 // The mailbox entry for a host step (see `step` below); never a reducer event.
 const STEP = Symbol('step');
 // The mailbox entry for a publication (see `publish` below).
 const PUBLISH = Symbol('publish');
+
+function presentAccounts(room) {
+  /** @type {Map<string, string>} */
+  const accounts = new Map();
+  for (const viewer of room.viewers.values()) {
+    if (viewer.userId && !accounts.has(viewer.userId)) {
+      accounts.set(viewer.userId, viewer.name || viewer.actor?.name || 'Participant');
+    }
+  }
+  for (const saved of room.disconnectedViewers.values()) {
+    if (saved.userId && !accounts.has(saved.userId)) {
+      accounts.set(saved.userId, saved.name || 'Participant');
+    }
+  }
+  return accounts;
+}
+
+function isEffectivelyPaused(room) {
+  return Boolean(
+    room.manualPaused ||
+    room.pauseAt ||
+    room.bufferingViewerId ||
+    room.waitingForHost ||
+    (getPaused(room) && !room.initialGate),
+  );
+}
+
+function describeRoomMedia(room, extensions) {
+  if (!room.media) return null;
+  if (typeof extensions.describeMedia === 'function') return extensions.describeMedia(room.media, room);
+  return {
+    title: room.media.title || 'Untitled',
+    subtitle: room.media.subtitle || '',
+    ...(room.media.entryId || room.media.id ? { entryId: room.media.entryId || room.media.id } : {}),
+  };
+}
+
+function captureJournalFacts(room, at, extensions) {
+  const bufferingViewer = room.bufferingViewerId ? room.viewers.get(room.bufferingViewerId) : undefined;
+  return {
+    at,
+    hadViewers: !!room.hadViewers,
+    closed: !!room.closed,
+    frozen: !!room.frozen,
+    recovery: !!room.recovery,
+    media: !!room.media,
+    mediaVersion: room.mediaVersion,
+    mediaDesc: describeRoomMedia(room, extensions),
+    duration: getDuration(room),
+    position: room.position,
+    changedAt: room.changedAt,
+    startAt: room.startAt,
+    pauseAt: room.pauseAt,
+    rawPaused: getPaused(room),
+    effectivePaused: isEffectivelyPaused(room),
+    bufferingViewerId: room.bufferingViewerId,
+    bufferingViewer: bufferingViewer ? normalizeActor(bufferingViewer) : undefined,
+    waitingForHost: !!room.waitingForHost,
+    hostId: room.hostId,
+    hostName: room.hostName,
+    hostViewerId: room.hostViewerId,
+    accounts: presentAccounts(room),
+  };
+}
+
+function positionFromFacts(facts, at) {
+  let t = at;
+  if (facts.pauseAt) t = Math.min(t, facts.pauseAt);
+  const elapsed = facts.startAt ? Math.max(0, t - Math.max(facts.changedAt, facts.startAt)) : t - facts.changedAt;
+  return Math.min(facts.duration, Math.max(0, facts.position + (facts.rawPaused ? 0 : elapsed / 1000)));
+}
+
+function mediaStartHow(cause) {
+  if (cause?.how) return cause.how;
+  const action = cause?.action;
+  if (action === 'media.next') return 'next';
+  if (action === 'media.previous') return 'previous';
+  if (action === 'media.autoplay') return 'autoplay';
+  if (action === 'media.autoQueue') return 'auto-queue';
+  return 'chosen';
+}
+
+function observeJournalCommit(journal, before, room, at, cause, event, extensions) {
+  const after = captureJournalFacts(room, at, extensions);
+  const actor = normalizeActor(cause?.actor || event?.actor);
+  const action = cause?.action || (event?.type === 'command' ? event.command?.action : undefined);
+  const mediaChanged =
+    before.media !== after.media || (before.media && after.media && before.mediaVersion !== after.mediaVersion);
+
+  if (mediaChanged) {
+    if (before.media) {
+      const reason =
+        cause?.mediaEndReason || (action === 'media.stop' ? 'stopped' : after.media ? 'skipped' : 'completed');
+      journal.append({
+        at,
+        kind: 'media.end',
+        actor,
+        mediaVersion: before.mediaVersion,
+        data: { media: before.mediaDesc, reason },
+      });
+    }
+    if (after.media) {
+      journal.append({
+        at,
+        kind: 'media.start',
+        actor,
+        mediaVersion: after.mediaVersion,
+        data: { media: after.mediaDesc, how: mediaStartHow({ ...cause, action }) },
+      });
+    }
+  } else if (before.media && after.media && !after.closed) {
+    const expectedPos = positionFromFacts(before, at);
+    const actualPos = position(room, at);
+    const delta = Math.abs(actualPos - expectedPos);
+    const isSeekAction = typeof action === 'string' && action.startsWith('media.seek.');
+    if (delta >= 1.5 || (isSeekAction && delta >= 0.5)) {
+      const from = Math.round(expectedPos * 10) / 10;
+      const to = Math.round(actualPos * 10) / 10;
+      const mergeKey = `seek:${actor?.id || 'system'}:${after.mediaVersion}`;
+      journal.append(
+        { at, kind: 'playback.seek', actor, mediaVersion: after.mediaVersion, data: { from, to } },
+        {
+          mergeWithin: SEEK_MERGE_MS,
+          key: mergeKey,
+          merge: (prev, next) => ({
+            from: prev.data?.from ?? from,
+            to: next.data?.to ?? to,
+          }),
+        },
+      );
+    }
+
+    if (!before.effectivePaused && after.effectivePaused) {
+      let reason = cause?.reason || (actor ? 'manual' : 'system');
+      /** @type {{id: string, name: string} | undefined} */
+      let viewer;
+      if (after.bufferingViewerId) {
+        reason = 'buffering';
+        viewer = after.bufferingViewer;
+      } else if (after.waitingForHost && !before.waitingForHost) {
+        reason = 'noHost';
+      } else if (after.frozen && !before.frozen) {
+        reason = 'empty';
+      }
+      journal.append({
+        at,
+        kind: 'playback.pause',
+        actor: reason === 'manual' || reason === 'scheduled' ? actor : undefined,
+        mediaVersion: after.mediaVersion,
+        data: {
+          position: Math.round(actualPos * 10) / 10,
+          reason,
+          ...(viewer ? { viewer } : {}),
+        },
+      });
+    } else if (before.effectivePaused && !after.effectivePaused) {
+      let reason = cause?.reason || (actor ? 'manual' : 'system');
+      if (before.bufferingViewerId && !after.bufferingViewerId) {
+        reason = 'buffering';
+      } else if (before.recovery && !after.recovery) {
+        reason = 'recovery';
+      }
+      journal.append({
+        at,
+        kind: 'playback.play',
+        actor: reason === 'manual' || reason === 'scheduled' ? actor : undefined,
+        mediaVersion: after.mediaVersion,
+        data: {
+          position: Math.round(actualPos * 10) / 10,
+          reason,
+        },
+      });
+    }
+  }
+
+  for (const [id, name] of after.accounts) {
+    if (before.accounts.has(id)) continue;
+    const person = { id, name };
+    journal.append(
+      { at, kind: 'people.join', actor: person, data: { people: [person] } },
+      {
+        mergeWithin: PRESENCE_MERGE_MS,
+        key: 'people.join',
+        merge: prev => {
+          const existing = Array.isArray(prev.data?.people) ? prev.data.people : [];
+          if (existing.some(p => p.id === id)) return { people: existing };
+          return { people: [...existing, person] };
+        },
+      },
+    );
+  }
+  for (const [id, name] of before.accounts) {
+    if (after.accounts.has(id)) continue;
+    const person = { id, name };
+    journal.append(
+      { at, kind: 'people.leave', actor: person, data: { people: [person] } },
+      {
+        mergeWithin: PRESENCE_MERGE_MS,
+        key: 'people.leave',
+        merge: prev => {
+          const existing = Array.isArray(prev.data?.people) ? prev.data.people : [];
+          if (existing.some(p => p.id === id)) return { people: existing };
+          return { people: [...existing, person] };
+        },
+      },
+    );
+  }
+
+  if (!after.closed && after.hostViewerId && after.hostId && after.hostId !== before.hostId && before.hadViewers) {
+    const hostName = after.hostName || 'Host';
+    journal.append({
+      at,
+      kind: 'people.host',
+      actor: { id: after.hostId, name: hostName },
+      data: {
+        hostId: after.hostId,
+        hostName,
+        ...(before.hostId ? { previousHostId: before.hostId } : {}),
+      },
+    });
+  }
+}
 
 /**
  * One room registry. Each room's events are reduced one at a time, in order. When a
@@ -1398,7 +1588,15 @@ export function createRoomCoordinator(options) {
   /** @type {Map<string, any>} */
   const rooms = new Map();
   const mailboxes = new WeakMap(),
+    journals = new WeakMap(),
     timers = new Map();
+  /** @type {any} */
+  let activeRoom;
+  function journalFor(room) {
+    let journal = journals.get(room);
+    if (!journal) journals.set(room, (journal = createJournal({ createId })));
+    return journal;
+  }
   const report = error => {
     if (options.onError) options.onError(error);
     else
@@ -1451,15 +1649,22 @@ export function createRoomCoordinator(options) {
       report(error);
     }
   }
-  function finish(room, result, type) {
+  function finish(room, result, event, before, eventNow) {
     if (result.error) return result;
+    const type = event.type;
+    const journal = journalFor(room);
+    const headBefore = journal.head;
+    const stampChanged = visibleStamp(room) !== visibleStamp(result.state);
+    const removed = commitRoomState(room, result.state, keys);
+    if (before) observeJournalCommit(journal, before, room, eventNow, event.cause, event, extensions);
+    const journalChanged = journal.head !== headBefore;
     const quiet =
       !options.onChange ||
       type === 'touch' ||
       (type === 'timer' &&
         result.effects.every(effect => effect.type === 'checkpoint') &&
-        visibleStamp(room) === visibleStamp(result.state));
-    const removed = commitRoomState(room, result.state, keys);
+        !stampChanged &&
+        !journalChanged);
     for (const effect of result.effects)
       try {
         options.onEffect?.(room, effect, removed);
@@ -1484,8 +1689,18 @@ export function createRoomCoordinator(options) {
       return { effects: [] };
     }
     if (event.type === STEP) {
-      const value = event.step(room);
-      if (typeof value?.then === 'function') throw new TypeError('A room step must not wait');
+      const eventNow = now();
+      const before = captureJournalFacts(room, eventNow, extensions);
+      const prevActive = activeRoom;
+      activeRoom = room;
+      let value;
+      try {
+        value = event.step(room);
+        if (typeof value?.then === 'function') throw new TypeError('A room step must not wait');
+        observeJournalCommit(journalFor(room), before, room, now(), event.cause, undefined, extensions);
+      } finally {
+        activeRoom = prevActive;
+      }
       arm(room);
       changed(room, 'step');
       return { value, effects: [] };
@@ -1504,8 +1719,10 @@ export function createRoomCoordinator(options) {
           effects: [],
         };
     }
+    const eventNow = now();
+    const before = event.type === 'touch' ? undefined : captureJournalFacts(room, eventNow, extensions);
     const result = reduce(room, event, {
-      now: now(),
+      now: eventNow,
       monoNow: monoNow(),
       createId,
       authorize: options.authorize,
@@ -1514,7 +1731,7 @@ export function createRoomCoordinator(options) {
       hold: !!options.hold?.(room),
       checkpointMs: options.checkpointMs,
     });
-    if (!result.persist || !options.onPersist) return finish(room, result, event.type);
+    if (!result.persist || !options.onPersist) return finish(room, result, event, before, eventNow);
     if (syncOnly) return refused('Room event requires asynchronous persistence', 409);
     const persisting = options.onPersist(cloneRoomState(result.state, keys), {
       event: event.type,
@@ -1522,7 +1739,8 @@ export function createRoomCoordinator(options) {
       revision: result.state.revision,
     });
     return Promise.resolve(persisting).then(
-      () => (rooms.get(room.roomId) === room ? finish(room, result, event.type) : refused('Room unavailable')),
+      () =>
+        rooms.get(room.roomId) === room ? finish(room, result, event, before, eventNow) : refused('Room unavailable'),
       error => ({ error, effects: [] }),
     );
   }
@@ -1629,12 +1847,41 @@ export function createRoomCoordinator(options) {
      * free, otherwise a promise of it.
      * @param {any} idOrRoom
      * @param {(room: any) => any} step
+     * @param {{cause?: {actor?: any, action?: string, how?: string, reason?: string, mediaEndReason?: string}}} [options]
      */
-    step(idOrRoom, step) {
+    step(idOrRoom, step, options = undefined) {
       const room = resolveRoom(idOrRoom);
       if (!room || rooms.get(room.roomId) !== room) return refused('Room unavailable');
-      const entry = submit(room, { type: STEP, step });
+      const entry = submit(room, { type: STEP, step, cause: options?.cause });
       return entry.done ? entry.result : entry.promise;
+    },
+    /** Returns the room's bounded journal, or undefined if the room is not registered. */
+    journal(idOrRoom) {
+      const room = resolveRoom(idOrRoom);
+      if (!room) return undefined;
+      return journalFor(room);
+    },
+    /** Hydrates a room's journal from durable storage when the room goes live. */
+    initJournal(idOrRoom, saved) {
+      const room = resolveRoom(idOrRoom);
+      if (!room) return undefined;
+      const journal = journalFor(room);
+      journal.hydrate(saved);
+      return journal;
+    },
+    /**
+     * Records a declared journal entry. Must run inside the room's mailbox (a step or
+     * reducer event); throws otherwise so journal writes stay ordered with room commits.
+     * @param {any} idOrRoom
+     * @param {Omit<import('./journal.mjs').JournalInput, 'at'> & {at?: number}} entry
+     * @param {import('./journal.mjs').JournalMergeOptions} [mergeOptions]
+     */
+    record(idOrRoom, entry, mergeOptions = undefined) {
+      const room = resolveRoom(idOrRoom);
+      if (!room || activeRoom !== room) {
+        throw new Error('Room journal record() must run inside the room mailbox');
+      }
+      return journalFor(room).append({ at: now(), ...entry }, mergeOptions);
     },
     /**
      * Publishes a change to the room's subscribers through `onPublish`, in mailbox order:

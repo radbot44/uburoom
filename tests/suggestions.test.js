@@ -92,7 +92,7 @@ test('viewers and guests can suggest on live rooms, projecting onto the v2 room 
   const f = await fixture(t);
   const viewerView = f.watch.view(f.room, f.viewer, f.viewer.watchViewerId);
   const guestView = f.watch.view(f.room, f.guest, f.guest.watchViewerId);
-  assert.equal(PROTOCOL_VERSION, 2);
+  assert.equal(PROTOCOL_VERSION, 3);
   assert.equal(viewerView.capabilities.suggestMedia, true);
   assert.equal(viewerView.capabilities.addQueue, false);
   assert.equal(guestView.capabilities.suggestMedia, true);

@@ -2,7 +2,7 @@
 
 A client holds one WebSocket to `/watch-socket` per tab or app window. Everything about rooms travels on it as JSON messages with a `type`. The message shapes and their validators live in [`shared/wire-protocol.mjs`](../shared/wire-protocol.mjs); the server, the browser and the test harnesses load that file, and other clients (such as `plezy-uburoom`) mirror it.
 
-Protocol version: **2**. Version 1 was the earlier path-shaped protocol and is no longer spoken.
+Protocol version: **3**. Earlier protocol versions (1 and 2) are no longer spoken.
 
 ## Connecting
 
@@ -10,16 +10,16 @@ Protocol version: **2**. Version 1 was the earlier path-shaped protocol and is n
 2. Send `hello` within five seconds:
 
    ```json
-   { "type": "hello", "protocol": 2, "token": "<64 hex, for bearer sign-in>", "csrf": "<for cookie sign-in>" }
+   { "type": "hello", "protocol": 3, "token": "<64 hex, for bearer sign-in>", "csrf": "<for cookie sign-in>" }
    ```
 
 3. The server answers `welcome`:
 
    ```json
-   { "type": "welcome", "protocol": 2, "connectionId": 7, "resyncMs": 20000 }
+   { "type": "welcome", "protocol": 3, "connectionId": 7, "resyncMs": 20000 }
    ```
 
-A client that states another version, or sends anything other than `hello` first, gets `{ "type": "error", "code": "protocol", "status": 426, "message": "…", "supported": [2] }` and the socket closes with code 4010. Show the message and stop reconnecting: only updating the client helps.
+A client that states another version, or sends anything other than `hello` first, gets `{ "type": "error", "code": "protocol", "status": 426, "message": "…", "supported": [3] }` and the socket closes with code 4010. Show the message and stop reconnecting: only updating the client helps.
 
 Sending `hello` again on an open connection renews its sign-in (for example with a renewed bearer token).
 
@@ -64,15 +64,18 @@ A `command` is a room command from the shared command table ([`shared/room-proto
 
 Two messages have no answer of their own: `clock` (the server replies with a `clock` message carrying the same `id`, `serverNow` and `timing`) and `quality` (a tab's sync-quality report).
 
-## State: three lanes, pushed on change
+## State: four lanes, pushed on change
 
 The server sends state without being asked, and only when it changed.
 
 | Message | Carries | Sent when |
 | --- | --- | --- |
-| `room` | `roomId`, `viewerId`, `version`, `state`: the room as this tab may see it (timeline, media, queue summary, participants, permissions) | The room changed |
+| `room` | `roomId`, `viewerId`, `version`, `state`: the room as this tab may see it (timeline, media, queue summary, participants, permissions, live `activities`) | The room changed |
 | `viewer` | `roomId`, `viewerId`, `version`, `state`: this tab's own stream, tracks and settings, with `mediaVersion` | This tab's stream or settings changed, or the room's video did |
+| `journal` | `roomId`, `journalId`, `full`, `head`, `entries`: audience-filtered room activity log entries (capped at 500) | On join (`full: true`), on new entries (`full: false`), or on role/visibility/reset changes (`full: true`) |
 | `lobby` | `version`, `identity`, `rooms` | The room list or the person's standing changed |
+
+Protocol 3 retires `room.feedback` (participant toasts now derive from live `journal` appends) and moves live room tools (readiness checks, breaks, announcements, polls) onto `room.activities`. Periodic `resyncMs` sweeps do not resend the `journal` lane when nothing changed; explicit client `resync` requests send a `full: true` journal snapshot.
 
 A tab's view is its two lanes together: `mergeView(room.state, viewer.state)`. The `viewer` lane names the `mediaVersion` its stream belongs to; show the lanes together only when both name the same one (`lanesAgree`), so a new video is never paired with the previous video's stream. A lane message replaces that lane whole. Drop one whose `version` is lower than the lane's current version.
 

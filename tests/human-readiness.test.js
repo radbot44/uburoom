@@ -465,7 +465,7 @@ test('server Hub.authorize, room-protocol, epoch preservation, and room-lane pro
 
     assert.equal(RoomProtocol.command('check.ask').liveOnly, true);
     assert.equal(RoomProtocol.command('check.reply').roomLocal, true);
-    assert.equal(WireProtocol.PROTOCOL_VERSION, 2);
+    assert.equal(WireProtocol.PROTOCOL_VERSION, 3);
 
     // Plain viewer cannot ask or clear in host-control, but can reply; non-watching viewer cannot reply.
     const nonWatching = await s.hub.dispatch(s.viewerB, {

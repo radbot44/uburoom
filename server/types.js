@@ -114,6 +114,8 @@
  * @property {number} [readinessStartAt] - Earliest release timestamp, counted alongside buffering.
  * @property {string} [readinessVersion] - Shared seek readiness generation.
  * @property {string} [bufferingViewerId] - Tab that triggered the current shared buffering hold.
+ * @property {Map<string, any>} [activities] - Ephemeral live room activities (readiness check, break, announcement, poll).
+ * @property {any[]} [suggestions] - Ephemeral room media suggestions.
  * @property {{id: string, askedBy?: string, askedByName: string, askedAt: number, expiresAt: number, mediaVersion: string, hadMedia: boolean, answers: Map<string, 'ready'|'hold'>}} [humanCheck] - Ephemeral human readiness check.
  * @property {boolean} initialGate - Whether startup or seek readiness is currently held.
  * @property {boolean} manualPaused - Whether playback was paused deliberately by user action.

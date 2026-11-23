@@ -5,7 +5,7 @@
  */
 // Raised whenever a message changes shape. A client states the version it speaks
 // in `hello`; the server refuses any other with a `protocol` error.
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 // How often the server sends every lane again, whether or not it changed.
 const RESYNC_MS = 20000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -26,7 +26,7 @@ const CLIENT_TYPES = Object.freeze([
   'resync',
 ]);
 /** What the server sends. */
-const SERVER_TYPES = Object.freeze(['welcome', 'room', 'viewer', 'lobby', 'ack', 'error', 'clock']);
+const SERVER_TYPES = Object.freeze(['welcome', 'room', 'viewer', 'journal', 'lobby', 'ack', 'error', 'clock']);
 
 /**
  * Named requests that are neither a room command nor room state: reads, and the

@@ -319,7 +319,7 @@ export function mount(host, deps) {
     deps.hideDisconnectToast();
     resetChoppyPlayback(preserveChoppiness);
     deps.toasts.dismiss('participant');
-    store.room.lastFeedback = undefined;
+    if (reason === 'room-leave' || reason === 'unavailable') deps.journal?.clear?.();
     if (reason !== 'state-change') store.player.playerUI?.reset();
     store.player.sync.reset();
     deps.resetSyncQuality();

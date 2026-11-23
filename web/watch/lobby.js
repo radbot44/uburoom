@@ -84,7 +84,7 @@ export function mount(host, deps) {
       deps.clearPlayer('room-select');
       store.room.selected = id;
       store.room.state = undefined;
-      store.room.lastFeedback = undefined;
+      if (deps.journal?.roomId !== id) deps.journal?.clear?.();
       deps.applyState(next);
       deps.placeRoomBar();
       deps.fail(store.player.playbackError);

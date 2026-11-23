@@ -433,16 +433,41 @@ module.exports = {
     if (!reserved) throw Object.assign(new Error('Room access changed; retry manually'), { status: 403 });
     const { priorCountdown, wasEmptyQueue, acceptedSuggestion } = reserved;
     let suggestionSettled = false;
+    /** @type {Array<{kind: string, actor?: any, data?: Record<string, any>}>} */
+    const journalEvents = [];
+    const describeQueueEntry = entry =>
+      entry
+        ? {
+            title: entry.title || 'Untitled',
+            subtitle: entry.grandparentTitle || entry.parentTitle || '',
+            ...(entry.id ? { entryId: entry.id } : {}),
+          }
+        : undefined;
     try {
       let value;
       if (action === 'queue.remove' && (args.advance || queue.current(id)?.id === args.entryId)) {
-        if (queue.current(id)?.id !== args.entryId)
+        const removedEntry = queue.current(id);
+        if (removedEntry?.id !== args.entryId)
           throw Object.assign(new Error('Current video changed; refresh before removing'), { status: 409 });
         queue.assertAllowed(queue.room(id), actor.userId, 'chooseMedia');
         if (args.advance && !this.nextCandidate(id))
           throw Object.assign(new Error('No next video is available'), { status: 409 });
         if (activeRoom) {
-          return this.changeQueueMedia(room, command, actor, ticket, { transition: transitionToken });
+          const outcome = await this.changeQueueMedia(room, command, actor, ticket, { transition: transitionToken });
+          if (outcome?.status === 'applied') {
+            await this.inRoom(
+              room,
+              () => {
+                this.record(room, {
+                  kind: 'queue.remove',
+                  actor,
+                  data: { media: describeQueueEntry(removedEntry) },
+                });
+              },
+              undefined,
+            );
+          }
+          return outcome;
         }
         value = args.advance
           ? await queue.next(id, actor.userId, {
@@ -451,17 +476,41 @@ module.exports = {
               discardCurrent: true,
             })
           : await queue.remove(id, actor.userId, args.entryId, revision, { allowCurrent: true });
+        journalEvents.push({ kind: 'queue.remove', actor, data: { media: describeQueueEntry(removedEntry) } });
       } else if (action === 'queue.add' || action === 'queue.playNow' || accepting) {
         const raw = acceptedSuggestion ? acceptedSuggestion.item : args.item;
         const item = await this.resolvePlayableQueueItem(actor, raw);
         await check();
         queue.assertRevision(queue.room(id), revision);
         const playNow = action === 'queue.playNow' || action === 'queue.suggestion.playNow';
+        const mediaDesc = describeQueueEntry(item);
         // An accepted suggestion leaves the list once its video has played or joined the queue.
         const settle = async () => {
           if (!acceptedSuggestion) return;
           suggestionSettled = true;
-          await this.inRoom(room, () => this.settleSuggestion(room, acceptedSuggestion.id), undefined);
+          await this.inRoom(
+            room,
+            () => {
+              this.settleSuggestion(room, acceptedSuggestion.id);
+              this.record(room, {
+                kind: 'suggestion.accepted',
+                actor,
+                data: {
+                  media: mediaDesc,
+                  playNow,
+                  ...(acceptedSuggestion.supporters?.[0]
+                    ? {
+                        suggestedBy: {
+                          id: acceptedSuggestion.supporters[0].userId,
+                          name: acceptedSuggestion.supporters[0].name,
+                        },
+                      }
+                    : {}),
+                },
+              });
+            },
+            undefined,
+          );
         };
         if (activeRoom && (playNow || (!room.media && wasEmptyQueue))) {
           const outcome = await this.changeQueueMedia(
@@ -476,13 +525,31 @@ module.exports = {
                 : { initialAdd: true, forcePlay: !!room.endedVersion && !!this.roomState.store.get(id).autoplay }),
             },
           );
-          if (outcome?.status === 'applied') await settle();
+          if (outcome?.status === 'applied') {
+            if (acceptedSuggestion) await settle();
+            else if (playNow) {
+              await this.inRoom(
+                room,
+                () => {
+                  this.record(room, { kind: 'queue.playNow', actor, data: { media: mediaDesc } });
+                },
+                undefined,
+              );
+            }
+          }
           return outcome;
         }
         value = playNow
           ? await queue.playNow(id, actor.userId, item, queue.current(id)?.position || 0)
           : await queue.add(id, actor.userId, item, { expectedRevision: revision });
         await settle();
+        if (!acceptedSuggestion) {
+          journalEvents.push({
+            kind: playNow ? 'queue.playNow' : 'queue.add',
+            actor,
+            data: { media: describeQueueEntry(value?.entry || item) },
+          });
+        }
       } else if (action === 'queue.offer.start') {
         if (!activeRoom)
           throw Object.assign(new Error('Rejoin the room before starting an episode offer'), { status: 409 });
@@ -658,9 +725,19 @@ module.exports = {
         value = { ...value, queueRevision: this.roomState.store.get(id).queueRevision };
       } else if (action === 'queue.move')
         value = await queue.move(id, actor.userId, args.entryId, args.targetRank, revision);
-      else if (action === 'queue.remove') value = await queue.remove(id, actor.userId, args.entryId, revision);
-      else if (action === 'queue.clear') value = await queue.clear(id, actor.userId, revision);
-      else if (action === 'queue.shuffle') value = await queue.shuffle(id, actor.userId, revision);
+      else if (action === 'queue.remove') {
+        const removedEntry = queue.pending(id).find(entry => entry.id === args.entryId);
+        value = await queue.remove(id, actor.userId, args.entryId, revision);
+        if (removedEntry) {
+          journalEvents.push({ kind: 'queue.remove', actor, data: { media: describeQueueEntry(removedEntry) } });
+        }
+      } else if (action === 'queue.clear') {
+        const clearedCount = queue.pending(id).length;
+        value = await queue.clear(id, actor.userId, revision);
+        if (clearedCount > 0) {
+          journalEvents.push({ kind: 'queue.remove', actor, data: { cleared: true, count: clearedCount } });
+        }
+      } else if (action === 'queue.shuffle') value = await queue.shuffle(id, actor.userId, revision);
       else if (action === 'queue.history.clear') value = await queue.historyClear(id, actor.userId);
       else if (action === 'queue.history.replay' || action === 'queue.history.goBack') {
         if (activeRoom) {
@@ -694,6 +771,7 @@ module.exports = {
           () => {
             const latest = this.roomState.store.get(id);
             this.roomState.apply(room, latest);
+            for (const entry of journalEvents) this.record(room, entry);
             if (!activeRoom || !priorCountdown || room.media) return;
             const afterNext = this.nextCandidate(id);
             const afterKey = afterNext ? afterNext.id || afterNext.serverId + ':' + afterNext.mediaId : null;

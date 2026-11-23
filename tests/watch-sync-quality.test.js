@@ -1,4 +1,5 @@
 'use strict';
+const { createJournal } = require('../shared/sync/journal.mjs');
 const { recordRoomSyncTimeline, sampleRoomSync, roomSyncHistory } = require('../server/room/sync-history');
 const test = require('node:test'),
   assert = require('node:assert/strict');
@@ -299,10 +300,12 @@ test('room sync history separates viewer tabs, preserves gaps and expires with t
   sampleRoomSync(room, 11000);
   room.state.paused = true;
   recordRoomSyncTimeline(room, 12000);
-  room.feedback = { action: 'media.seek.absolute' };
-  recordRoomSyncTimeline(room, 13000);
+  const journal = createJournal();
+  journal.append({ at: 1000, kind: 'media.start', mediaVersion: 'one', data: { media: { title: 'Fixture' } } });
+  journal.append({ at: 12000, kind: 'playback.pause', mediaVersion: 'one', data: { position: 10, reason: 'manual' } });
+  journal.append({ at: 13000, kind: 'playback.seek', mediaVersion: 'one', data: { from: 10, to: 50 } });
 
-  const snapshot = roomSyncHistory(room, 13000, 5);
+  const snapshot = roomSyncHistory(room, 13000, 5, journal);
   assert.deepEqual(snapshot.samples, [
     [1000, 80, 2, 2],
     [6000, null, 1, 2],

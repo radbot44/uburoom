@@ -214,8 +214,8 @@ rooms:
   # [] or 'none' grants none; 'all' grants all eligible rights.
   # Creators have all perms; hosts inherit from viewers; viewers can't get management perms.
   # Names: playPause, seek, chooseMedia, addQueue, suggestMedia, editQueue, autoplay,
-  # roomSettings, closeRoom, deleteRoom, continueWithoutHost, addHosts, kickParticipants
-  host_permissions: [playPause, seek, chooseMedia, addQueue, suggestMedia, editQueue, autoplay, roomSettings, closeRoom, continueWithoutHost, kickParticipants]
+  # roomSettings, closeRoom, deleteRoom, continueWithoutHost, addHosts, kickParticipants, announce, runPolls
+  host_permissions: [playPause, seek, chooseMedia, addQueue, suggestMedia, editQueue, autoplay, roomSettings, closeRoom, continueWithoutHost, kickParticipants, announce, runPolls]
   viewer_permissions: [playPause, suggestMedia]
 
   # Exact identities ('discord:<id>', 'plex:<id>', 'uburoom:<subject>', 'jellyfin:<server id>:<user id>')

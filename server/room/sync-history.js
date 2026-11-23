@@ -22,7 +22,6 @@ function recordRoomSyncTimeline(room, now) {
       samples: [],
       events: [[now, 'video']],
       paused,
-      feedback: room.feedback,
     };
     history.set(room, current);
     return current;
@@ -30,10 +29,6 @@ function recordRoomSyncTimeline(room, now) {
   if (paused !== current.paused) {
     current.paused = paused;
     current.events.push([now, paused ? 'pause' : 'play']);
-  }
-  if (current.feedback !== room.feedback) {
-    current.feedback = room.feedback;
-    if (room.feedback?.action?.startsWith('media.seek.')) current.events.push([now, 'seek']);
   }
   if (current.events.length > MAX_EVENTS) current.events.splice(0, current.events.length - MAX_EVENTS);
   return current;
@@ -87,7 +82,14 @@ function sampleRoomSync(room, now) {
   if (current.samples.length > MAX_SAMPLES) current.samples.shift();
 }
 
-function roomSyncHistory(room, now, minutes) {
+const JOURNAL_SYNC_EVENT = Object.freeze({
+  'media.start': 'video',
+  'playback.play': 'play',
+  'playback.pause': 'pause',
+  'playback.seek': 'seek',
+});
+
+function roomSyncHistory(room, now, minutes, journal = undefined) {
   const since = now - minutes * 60 * 1000;
   const timeline = history.get(room);
   const current = room.media && timeline?.mediaVersion === room.mediaVersion ? timeline : undefined;
@@ -106,6 +108,19 @@ function roomSyncHistory(room, now, minutes) {
       series.points.push([sample.at, tab.offset, tab.status, tab.rejoined]);
     }
   }
+  let events;
+  if (journal && room.media) {
+    events = [];
+    for (const entry of journal.since(0)) {
+      if (entry.at < since) continue;
+      if (entry.mediaVersion !== room.mediaVersion) continue;
+      const mapped = JOURNAL_SYNC_EVENT[entry.kind];
+      if (mapped) events.push([entry.at, mapped]);
+    }
+    if (events.length > MAX_EVENTS) events = events.slice(events.length - MAX_EVENTS);
+  } else {
+    events = (current?.events || []).filter(([at]) => at >= since);
+  }
   return {
     now,
     mediaVersion: room.media ? room.mediaVersion : undefined,
@@ -113,7 +128,7 @@ function roomSyncHistory(room, now, minutes) {
     interval: SPREAD_SAMPLE_INTERVAL_MS,
     samples,
     viewers: [...viewers.values()],
-    events: (current?.events || []).filter(([at]) => at >= since),
+    events,
   };
 }
 

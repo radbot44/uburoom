@@ -21,6 +21,8 @@ const labels = {
   continueWithoutHost: 'Continue without hosts',
   addHosts: 'Add hosts',
   kickParticipants: 'Kick viewers',
+  announce: 'Send announcements',
+  runPolls: 'Run polls',
 };
 const descriptions = {
   chooseMedia: 'Skip to another video in the queue or replay a video from history.',
@@ -30,6 +32,8 @@ const descriptions = {
   deleteRoom: 'Permanently delete this room and its saved history.',
   addHosts: 'Appoint additional hosts; cannot remove other hosts.',
   kickParticipants: 'Remove viewers from the room; they may rejoin.',
+  announce: 'Show a stage banner announcement to everyone in the room.',
+  runPolls: 'Start and close room polls for viewers to vote on.',
   allHosts:
     'Everyone admitted uses host permissions, except guests. Only the leader can change this; explicit host assignments are kept.',
 };
@@ -443,13 +447,68 @@ function mount({
   const expand = $('room-participants-expand'),
     rosterFrame = $('room-roster-frame'),
     toolsColumn = $('room-tools-column'),
-    humanCheckButton = $('room-human-check-ask');
+    humanCheckButton = $('room-human-check-ask'),
+    announceButton = $('room-announce-btn'),
+    pollButton = $('room-poll-btn');
   // Starting and cancelling a ready check lives in the Tools column; answering happens on the video.
   controls.content(humanCheckButton, { icon: 'users-check', label: 'Readiness check' });
-  humanCheckButton.addEventListener('click', () => {
-    const check = getState()?.humanCheck;
-    void runHumanCheckAction(() => (check ? onClearHumanCheck?.(check.id) : onAskHumanCheck?.()));
+  if (announceButton) controls.content(announceButton, { icon: 'bell', label: 'Announce' });
+  if (pollButton) controls.content(pollButton, { icon: 'chart-bar', label: 'Poll' });
+  humanCheckButton.addEventListener('click', event => {
+    event.stopPropagation();
+    const state = getState();
+    const active =
+      (Array.isArray(state?.activities) ? state.activities.find(a => a.kind === 'check') : null) || state?.humanCheck;
+    if (active) {
+      void runHumanCheckAction(() => onClearHumanCheck?.(active.id));
+      return;
+    }
+    const popover = $('break-popover');
+    if (!popover) {
+      void runHumanCheckAction(() => onAskHumanCheck?.());
+      return;
+    }
+    const opening = popover.hidden;
+    popover.hidden = !opening;
+    if (opening) {
+      const rect = humanCheckButton.getBoundingClientRect();
+      const left = Math.max(12, Math.min(rect.left, window.innerWidth - 292));
+      const spaceAbove = rect.top - 16;
+      popover.style.left = `${left}px`;
+      if (spaceAbove >= 220) {
+        popover.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+        popover.style.top = 'auto';
+      } else {
+        popover.style.top = `${rect.bottom + 8}px`;
+        popover.style.bottom = 'auto';
+      }
+      $('break-ask-now')?.focus();
+    }
   });
+  {
+    const popover = $('break-popover');
+    if (popover) {
+      document.addEventListener('click', event => {
+        if (
+          !popover.hidden &&
+          !popover.contains(/** @type {Node} */ (event.target)) &&
+          event.target !== humanCheckButton
+        ) {
+          popover.hidden = true;
+        }
+      });
+      document.addEventListener('keydown', event => {
+        if (!popover.hidden && event.key === 'Escape') {
+          popover.hidden = true;
+          humanCheckButton.focus();
+        }
+      });
+      $('break-ask-now')?.addEventListener('click', () => {
+        popover.hidden = true;
+        void runHumanCheckAction(() => onAskHumanCheck?.());
+      });
+    }
+  }
   function syncToolsVisibility() {
     if (!toolsColumn) return;
     toolsColumn.hidden = !toolsColumn.querySelector('.room-tools-list > button:not([hidden])');
@@ -612,6 +671,12 @@ function mount({
     humanCheckButton.setAttribute('aria-pressed', String(active));
     humanCheckButton.setAttribute('aria-label', label);
     humanCheckButton.title = label;
+    if (announceButton) {
+      announceButton.hidden = !state?.capabilities?.announce;
+    }
+    if (pollButton) {
+      pollButton.hidden = !state?.capabilities?.runPolls;
+    }
     syncToolsVisibility();
   }
   // One viewer's answer to the ready check: an icon beside their name, nothing until they answer.
@@ -962,6 +1027,12 @@ function mount({
     renderPeople($('room-participants'), state?.participants || [], state || {});
     if (dialog.open && details && !details.draft && details.id === state?.id) renderSettingsPeople(details, state);
     roomSync.render(state);
+    if (announceButton) {
+      announceButton.hidden = !state?.capabilities?.announce;
+    }
+    if (pollButton) {
+      pollButton.hidden = !state?.capabilities?.runPolls;
+    }
     syncToolsVisibility();
     updateRosterSize();
   }
@@ -1372,6 +1443,7 @@ function mount({
     for (const [group, keys] of Object.entries({
       Playback: ['playPause', 'seek', 'chooseMedia'],
       Queue: ['addQueue', 'suggestMedia', 'editQueue', 'autoplay'],
+      'Room tools': ['announce', 'runPolls'],
       'Room management': ['roomSettings', 'closeRoom', 'deleteRoom', 'addHosts', 'kickParticipants', 'allHosts'],
       Continuity: ['continueWithoutHost'],
     })) {

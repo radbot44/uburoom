@@ -12,6 +12,8 @@ export * as Protocol from './protocol.mjs';
 export * as Policy from './policy.mjs';
 export * as Envelope from './envelope.mjs';
 export * as RoomAuthority from './room-authority.mjs';
+export * as Activities from './activities.mjs';
+export * as Journal from './journal.mjs';
 export { createServerClock } from './server-clock.mjs';
 export * as Subscriptions from './subscriptions.mjs';
 
@@ -138,3 +140,14 @@ export {
 } from './room-authority.mjs';
 
 export { createSubscriptionBroker } from './subscriptions.mjs';
+
+export { JOURNAL_LIMIT, SEEK_MERGE_MS, PRESENCE_MERGE_MS, normalizeActor, createJournal } from './journal.mjs';
+
+export {
+  HUMAN_CHECK_TTL_MS,
+  registerActivity,
+  getActivityDefinition,
+  activityForCommand,
+  snapshotActivities,
+  applyActivityCommand,
+} from './activities.mjs';
