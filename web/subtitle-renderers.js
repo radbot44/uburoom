@@ -80,7 +80,9 @@ export const subtitleRenderers = {
       proxyCleanup,
       disposed = false,
       renderError;
-    const manualAssMode = format === 'ass' && (surface.isUbuPlayer() || !surface.videoElement);
+    // Always drive ASS through MediaSurface when a stage element exists so switching between
+    // <video> (transcode) and UbuPlayer (Original) keeps subtitles attached in both directions.
+    const manualAssMode = format === 'ass' && (Boolean(stageEl) || surface.isUbuPlayer() || !surface.videoElement);
     const currentMediaTime = raw =>
       typeof resolveMediaTime === 'function'
         ? resolveMediaTime(Number.isFinite(raw) ? raw : surface.currentTime())
@@ -110,7 +112,16 @@ export const subtitleRenderers = {
       if (format === 'ass') {
         const w = surface.width(),
           h = surface.height();
-        if (manualAssMode) placeContentBoxCanvas(canvas, stageEl, w, h);
+        if (manualAssMode) {
+          placeContentBoxCanvas(canvas, stageEl, w, h);
+          if (surface.supportsFrameCallback()) {
+            if (frameHandle !== undefined) {
+              surface.cancelFrame(frameHandle);
+              frameHandle = undefined;
+            }
+            scheduleSurfaceFrameLoop();
+          }
+        }
         if (!w || !h) return;
         void (renderAssFrame || renderer.manualRender)
           .call(
@@ -226,8 +237,10 @@ export const subtitleRenderers = {
         signal.throwIfAborted();
         const pushStream =
           (format === 'pgs' || format === 'vobsub') && !!(assets.subUrl || assets.pushStream) && !assets.data;
+        // Always bind PGS/VobSub through MediaSurface proxy when a stage element exists so
+        // switching between <video> (transcode) and UbuPlayer (Original) stays attached.
         let videoTarget = surface.videoElement;
-        if (surface.isUbuPlayer()) {
+        if (stageEl) {
           const proxy = createSurfaceVideoProxy(stageEl, surface);
           videoTarget = proxy.element;
           proxyCleanup = proxy.cleanup;
