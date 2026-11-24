@@ -1450,18 +1450,30 @@ void main() {
   linearBt2020 = max(linearBt2020, vec3(0.0));
 
   if (uApplyBt2390 == 1) {
-    // libplacebo hybrid max-RGB + luma perceptual BT.2390 tone mapping
-    float sigLin = max(max(linearBt2020.r, max(linearBt2020.g, linearBt2020.b)), 1e-8);
-    float sigPq = pqOetf(sigLin);
-    float mappedPq = bt2390Spline(sigPq);
-    float mappedLin = pqEotf(mappedPq);
-    float scale = mappedLin / sigLin;
-    float lumaLin = dot(linearBt2020, vec3(0.2627, 0.6780, 0.0593));
-    float lumaMapped = lumaLin * scale;
-    vec3 scaled = linearBt2020 * scale;
-    // Subtle highlight desaturation matching libplacebo knee chroma preservation
-    float desat = smoothstep(uToneParams.w, 1.0, sigPq);
-    linearBt2020 = mix(scaled, vec3(lumaMapped), desat * 0.25);
+    // Exact ITU-R BT.2100 / BT.2390-10 §5.4.1 ICtCp tone mapping (matches libplacebo bt.2390)
+    vec3 lmsLin = vec3(
+      dot(vec3(0.41210938, 0.52392578, 0.06396484), linearBt2020),
+      dot(vec3(0.16674805, 0.72045898, 0.11279297), linearBt2020),
+      dot(vec3(0.02416992, 0.07543945, 0.90039063), linearBt2020)
+    );
+    vec3 lmsPq = vec3(pqOetf(lmsLin.x), pqOetf(lmsLin.y), pqOetf(lmsLin.z));
+    float iVal = 0.5 * (lmsPq.x + lmsPq.y);
+    float ct = dot(vec3(1.61376953, -3.32348633, 1.70971680), lmsPq);
+    float cp = dot(vec3(4.37817383, -4.24560547, -0.13256836), lmsPq);
+    float iMapped = bt2390Spline(iVal);
+    float cScale = (iVal > 1e-6) ? min(iMapped / iVal, iVal / max(iMapped, 1e-6)) : 1.0;
+    vec3 ictcp = vec3(iMapped, ct * cScale, cp * cScale);
+    vec3 lmsPqOut = vec3(
+      ictcp.x + 0.00860904 * ictcp.y + 0.11102963 * ictcp.z,
+      ictcp.x - 0.00860904 * ictcp.y - 0.11102963 * ictcp.z,
+      ictcp.x + 0.56003134 * ictcp.y - 0.32062717 * ictcp.z
+    );
+    vec3 lmsLinOut = pqEotf3(lmsPqOut);
+    linearBt2020 = max(vec3(
+      dot(vec3(3.43660669, -2.50645212, 0.06984542), lmsLinOut),
+      dot(vec3(-0.79132956, 1.98360045, -0.19227090), lmsLinOut),
+      dot(vec3(-0.02594990, -0.09891371, 1.12486361), lmsLinOut)
+    ), vec3(0.0));
   }
 
   // Normalize from 10000-nit PQ scale to SDR reference white (1.0 == sdrWhiteNits = 203 cd/m^2)
@@ -1722,14 +1734,30 @@ fn fsMain(in: VsOut) -> @location(0) vec4<f32> {
   linearBt2020 = max(linearBt2020, vec3<f32>(0.0));
 
   if (u.applyBt2390 == 1u) {
-    let sigLin = max(max(linearBt2020.r, max(linearBt2020.g, linearBt2020.b)), 1e-8);
-    let sigPq = pqOetf(sigLin);
-    let mappedLin = pqEotf(bt2390Spline(sigPq));
-    let scale = mappedLin / sigLin;
-    let lumaMapped = dot(linearBt2020, vec3<f32>(0.2627, 0.6780, 0.0593)) * scale;
-    let scaled = linearBt2020 * scale;
-    let desat = smoothstep(u.toneParams.w, 1.0, sigPq);
-    linearBt2020 = mix(scaled, vec3<f32>(lumaMapped), desat * 0.25);
+    // Exact ITU-R BT.2100 / BT.2390-10 §5.4.1 ICtCp tone mapping (matches libplacebo bt.2390)
+    let lmsLin = vec3<f32>(
+      dot(vec3<f32>(0.41210938, 0.52392578, 0.06396484), linearBt2020),
+      dot(vec3<f32>(0.16674805, 0.72045898, 0.11279297), linearBt2020),
+      dot(vec3<f32>(0.02416992, 0.07543945, 0.90039063), linearBt2020)
+    );
+    let lmsPq = vec3<f32>(pqOetf(lmsLin.x), pqOetf(lmsLin.y), pqOetf(lmsLin.z));
+    let iVal = 0.5 * (lmsPq.x + lmsPq.y);
+    let ct = dot(vec3<f32>(1.61376953, -3.32348633, 1.70971680), lmsPq);
+    let cp = dot(vec3<f32>(4.37817383, -4.24560547, -0.13256836), lmsPq);
+    let iMapped = bt2390Spline(iVal);
+    let cScale = select(1.0, min(iMapped / iVal, iVal / max(iMapped, 1e-6)), iVal > 1e-6);
+    let ictcp = vec3<f32>(iMapped, ct * cScale, cp * cScale);
+    let lmsPqOut = vec3<f32>(
+      ictcp.x + 0.00860904 * ictcp.y + 0.11102963 * ictcp.z,
+      ictcp.x - 0.00860904 * ictcp.y - 0.11102963 * ictcp.z,
+      ictcp.x + 0.56003134 * ictcp.y - 0.32062717 * ictcp.z
+    );
+    let lmsLinOut = vec3<f32>(pqEotf(lmsPqOut.x), pqEotf(lmsPqOut.y), pqEotf(lmsPqOut.z));
+    linearBt2020 = max(vec3<f32>(
+      dot(vec3<f32>(3.43660669, -2.50645212, 0.06984542), lmsLinOut),
+      dot(vec3<f32>(-0.79132956, 1.98360045, -0.19227090), lmsLinOut),
+      dot(vec3<f32>(-0.02594990, -0.09891371, 1.12486361), lmsLinOut)
+    ), vec3<f32>(0.0));
   }
 
   let normLinear = linearBt2020 * (10000.0 / u.scaleParams.x);
