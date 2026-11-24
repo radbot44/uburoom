@@ -93,6 +93,266 @@ export function removeRbspEmulationPrevention(src) {
   return out.subarray(0, w);
 }
 
+/**
+ * Insert H.264/HEVC RBSP emulation prevention bytes (`0x00 0x00 0x00..0x03` -> `0x00 0x00 0x03 ...`).
+ * @param {Uint8Array} rbsp
+ * @returns {Uint8Array}
+ */
+export function addRbspEmulationPrevention(rbsp) {
+  if (!rbsp || rbsp.length < 3) return rbsp ? rbsp.slice() : new Uint8Array(0);
+  const out = [];
+  let zeros = 0;
+  for (let i = 0; i < rbsp.length; i++) {
+    const b = rbsp[i];
+    if (zeros >= 2 && b <= 3) {
+      out.push(3);
+      zeros = 0;
+    }
+    out.push(b);
+    zeros = b === 0 ? zeros + 1 : 0;
+  }
+  return new Uint8Array(out);
+}
+
+function writeBitInPlace(bytes, bitPos, bit) {
+  const byteIdx = bitPos >> 3;
+  const shift = 7 - (bitPos & 7);
+  if (bit) bytes[byteIdx] |= 1 << shift;
+  else bytes[byteIdx] &= ~(1 << shift);
+}
+
+function writeBitsInPlace(bytes, bitPos, count, value) {
+  for (let i = 0; i < count; i++) {
+    const bit = (value >>> (count - 1 - i)) & 1;
+    writeBitInPlace(bytes, bitPos + i, bit);
+  }
+}
+
+/**
+ * Patch an HEVC SPS NAL unit (`NAL 33`, including its 2-byte NAL header) in-place so its
+ * VUI colour tags declare full-range BT.709 / sRGB (`full_range=1, primaries=1, transfer=13, matrix=1`).
+ * Because HEVC VUI tags are purely display metadata, hardware decoders output identical 10-bit YUV
+ * samples while stamping `VideoFrame.colorSpace` as full-range BT.709/sRGB, bypassing Chromium's
+ * internal HDR->SDR pre-clamping LUT at zero CPU/bandwidth cost.
+ * @param {Uint8Array} nal
+ * @returns {{nal: Uint8Array, patched: boolean}}
+ */
+export function patchHevcSpsVuiToSdrFullRange(nal) {
+  if (!nal || nal.length < 16 || ((nal[0] >> 1) & 0x3f) !== 33) {
+    return { nal, patched: false };
+  }
+  const rbspOrig = removeRbspEmulationPrevention(nal.subarray(2));
+  const br = new BitReader(rbspOrig);
+  try {
+    br.skipBits(4); // sps_video_parameter_set_id
+    const maxSubLayersMinus1 = br.readBits(3);
+    br.skipBits(1); // sps_temporal_id_nesting_flag
+
+    // profile_tier_level(1, maxSubLayersMinus1)
+    br.skipBits(96); // general_profile_space..general_level_idc (12 bytes)
+    const subProfilePresent = [];
+    const subLevelPresent = [];
+    for (let i = 0; i < maxSubLayersMinus1; i++) {
+      subProfilePresent.push(br.readBit());
+      subLevelPresent.push(br.readBit());
+    }
+    if (maxSubLayersMinus1 > 0) {
+      for (let i = maxSubLayersMinus1; i < 8; i++) br.skipBits(2);
+    }
+    for (let i = 0; i < maxSubLayersMinus1; i++) {
+      if (subProfilePresent[i]) br.skipBits(88);
+      if (subLevelPresent[i]) br.skipBits(8);
+    }
+
+    br.readUE(); // sps_seq_parameter_set_id
+    const chromaFormatIdc = br.readUE();
+    if (chromaFormatIdc === 3) br.skipBits(1); // separate_colour_plane_flag
+    br.readUE(); // pic_width_in_luma_samples
+    br.readUE(); // pic_height_in_luma_samples
+    if (br.readBit()) {
+      // conformance_window_flag
+      br.readUE();
+      br.readUE();
+      br.readUE();
+      br.readUE();
+    }
+    br.readUE(); // bit_depth_luma_minus8
+    br.readUE(); // bit_depth_chroma_minus8
+    const log2MaxPocLsbMinus4 = br.readUE();
+    const subLayerOrdering = br.readBit();
+    for (let i = subLayerOrdering ? 0 : maxSubLayersMinus1; i <= maxSubLayersMinus1; i++) {
+      br.readUE();
+      br.readUE();
+      br.readUE();
+    }
+    for (let i = 0; i < 6; i++) br.readUE();
+    if (br.readBit()) {
+      // scaling_list_enabled_flag
+      if (br.readBit()) {
+        // sps_scaling_list_data_present_flag
+        for (let sizeId = 0; sizeId < 4; sizeId++) {
+          const step = sizeId === 3 ? 3 : 1;
+          for (let matrixId = 0; matrixId < 6; matrixId += step) {
+            if (!br.readBit()) {
+              br.readUE(); // scaling_list_pred_matrix_id_delta
+            } else {
+              const coefNum = Math.min(64, 1 << (4 + (sizeId << 1)));
+              if (sizeId > 1) br.readSE(); // scaling_list_dc_coef_minus8
+              for (let k = 0; k < coefNum; k++) br.readSE();
+            }
+          }
+        }
+      }
+    }
+    br.skipBits(2); // amp_enabled_flag, sample_adaptive_offset_enabled_flag
+    if (br.readBit()) {
+      // pcm_enabled_flag
+      br.skipBits(8);
+      br.readUE();
+      br.readUE();
+      br.skipBits(1);
+    }
+    const numStRps = br.readUE();
+    const numDeltaPocs = new Array(numStRps).fill(0);
+    for (let idx = 0; idx < numStRps; idx++) {
+      const interPred = idx !== 0 ? br.readBit() : 0;
+      if (interPred) {
+        const refIdx = idx - 1;
+        br.skipBits(1); // delta_rps_sign
+        br.readUE(); // abs_delta_rps_minus1
+        let count = 0;
+        const refCount = numDeltaPocs[refIdx] || 0;
+        for (let j = 0; j <= refCount; j++) {
+          const used = br.readBit();
+          const useDelta = used ? 1 : br.readBit();
+          if (used || useDelta) count++;
+        }
+        numDeltaPocs[idx] = count;
+      } else {
+        const numNeg = br.readUE();
+        const numPos = br.readUE();
+        for (let i = 0; i < numNeg; i++) {
+          br.readUE();
+          br.skipBits(1);
+        }
+        for (let i = 0; i < numPos; i++) {
+          br.readUE();
+          br.skipBits(1);
+        }
+        numDeltaPocs[idx] = numNeg + numPos;
+      }
+    }
+    if (br.readBit()) {
+      // long_term_ref_pics_present_flag
+      const numLt = br.readUE();
+      for (let i = 0; i < numLt; i++) {
+        br.skipBits(log2MaxPocLsbMinus4 + 4);
+        br.skipBits(1);
+      }
+    }
+    br.skipBits(2); // sps_temporal_mvp_enabled_flag, strong_intra_smoothing_enabled_flag
+    if (!br.readBit()) return { nal, patched: false }; // vui_parameters_present_flag
+
+    // vui_parameters()
+    if (br.readBit()) {
+      // aspect_ratio_info_present_flag
+      const arIdc = br.readBits(8);
+      if (arIdc === 255) br.skipBits(32);
+    }
+    if (br.readBit()) br.skipBits(1); // overscan_info_present_flag
+    if (!br.readBit()) return { nal, patched: false }; // video_signal_type_present_flag
+
+    br.skipBits(3); // video_format
+    const fullRangePos = br.bitPos;
+    br.skipBits(1); // video_full_range_flag
+    const colourDescPresent = br.readBit();
+    let primariesPos = -1;
+    let transferPos = -1;
+    let matrixPos = -1;
+    if (colourDescPresent) {
+      primariesPos = br.bitPos;
+      br.skipBits(8);
+      transferPos = br.bitPos;
+      br.skipBits(8);
+      matrixPos = br.bitPos;
+      br.skipBits(8);
+    }
+
+    const rbspPatched = rbspOrig.slice();
+    writeBitInPlace(rbspPatched, fullRangePos, 1);
+    if (colourDescPresent) {
+      writeBitsInPlace(rbspPatched, primariesPos, 8, 1); // BT.709 primaries
+      writeBitsInPlace(rbspPatched, transferPos, 8, 13); // IEC 61966-2-1 (sRGB)
+      writeBitsInPlace(rbspPatched, matrixPos, 8, 1); // BT.709 matrix
+    }
+    const escaped = addRbspEmulationPrevention(rbspPatched);
+    const out = new Uint8Array(2 + escaped.length);
+    out[0] = nal[0];
+    out[1] = nal[1];
+    out.set(escaped, 2);
+    return { nal: out, patched: true };
+  } catch {
+    return { nal, patched: false };
+  }
+}
+
+/**
+ * Rewrite `NAL 33` (SPS) entries inside an `hvcC` extradata record so hardware HEVC decoders
+ * tag output frames as full-range BT.709 / sRGB instead of PQ / BT.2020.
+ * @param {Uint8Array} extradata
+ * @returns {{extradata: Uint8Array, patched: boolean}}
+ */
+export function patchHvccForRawHdrDecode(extradata) {
+  if (!extradata || extradata.length < 23 || extradata[0] !== 1) {
+    return { extradata, patched: false };
+  }
+  const numArrays = extradata[22];
+  let offset = 23;
+  const parts = [extradata.subarray(0, 23)];
+  let total = 23;
+  let anyPatched = false;
+
+  for (let a = 0; a < numArrays && offset + 3 <= extradata.length; a++) {
+    const arrHeader = extradata.subarray(offset, offset + 3);
+    const nalType = arrHeader[0] & 0x3f;
+    const numNalus = (arrHeader[1] << 8) | arrHeader[2];
+    offset += 3;
+    parts.push(arrHeader);
+    total += 3;
+
+    for (let n = 0; n < numNalus && offset + 2 <= extradata.length; n++) {
+      const len = (extradata[offset] << 8) | extradata[offset + 1];
+      offset += 2;
+      if (offset + len > extradata.length) return { extradata, patched: false };
+      let nal = extradata.subarray(offset, offset + len);
+      offset += len;
+      if (nalType === 33) {
+        const res = patchHevcSpsVuiToSdrFullRange(nal);
+        if (res.patched) {
+          nal = res.nal;
+          anyPatched = true;
+        }
+      }
+      const lenBytes = new Uint8Array([(nal.length >> 8) & 0xff, nal.length & 0xff]);
+      parts.push(lenBytes, nal);
+      total += 2 + nal.length;
+    }
+  }
+  if (!anyPatched) return { extradata, patched: false };
+  if (offset < extradata.length) {
+    const tail = extradata.subarray(offset);
+    parts.push(tail);
+    total += tail.length;
+  }
+  const out = new Uint8Array(total);
+  let pos = 0;
+  for (const part of parts) {
+    out.set(part, pos);
+    pos += part.length;
+  }
+  return { extradata: out, patched: true };
+}
+
 export class BitReader {
   /** @param {Uint8Array} bytes */
   constructor(bytes) {
@@ -622,11 +882,12 @@ export function parseHevcColorMetadata(extradata) {
  * @param {number} [nalLenSize]
  * @param {ReturnType<typeof createDoviRpuContext>} [rpuCtx]
  */
-export function inspectHevcPacket(data, nalLenSize = 4, rpuCtx) {
+export function inspectHevcPacket(data, nalLenSize = 4, rpuCtx, options = {}) {
   if (!data || data.length < nalLenSize + 2) {
     return { packetData: data, rpu: null, masteringDisplay: null, contentLight: null };
   }
-  let hasStrip = false;
+  const patchSpsVui = Boolean(options?.patchSpsVui);
+  let needsRewrite = false;
   let rpu = null;
   let masteringDisplay = null;
   let contentLight = null;
@@ -640,23 +901,25 @@ export function inspectHevcPacket(data, nalLenSize = 4, rpuCtx) {
     }
     const nalStart = offset + nalLenSize;
     const nalType = (data[nalStart] >> 1) & 0x3f;
-    if (nalType === 39 && len > 2) {
+    if (nalType === 33 && patchSpsVui) {
+      needsRewrite = true;
+    } else if (nalType === 39 && len > 2) {
       const sei = parseSeiNal(data.subarray(nalStart + 2, nalStart + len));
       if (sei.masteringDisplay) masteringDisplay = sei.masteringDisplay;
       if (sei.contentLight) contentLight = sei.contentLight;
     } else if (nalType === 62) {
-      hasStrip = true;
+      needsRewrite = true;
       if (len > 3) {
         const parsed = parseDolbyVisionRpu(data.subarray(nalStart, nalStart + len), rpuCtx);
         if (parsed) rpu = parsed;
       }
     } else if (nalType === 63) {
-      hasStrip = true;
+      needsRewrite = true;
     }
     offset += nalLenSize + len;
   }
 
-  if (!hasStrip) {
+  if (!needsRewrite) {
     return { packetData: data, rpu, masteringDisplay, contentLight };
   }
 
@@ -667,11 +930,25 @@ export function inspectHevcPacket(data, nalLenSize = 4, rpuCtx) {
     let len = 0;
     for (let i = 0; i < nalLenSize; i++) len = len * 256 + data[offset + i];
     if (len <= 0 || offset + nalLenSize + len > data.length) break;
-    const nalType = (data[offset + nalLenSize] >> 1) & 0x3f;
+    const nalStart = offset + nalLenSize;
+    const nalType = (data[nalStart] >> 1) & 0x3f;
     if (nalType !== 62 && nalType !== 63) {
-      const slice = data.subarray(offset, offset + nalLenSize + len);
-      kept.push(slice);
-      total += slice.length;
+      if (nalType === 33 && patchSpsVui) {
+        const res = patchHevcSpsVuiToSdrFullRange(data.subarray(nalStart, nalStart + len));
+        const nalOut = res.nal;
+        const lenBuf = new Uint8Array(nalLenSize);
+        let v = nalOut.length;
+        for (let i = nalLenSize - 1; i >= 0; i--) {
+          lenBuf[i] = v & 0xff;
+          v >>>= 8;
+        }
+        kept.push(lenBuf, nalOut);
+        total += nalLenSize + nalOut.length;
+      } else {
+        const slice = data.subarray(offset, offset + nalLenSize + len);
+        kept.push(slice);
+        total += slice.length;
+      }
     }
     offset += nalLenSize + len;
   }
@@ -853,6 +1130,16 @@ export function computeTonemapUniforms(colorMeta = {}, rpuMeta = null, options =
   };
 }
 
+function isBt709FullRangeSrgb(cs) {
+  return Boolean(
+    cs &&
+    cs.primaries === 'bt709' &&
+    cs.matrix === 'bt709' &&
+    cs.fullRange === true &&
+    (cs.transfer === 'iec61966-2-1' || cs.transfer === 'srgb'),
+  );
+}
+
 /**
  * Wrap an HDR/DoVi `VideoFrame` with a zero-copy `BT.709` colorSpace metadata override
  * so Chromium/WebKit skip their internal SDR pre-clamping LUT (Chromium Issue 40944011),
@@ -867,14 +1154,18 @@ export function wrapFramePreventingSdrClamp(frame, colorMeta = {}, options = {})
     return { frame, owned: false, inputMode: 'planar10' };
   }
   const isHdr = Boolean(colorMeta.hdr || (colorMeta.hdrKind && colorMeta.hdrKind !== 'sdr'));
-  if (!isHdr || typeof globalThis.VideoFrame !== 'function') {
+  if (!isHdr) {
+    return { frame, owned: false, inputMode: 'passthrough' };
+  }
+  // If SPS VUI patching + VideoDecoderConfig.colorSpace already stamped the hardware VideoFrame
+  // as full-range BT.709/sRGB, use it directly with zero cloning!
+  if (isBt709FullRangeSrgb(frame?.colorSpace)) {
+    return { frame, owned: false, inputMode: 'bt709-override' };
+  }
+  if (typeof globalThis.VideoFrame !== 'function') {
     return { frame, owned: false, inputMode: 'passthrough' };
   }
   try {
-    // Always override with fullRange: true + transfer: 'srgb' so GPU import maps raw 10-bit
-    // codewords [0..1023] linearly into [0..1] without clipping narrow-range BTB/WTW (<64 or >940),
-    // keeps wide-gamut BT.2020 narrow-range excursions strictly inside [0..1], and matches
-    // WebGPU copyExternalImageToTexture({ colorSpace: 'srgb' }) 1:1 with zero toe distortion.
     const wrapped = new globalThis.VideoFrame(frame, {
       timestamp: frame.timestamp,
       duration: frame.duration ?? undefined,
@@ -885,22 +1176,15 @@ export function wrapFramePreventingSdrClamp(frame, colorMeta = {}, options = {})
         fullRange: true,
       },
     });
-    const cs = wrapped?.colorSpace;
-    const overridden =
-      cs &&
-      cs.primaries === 'bt709' &&
-      cs.matrix === 'bt709' &&
-      cs.fullRange === true &&
-      (cs.transfer === 'iec61966-2-1' || cs.transfer === 'srgb');
-    if (!overridden) {
+    if (!isBt709FullRangeSrgb(wrapped?.colorSpace)) {
       try {
         wrapped.close?.();
       } catch {}
-      return { frame, owned: false, inputMode: 'hdr-rgb' };
+      return { frame, owned: false, inputMode: 'passthrough' };
     }
     return { frame: wrapped, owned: true, inputMode: 'bt709-override' };
   } catch {
-    return { frame, owned: false, inputMode: 'hdr-rgb' };
+    return { frame, owned: false, inputMode: 'passthrough' };
   }
 }
 

@@ -8,6 +8,8 @@ import {
   parseDolbyVisionConfigRecord,
   parseDolbyVisionRpu,
   parseHevcColorMetadata,
+  patchHevcSpsVuiToSdrFullRange,
+  patchHvccForRawHdrDecode,
   wrapFramePreventingSdrClamp,
 } from './ubuplayer-gpu.js';
 
@@ -19,6 +21,8 @@ export {
   parseDolbyVisionConfigRecord,
   parseDolbyVisionRpu,
   parseHevcColorMetadata,
+  patchHevcSpsVuiToSdrFullRange,
+  patchHvccForRawHdrDecode,
   wrapFramePreventingSdrClamp,
 };
 
@@ -676,11 +680,27 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
       });
       throw err;
     }
+    let description = vStream.extradata?.length && !isAnnexB ? vStream.extradata : undefined;
+    const wantRawHdrDecode = Boolean(vStream.hdr || (vStream.hdrKind && vStream.hdrKind !== 'sdr'));
+    if (wantRawHdrDecode && vStream.codecName === 'hevc' && description) {
+      const patched = patchHvccForRawHdrDecode(description);
+      if (patched.patched) description = patched.extradata;
+    }
     const baseCfg = {
       codec: codecString,
       codedWidth: vStream.width,
       codedHeight: vStream.height,
-      ...(vStream.extradata?.length && !isAnnexB ? { description: vStream.extradata } : {}),
+      ...(description ? { description } : {}),
+      ...(wantRawHdrDecode
+        ? {
+            colorSpace: {
+              primaries: 'bt709',
+              transfer: 'iec61966-2-1',
+              matrix: 'bt709',
+              fullRange: true,
+            },
+          }
+        : {}),
     };
     let chosenCfg = null;
     if (typeof VideoDecoderCtor.isConfigSupported === 'function') {
@@ -1262,7 +1282,9 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
       let packetData = p.data;
       let packetRpu = null;
       if (vStream.codecName === 'hevc' && !vStream.isAnnexB) {
-        const inspected = inspectHevcPacket(packetData, vStream.nalLengthSize, doviRpuCtx);
+        const inspected = inspectHevcPacket(packetData, vStream.nalLengthSize, doviRpuCtx, {
+          patchSpsVui: Boolean(vStream.hdr || (vStream.hdrKind && vStream.hdrKind !== 'sdr')),
+        });
         packetData = inspected.packetData;
         if (inspected.masteringDisplay) {
           vStream.maxLuminance = inspected.masteringDisplay.maxLuminance;

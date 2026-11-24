@@ -390,9 +390,79 @@ test('Dolby Vision RPU parser, NAL 62/63 inspector, BT.2390 tonemap uniforms, an
     };
     const ignored = wrapFramePreventingSdrClamp(gpuBackedHdrFrame, { hdr: true, hdrKind: 'hdr10', fullRange: false });
     assert.equal(ignored.owned, false);
-    assert.equal(ignored.inputMode, 'hdr-rgb');
+    assert.equal(ignored.inputMode, 'passthrough');
     assert.equal(ignored.frame, gpuBackedHdrFrame);
     assert.equal(ignoredClosed, true);
+
+    // If SPS VUI patching + VideoDecoderConfig.colorSpace already stamped bt709/srgb/fullRange, reuse frame zero-copy
+    const vuitaggedFrame = {
+      timestamp: 2000,
+      format: 'NV12',
+      colorSpace: { primaries: 'bt709', transfer: 'iec61966-2-1', matrix: 'bt709', fullRange: true },
+    };
+    const zeroCopy = wrapFramePreventingSdrClamp(vuitaggedFrame, { hdr: true, hdrKind: 'hdr10', fullRange: false });
+    assert.equal(zeroCopy.owned, false);
+    assert.equal(zeroCopy.inputMode, 'bt709-override');
+    assert.equal(zeroCopy.frame, vuitaggedFrame);
+
+    // Verify HEVC SPS VUI colour tag patcher rewrites PQ/BT.2020/limited -> sRGB/BT.709/full in hvcC
+    const spsBuilder = new BitBuilder();
+    spsBuilder.u(0x42, 8); // HEVC NAL 33 header byte 0 ((33 << 1) = 0x42)
+    spsBuilder.u(0x01, 8); // HEVC NAL 33 header byte 1
+    spsBuilder.u(0, 4); // vps_id
+    spsBuilder.u(0, 3); // max_sub_layers_minus1
+    spsBuilder.u(1, 1); // temporal_id_nesting_flag
+    for (let i = 0; i < 12; i++) spsBuilder.u(0, 8); // general_profile_tier_level (96 bits)
+    spsBuilder.ue(0); // sps_id
+    spsBuilder.ue(1); // chroma_format_idc (4:2:0)
+    spsBuilder.ue(3840); // width
+    spsBuilder.ue(2160); // height
+    spsBuilder.u(0, 1); // conformance_window_flag
+    spsBuilder.ue(2); // bit_depth_luma_minus8 (10-bit)
+    spsBuilder.ue(2); // bit_depth_chroma_minus8 (10-bit)
+    spsBuilder.ue(4); // log2_max_pic_order_cnt_lsb_minus4
+    spsBuilder.u(0, 1); // sps_sub_layer_ordering_info_present_flag
+    spsBuilder.ue(4);
+    spsBuilder.ue(2);
+    spsBuilder.ue(0);
+    for (let i = 0; i < 6; i++) spsBuilder.ue(0);
+    spsBuilder.u(0, 1); // scaling_list_enabled_flag
+    spsBuilder.u(1, 1); // amp
+    spsBuilder.u(1, 1); // sao
+    spsBuilder.u(0, 1); // pcm
+    spsBuilder.ue(0); // num_short_term_ref_pic_sets
+    spsBuilder.u(0, 1); // long_term_ref_pics_present_flag
+    spsBuilder.u(1, 1); // temporal_mvp
+    spsBuilder.u(1, 1); // strong_intra_smoothing
+    spsBuilder.u(1, 1); // vui_parameters_present_flag
+    spsBuilder.u(0, 1); // aspect_ratio_info_present_flag
+    spsBuilder.u(0, 1); // overscan_info_present_flag
+    spsBuilder.u(1, 1); // video_signal_type_present_flag
+    spsBuilder.u(5, 3); // video_format (unspecified)
+    spsBuilder.u(0, 1); // video_full_range_flag (limited)
+    spsBuilder.u(1, 1); // colour_description_present_flag
+    spsBuilder.u(9, 8); // colour_primaries = BT.2020 (9)
+    spsBuilder.u(16, 8); // transfer_characteristics = PQ (16)
+    spsBuilder.u(9, 8); // matrix_coeffs = BT.2020nc (9)
+    const spsNal = spsBuilder.toBytesWithEpb();
+    const hvcc = new Uint8Array(23 + 3 + 2 + spsNal.length);
+    hvcc[0] = 1;
+    hvcc[21] = 0xff;
+    hvcc[22] = 1; // 1 array
+    hvcc[23] = 33; // NAL 33 (SPS)
+    hvcc[24] = 0;
+    hvcc[25] = 1; // 1 NAL
+    hvcc[26] = (spsNal.length >> 8) & 0xff;
+    hvcc[27] = spsNal.length & 0xff;
+    hvcc.set(spsNal, 28);
+    const patchedHvcc = gpuMod.patchHvccForRawHdrDecode(hvcc);
+    assert.equal(patchedHvcc.patched, true, 'Patched HEVC hvcC SPS VUI color tags');
+    const patchedLen = (patchedHvcc.extradata[26] << 8) | patchedHvcc.extradata[27];
+    const patchedSps = patchedHvcc.extradata.subarray(28, 28 + patchedLen);
+    // Re-running on already-patched SPS succeeds cleanly
+    const recheck = gpuMod.patchHevcSpsVuiToSdrFullRange(patchedSps);
+    assert.equal(recheck.patched, true);
+    assert.deepEqual(recheck.nal, patchedSps, 'SPS VUI patch is idempotent');
   } finally {
     globalThis.VideoFrame = origVF;
   }
