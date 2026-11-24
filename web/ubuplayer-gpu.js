@@ -979,10 +979,11 @@ export function inspectHevcPacket(data, nalLenSize = 4, rpuCtx, options = {}) {
  *   minLuminance?: number,
  * }} colorMeta
  * @param {ReturnType<typeof parseDolbyVisionRpu> | null} [rpuMeta]
- * @param {{targetHdr?: boolean, sdrWhiteNits?: number, inputMode?: 'bt709-override'|'planar10'|'passthrough'}} [options]
+ * @param {{targetHdr?: boolean, sdrWhiteNits?: number, inputMode?: 'bt709-override'|'planar10'|'passthrough', rangeAlreadyExpanded?: boolean}} [options]
  */
 export function computeTonemapUniforms(colorMeta = {}, rpuMeta = null, options = {}) {
   const targetHdr = Boolean(options.targetHdr);
+  const rangeAlreadyExpanded = Boolean(options.rangeAlreadyExpanded);
   const sdrWhite = Number(options.sdrWhiteNits) > 0 ? Number(options.sdrWhiteNits) : SDR_WHITE_NITS;
   const hdrKind = String(colorMeta.hdrKind || 'sdr').toLowerCase();
   const doviProfile = Number(colorMeta.doviProfile || rpuMeta?.profile || 0) || null;
@@ -1044,10 +1045,18 @@ export function computeTonemapUniforms(colorMeta = {}, rpuMeta = null, options =
   }
 
   const gamutMatrix = isPq || isHlg ? (targetHdr ? BT2020_TO_DISPLAY_P3_MATRIX : BT2020_TO_BT709_MATRIX) : IDENTITY_3X3;
-  const fullRange = isDoviP5 ? Boolean(rpuMeta?.fullRange ?? true) : Boolean(colorMeta.fullRange);
+  const sourceFullRange = isDoviP5 ? Boolean(rpuMeta?.fullRange ?? true) : Boolean(colorMeta.fullRange);
+  const fullRange = rangeAlreadyExpanded ? true : sourceFullRange;
   const useDoviReshape = Boolean(
     rpuMeta?.mapping?.curves?.length === 3 &&
     (isDoviP5 || (rpuMeta?.color?.yccToRgbMatrix && rpuMeta.color.signalColorSpace === 0)),
+  );
+  // When Chromium already expanded studio-range YCbCr [64..940]/[64..960] -> [0..1] during
+  // bt709-override upload, DoVi P7/P8.1 RPU curves and DM ycc_to_rgb_matrix still expect raw
+  // studio codewords (the DM matrix has studio->full gain/offset baked in). Re-compress in shader
+  // before reshaping so studio expansion is never applied twice.
+  const recompressStudioForDovi = Boolean(
+    useDoviReshape && rangeAlreadyExpanded && !isDoviP5 && rpuMeta?.fullRange === false,
   );
 
   // Pack RPU 3x9 pivots (3 vec4s per channel -> 9 vec4s = 36 floats),
@@ -1107,6 +1116,7 @@ export function computeTonemapUniforms(colorMeta = {}, rpuMeta = null, options =
     targetHdr,
     applyBt2390,
     useDoviReshape,
+    recompressStudioForDovi,
     fullRange,
     inputMode: options.inputMode || (isPq || isHlg ? 'bt709-override' : 'passthrough'),
     srcPeakNits,
@@ -1228,6 +1238,7 @@ uniform int uInputMode;      // 0 = passthrough SDR, 1 = bt709-override YCbCr re
 uniform int uTransferType;   // 0 = sdr, 1 = pq (HDR10/DoVi), 2 = hlg
 uniform int uIsDoviP5;       // 1 = IPTPQc2 -> LMS -> PQ -> BT.2020
 uniform int uUseDoviReshape; // 1 = evaluate RPU polynomial / MMR curves
+uniform int uRecompressStudio; // 1 = restore studio [64..940] codewords before DoVi P7/P8.1 reshape + DM matrix
 uniform int uFullRange;      // 1 = full range, 0 = studio/limited range
 uniform int uApplyBt2390;    // 1 = static-peak ITU-R BT.2390 EETF
 uniform int uTargetHdr;      // 1 = preserve linear/extended HDR output
@@ -1411,6 +1422,10 @@ void main() {
   }
 
   if (uUseDoviReshape == 1) {
+    if (uRecompressStudio == 1) {
+      ycc.x = ycc.x * (876.0 / 1023.0) + (64.0 / 1023.0);
+      ycc.yz = (ycc.yz - 0.5) * (896.0 / 1023.0) + (512.0 / 1023.0);
+    }
     ycc = applyDoviReshaping(ycc);
   } else if (uFullRange == 0) {
     ycc.x = clamp((ycc.x - (64.0 / 1023.0)) * (1023.0 / 876.0), 0.0, 1.0);
@@ -1510,7 +1525,7 @@ struct Uniforms {
   pieceCountsX: u32,
   pieceCountsY: u32,
   pieceCountsZ: u32,
-  pad0: u32,
+  recompressStudio: u32,
   pad1: u32,
   pad2: u32,
   toneParams: vec4<f32>,
@@ -1696,6 +1711,11 @@ fn fsMain(in: VsOut) -> @location(0) vec4<f32> {
   }
 
   if (u.useDoviReshape == 1u) {
+    if (u.recompressStudio == 1u) {
+      ycc.x = ycc.x * (876.0 / 1023.0) + (64.0 / 1023.0);
+      ycc.y = (ycc.y - 0.5) * (896.0 / 1023.0) + (512.0 / 1023.0);
+      ycc.z = (ycc.z - 0.5) * (896.0 / 1023.0) + (512.0 / 1023.0);
+    }
     ycc = applyDoviReshaping(ycc);
   } else if (u.fullRange == 0u) {
     ycc.x = clamp((ycc.x - (64.0 / 1023.0)) * (1023.0 / 876.0), 0.0, 1.0);
@@ -1882,6 +1902,7 @@ function createWebGl2Renderer(canvas, initialTargetHdr = false) {
     uTransferType: gl.getUniformLocation(prog, 'uTransferType'),
     uIsDoviP5: gl.getUniformLocation(prog, 'uIsDoviP5'),
     uUseDoviReshape: gl.getUniformLocation(prog, 'uUseDoviReshape'),
+    uRecompressStudio: gl.getUniformLocation(prog, 'uRecompressStudio'),
     uFullRange: gl.getUniformLocation(prog, 'uFullRange'),
     uApplyBt2390: gl.getUniformLocation(prog, 'uApplyBt2390'),
     uTargetHdr: gl.getUniformLocation(prog, 'uTargetHdr'),
@@ -1979,14 +2000,11 @@ function createWebGl2Renderer(canvas, initialTargetHdr = false) {
         }
 
         const effectiveHdr = Boolean(wantHdr && hdrConfigured);
-        const u = computeTonemapUniforms(
-          wrapped.rangeAlreadyExpanded ? { ...colorMeta, fullRange: true } : colorMeta,
-          rpuMeta,
-          {
-            targetHdr: effectiveHdr,
-            inputMode: inputModeCode === 2 ? 'planar10' : inputModeCode === 1 ? 'bt709-override' : 'passthrough',
-          },
-        );
+        const u = computeTonemapUniforms(colorMeta, rpuMeta, {
+          targetHdr: effectiveHdr,
+          inputMode: inputModeCode === 2 ? 'planar10' : inputModeCode === 1 ? 'bt709-override' : 'passthrough',
+          rangeAlreadyExpanded: wrapped.rangeAlreadyExpanded,
+        });
 
         frameCounter = (frameCounter + 1) % 1024;
         gl.viewport(0, 0, w, h);
@@ -1997,6 +2015,7 @@ function createWebGl2Renderer(canvas, initialTargetHdr = false) {
         gl.uniform1i(locs.uTransferType, u.isPq ? 1 : u.isHlg ? 2 : 0);
         gl.uniform1i(locs.uIsDoviP5, u.isDoviP5 ? 1 : 0);
         gl.uniform1i(locs.uUseDoviReshape, u.useDoviReshape ? 1 : 0);
+        gl.uniform1i(locs.uRecompressStudio, u.recompressStudioForDovi ? 1 : 0);
         gl.uniform1i(locs.uFullRange, u.fullRange ? 1 : 0);
         gl.uniform1i(locs.uApplyBt2390, u.applyBt2390 ? 1 : 0);
         gl.uniform1i(locs.uTargetHdr, u.targetHdr ? 1 : 0);
@@ -2181,14 +2200,11 @@ async function createWebGpuRenderer(canvas, initialTargetHdr = false) {
           h,
         ]);
 
-        const u = computeTonemapUniforms(
-          wrapped.rangeAlreadyExpanded ? { ...colorMeta, fullRange: true } : colorMeta,
-          rpuMeta,
-          {
-            targetHdr: effectiveHdr,
-            inputMode: wrapped.inputMode,
-          },
-        );
+        const u = computeTonemapUniforms(colorMeta, rpuMeta, {
+          targetHdr: effectiveHdr,
+          inputMode: wrapped.inputMode,
+          rangeAlreadyExpanded: wrapped.rangeAlreadyExpanded,
+        });
 
         frameCounter = (frameCounter + 1) % 1024;
         uF32.fill(0);
@@ -2205,6 +2221,7 @@ async function createWebGpuRenderer(canvas, initialTargetHdr = false) {
         uU32[10] = u.pieceCounts[0];
         uU32[11] = u.pieceCounts[1];
         uU32[12] = u.pieceCounts[2];
+        uU32[13] = u.recompressStudioForDovi ? 1 : 0;
 
         // toneParams @ vec4[4] (float index 16)
         uF32[16] = u.srcMinPq;

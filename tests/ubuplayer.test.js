@@ -325,8 +325,65 @@ test('Dolby Vision RPU parser, NAL 62/63 inspector, BT.2390 tonemap uniforms, an
   assert.equal(uboSdr.isDoviP5, true);
   assert.equal(uboSdr.applyBt2390, true);
   assert.equal(uboSdr.useDoviReshape, true);
+  assert.equal(uboSdr.recompressStudioForDovi, false);
   assert.equal(uboSdr.debandEnabled, true);
   assert.ok(uboSdr.srcPeakNits > 900 && uboSdr.srcPeakNits < 1100);
+
+  // Verify DoVi P7/P8.1 studio-range RPU + DM matrix sets recompressStudioForDovi when Chromium
+  // already expanded studio [64..940] -> [0..1] during bt709-override upload, avoiding double expansion
+  const studioDoviP7Rpu = {
+    profile: 7,
+    fullRange: false,
+    mapping: {
+      curves: [
+        { numPieces: 1, pivots: new Float32Array(9), mappingIdc: new Uint8Array(8), polyCoeffs: [[0, 1, 0]] },
+        { numPieces: 1, pivots: new Float32Array(9), mappingIdc: new Uint8Array(8), polyCoeffs: [[0, 1, 0]] },
+        { numPieces: 1, pivots: new Float32Array(9), mappingIdc: new Uint8Array(8), polyCoeffs: [[0, 1, 0]] },
+      ],
+    },
+    color: {
+      signalColorSpace: 0,
+      yccToRgbMatrix: [
+        9574 / 8192,
+        0,
+        13802 / 8192,
+        9574 / 8192,
+        -1540 / 8192,
+        -5348 / 8192,
+        9574 / 8192,
+        17610 / 8192,
+        0,
+      ],
+      yccToRgbOffset: [16777216 / 268435456, 0.5, 0.5],
+      sourceMinPq: 38,
+      sourceMaxPq: 3079,
+    },
+  };
+  const uboP7Expanded = computeTonemapUniforms(
+    { hdr: true, hdrKind: 'dovi-hdr10', doviProfile: 7, fullRange: false, maxCll: 992 },
+    studioDoviP7Rpu,
+    { targetHdr: false, rangeAlreadyExpanded: true },
+  );
+  assert.equal(uboP7Expanded.useDoviReshape, true);
+  assert.equal(uboP7Expanded.recompressStudioForDovi, true);
+  assert.equal(uboP7Expanded.fullRange, true);
+
+  const uboP7Planar = computeTonemapUniforms(
+    { hdr: true, hdrKind: 'dovi-hdr10', doviProfile: 7, fullRange: false, maxCll: 992 },
+    studioDoviP7Rpu,
+    { targetHdr: false, inputMode: 'planar10', rangeAlreadyExpanded: false },
+  );
+  assert.equal(uboP7Planar.useDoviReshape, true);
+  assert.equal(uboP7Planar.recompressStudioForDovi, false);
+  assert.equal(uboP7Planar.fullRange, false);
+
+  const uboHdrExpanded = computeTonemapUniforms({ hdr: true, hdrKind: 'hdr10', fullRange: false, maxCll: 1000 }, null, {
+    targetHdr: false,
+    rangeAlreadyExpanded: true,
+  });
+  assert.equal(uboHdrExpanded.useDoviReshape, false);
+  assert.equal(uboHdrExpanded.recompressStudioForDovi, false);
+  assert.equal(uboHdrExpanded.fullRange, true);
 
   const uboHdr = computeTonemapUniforms({ hdr: true, hdrKind: 'hdr10', maxCll: 1000 }, null, {
     targetHdr: true,
