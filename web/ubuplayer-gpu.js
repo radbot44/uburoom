@@ -1257,8 +1257,8 @@ vec3 srgbToLinear(vec3 c) {
   return mix(lo, hi, greaterThan(c, vec3(0.04045)));
 }
 
-vec3 linearToBt1886(vec3 c) {
-  return pow(max(c, vec3(0.0)), vec3(1.0 / 2.4));
+vec3 linearToSdrGamma(vec3 c) {
+  return pow(max(c, vec3(0.0)), vec3(1.0 / 2.2));
 }
 
 float pqEotf(float e) {
@@ -1490,7 +1490,7 @@ void main() {
     return;
   }
 
-  vec3 sdrOut = linearToBt1886(clamp(outLinear, 0.0, 1.0));
+  vec3 sdrOut = linearToSdrGamma(clamp(outLinear, 0.0, 1.0));
   float dither = (ignNoise(gl_FragCoord.xy, uScaleParams.w) - 0.5) * uScaleParams.z;
   fragColor = vec4(clamp(sdrOut + dither, 0.0, 1.0), 1.0);
 }
@@ -1555,8 +1555,8 @@ const PQ_C1: f32 = 0.8359375;
 const PQ_C2: f32 = 18.8515625;
 const PQ_C3: f32 = 18.6875;
 
-fn linearToBt1886(cIn: vec3<f32>) -> vec3<f32> {
-  return pow(max(cIn, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4));
+fn linearToSdrGamma(cIn: vec3<f32>) -> vec3<f32> {
+  return pow(max(cIn, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
 }
 
 fn srgbToLinear(cIn: vec3<f32>) -> vec3<f32> {
@@ -1778,7 +1778,7 @@ fn fsMain(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(outLin, 1.0);
   }
 
-  let sdrOut = linearToBt1886(clamp(outLin, vec3<f32>(0.0), vec3<f32>(1.0)));
+  let sdrOut = linearToSdrGamma(clamp(outLin, vec3<f32>(0.0), vec3<f32>(1.0)));
   let dither = (ignNoise(in.pos.xy, u.scaleParams.w) - 0.5) * u.scaleParams.z;
   return vec4<f32>(clamp(sdrOut + dither, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
 }
