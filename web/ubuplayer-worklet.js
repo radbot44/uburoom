@@ -409,6 +409,7 @@ if (typeof globalThis.AudioWorkletProcessor === 'function' && typeof globalThis.
         playbackRate: this.core.playbackRate,
         eofDrained: this.core.eof && this.core.availableFrames === 0 && this.core.fifoFrames === 0,
         seekGen: this.core.seekGen,
+        audioGen: this.core.audioGen,
       });
       this.emitWorkerCapacity();
     }

@@ -41,7 +41,7 @@ const BLOCK_SIZE = 1024 * 1024;
 const MAX_CACHED_BLOCKS = 24;
 const OUT_SAMPLE_RATE = 48000;
 const OUT_CHANNEL_LAYOUT = 0x3; // AV_CH_LAYOUT_STEREO
-const MAX_VIDEO_PACKET_BYTES = 48 * 1024 * 1024;
+const MAX_VIDEO_PACKET_BYTES = 96 * 1024 * 1024;
 const MAX_DECODER_INFLIGHT = 18;
 const MAX_AUDIO_AHEAD_SECONDS = 18;
 
@@ -1169,12 +1169,12 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
       await initAudioDecoder(chosenAudio);
     }
 
-    aheadBudgetSeconds = Math.max(6, Math.min(45, Number(msg.aheadSeconds) || 30));
+    aheadBudgetSeconds = Math.max(10, Math.min(45, Number(msg.aheadSeconds) || 30));
     if (fileSize > 0 && duration > 0) {
       const bytesPerSec = fileSize / duration;
       if (bytesPerSec > 0) {
         aheadBudgetSeconds = Math.max(
-          6,
+          10,
           Math.min(aheadBudgetSeconds, Math.floor(MAX_VIDEO_PACKET_BYTES / bytesPerSec)),
         );
       }

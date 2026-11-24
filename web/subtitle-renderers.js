@@ -1,46 +1,33 @@
 import { asMediaSurface } from './media-surface.js';
 
 function createSurfaceVideoProxy(stageEl, surface) {
-  if (!stageEl) return surface.videoElement;
-  return new Proxy(stageEl, {
-    get(target, prop) {
-      switch (prop) {
-        case 'videoWidth':
-          return surface.width();
-        case 'videoHeight':
-          return surface.height();
-        case 'currentTime':
-          return surface.currentTime();
-        case 'paused':
-          return surface.paused();
-        case 'ended':
-          return surface.ended();
-        case 'seeking':
-          return surface.seeking();
-        case 'readyState':
-          return surface.readyState();
-        case 'offsetLeft':
-          return 0;
-        case 'offsetTop':
-          return 0;
-        case 'parentElement':
-        case 'parentNode':
-          return stageEl;
-        case 'requestVideoFrameCallback':
-          return cb => surface.requestFrame(cb);
-        case 'cancelVideoFrameCallback':
-          return id => surface.cancelFrame(id);
-        case 'addEventListener':
-          return (type, fn) => surface.addEventListener(type, fn);
-        case 'removeEventListener':
-          return (type, fn) => surface.removeEventListener(type, fn);
-        default: {
-          const val = target[prop];
-          return typeof val === 'function' ? val.bind(target) : val;
-        }
-      }
-    },
+  if (!stageEl || typeof document === 'undefined' || typeof document.createElement !== 'function') {
+    return { element: surface.videoElement, cleanup: () => {} };
+  }
+  // Use a real DOM Element (never a JS Proxy) so ResizeObserver.observe(video) passes WebIDL brand checks.
+  const el = document.createElement('div');
+  el.className = 'subtitle-video-proxy';
+  el.setAttribute('aria-hidden', 'true');
+  el.style.cssText = 'position:absolute;inset:0;pointer-events:none;visibility:hidden;';
+  stageEl.append(el);
+  Object.defineProperties(el, {
+    videoWidth: { get: () => surface.width(), configurable: true },
+    videoHeight: { get: () => surface.height(), configurable: true },
+    currentTime: { get: () => surface.currentTime(), configurable: true },
+    paused: { get: () => surface.paused(), configurable: true },
+    ended: { get: () => surface.ended(), configurable: true },
+    seeking: { get: () => surface.seeking(), configurable: true },
+    readyState: { get: () => surface.readyState(), configurable: true },
+    offsetLeft: { get: () => 0, configurable: true },
+    offsetTop: { get: () => 0, configurable: true },
+    clientWidth: { get: () => stageEl.clientWidth || 0, configurable: true },
+    clientHeight: { get: () => stageEl.clientHeight || 0, configurable: true },
+    requestVideoFrameCallback: { value: cb => surface.requestFrame(cb), configurable: true },
+    cancelVideoFrameCallback: { value: id => surface.cancelFrame(id), configurable: true },
+    addEventListener: { value: (type, fn) => surface.addEventListener(type, fn), configurable: true },
+    removeEventListener: { value: (type, fn) => surface.removeEventListener(type, fn), configurable: true },
   });
+  return { element: el, cleanup: () => el.remove() };
 }
 
 function placeContentBoxCanvas(canvas, stageEl, videoWidth, videoHeight) {
@@ -90,6 +77,7 @@ export const subtitleRenderers = {
     let renderer,
       renderAssFrame,
       frameHandle,
+      proxyCleanup,
       disposed = false,
       renderError;
     const manualAssMode = format === 'ass' && (surface.isUbuPlayer() || !surface.videoElement);
@@ -105,6 +93,10 @@ export const subtitleRenderers = {
       if (frameHandle !== undefined) {
         surface.cancelFrame(frameHandle);
         frameHandle = undefined;
+      }
+      if (proxyCleanup) {
+        proxyCleanup();
+        proxyCleanup = undefined;
       }
       layer.remove();
       try {
@@ -234,7 +226,12 @@ export const subtitleRenderers = {
         signal.throwIfAborted();
         const pushStream =
           (format === 'pgs' || format === 'vobsub') && !!(assets.subUrl || assets.pushStream) && !assets.data;
-        const videoTarget = surface.isUbuPlayer() ? createSurfaceVideoProxy(stageEl, surface) : surface.videoElement;
+        let videoTarget = surface.videoElement;
+        if (surface.isUbuPlayer()) {
+          const proxy = createSurfaceVideoProxy(stageEl, surface);
+          videoTarget = proxy.element;
+          proxyCleanup = proxy.cleanup;
+        }
         await wait(
           new Promise((resolve, reject) => {
             const options = {
