@@ -72,6 +72,7 @@ const CALLS = Object.freeze({
 const JOIN_PREFERENCES = Object.freeze({
   quality: 'string',
   delivery: 'string',
+  clientRemux: 'boolean',
   subtitles: 'string',
   codecs: 'string',
   volume: 'number',

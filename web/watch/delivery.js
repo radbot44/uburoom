@@ -12,6 +12,7 @@ export function mount(host, deps) {
       !store.room.state?.mediaUrl ||
       store.room.state.mediaId === 'demo' ||
       store.room.state.format === 'youtube-embed' ||
+      store.room.state.format === 'local' ||
       store.stream.fallbackPending
     )
       return;
@@ -78,6 +79,8 @@ export function mount(host, deps) {
     if (!candidates.length) {
       store.stream.av1?.destroy();
       store.stream.av1 = undefined;
+      store.stream.filePlayer?.destroy();
+      store.stream.filePlayer = undefined;
       deps.video.pause();
       store.player.playbackError =
         reason + ' No remaining compatible conversion is available. Check the server codec/encoder settings.';
@@ -92,6 +95,8 @@ export function mount(host, deps) {
     deps.diagnosticSample('fallback');
     store.stream.av1?.destroy();
     store.stream.av1 = undefined;
+    store.stream.filePlayer?.destroy();
+    store.stream.filePlayer = undefined;
     deps.stopHls('fallback');
     try {
       for (const codec of candidates) {
@@ -219,7 +224,9 @@ export function mount(host, deps) {
       store.player.layout === 'phone' ||
       next?.format === 'youtube-embed' ||
       store.room.state?.format === 'youtube-embed' ||
-      !(store.stream.hls || store.stream.av1) ||
+      next?.format === 'local' ||
+      store.room.state?.format === 'local' ||
+      !(store.stream.hls || store.stream.av1 || store.stream.filePlayer) ||
       !store.room.state?.mediaUrl ||
       store.player.playbackError
     )
@@ -237,6 +244,7 @@ export function mount(host, deps) {
     );
   }
   const fileNeedsAudioStream = next =>
+    !(uburoomPlayback.supportsClientRemux() && store.stream.clientRemuxFailed !== next.mediaVersion) &&
     next.format === 'file' &&
     /^(h264|avc1|hevc|h265|hvc1|hev1)$/i.test(next.videoCodec || '') &&
     !uburoomPlayback.needsVideoConversion(
@@ -252,6 +260,7 @@ export function mount(host, deps) {
     deps.diagnostics.record('stream-hold', { format: next.format });
     store.stream.hls?.stopLoad();
     store.stream.av1?.hold();
+    store.stream.filePlayer?.hold();
     const room = uburoomPlayback.bufferedAhead(deps.video.buffered, deps.video.currentTime) - HOLD_RESERVE;
     hold.timer = deps.time.setTimeout(
       () => {

@@ -221,6 +221,8 @@ module.exports = {
       viewer.plexReporting,
       viewer.plexWatchState,
       viewer.localDelivery,
+      viewer.localDeliveryVersion,
+      viewer.clientRemux,
       viewer.directProxyVersion,
       media && viewer.directFileResolved?.media === media ? viewer.directFileResolved.url || '' : '',
       JSON.stringify(viewer.trackChoice),
@@ -355,6 +357,7 @@ module.exports = {
             height: viewer.media.output?.height,
             bitrate: viewer.media.bitrate,
             bitrateCeiling: viewer.media.bitrateCeiling,
+            fileSize: viewer.media.fileSize,
             encoder: viewer.media.av1Lease?.group.encoder,
             cpuFallback: !!viewer.media.av1Lease?.group.cpuFallback,
           }

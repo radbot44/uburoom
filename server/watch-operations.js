@@ -243,7 +243,7 @@ function watchOperations({
         action: 'media.volume.set',
         args: { percent: preferences.volume },
       }).args.percent;
-    for (const key of ['muted', 'plexReporting', 'plexWatchState'])
+    for (const key of ['muted', 'plexReporting', 'plexWatchState', 'clientRemux'])
       if (preferences[key] !== undefined) settings[key] = preferences[key];
     // A new viewer's saved subtitle choice shapes their first stream; their own later
     // choices in the room always win.
@@ -311,7 +311,18 @@ function watchOperations({
         }
         if (viewer.browserSubtitles === undefined) viewer.browserSubtitles = preferences.subtitles === 'browser';
         viewer.localCodecs = (preferences.codecs || '').split(',').filter(localFormat);
-        viewer.localDelivery = preferences.delivery === 'local';
+        if (typeof preferences.clientRemux === 'boolean') viewer.clientRemux = preferences.clientRemux;
+        if (preferences.delivery !== undefined) {
+          viewer.localDelivery = preferences.delivery === 'local';
+          viewer.localDeliveryVersion = undefined;
+        } else if (
+          viewer.localDelivery &&
+          viewer.localDeliveryVersion &&
+          viewer.localDeliveryVersion !== liveRoom.mediaVersion
+        ) {
+          viewer.localDelivery = false;
+          viewer.localDeliveryVersion = undefined;
+        }
         viewer.browserLoginHash = loginHash;
       },
     });
@@ -434,15 +445,16 @@ function watchOperations({
               } else viewer.directDelivery = undefined;
             }
           }
-          const subGrant =
-            media.selection?.subtitle?.available &&
-            ['text', 'ass', 'pgs', 'vobsub', 'cues'].includes(media.selection.subtitle.delivery)
-              ? (captionGrant || mediaGrant)(room, auth, context, viewerId, renew)
-              : undefined;
-          if (subGrant && media.selection.subtitle.delivery === 'text')
-            state.subtitleUrl = `/api/watch/media/${subGrant}/captions-${media.captionVersion}`;
-          else if (subGrant) state.subtitleUrl = `/api/watch/media/${subGrant}/subtitle-${media.captionVersion}`;
         }
+        const subMedia = room.viewers.get(viewerId)?.media;
+        const subGrant =
+          subMedia?.selection?.subtitle?.available &&
+          ['text', 'ass', 'pgs', 'vobsub', 'cues'].includes(subMedia.selection.subtitle.delivery)
+            ? (captionGrant || mediaGrant)(room, auth, context, viewerId, renew)
+            : undefined;
+        if (subGrant && subMedia.selection.subtitle.delivery === 'text')
+          state.subtitleUrl = `/api/watch/media/${subGrant}/captions-${subMedia.captionVersion}`;
+        else if (subGrant) state.subtitleUrl = `/api/watch/media/${subGrant}/subtitle-${subMedia.captionVersion}`;
       }
     }
     const lanes = splitView(state);

@@ -232,6 +232,10 @@ export function mount(host, deps) {
         ? { audioPreference: 'language:' + store.preferences.playerPreferences.audio.language }
         : {}),
       ...(subtitleRenderers.supported() ? { subtitles: 'browser' } : {}),
+      clientRemux: uburoomPlayback.supportsClientRemux(),
+      ...(store.stream.localFile?.mediaVersion && store.stream.localFile.mediaVersion === store.room.state?.mediaVersion
+        ? { delivery: 'local' }
+        : {}),
       codecs: Object.keys(uburoomPlayback.LOCAL_CODECS)
         .filter(
           codec =>
@@ -327,23 +331,26 @@ export function mount(host, deps) {
     const hint = $('audio-mode-hint');
     if (select && select.value !== targetMode) select.value = targetMode;
     if (hint) hint.textContent = audioModeHints[targetMode] || audioModeHints.normal;
+    store.stream.filePlayer?.setAudioMode?.(targetMode);
     if (targetMode === 'normal' && !audioSourceNode) return;
     if (!initAudioGraph()) return;
     resumeAudioContext();
     const now = audioContext.currentTime;
+    const workerSurroundDialogue = Boolean(store.stream.filePlayer?.surroundDialogueActive);
     if (targetMode === 'normal') {
       speechFilterNode.gain.setValueAtTime(0, now);
       compressorNode.threshold.setValueAtTime(0, now);
       compressorNode.ratio.setValueAtTime(1, now);
       makeupGainNode.gain.setValueAtTime(1.0, now);
     } else if (targetMode === 'dialogue') {
-      speechFilterNode.gain.setValueAtTime(5.0, now);
+      // Skip redundant 2.5 kHz stereo EQ when the worker is boosting the discrete 5.1/7.1 Center channel.
+      speechFilterNode.gain.setValueAtTime(workerSurroundDialogue ? 0 : 5.0, now);
       compressorNode.threshold.setValueAtTime(-20, now);
       compressorNode.knee.setValueAtTime(12, now);
-      compressorNode.ratio.setValueAtTime(4.0, now);
+      compressorNode.ratio.setValueAtTime(workerSurroundDialogue ? 3.0 : 4.0, now);
       compressorNode.attack.setValueAtTime(0.005, now);
       compressorNode.release.setValueAtTime(0.2, now);
-      makeupGainNode.gain.setValueAtTime(1.1, now);
+      makeupGainNode.gain.setValueAtTime(workerSurroundDialogue ? 1.05 : 1.1, now);
     } else if (targetMode === 'night') {
       speechFilterNode.gain.setValueAtTime(0, now);
       compressorNode.threshold.setValueAtTime(-28, now);

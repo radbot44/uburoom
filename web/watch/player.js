@@ -155,6 +155,7 @@ export function mount(host, deps) {
     if (
       !store.room.state?.mediaUrl ||
       store.room.state?.format === 'youtube-embed' ||
+      store.room.state?.format === 'local' ||
       store.player.autoplayBlocked ||
       store.player.playbackError ||
       store.room.state?.mediaId === 'demo'
@@ -352,6 +353,8 @@ export function mount(host, deps) {
     store.player.playerWaiting = false;
     store.stream.av1?.destroy();
     store.stream.av1 = undefined;
+    store.stream.filePlayer?.destroy();
+    store.stream.filePlayer = undefined;
     deps.time.clearTimeout(store.stream.hlsRecoveryTimer);
     deps.time.clearTimeout(store.stream.hlsNativeErrorTimer);
     store.stream.hlsNativeErrorTimer = undefined;

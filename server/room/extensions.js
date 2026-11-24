@@ -93,7 +93,9 @@ module.exports = {
         directProxyVersion: viewer.directProxyVersion,
         browserSubtitles: viewer.browserSubtitles,
         localCodecs: viewer.localCodecs,
+        clientRemux: viewer.clientRemux,
         localDelivery: viewer.localDelivery,
+        localDeliveryVersion: viewer.localDeliveryVersion,
       }),
       /** @type {(saved: any, event: {quality?: string | null, preferences?: any}) => any} */
       admit: (saved, { quality = '720p', preferences = {} }) => ({
@@ -111,7 +113,9 @@ module.exports = {
         directProxyVersion: saved?.directProxyVersion,
         browserSubtitles: saved?.browserSubtitles,
         localCodecs: saved?.localCodecs,
+        clientRemux: saved?.clientRemux ?? preferences.clientRemux ?? false,
         localDelivery: saved?.localDelivery ?? false,
+        localDeliveryVersion: saved?.localDeliveryVersion,
       }),
       capacity: (room, userId) => {
         try {

@@ -2,7 +2,13 @@ import * as uburoomIcons from '../icons.js';
 import * as uburoomPlayback from '../playback-policy.js';
 import * as uburoomPlayerUI from '../watch-player-ui.js';
 import * as uburoomPopover from '../watch-popover.js';
-import { formatSubtitleOffset, normalizeSubtitleOffset, uburoomSubtitles } from '../watch-subtitles.js';
+import { probeLocalFile } from '../watch-file-player.js';
+import {
+  formatSubtitleOffset,
+  normalizeSubtitleOffset,
+  parseSubtitleText,
+  uburoomSubtitles,
+} from '../watch-subtitles.js';
 import { $ } from './page.js';
 import { store } from './store.js';
 
@@ -173,6 +179,222 @@ export function mount(host, deps) {
       store.player.trackContext = undefined;
     },
   });
+  let pendingLocalCandidate = null;
+  let localProbePending = false;
+  function formatDurationDiff(seconds) {
+    const abs = Math.round(Math.abs(seconds));
+    const m = Math.floor(abs / 60);
+    const s = abs % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  }
+  function renderLocalSourceControls() {
+    const state = store.room.state;
+    const canUseLocal = Boolean(state?.mediaId && state?.format !== 'youtube-embed');
+    const activeLocal =
+      state?.format === 'local' && store.stream.localFile?.mediaVersion === state?.mediaVersion
+        ? store.stream.localFile
+        : null;
+    const chooseBtn = $('local-file-choose');
+    const clearBtn = $('local-file-clear');
+    const statusEl = $('local-file-status');
+    const mismatchBox = $('local-file-mismatch');
+    if (chooseBtn) {
+      chooseBtn.disabled = !canUseLocal || localProbePending || store.room.pending;
+      chooseBtn.textContent = activeLocal ? 'Change local file…' : 'Choose local file…';
+    }
+    if (clearBtn) {
+      clearBtn.hidden = !activeLocal;
+      clearBtn.disabled = localProbePending || store.room.pending;
+    }
+    if (mismatchBox && (!pendingLocalCandidate || pendingLocalCandidate.mediaVersion !== state?.mediaVersion)) {
+      pendingLocalCandidate = null;
+      mismatchBox.hidden = true;
+    }
+    if (statusEl && !localProbePending && !pendingLocalCandidate) {
+      if (!state?.mediaId) statusEl.textContent = 'Choose a video in the room first.';
+      else if (state.format === 'youtube-embed') statusEl.textContent = 'Unavailable for embedded YouTube videos.';
+      else if (activeLocal) statusEl.textContent = 'Playing local file: ' + activeLocal.name;
+      else statusEl.textContent = 'Streaming from room. Pick a downloaded copy on this device to play locally.';
+      statusEl.classList.remove('error');
+    }
+    const subChoose = $('local-subtitle-choose');
+    const subClear = $('local-subtitle-clear');
+    const activeSidecar =
+      store.stream.localSidecarSubtitle?.mediaVersion === state?.mediaVersion
+        ? store.stream.localSidecarSubtitle
+        : null;
+    if (subChoose) {
+      subChoose.disabled = !canUseLocal;
+      subChoose.textContent = activeSidecar ? 'Change subtitle file…' : 'Load subtitle file…';
+    }
+    if (subClear) subClear.hidden = !activeSidecar;
+  }
+  async function commitLocalFile(candidate) {
+    const state = store.room.state;
+    if (!state || state.mediaVersion !== candidate.mediaVersion) return;
+    pendingLocalCandidate = null;
+    if ($('local-file-mismatch')) $('local-file-mismatch').hidden = true;
+    const defaultAudio =
+      candidate.probed.audioTracks.find(a => a.default)?.id || candidate.probed.audioTracks[0]?.id || null;
+    store.stream.localFile = {
+      key: 'local-file:' + crypto.randomUUID(),
+      file: candidate.file,
+      name: candidate.file.name,
+      probed: candidate.probed,
+      mediaVersion: state.mediaVersion,
+      audioId: defaultAudio,
+      subtitleId: state.tracks?.subtitleId || null,
+    };
+    renderLocalSourceControls();
+    try {
+      const res = await deps.execute({
+        action: 'media.delivery.set',
+        args: { mode: 'local', mediaVersion: state.mediaVersion },
+      });
+      if (res?.status && res.status !== 'applied') {
+        store.stream.localFile = undefined;
+        if ($('local-file-status')) {
+          $('local-file-status').textContent = res.message || 'Could not switch to local file.';
+          $('local-file-status').classList.add('error');
+        }
+      }
+    } catch (err) {
+      store.stream.localFile = undefined;
+      deps.fail(err.message);
+    } finally {
+      renderLocalSourceControls();
+      renderTracks();
+    }
+  }
+  async function useRoomStream() {
+    const state = store.room.state;
+    pendingLocalCandidate = null;
+    if ($('local-file-mismatch')) $('local-file-mismatch').hidden = true;
+    store.stream.localFile = undefined;
+    renderLocalSourceControls();
+    if (!state?.mediaVersion) return;
+    try {
+      await deps.execute({
+        action: 'media.delivery.set',
+        args: { mode: 'auto', mediaVersion: state.mediaVersion },
+      });
+    } catch (err) {
+      deps.fail(err.message);
+    } finally {
+      renderLocalSourceControls();
+      renderTracks();
+    }
+  }
+  async function handleLocalFilePicked(file) {
+    const state = store.room.state;
+    if (!file || !state?.mediaVersion) return;
+    const mediaVersion = state.mediaVersion;
+    localProbePending = true;
+    pendingLocalCandidate = null;
+    if ($('local-file-mismatch')) $('local-file-mismatch').hidden = true;
+    const statusEl = $('local-file-status');
+    if (statusEl) {
+      statusEl.textContent = 'Checking ' + file.name + '…';
+      statusEl.classList.remove('error');
+    }
+    renderLocalSourceControls();
+    try {
+      const probed = await probeLocalFile(file);
+      if (store.room.state?.mediaVersion !== mediaVersion) return;
+      if (!probed.mseSupported) {
+        if (statusEl) {
+          statusEl.textContent = `This browser cannot hardware-decode ${(probed.video?.codec || 'the').toUpperCase()} video in ${file.name}. Keep using the room stream.`;
+          statusEl.classList.add('error');
+        }
+        return;
+      }
+      const roomDur = Number(store.room.state?.state?.duration) || 0;
+      if (roomDur > 0 && probed.duration > 0 && Math.abs(probed.duration - roomDur) > 5) {
+        pendingLocalCandidate = { file, probed, mediaVersion };
+        if ($('local-file-mismatch-text')) {
+          $('local-file-mismatch-text').textContent =
+            `Duration differs by ${formatDurationDiff(probed.duration - roomDur)} (${file.name}: ${deps.clock(probed.duration)}, room: ${deps.clock(roomDur)}). Playback sync may not line up.`;
+        }
+        if ($('local-file-mismatch')) $('local-file-mismatch').hidden = false;
+        if (statusEl) statusEl.textContent = 'Confirm local file duration mismatch below.';
+        return;
+      }
+      await commitLocalFile({ file, probed, mediaVersion });
+    } catch (err) {
+      if (statusEl) {
+        statusEl.textContent = (err?.message || 'Could not read local file.') + ' Using room stream.';
+        statusEl.classList.add('error');
+      }
+    } finally {
+      localProbePending = false;
+      renderLocalSourceControls();
+    }
+  }
+  async function handleLocalSubtitlePicked(file) {
+    const state = store.room.state;
+    if (!file || !state?.mediaVersion) return;
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let spec;
+    if (ext === 'ass' || ext === 'ssa') {
+      spec = { key: 'local-sidecar:' + crypto.randomUUID(), format: 'ass', data: bytes, fileName: file.name };
+    } else if (ext === 'sup') {
+      spec = { key: 'local-sidecar:' + crypto.randomUUID(), format: 'pgs', data: bytes, fileName: file.name };
+    } else {
+      const cues = parseSubtitleText(new TextDecoder('utf-8', { fatal: false }).decode(bytes));
+      if (!cues.length) {
+        store.player.trackActionError = 'No subtitle cues found in ' + file.name + '.';
+        renderTracks();
+        return;
+      }
+      spec = { key: 'local-sidecar:' + crypto.randomUUID(), format: 'cues', cues, fileName: file.name };
+    }
+    store.stream.localSidecarSubtitle = {
+      id: 'local-sidecar',
+      mediaVersion: state.mediaVersion,
+      name: file.name,
+      spec,
+    };
+    if (store.stream.localFile?.mediaVersion === state.mediaVersion) {
+      store.stream.localFile.subtitleId = 'local-sidecar';
+    }
+    await captions.setLocalSubtitle(spec);
+    deps.applyState(store.room.state, true);
+    renderLocalSourceControls();
+    renderTracks();
+  }
+  function clearLocalSubtitle() {
+    store.stream.localSidecarSubtitle = undefined;
+    if (store.stream.localFile?.subtitleId === 'local-sidecar') {
+      store.stream.localFile.subtitleId = 'off';
+    }
+    void captions.setLocalSubtitle(null);
+    if (store.room.state) deps.applyState(store.room.state, true);
+    renderLocalSourceControls();
+    renderTracks();
+  }
+  $('local-file-choose')?.addEventListener('click', () => $('local-file-input')?.click());
+  $('local-file-input')?.addEventListener('change', ev => {
+    const file = ev.target.files?.[0];
+    ev.target.value = '';
+    if (file) void handleLocalFilePicked(file);
+  });
+  $('local-file-clear')?.addEventListener('click', () => void useRoomStream());
+  $('local-file-confirm')?.addEventListener('click', () => {
+    if (pendingLocalCandidate) void commitLocalFile(pendingLocalCandidate);
+  });
+  $('local-file-cancel')?.addEventListener('click', () => {
+    pendingLocalCandidate = null;
+    if ($('local-file-mismatch')) $('local-file-mismatch').hidden = true;
+    renderLocalSourceControls();
+  });
+  $('local-subtitle-choose')?.addEventListener('click', () => $('local-subtitle-input')?.click());
+  $('local-subtitle-input')?.addEventListener('change', ev => {
+    const file = ev.target.files?.[0];
+    ev.target.value = '';
+    if (file) void handleLocalSubtitlePicked(file);
+  });
+  $('local-subtitle-clear')?.addEventListener('click', () => clearLocalSubtitle());
   function renderMediaInformation(next) {
     if (!next) return;
     const info = next.deliveryInfo;
@@ -196,16 +418,26 @@ export function mount(host, deps) {
       : 'Choose a video to see media information.';
     $('delivery-information').textContent = info
       ? [
-          info.format === 'file'
-            ? 'Original file'
-            : info.format === 'hls'
-              ? ['audio-conversion', 'multiple-audio'].includes(info.reason)
-                ? 'Original picture, converted sound'
-                : 'Media server conversion'
-              : uburoomPlayback.localFormat(info.format)
-                ? 'uburoom conversion'
-                : info.format,
-          next.mediaUrl ? (next.directDelivery ? 'Direct from Plex' : 'Through uburoom') : null,
+          info.format === 'local'
+            ? 'Local file' + (next.localFileName ? ' (' + next.localFileName + ')' : '')
+            : info.format === 'file'
+              ? store.stream.filePlayer
+                ? 'Original file (client audio decode)'
+                : 'Original file'
+              : info.format === 'hls'
+                ? ['audio-conversion', 'multiple-audio'].includes(info.reason)
+                  ? 'Original picture, converted sound'
+                  : 'Media server conversion'
+                : uburoomPlayback.localFormat(info.format)
+                  ? 'uburoom conversion'
+                  : info.format,
+          info.format === 'local'
+            ? 'From this device (synced with room)'
+            : next.mediaUrl
+              ? next.directDelivery
+                ? 'Direct from Plex'
+                : 'Through uburoom'
+              : null,
           info.encoder ? 'Encoder: ' + info.encoder : null,
           info.cpuFallback ? 'Using CPU fallback' : null,
           info.bitrateCeiling ? 'Requested limit: ' + Number(info.bitrateCeiling / 1000).toFixed(1) + ' Mbps' : null,
@@ -270,13 +502,22 @@ export function mount(host, deps) {
     const autoBurned = burned && (tracks?.subtitleMode || 'auto') === 'auto';
     subtitleMode.querySelector('option[value="auto"]').textContent = autoBurned ? 'Automatic (burned in)' : 'Automatic';
     subtitleMode.value = tracks?.subtitleMode || 'auto';
-    subtitleMode.disabled = !available || store.room.pending || store.stream.qualityPending || !subtitle;
+    subtitleMode.disabled =
+      !available ||
+      store.room.state?.format === 'local' ||
+      String(subtitle?.id || '').startsWith('local-') ||
+      store.room.pending ||
+      store.stream.qualityPending ||
+      !subtitle;
     $('audio-track-status').textContent = !audioAvailable
       ? 'No audio available'
       : audio
         ? [
             uburoomPlayerUI.trackLabel(audio),
-            store.room.state.format !== 'file' && audio.channels !== 2 && 'Stereo playback',
+            (store.room.state.format !== 'file' ||
+              (!!store.stream.filePlayer && !store.stream.filePlayer.audioPassthrough)) &&
+              audio.channels !== 2 &&
+              'Stereo playback',
           ]
             .filter(Boolean)
             .join(' · ')
@@ -344,6 +585,7 @@ export function mount(host, deps) {
       }
     }
     renderRichPresence();
+    renderLocalSourceControls();
     const isEmbed = store.room.state?.format === 'youtube-embed';
     const audioModeSelect = $('audio-mode');
     if (audioModeSelect) {
@@ -389,8 +631,63 @@ export function mount(host, deps) {
     )
       return;
     store.player.trackActionError = '';
+    const state = store.room.state;
+    const activeLocal =
+      state.format === 'local' && store.stream.localFile?.mediaVersion === state.mediaVersion
+        ? store.stream.localFile
+        : null;
+    if (activeLocal && args.audioId !== undefined) {
+      const targetAudio =
+        args.audioId === 'auto'
+          ? activeLocal.probed.audioTracks.find(a => a.default)?.id || activeLocal.probed.audioTracks[0]?.id || null
+          : args.audioId;
+      activeLocal.audioId = targetAudio;
+      store.stream.filePlayer?.selectAudio(targetAudio);
+      deps.applyState(store.room.state, true);
+      if (args.subtitleId === undefined && args.subtitleMode === undefined && args.subtitleOffset === undefined) {
+        renderTracks();
+        return;
+      }
+    }
+    if (args.subtitleId !== undefined) {
+      const subId = args.subtitleId;
+      if (subId === 'local-sidecar' && store.stream.localSidecarSubtitle?.mediaVersion === state.mediaVersion) {
+        if (activeLocal) activeLocal.subtitleId = 'local-sidecar';
+        store.stream.filePlayer?.selectSubtitle(null);
+        await captions.setLocalSubtitle(store.stream.localSidecarSubtitle.spec);
+        deps.applyState({ ...state, subtitleUrl: undefined }, true);
+        renderTracks();
+        return;
+      }
+      if (String(subId).startsWith('local-s-') && activeLocal) {
+        activeLocal.subtitleId = subId;
+        store.stream.filePlayer?.selectSubtitle(subId);
+        deps.applyState({ ...state, subtitleUrl: undefined }, true);
+        renderTracks();
+        return;
+      }
+      if (activeLocal) {
+        activeLocal.subtitleId = subId;
+        store.stream.filePlayer?.selectSubtitle(null);
+      }
+      if (store.stream.localSidecarSubtitle && subId !== 'local-sidecar') {
+        await captions.setLocalSubtitle(null);
+      }
+      if (activeLocal && subId === 'off' && !state.subtitleUrl) {
+        await captions.setLocalSubtitle(null);
+        deps.applyState(state, true);
+        renderTracks();
+        return;
+      }
+    }
     try {
-      const result = await deps.execute({ action: 'media.tracks.set', args: { ...context, ...args } });
+      const serverArgs = { ...args };
+      if (activeLocal) delete serverArgs.audioId;
+      if (!Object.keys(serverArgs).length) {
+        renderTracks();
+        return;
+      }
+      const result = await deps.execute({ action: 'media.tracks.set', args: { ...context, ...serverArgs } });
       if (result.status === 'applied') {
         if (burnKey) lastBurnFallbackKey = burnKey;
         deps.rememberPlayerSubtitles(args);
@@ -407,7 +704,7 @@ export function mount(host, deps) {
     const tracks = state?.tracks;
     const subtitle = tracks?.subtitles.find(row => row.id === tracks.subtitleId);
     const delivery = tracks?.subtitleDelivery || subtitle?.delivery;
-    const burned = delivery === 'burn';
+    const burned = store.room.state?.format !== 'local' && delivery === 'burn';
     return { state, tracks, subtitle, burned };
   }
   function applySubtitleOffset(value, { persist = true, announce = false } = {}) {
@@ -583,6 +880,7 @@ export function mount(host, deps) {
     renderMediaInformation,
     renderTracks,
     setSubtitleLoading,
+    useRoomStream,
     videoCheck,
   };
 }

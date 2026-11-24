@@ -107,6 +107,7 @@ class PlexSessions {
       sourceBitrate: Number(original.bitrate) || undefined,
       sourceWidth: Number(original.width) || undefined,
       sourceHeight: Number(original.height) || undefined,
+      fileSize: Number(part.size) || undefined,
       ...(sameSource ? { previousId: source.previousId, nextId: source.nextId } : await this.plex.neighbors(item)),
     };
     media.chapters = parseChapters(item);

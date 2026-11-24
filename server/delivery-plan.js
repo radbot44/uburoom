@@ -11,6 +11,7 @@ const { localFormat } = require('../shared/playback-policy.mjs');
  * @property {number} audioTracks - Audio tracks offered by the selected source.
  * @property {boolean} [sourceOnly] - Resolve the source without preparing delivery.
  * @property {boolean} [remux] - uburoom can copy this picture and convert only the sound (server/remux.js).
+ * @property {boolean} [clientRemux] - Viewer's browser worker can demux containers, select audio tracks and decode home-theater audio from the original file.
  * @property {string[]} [outputs] - Outputs usable for this viewer, in configured priority order.
  */
 
@@ -27,7 +28,17 @@ const { localFormat } = require('../shared/playback-policy.mjs');
  * @param {DeliveryRequest} request
  * @returns {DeliveryPlan}
  */
-function planDelivery({ quality, compatible, fallback, burn, audioTracks, sourceOnly, remux, outputs = ['provider'] }) {
+function planDelivery({
+  quality,
+  compatible,
+  fallback,
+  burn,
+  audioTracks,
+  sourceOnly,
+  remux,
+  clientRemux,
+  outputs = ['provider'],
+}) {
   if (sourceOnly) return { route: 'file', reason: 'source-only' };
   if (localFormat(fallback)) return { route: 'local', codec: fallback, reason: 'local-fallback' };
   if (fallback === 'provider') return { route: 'provider-hls', reason: 'provider-fallback' };
@@ -39,7 +50,7 @@ function planDelivery({ quality, compatible, fallback, burn, audioTracks, source
       ? 'compatible'
       : quality !== 'direct'
         ? 'quality-limit'
-        : audioTracks > 1
+        : audioTracks > 1 && !clientRemux
           ? 'multiple-audio'
           : undefined;
   if (!reason) return { route: 'file', reason: 'original' };

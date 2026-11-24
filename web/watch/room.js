@@ -1,5 +1,6 @@
 import * as uburoom from '../../shared/engine.mjs';
 import { uburoomAV1 } from '../watch-av1.js';
+import { uburoomFilePlayer } from '../watch-file-player.js';
 import * as uburoomControls from '../watch-controls.js';
 import * as uburoomDialogs from '../watch-dialogs.js';
 import * as uburoomPlayback from '../playback-policy.js';
@@ -254,11 +255,117 @@ export function mount(host, deps) {
     });
     lastSpreadDiagnostic = { at: deps.time.wall(), samples: spread.samples };
   }
+  function enrichLocalView(view) {
+    if (store.stream.localFile && store.stream.localFile.mediaVersion !== view.mediaVersion) {
+      store.stream.localFile = undefined;
+    }
+    if (store.stream.localSidecarSubtitle && store.stream.localSidecarSubtitle.mediaVersion !== view.mediaVersion) {
+      store.stream.localSidecarSubtitle = undefined;
+    }
+    const sidecar =
+      store.stream.localSidecarSubtitle?.mediaVersion === view.mediaVersion ? store.stream.localSidecarSubtitle : null;
+    const localFile =
+      view.format === 'local' && store.stream.localFile?.mediaVersion === view.mediaVersion
+        ? store.stream.localFile
+        : null;
+    if (view.format === 'local' && !localFile) {
+      // Tab reloaded while server still held localDelivery in reconnect grace: switch back to room stream.
+      if (view.mediaVersion && !store.stream.localAutoResetVersion?.includes(view.mediaVersion)) {
+        store.stream.localAutoResetVersion = [view.mediaVersion];
+        queueMicrotask(() => {
+          void deps
+            .execute({ action: 'media.delivery.set', args: { mode: 'auto', mediaVersion: view.mediaVersion } })
+            .catch(() => {});
+        });
+      }
+      return view;
+    }
+    if (!localFile && !sidecar) return view;
+    const serverSubs = (view.tracks?.subtitles || []).map(s =>
+      localFile && s.delivery === 'burn' ? { ...s, available: false } : s,
+    );
+    const embeddedSubs = localFile
+      ? (localFile.probed.subtitleTracks || []).map(s => ({
+          ...s,
+          title: [s.title, 'Local file'].filter(Boolean).join(' · '),
+        }))
+      : [];
+    const sidecarSub = sidecar
+      ? [
+          {
+            id: 'local-sidecar',
+            codec: sidecar.spec.format,
+            delivery: sidecar.spec.format,
+            language: 'und',
+            languageName: 'Local file',
+            title: sidecar.name,
+            available: true,
+          },
+        ]
+      : [];
+    const mergedSubs = [...sidecarSub, ...embeddedSubs, ...serverSubs];
+    const audioRows = localFile ? localFile.probed.audioTracks || [] : view.tracks?.audio || [];
+    const activeAudioId = localFile ? localFile.audioId || audioRows[0]?.id : view.tracks?.audioId;
+    const activeSubId = sidecar
+      ? localFile
+        ? (localFile.subtitleId ?? 'local-sidecar')
+        : 'local-sidecar'
+      : localFile?.subtitleId === 'off'
+        ? undefined
+        : localFile?.subtitleId && mergedSubs.some(s => s.id === localFile.subtitleId)
+          ? localFile.subtitleId
+          : view.tracks?.subtitleId;
+    const activeAudio = audioRows.find(a => a.id === activeAudioId);
+    const localSubtitleKey =
+      activeSubId === 'local-sidecar' && sidecar
+        ? sidecar.spec.key
+        : activeSubId && String(activeSubId).startsWith('local-s-') && localFile
+          ? `${localFile.key}:${activeSubId}`
+          : undefined;
+    return {
+      ...view,
+      ...(localFile
+        ? {
+            mediaUrl: localFile.key,
+            localFileName: localFile.name,
+            chapters: view.chapters?.length ? view.chapters : localFile.probed.chapters || [],
+            videoCodec: localFile.probed.video?.codec || view.videoCodec,
+            audioCodec: activeAudio?.codec || view.audioCodec,
+            deliveryInfo: {
+              ...view.deliveryInfo,
+              format: 'local',
+              reason: 'local-file',
+              videoCodec: localFile.probed.video?.codec,
+              audioCodec: activeAudio?.codec,
+              width: localFile.probed.video?.width,
+              height: localFile.probed.video?.height,
+              hdr: !!localFile.probed.video?.hdr,
+              hdrKind: localFile.probed.video?.hdrKind || 'sdr',
+            },
+          }
+        : {}),
+      ...(localSubtitleKey ? { subtitleUrl: undefined, localSubtitleKey } : {}),
+      tracks: {
+        audio: audioRows,
+        subtitles: mergedSubs,
+        audioChoice: localFile ? activeAudioId || 'auto' : view.tracks?.audioChoice || 'auto',
+        subtitleChoice:
+          activeSubId || (localFile?.subtitleId === 'off' ? 'off' : view.tracks?.subtitleChoice || 'auto'),
+        audioId: activeAudioId,
+        subtitleId: activeSubId,
+        subtitleOffset: view.tracks?.subtitleOffset || 0,
+        subtitleDelivery: mergedSubs.find(s => s.id === activeSubId)?.delivery || view.tracks?.subtitleDelivery,
+        subtitleMode: localFile ? 'auto' : view.tracks?.subtitleMode || 'auto',
+        subtitleError: localSubtitleKey ? undefined : view.tracks?.subtitleError,
+      },
+    };
+  }
   function applyState(next, local = false) {
     if (!local) {
       if (next.id !== store.room.selected) return;
       next = deps.fallbackPlayback.receive(next, store.connection.reconnecting);
     }
+    next = enrichLocalView(next);
     deps.time.clearTimeout(store.connection.disconnectGraceTimer);
     store.connection.disconnectGraceTimer = undefined;
     const wasExtended = store.connection.disconnectExtended;
@@ -386,11 +493,69 @@ export function mount(host, deps) {
         $('empty-stage').hidden = true;
         if (next.format === 'youtube-embed') {
           deps.youtube.attach(next);
+        } else if (next.format === 'local') {
+          if (store.stream.localFile?.mediaVersion === next.mediaVersion) {
+            deps.watchFrames();
+            const localFile = store.stream.localFile;
+            store.stream.filePlayer = new uburoomFilePlayer(
+              deps.video,
+              { file: localFile.file },
+              deps.expected,
+              message => {
+                store.player.playbackError = message;
+                deps.toasts.show('local-file-error', {
+                  type: 'error',
+                  title: 'Local file playback stopped',
+                  hint: message,
+                  symbol: 'alert-triangle',
+                  persistent: true,
+                  action: {
+                    label: 'Use room stream',
+                    run: () => {
+                      deps.toasts.dismiss('local-file-error');
+                      void deps.useRoomStream?.();
+                    },
+                  },
+                });
+              },
+              {
+                duration: localFile.probed.duration || next.state?.duration,
+                audioId: next.tracks?.audioId,
+                audioMode: store.preferences.playerPreferences.audioMode || 'normal',
+                onAudioStateChange: () => {
+                  deps.applyAudioMode?.();
+                  deps.renderTracks?.();
+                },
+                subtitleId: String(next.tracks?.subtitleId || '').startsWith('local-s-')
+                  ? next.tracks.subtitleId
+                  : null,
+                onSubtitleInit: subMsg => {
+                  void deps.captions.setLocalSubtitle({
+                    key: `${localFile.key}:${subMsg.subtitleId}`,
+                    format: subMsg.format,
+                    data: subMsg.header,
+                    fonts: subMsg.fonts,
+                    pushStream: subMsg.format === 'pgs',
+                  });
+                },
+                onSubtitleCues: cues => deps.captions.appendLocalCues(cues),
+                onSubtitleData: (_fmt, bytes) => void deps.captions.appendLocalData(bytes),
+              },
+            );
+          }
         } else {
           deps.watchFrames();
+          const canClientRemux =
+            uburoomPlayback.supportsClientRemux() && store.stream.clientRemuxFailed !== next.mediaVersion;
           if (
             (next.format === 'file' &&
-              uburoomPlayback.needsCompatible(next, type => deps.video.canPlayType(type), undefined, hdrMode())) ||
+              uburoomPlayback.needsCompatible(
+                next,
+                type => deps.video.canPlayType(type),
+                undefined,
+                hdrMode(),
+                canClientRemux,
+              )) ||
             (next.format === 'hls' &&
               uburoomPlayback.needsVideoConversion(next, type => deps.video.canPlayType(type), undefined, hdrMode()))
           ) {
@@ -525,7 +690,43 @@ export function mount(host, deps) {
             queueMicrotask(() => {
               if (store.room.state === next) void deps.proxyDirectFile();
             });
-          else if (next.directDelivery) void deps.attachDirectFile(next);
+          else if (
+            next.format === 'file' &&
+            canClientRemux &&
+            uburoomPlayback.needsClientRemux(next, type => deps.video.canPlayType(type))
+          ) {
+            store.stream.filePlayer = new uburoomFilePlayer(
+              deps.video,
+              {
+                url: next.mediaUrl,
+                direct: !!next.directDelivery,
+                fileSize: next.deliveryInfo?.fileSize,
+              },
+              deps.expected,
+              (message, error) => {
+                if (error?.kind === 'direct-failed') {
+                  void deps.proxyDirectFile();
+                  return;
+                }
+                if (error?.kind === 'grant-expired') {
+                  void deps.refreshState().catch(() => deps.fail(message));
+                  return;
+                }
+                store.stream.clientRemuxFailed = next.mediaVersion;
+                void deps.compatibleFallback(message, error?.kind !== 'codec-unsupported');
+              },
+              {
+                duration: next.state?.duration,
+                audioId: next.tracks?.audioId,
+                audioMode: store.preferences.playerPreferences.audioMode || 'normal',
+                onAudioStateChange: () => {
+                  deps.applyAudioMode?.();
+                  deps.renderTracks?.();
+                },
+                serverAudioIds: (next.tracks?.audio || []).map(a => a.id),
+              },
+            );
+          } else if (next.directDelivery) void deps.attachDirectFile(next);
           else {
             deps.video.removeAttribute('crossorigin');
             deps.video.src = next.mediaUrl;
@@ -564,6 +765,9 @@ export function mount(host, deps) {
       }
     } else if (wasExtended && !changed && store.stream.hls) {
       store.stream.hls.startLoad(deps.expected());
+    }
+    if (!changed && store.stream.filePlayer && next.tracks?.audioId) {
+      store.stream.filePlayer.selectAudio(next.tracks.audioId);
     }
     deps.captions.update(next);
     queueMicrotask(() => {
@@ -614,15 +818,19 @@ export function mount(host, deps) {
         ? { ...q, label: maxMbps ? 'Maximum · ' + maxMbps + ' Mbps' : q.label.replace(/^Original/, 'Maximum') }
         : q,
     );
-    $('quality-detail').textContent = next.fallbackActive
-      ? 'Using fallback · ' + next.fallbackStream.height + 'p · ' + next.fallbackStream.bitrate + ' Mbps'
-      : maximum
-        ? 'Converted to ' +
-          (next.deliveryInfo.videoCodec || 'another format').toUpperCase() +
-          ' at the highest quality available.'
-        : '';
-    $('quality-detail').hidden = !maximum && !next.fallbackActive;
+    const isLocalFile = next.format === 'local';
+    $('quality-detail').textContent = isLocalFile
+      ? 'Playing local file' + (next.localFileName ? ' · ' + next.localFileName : '')
+      : next.fallbackActive
+        ? 'Using fallback · ' + next.fallbackStream.height + 'p · ' + next.fallbackStream.bitrate + ' Mbps'
+        : maximum
+          ? 'Converted to ' +
+            (next.deliveryInfo.videoCodec || 'another format').toUpperCase() +
+            ' at the highest quality available.'
+          : '';
+    $('quality-detail').hidden = !isLocalFile && !maximum && !next.fallbackActive;
     const qualitySelect = $('quality');
+    qualitySelect.disabled = isLocalFile || !next.mediaId || next.format === 'youtube-embed';
     if (
       JSON.stringify([...qualitySelect.options].map(o => [o.value, o.textContent])) !==
       JSON.stringify(choices.map(q => [q.id, q.label]))

@@ -353,20 +353,35 @@ const CONTAINER_MIME = Object.freeze({
   mpegts: 'video/mp2t',
   avi: 'video/x-msvideo',
 });
-function needsVideoConversion(source, canPlayType, matchMedia, hdrMode) {
+function supportsClientRemux(
+  mse = typeof globalThis.MediaSource !== 'undefined' ? globalThis.MediaSource : undefined,
+  wasm = typeof globalThis.WebAssembly === 'object',
+  worker = typeof globalThis.Worker === 'function',
+) {
+  if (!wasm || !worker || typeof mse?.isTypeSupported !== 'function') return false;
+  try {
+    return (
+      mse.isTypeSupported('video/mp4; codecs="avc1.42E01E"') &&
+      (mse.isTypeSupported('audio/mp4; codecs="flac"') || mse.isTypeSupported('audio/mp4; codecs="mp4a.40.2"'))
+    );
+  } catch {
+    return false;
+  }
+}
+function needsVideoConversion(source, canPlayType, matchMedia, hdrMode, clientRemux = false) {
   // Positive answers remain only hints. Only an explicit negative for every
   // representative family probe rules out an initial HEVC direct-play trial.
   // Test Main/Main10 and both sample entries: bare `hvc1` alone is insufficient.
   if (!source || typeof canPlayType !== 'function') return false;
   try {
     const rawContainer = String(source.container || '').toLowerCase();
-    if (source.format === 'file' && rawContainer) {
+    if (source.format === 'file' && rawContainer && !clientRemux) {
       if (/^(mkv|matroska|ts|mpegts|avi)$/i.test(rawContainer)) {
         const mime = CONTAINER_MIME[rawContainer];
         if (mime && canPlayType(mime) === '') return true;
       }
     }
-    const baseMime = (source.format === 'file' && CONTAINER_MIME[rawContainer]) || 'video/mp4';
+    const baseMime = (!clientRemux && source.format === 'file' && CONTAINER_MIME[rawContainer]) || 'video/mp4';
     if (source.hdrKind === 'dovi-p5') {
       if (!supportsHdrDisplay(matchMedia, hdrMode)) return true;
       const dovi = ['dvh1.05.06', 'dvhe.05.06'];
@@ -420,8 +435,18 @@ function needsAudioConversion(source, canPlayType) {
   }
   return false;
 }
-function needsCompatible(source, canPlayType, matchMedia, hdrMode) {
-  return needsVideoConversion(source, canPlayType, matchMedia, hdrMode) || needsAudioConversion(source, canPlayType);
+function needsClientRemux(source, canPlayType) {
+  if (!source || source.format !== 'file') return false;
+  const rawContainer = String(source.container || '').toLowerCase();
+  if (/^(mkv|matroska|ts|mpegts|avi)$/i.test(rawContainer)) return true;
+  if ((source.tracks?.audio?.length || 0) > 1) return true;
+  if (source.hdrKind === 'dovi-p7') return true;
+  return needsAudioConversion(source, canPlayType);
+}
+function needsCompatible(source, canPlayType, matchMedia, hdrMode, clientRemux = false) {
+  if (needsVideoConversion(source, canPlayType, matchMedia, hdrMode, clientRemux)) return true;
+  if (clientRemux) return false;
+  return needsAudioConversion(source, canPlayType);
 }
 function observationClock() {
   return timingApi().observationClock();
@@ -799,8 +824,10 @@ export {
   readinessBuffered,
   timeline,
   supportsHdrDisplay,
+  supportsClientRemux,
   needsVideoConversion,
   needsAudioConversion,
+  needsClientRemux,
   needsCompatible,
   observationClock,
   observationFrames,

@@ -791,6 +791,7 @@ class Jellyfin {
       sourceBitrate: Math.round(Number(source.Bitrate) / 1000) || undefined,
       sourceWidth: Number(video.Width) || undefined,
       sourceHeight: Number(video.Height) || undefined,
+      fileSize: Number(source.Size) || undefined,
       chapters,
       markers: [],
       ...(same ? { previousId: previous.previousId, nextId: previous.nextId } : await this.neighbors(x)),

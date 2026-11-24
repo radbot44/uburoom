@@ -147,7 +147,7 @@ function transfer(from, to) {
   }
   to.captionVersion = from.captionVersion;
   to.subtitleAbort?.abort();
-  to.subtitleAbort = from.subtitleAbort;
+  to.subtitleAbort = from.subtitleAbort || new AbortController();
   to.subtitleAssets = from.subtitleAssets;
   to.subtitleJob = from.subtitleJob;
   if (to.subtitleJob) to.subtitleJob.media = to;

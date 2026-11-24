@@ -183,7 +183,7 @@ function event(a, action) {
  *   capability: string|null, host?: boolean, idle?: string, also?: string, hostless?: boolean,
  *   prepares?: true|'personal'|'idle', preparesSaved?: boolean, loadsFirstItem?: boolean,
  *   service?: 'publish'|'unpublish'|'event',
- *   handler?: 'quality'|'tracks'|'stream'|'player'|'reporting', persists?: boolean, roomLocal?: boolean,
+ *   handler?: 'quality'|'tracks'|'stream'|'delivery'|'player'|'reporting', persists?: boolean, roomLocal?: boolean,
  *   refillsAutoQueue?: boolean, liveOnly?: boolean}} Command
  */
 /** @type {Readonly<Record<string, Command>>} */
@@ -475,6 +475,19 @@ const COMMANDS = Object.freeze({
     handler: 'stream',
     roomLocal: true,
     args: a => versions(a, 'Stream refresh expired.'),
+  },
+  'media.delivery.set': {
+    scope: 'personal',
+    capability: null,
+    prepares: 'personal',
+    handler: 'delivery',
+    roomLocal: true,
+    args(a) {
+      if (a.mode !== 'local' && a.mode !== 'auto') throw new Error('Choose a playback source.');
+      if (typeof a.mediaVersion !== 'string' || !VERSION.test(a.mediaVersion))
+        throw new Error('Playback source selection expired.');
+      return { mode: a.mode, mediaVersion: a.mediaVersion };
+    },
   },
   'media.volume.set': { scope: 'personal', capability: null, handler: 'player', roomLocal: true },
   'media.mute': { scope: 'personal', capability: null, handler: 'player', roomLocal: true },

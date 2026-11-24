@@ -714,6 +714,7 @@ class YouTubeMedia {
       sourceWidth: prepared.width,
       sourceHeight: prepared.height,
       size: prepared.size,
+      fileSize: Number(prepared.size) || undefined,
       chapters: [],
       markers: [],
     };

@@ -12,6 +12,7 @@ First-party source code is **GPL-3.0-only** (Copyright © 2026 radbot44); preser
 | OverlayScrollbars | 2.17.0 | MIT | `web/vendor/overlayscrollbars/`; notice in `web/vendor/THIRD_PARTY_NOTICES.txt` |
 | jassub | 2.5.21 | LGPL-2.1-or-later AND (FTL OR GPL-2.0-or-later) AND MIT AND MIT-Modern-Variant AND ISC AND NTP AND Zlib AND BSL-1.0 | `web/vendor/subtitles/jassub*` |
 | libbitsub | 1.13.0 | MIT | `web/vendor/subtitles/libbitsub*` |
+| libav.js (`uburoom` variant, FFmpeg 9.0.2 + zlib 1.3.2 + emfiberthreads 1.3) | 6.11.9.0.2 | LGPL-2.1-or-later AND 0BSD AND Zlib | `web/vendor/libav/libav*`; notice in `web/vendor/libav/THIRD_PARTY_NOTICES.txt` |
 | Liberation Sans Bold (`default.woff2`) | 2.5.21 bundle | OFL-1.1 | `web/vendor/subtitles/default.woff2`; full text in `web/vendor/licenses/OFL-1.1.txt` |
 | ws | 8.22.0 | MIT | Server WebSocket runtime (`package-lock.json`) |
 | yaml | 2.9.1 | ISC | Server configuration parser (`package-lock.json`) |
@@ -29,6 +30,16 @@ FFmpeg and FFprobe are operator-supplied external system binaries, not bundled o
 - **libbitsub (`libbitsub-renderer.js`, `libbitsub.js`, `libbitsub_bg.wasm`):** Built from locked npm artifact `https://registry.npmjs.org/libbitsub/-/libbitsub-1.13.0.tgz` (`sha512-b1UWpSObYeyBiYF6JuUDXmmtE1/yCecLbu+DlnNYajcBCquL044oG42iqGmaAdjFPYrwo9CscffUGB3BG/Fo3Q==`) under the MIT License (Copyright © 2026 Jaruwit Jaiya; Copyright © 2024 David Schulte and Libpgs contributors; [`https://github.com/altqx/libbitsub`](https://github.com/altqx/libbitsub)).
 - **Fallback font (`web/vendor/subtitles/default.woff2`):** Unmodified **Liberation Sans Bold** distributed by JASSUB as the default `liberation sans` fallback font under the **SIL Open Font License 1.1** (Copyright © 2010 Google Corporation, Red Hat, Inc., and Ascender Corp.). Full license text is retained in [`web/vendor/licenses/OFL-1.1.txt`](../web/vendor/licenses/OFL-1.1.txt) and `web/vendor/subtitles/THIRD_PARTY_NOTICES.txt`.
 - **uburoom integration modifications:** `scripts/build-subtitle-vendor.js` bounds JASSUB worker disposal to 1 second, selects JASSUB transparent Canvas2D composition, and adapts `libbitsub` asset URLs, layout-box measurement, initialization readiness (`whenReady()`) and forced manual repaints. PGS pending-render cleanup also removes the exact completed promise before rejecting an obsolete generation, preventing repeated stale repaint callbacks during window reset/replay. All modifications are produced reproducibly from `scripts/build-subtitle-vendor.js`.
+
+## Browser container demuxer and audio decoder (`web/vendor/libav/`)
+
+`scripts/build-libav-vendor.sh` compiles the custom single-threaded `uburoom` WebAssembly variant of [`Yahweasel/libav.js`](https://github.com/Yahweasel/libav.js) (commit `2baa971a01bdea4545c1c7e4d42855a33d5b8cc2`, 0BSD wrapper) against [FFmpeg 9.0.2](https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz) (**LGPL-2.1-or-later**, without `--enable-gpl` or `--enable-nonfree`), [zlib 1.3.2](https://www.zlib.net/fossils/zlib-1.3.2.tar.gz) (**Zlib**), and [`emfiberthreads` 1.3](https://github.com/Yahweasel/emfiberthreads/releases/tag/v1.3) (**0BSD**) into `web/vendor/libav/`:
+
+- `libav-uburoom.mjs` (SHA-256 `ae717959bb375ffbde6910d78f7cb88142154ddcc7eb38820894c5b0d0c2002f`)
+- `libav-6.11.9.0.2-uburoom.wasm.mjs` (SHA-256 `27e7a05cf6b00962e6d0d34b38d2a97aceba3e71f4734b68b4f60a90aeb04d6c`)
+- `libav-6.11.9.0.2-uburoom.wasm.wasm` (SHA-256 `d4d9a7b65af23d0325a9fc59291376c8c97693d9540e2f3aef084810bab8436d`)
+
+Full copyright and license texts are retained in [`web/vendor/libav/THIRD_PARTY_NOTICES.txt`](../web/vendor/libav/THIRD_PARTY_NOTICES.txt), and the exact FFmpeg configure flags and Emscripten build commands are preserved in [`scripts/build-libav-vendor.sh`](../scripts/build-libav-vendor.sh).
 
 ## Artwork, branding, typography and synthetic media
 

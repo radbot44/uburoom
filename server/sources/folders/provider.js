@@ -674,6 +674,7 @@ class LocalMedia {
       sourceBitrate: info.bitrate,
       sourceWidth: Number(info.video.width) || undefined,
       sourceHeight: Number(info.video.height) || undefined,
+      fileSize: Number(stat.size) || undefined,
       chapters: info.chapters,
       markers: [],
     };

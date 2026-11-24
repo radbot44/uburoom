@@ -600,6 +600,7 @@ class uburoomSubtitles {
     clearTimeout(this.timer);
     this.timer = undefined;
     this.key = '';
+    this.localKey = '';
     this.url = undefined;
     this.cues = [];
     this.attempts = 0;
@@ -629,7 +630,91 @@ class uburoomSubtitles {
     this.syncStatus();
     return next;
   }
+  async setLocalSubtitle(spec) {
+    if (!spec) {
+      if (this.localKey) this.reset();
+      return;
+    }
+    if (spec.key === this.localKey && this.loaded) return;
+    this.reset();
+    this.localKey = spec.key;
+    const generation = this.generation;
+    const abort = (this.abort = new AbortController());
+    try {
+      if (spec.format === 'cues') {
+        this.track.mode = 'hidden';
+        this.cues = Array.isArray(spec.cues) ? [...spec.cues] : [];
+        this.rebuild();
+        this.loaded = true;
+        this.status({ message: '', error: false, loading: false });
+        return;
+      }
+      this.status({ message: 'Preparing subtitles…', error: false, loading: true });
+      const renderer = await uburoomSubtitleRenderers.create(
+        this.video,
+        spec.format,
+        {
+          data: spec.data,
+          fonts: spec.fonts || [],
+          pushStream: spec.pushStream,
+          fileName: spec.fileName,
+        },
+        this.offset || 0,
+        abort.signal,
+        this.resolveMediaTime,
+      );
+      if (generation !== this.generation) {
+        renderer.destroy();
+        return;
+      }
+      this.renderer = renderer;
+      renderer.offset(this.offset || 0);
+      this.track.mode = 'disabled';
+      this.loaded = true;
+      this.paint();
+      this.status({ message: '', error: false, loading: false });
+    } catch (err) {
+      if (generation !== this.generation || abort.signal.aborted) return;
+      this.status({ message: err?.message || 'Local subtitles could not load.', error: true, loading: false });
+    }
+  }
+  appendLocalCues(cues) {
+    if (!this.localKey || !Array.isArray(cues) || !cues.length) return;
+    let replaced = false;
+    for (const cue of cues) {
+      if (!Number.isFinite(cue.start) || !Number.isFinite(cue.end) || typeof cue.text !== 'string') continue;
+      const key = Math.round(cue.end * 1000) + '|' + cue.text;
+      const existing = this.cues.find(c => Math.round(c.end * 1000) + '|' + c.text === key);
+      if (existing) {
+        if (cue.start < existing.start - 0.001) {
+          existing.start = cue.start;
+          replaced = true;
+        }
+      } else {
+        this.cues.push(cue);
+        this.addCue(cue);
+      }
+    }
+    if (replaced) this.rebuild();
+    else this.paint();
+  }
+  async appendLocalData(bytes) {
+    if (!this.localKey || !this.renderer || !bytes?.byteLength) return;
+    await this.renderer.append?.(bytes);
+  }
   update(state) {
+    if (!state.subtitleUrl && this.localKey && state.localSubtitleKey === this.localKey) {
+      const serverOffset = state.tracks?.subtitleOffset;
+      if (serverOffset !== undefined) {
+        const normalizedServer = normalizeSubtitleOffset(serverOffset, this.serverOffset);
+        if (normalizedServer !== this.serverOffset) {
+          this.serverOffset = normalizedServer;
+          this.setOffset(normalizedServer);
+        }
+      }
+      this.track.mode = this.renderer ? 'disabled' : 'hidden';
+      return;
+    }
     const key = state.subtitleUrl?.replace(/^\/api\/watch\/media\/[a-f0-9]+\//, '') || '';
     if (key !== this.key) {
       this.reset();
@@ -1030,7 +1115,48 @@ class uburoomSubtitles {
     this.reset();
   }
 }
+function parseSubtitleTimestamp(raw) {
+  const m = /^(?:(\d{1,3}):)?(\d{1,2}):(\d{2})[,.](\d{1,3})$/.exec(raw.trim());
+  if (!m) return undefined;
+  const h = Number(m[1] || 0);
+  const min = Number(m[2]);
+  const sec = Number(m[3]);
+  const ms = Number(m[4].padEnd(3, '0'));
+  return h * 3600 + min * 60 + sec + ms / 1000;
+}
+function parseSubtitleText(rawText) {
+  const normalized = String(rawText || '')
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n?/g, '\n');
+  const blocks = normalized.split(/\n{2,}/);
+  const cues = [];
+  for (const block of blocks) {
+    const lines = block.split('\n').map(l => l.trimEnd());
+    let arrowLineIdx = -1;
+    for (let i = 0; i < Math.min(lines.length, 3); i++) {
+      if (lines[i].includes('-->')) {
+        arrowLineIdx = i;
+        break;
+      }
+    }
+    if (arrowLineIdx < 0) continue;
+    const parts = lines[arrowLineIdx].split('-->');
+    const start = parseSubtitleTimestamp(parts[0]);
+    const endAndSettings = (parts[1] || '').trim().split(/\s+/);
+    const end = parseSubtitleTimestamp(endAndSettings[0] || '');
+    const settings = endAndSettings.slice(1).join(' ');
+    if (start === undefined || end === undefined || end <= start) continue;
+    const text = lines
+      .slice(arrowLineIdx + 1)
+      .join('\n')
+      .replace(/\{\\[^}]*\}/g, '')
+      .trim();
+    if (text) cues.push({ start, end, text, settings });
+  }
+  return cues;
+}
 export {
+  parseSubtitleText,
   SUBTITLE_OFFSET_MAX,
   SUBTITLE_OFFSET_MIN,
   formatSubtitleOffset,

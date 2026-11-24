@@ -50,6 +50,8 @@ const DOCUMENTS = {
 };
 const SUBTITLE_VENDOR =
   /^\/vendor\/subtitles\/(jassub(?:-worker(?:-modern)?)?\.(?:js|wasm)|libbitsub(?:-renderer)?\.js|libbitsub_bg\.wasm|default\.woff2)$/;
+const WASM_WORKER_SCRIPT = /^(?:\/watch-file-worker\.js|\/vendor\/libav\/[^/]+\.mjs)$/;
+const IMMUTABLE_LIBAV_ASSET = /^\/vendor\/libav\/libav-\d+(?:\.\d+)+-[^/]+\.(?:mjs|wasm)$/;
 
 function etagMatches(clientEtag, serverEtag) {
   if (!clientEtag) return false;
@@ -219,7 +221,16 @@ function createStaticFiles({ config }) {
         methods: ['GET', 'HEAD'],
         match: ctx => ctx.asset,
         async handle({ req, res, route }, asset) {
-          send(req, res, await readAsset(asset.file), asset.type, route);
+          if (WASM_WORKER_SCRIPT.test(route)) {
+            res.setHeader(
+              'Content-Security-Policy',
+              "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; worker-src 'self' blob:",
+            );
+          }
+          const cacheControl = IMMUTABLE_LIBAV_ASSET.test(route)
+            ? 'public, max-age=31536000, immutable'
+            : 'public, no-cache';
+          send(req, res, await readAsset(asset.file), asset.type, route, { cacheControl });
         },
       },
     ];

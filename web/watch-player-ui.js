@@ -124,6 +124,17 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
     row.onclick = () => openChoices(id);
     rows.push({ id, row, value });
   }
+  const playbackSource = button(mainMenu, 'Playback source');
+  playbackSource.id = 'settings-playback-source';
+  playbackSource.setAttribute('role', 'menuitem');
+  playbackSource.setAttribute('aria-haspopup', 'dialog');
+  playbackSource.setAttribute('aria-controls', dialog.id);
+  const playbackSourceValue = document.createElement('span');
+  playbackSourceValue.className = 'settings-value';
+  playbackSource.append(playbackSourceValue, uburoomIcons.icon(document, 'right'));
+  playbackSource.onclick = () => {
+    if (!playbackSource.disabled) openDialog(getState()?.format === 'local' ? 'local-file-clear' : 'local-file-choose');
+  };
   const subtitleSync = button(mainMenu, 'Subtitle sync');
   subtitleSync.id = 'settings-subtitle-sync';
   subtitleSync.setAttribute('role', 'menuitem');
@@ -335,15 +346,18 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
       tracks = state?.tracks;
     cog.setAttribute('aria-haspopup', mobile() ? 'dialog' : 'menu');
     cog.setAttribute('aria-controls', mobile() ? dialog.id : menu.id);
-    badge.textContent = state?.fallbackActive
-      ? 'FB'
-      : state?.quality === 'direct'
-        ? uburoomPlayback.convertedOriginal(state)
-          ? 'MAX'
-          : 'ORIG'
-        : state?.quality?.startsWith('1080p')
-          ? 'HD'
-          : '';
+    badge.textContent =
+      state?.format === 'local'
+        ? 'LOC'
+        : state?.fallbackActive
+          ? 'FB'
+          : state?.quality === 'direct'
+            ? uburoomPlayback.convertedOriginal(state)
+              ? 'MAX'
+              : 'ORIG'
+            : state?.quality?.startsWith('1080p')
+              ? 'HD'
+              : '';
     badge.hidden = !badge.textContent;
     const enabled = !!tracks?.subtitleId,
       available = tracks?.subtitles.some(t => t.available);
@@ -396,7 +410,9 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
               ? 'No audio available'
               : 'No subtitles available'
             : id === 'quality'
-              ? select.selectedOptions[0]?.textContent || 'Unavailable'
+              ? state?.format === 'local'
+                ? 'Local file'
+                : select.selectedOptions[0]?.textContent || 'Unavailable'
               : track
                 ? trackLabel(track)
                 : tracks && !audio
@@ -430,6 +446,20 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
           ? 'Fixed'
           : formatSubtitleOffset(captions?.offset || 0);
     subtitleSyncValue.title = subtitleSyncValue.textContent;
+    const canPickLocal = Boolean(state?.mediaId && state?.format !== 'youtube-embed');
+    playbackSource.disabled = !canPickLocal;
+    playbackSourceValue.textContent = !canPickLocal
+      ? 'Unavailable'
+      : state?.format === 'local'
+        ? 'Local file'
+        : 'Room stream';
+    if (state?.format === 'local' && state?.localFileName) {
+      const caption = document.createElement('span');
+      caption.className = 'settings-caption';
+      caption.textContent = state.localFileName;
+      playbackSourceValue.append(caption);
+    }
+    playbackSourceValue.title = playbackSourceValue.textContent;
     if (opened) {
       renderChoices();
       placeMenu();

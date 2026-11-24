@@ -853,6 +853,27 @@
                   <div class="player-settings-grid" id="player-page-playback">
                     <section class="settings-panel settings-group">
                       <h3>Video</h3>
+                      <div class="settings-field" id="playback-source-field">
+                        <label>Source</label>
+                        <input
+                          id="local-file-input"
+                          type="file"
+                          accept=".mkv,.mp4,.m4v,.mov,.webm,.ts,.m2ts,.avi,video/*,audio/*"
+                          hidden
+                        />
+                        <div class="playback-source-actions">
+                          <button id="local-file-choose" type="button" class="quiet">Choose local file…</button
+                          ><button id="local-file-clear" type="button" class="quiet" hidden>Use room stream</button>
+                        </div>
+                        <p id="local-file-status" class="hint" role="status">Streaming from room.</p>
+                        <div id="local-file-mismatch" class="local-file-mismatch" hidden>
+                          <p id="local-file-mismatch-text" class="hint"></p>
+                          <div class="playback-source-actions">
+                            <button id="local-file-confirm" type="button" class="primary">Play anyway</button
+                            ><button id="local-file-cancel" type="button" class="quiet">Cancel</button>
+                          </div>
+                        </div>
+                      </div>
                       <div class="settings-field">
                         <p id="quality-notice" class="quality-notice hint" role="status"></p>
                         <label for="quality">Quality</label
@@ -966,6 +987,13 @@
                         <label for="subtitle-track">Subtitle track</label
                         ><select id="subtitle-track"></select>
                         <p id="subtitle-track-name" class="hint" hidden></p>
+                        <input id="local-subtitle-input" type="file" accept=".srt,.vtt,.ass,.ssa,.sup" hidden />
+                        <div class="playback-source-actions" id="local-subtitle-actions">
+                          <button id="local-subtitle-choose" type="button" class="quiet">Load subtitle file…</button
+                          ><button id="local-subtitle-clear" type="button" class="quiet" hidden>
+                            Clear subtitle file
+                          </button>
+                        </div>
                       </div>
                       <div class="settings-field">
                         <label for="subtitle-mode">Rendering</label

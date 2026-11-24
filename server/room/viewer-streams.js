@@ -53,6 +53,7 @@ module.exports = {
       viewer.trackChoice,
       viewer.browserSubtitles,
       viewer.localCodecs,
+      viewer.clientRemux,
     ]);
   },
   preloadViewer(room, preload, source, viewerId, viewer) {
@@ -116,6 +117,7 @@ module.exports = {
         ...viewer.trackChoice,
         browserSubtitles: viewer.browserSubtitles,
         localCodecs: viewer.localCodecs,
+        clientRemux: viewer.clientRemux,
         shareKey: [room.roomId, room.mediaVersion],
         shareWaitMs: 8000,
         ...opts,
@@ -247,6 +249,10 @@ module.exports = {
       }
       if (viewer.media?.unavailable) viewer.media = undefined;
     }
+    if (viewer.localDelivery && viewer.localDeliveryVersion && viewer.localDeliveryVersion !== version) {
+      viewer.localDelivery = false;
+      viewer.localDeliveryVersion = undefined;
+    }
     if (!room.media) return;
     if (viewer.localDelivery) {
       if (
@@ -256,24 +262,50 @@ module.exports = {
         (!viewer.media.principal || !provider || viewer.media.principal === provider.principal)
       )
         return viewer.media;
+      let preparedLocal;
+      if (needsProvider && typeof provider?.prepare === 'function' && typeof provider?.stop === 'function') {
+        try {
+          preparedLocal = await provider.prepare(room.media.id, 'direct', false, room.media, undefined, {
+            ...viewer.trackChoice,
+            browserSubtitles: viewer.browserSubtitles,
+            sourceOnly: true,
+          });
+        } catch {
+          preparedLocal = undefined;
+        }
+      }
       return this.inRoom(room, () => {
-        if (room.mediaVersion !== version || room.viewers.get(viewerId) !== viewer) return;
+        if (room.mediaVersion !== version || room.viewers.get(viewerId) !== viewer || !viewer.localDelivery) {
+          if (preparedLocal && typeof preparedLocal.provider?.stop === 'function')
+            void this.providers.stop(preparedLocal);
+          return;
+        }
         this.tracking.end(viewer, 'stream-changed');
         void this.reporting?.end(viewer, 'stream-changed');
-        if (viewer.media) void this.providers.stop(viewer.media);
+        const previous = viewer.media;
         viewer.directDelivery = undefined;
         viewer.directFileResolved = undefined;
-        viewer.media = {
-          id: room.media.id,
-          title: room.media.title,
-          duration: room.media.duration,
-          kind: room.media.kind,
-          format: 'local',
-          ...(provider?.principal ? { principal: provider.principal } : {}),
-          resources: new Map(),
-          chapters: room.media.chapters || [],
-          markers: room.media.markers || [],
-        };
+        if (preparedLocal && typeof preparedLocal.provider?.stop === 'function' && preparedLocal.tracks) {
+          preparedLocal.format = 'local';
+          preparedLocal.deliveryReason = 'local-file';
+          if (previous) SubtitleResources.transfer(previous, preparedLocal);
+          viewer.media = preparedLocal;
+        } else {
+          viewer.media = {
+            id: room.media.id,
+            title: room.media.title,
+            duration: room.media.duration,
+            kind: room.media.kind,
+            format: 'local',
+            deliveryReason: 'local-file',
+            ...(provider?.principal ? { principal: provider.principal } : {}),
+            resources: new Map(),
+            subtitleAbort: new AbortController(),
+            chapters: room.media.chapters || [],
+            markers: room.media.markers || [],
+          };
+        }
+        if (previous && previous !== viewer.media) void this.providers.stop(previous);
         viewer.mediaVersion = version;
         viewer.streamVersion = randomUUID();
         viewer.ready = false;

@@ -46,8 +46,15 @@ module.exports = {
       return { status: 'unsupported', message: 'Use your watch player for personal audio and quality.' };
     if (declared.handler === 'tracks') return this.changeTracks(room, viewer, args, actor, ticket);
     if (declared.handler === 'stream') return this.refreshStream(room, viewer, args, actor, ticket);
+    if (declared.handler === 'delivery') return this.changeDelivery(room, viewer, args, actor, ticket);
     if (declared.handler === 'quality') {
-      if (!args.compatible && !args.fallback && args.quality) viewer.preferredQuality = Engine.qualityId(args.quality);
+      if (!args.compatible && !args.fallback && args.quality) {
+        viewer.preferredQuality = Engine.qualityId(args.quality);
+        if (viewer.localDelivery) {
+          viewer.localDelivery = false;
+          viewer.localDeliveryVersion = undefined;
+        }
+      }
       if (!room.media || room.media.kind === 'demo' || room.media.format === 'youtube-embed')
         return { status: 'applied', message: 'Preferred quality updated for future videos.' };
       if (viewer.preparing || viewer.change)
@@ -157,10 +164,18 @@ module.exports = {
       if (args.subtitleId && !['auto', 'off'].includes(args.subtitleId))
         choices.subtitleIntent = Tracks.intent(selection.subtitle);
       const burnChanged =
+        current.format !== 'local' &&
         (selection.subtitle?.delivery === 'burn' || current.selection.subtitle?.delivery === 'burn') &&
         (selection.subtitle?.id !== current.selection.subtitle?.id ||
           selection.subtitle?.delivery !== current.selection.subtitle?.delivery);
-      if (selection.audio?.id !== current.selection.audio?.id || burnChanged || current.playbackError) {
+      const clientHandlesAudio =
+        current.format === 'local' ||
+        (current.format === 'file' && viewer.clientRemux && !viewer.compatible && !viewer.fallback);
+      if (
+        (!clientHandlesAudio && selection.audio?.id !== current.selection.audio?.id) ||
+        burnChanged ||
+        current.playbackError
+      ) {
         const result = await this.replaceViewer(
           room,
           actor,
@@ -178,6 +193,7 @@ module.exports = {
                 ...choices,
                 browserSubtitles: viewer.browserSubtitles,
                 localCodecs: viewer.localCodecs,
+                clientRemux: viewer.clientRemux,
                 shareKey: [room.roomId, version],
                 authorized,
               },
@@ -202,13 +218,14 @@ module.exports = {
             )
               return false;
             if (selection.subtitle?.id !== current.selection.subtitle?.id) {
-              current.subtitleAbort.abort();
+              current.subtitleAbort?.abort();
               current.subtitleAbort = new AbortController();
               current.subtitleCache?.clear();
               SubtitleResources.clear(current);
               current.captionVersion = randomUUID();
             }
             current.selection = selection;
+            if (selection.audio?.codec) current.audioCodec = selection.audio.codec;
             return true;
           },
           false,
@@ -228,6 +245,51 @@ module.exports = {
             : 'Audio and subtitles could not be updated. Your previous selection is unchanged.',
       };
     }
+  },
+  changeDelivery(room, viewer, args, actor, ticket) {
+    if (!room.media || args.mediaVersion !== room.mediaVersion)
+      return {
+        status: 'unavailable',
+        message: 'Playback source selection expired. Choose again for the current video.',
+      };
+    if (room.media.format === 'youtube-embed')
+      return { status: 'unsupported', message: 'Local files cannot replace embedded YouTube playback.' };
+    if (viewer.preparing || viewer.change)
+      return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
+    return this.changeStream(viewer, async () => {
+      const wantLocal = args.mode === 'local';
+      const version = room.mediaVersion;
+      const updated = await this.inRoom(
+        room,
+        () => {
+          if (
+            !this.hub.current(ticket) ||
+            room.mediaVersion !== version ||
+            room.viewers.get(actor.watchViewerId) !== viewer
+          )
+            return false;
+          viewer.localDelivery = wantLocal;
+          viewer.localDeliveryVersion = wantLocal ? version : undefined;
+          if (!wantLocal && viewer.media?.format === 'local') {
+            this.tracking.end(viewer, 'stream-changed');
+            void this.reporting?.end(viewer, 'stream-changed');
+            const previous = viewer.media;
+            viewer.media = undefined;
+            viewer.ready = false;
+            if (previous) void this.providers.stop(previous);
+          }
+          return true;
+        },
+        false,
+      );
+      if (!updated) return expired();
+      await this.prepareStream(room, actor, actor.watchViewerId);
+      this.changed(room);
+      return {
+        ...this.playerUpdated(room, viewer),
+        message: wantLocal ? 'Switched to local file playback.' : 'Switched back to the room stream.',
+      };
+    });
   },
   refreshStream(room, viewer, args, actor, ticket) {
     const current = viewer.media,

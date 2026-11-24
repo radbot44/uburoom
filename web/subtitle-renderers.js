@@ -119,7 +119,8 @@ export const subtitleRenderers = {
       } else {
         const { PgsRenderer, VobSubRenderer } = await wait(import('/vendor/subtitles/libbitsub-renderer.js'));
         signal.throwIfAborted();
-        const pushStream = (format === 'pgs' || format === 'vobsub') && !!assets.subUrl && !assets.data;
+        const pushStream =
+          (format === 'pgs' || format === 'vobsub') && !!(assets.subUrl || assets.pushStream) && !assets.data;
         await wait(
           new Promise((resolve, reject) => {
             const options = {

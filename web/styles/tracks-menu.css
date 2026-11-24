@@ -42,10 +42,22 @@
     flex-wrap: wrap;
     gap: var(--space-10);
   }
-  .diagnostic-actions {
+  .diagnostic-actions,
+  .playback-source-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-10);
+    gap: var(--space-8);
+    align-items: center;
+  }
+  #local-subtitle-actions {
+    margin-top: var(--space-8);
+  }
+  .local-file-mismatch {
+    margin-top: var(--space-8);
+    padding: var(--space-10);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+    background: var(--elevated);
   }
   .tracks-open,
   .captions-toggle {

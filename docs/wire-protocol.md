@@ -52,7 +52,7 @@ Media catalog reads use the signed-in account. The server applies the invite's r
 
 Each connection holds one joined room/viewer pair. A successful join to another room or viewer ID releases its preceding viewer. Failed or canceled joins remove their provisional viewer, preparation retries and readiness participation; an older abandoned join cannot detach a newer successful attachment of the same viewer. Successfully joined viewers retain the ordinary reconnect grace after an unexpected connection loss.
 
-`preferences` (all optional): `quality`, `delivery` (`auto` or `local`), `subtitles` (`browser`), `codecs`, `volume`, `muted`, `plexReporting`, `plexWatchState`, `subtitlePreference`, `subtitleMode`, `audioPreference`.
+`preferences` (all optional): `quality`, `delivery` (`auto` or `local`), `clientRemux` (boolean), `subtitles` (`browser`), `codecs`, `volume`, `muted`, `plexReporting`, `plexWatchState`, `subtitlePreference`, `subtitleMode`, `audioPreference`.
 
 A tab reporting `ready: false` may include `blocker: { id, streamVersion, reason }`. The reason is `preparing` or `timing`. The server accepts the detail from the tab's current socket for the active readiness ID and stream, and sends it to people who can choose how playback continues. The reason is advisory.
 

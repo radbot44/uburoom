@@ -29,10 +29,11 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
   if (audio) media.audioCodec = audio.codec;
   const burn = media.selection.subtitle?.available && media.selection.subtitle.delivery === 'burn';
   const effectiveAudioTracks = media.tracks.audio.length;
+  const clientRemux = !!choices.clientRemux;
   const conversion =
     !choices.sourceOnly &&
     (!fallback || fallback === 'audio') &&
-    (burn || compatible || quality !== 'direct' || effectiveAudioTracks > 1);
+    (burn || compatible || quality !== 'direct' || (effectiveAudioTracks > 1 && !clientRemux));
   // A provider with a transcoder of its own keeps the picture through that instead.
   const remux =
     !choices.sourceOnly && typeof provider.startTranscode !== 'function' && !!pipeline.remux?.available(media);
@@ -44,6 +45,7 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
     audioTracks: effectiveAudioTracks,
     sourceOnly: choices.sourceOnly,
     remux,
+    clientRemux,
     outputs: conversion ? await pipeline.usableOutputs(provider, choices.localCodecs) : undefined,
   });
   media.deliveryReason = plan.reason;
@@ -63,6 +65,7 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
   // slow part of that, so it starts now; it is remembered per file and changes nothing else.
   if (
     remux &&
+    !clientRemux &&
     plan.route === 'file' &&
     (media.tracks.audio.length > 1 || (audio && !BROWSER_AUDIO.has(String(audio.codec).toLowerCase())))
   )
