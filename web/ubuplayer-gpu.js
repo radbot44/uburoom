@@ -885,6 +885,19 @@ export function wrapFramePreventingSdrClamp(frame, colorMeta = {}, options = {})
         fullRange: true,
       },
     });
+    const cs = wrapped?.colorSpace;
+    const overridden =
+      cs &&
+      cs.primaries === 'bt709' &&
+      cs.matrix === 'bt709' &&
+      cs.fullRange === true &&
+      (cs.transfer === 'iec61966-2-1' || cs.transfer === 'srgb');
+    if (!overridden) {
+      try {
+        wrapped.close?.();
+      } catch {}
+      return { frame, owned: false, inputMode: 'passthrough' };
+    }
     return { frame: wrapped, owned: true, inputMode: 'bt709-override' };
   } catch {
     return { frame, owned: false, inputMode: 'passthrough' };
@@ -1838,14 +1851,15 @@ async function createWebGpuRenderer(canvas, initialTargetHdr = false) {
       }
       const wrapped = wrapFramePreventingSdrClamp(rawFrame, colorMeta, { allowPlanar10: false });
       const isOverride = wrapped.inputMode === 'bt709-override';
+      const effectiveHdr = Boolean(wantHdr && hdrConfigured);
       try {
         ensureFrameTexture(w, h, currentFormat);
-        device.queue.copyExternalImageToTexture({ source: wrapped.frame }, { texture: frameTex, colorSpace: 'srgb' }, [
-          w,
-          h,
-        ]);
+        device.queue.copyExternalImageToTexture(
+          { source: wrapped.frame },
+          { texture: frameTex, colorSpace: !isOverride && effectiveHdr ? 'display-p3' : 'srgb' },
+          [w, h],
+        );
 
-        const effectiveHdr = Boolean(wantHdr && hdrConfigured);
         const u = computeTonemapUniforms(colorMeta, rpuMeta, {
           targetHdr: effectiveHdr,
           inputMode: isOverride ? 'bt709-override' : 'passthrough',

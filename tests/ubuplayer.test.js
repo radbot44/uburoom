@@ -339,8 +339,9 @@ test('Dolby Vision RPU parser, NAL 62/63 inspector, BT.2390 tonemap uniforms, an
   let constructedOpts = null;
   let closedWrapped = false;
   class FakeVideoFrame {
-    constructor(_src, opts) {
+    constructor(src, opts) {
       constructedOpts = opts;
+      this.colorSpace = opts?.colorSpace || src?.colorSpace;
     }
     close() {
       closedWrapped = true;
@@ -376,6 +377,22 @@ test('Dolby Vision RPU parser, NAL 62/63 inspector, BT.2390 tonemap uniforms, an
     assert.equal(directPlanar.owned, false);
     assert.equal(directPlanar.inputMode, 'planar10');
     assert.equal(directPlanar.frame, planar10Frame);
+
+    // If the browser ignores colorSpace on VideoFrame(frame, init), fall back to passthrough
+    let ignoredClosed = false;
+    globalThis.VideoFrame = class IgnoredColorSpaceVideoFrame {
+      constructor(src) {
+        this.colorSpace = src.colorSpace;
+      }
+      close() {
+        ignoredClosed = true;
+      }
+    };
+    const ignored = wrapFramePreventingSdrClamp(gpuBackedHdrFrame, { hdr: true, hdrKind: 'hdr10', fullRange: false });
+    assert.equal(ignored.owned, false);
+    assert.equal(ignored.inputMode, 'passthrough');
+    assert.equal(ignored.frame, gpuBackedHdrFrame);
+    assert.equal(ignoredClosed, true);
   } finally {
     globalThis.VideoFrame = origVF;
   }
@@ -831,6 +848,7 @@ test('Second-pass regressions: 44.1/96 kHz WSOLA, 3rd-order MMR + WebGPU 2320B U
     constructor(src, opts) {
       this.src = src;
       this.opts = opts;
+      this.colorSpace = opts?.colorSpace || src?.colorSpace;
       this.displayWidth = src.displayWidth;
       this.displayHeight = src.displayHeight;
     }

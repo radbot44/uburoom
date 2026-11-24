@@ -580,13 +580,18 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
   }
 
   async function seekFormatContext(ctx, streamInfo, seconds) {
-    if (!ctx || !streamInfo) return;
+    if (!ctx) return;
+    // Matroska Cues typically index only the video track. Seeking an audio or subtitle
+    // AVFormatContext by its own stream index causes FFmpeg to binary-search/scan gigabytes
+    // of the file over HTTP Range requests. Always seek via the indexed video stream when present.
+    const seekStream = vStream || streamInfo;
+    if (!seekStream) return;
     const clamped = Math.max(0, seconds);
-    const ts = Math.round((clamped * streamInfo.tbDen) / streamInfo.tbNum);
+    const ts = Math.round((clamped * seekStream.tbDen) / seekStream.tbNum);
     const [tsLo, tsHi] = libav.f64toi64(ts);
-    const ret = await libav.avformat_seek_file_max(ctx, streamInfo.index, tsLo, tsHi);
+    const ret = await libav.avformat_seek_file_max(ctx, seekStream.index, tsLo, tsHi);
     if (ret < 0) {
-      await libav.avformat_seek_file_approx(ctx, streamInfo.index, tsLo, tsHi);
+      await libav.avformat_seek_file_approx(ctx, seekStream.index, tsLo, tsHi);
     }
   }
 
