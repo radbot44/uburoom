@@ -1,3 +1,70 @@
+import { asMediaSurface } from './media-surface.js';
+
+function createSurfaceVideoProxy(stageEl, surface) {
+  if (!stageEl) return surface.videoElement;
+  return new Proxy(stageEl, {
+    get(target, prop) {
+      switch (prop) {
+        case 'videoWidth':
+          return surface.width();
+        case 'videoHeight':
+          return surface.height();
+        case 'currentTime':
+          return surface.currentTime();
+        case 'paused':
+          return surface.paused();
+        case 'ended':
+          return surface.ended();
+        case 'seeking':
+          return surface.seeking();
+        case 'readyState':
+          return surface.readyState();
+        case 'offsetLeft':
+          return 0;
+        case 'offsetTop':
+          return 0;
+        case 'parentElement':
+        case 'parentNode':
+          return stageEl;
+        case 'requestVideoFrameCallback':
+          return cb => surface.requestFrame(cb);
+        case 'cancelVideoFrameCallback':
+          return id => surface.cancelFrame(id);
+        case 'addEventListener':
+          return (type, fn) => surface.addEventListener(type, fn);
+        case 'removeEventListener':
+          return (type, fn) => surface.removeEventListener(type, fn);
+        default: {
+          const val = target[prop];
+          return typeof val === 'function' ? val.bind(target) : val;
+        }
+      }
+    },
+  });
+}
+
+function placeContentBoxCanvas(canvas, stageEl, videoWidth, videoHeight) {
+  if (!canvas || !stageEl) return;
+  const stageW = stageEl.clientWidth || 0;
+  const stageH = stageEl.clientHeight || 0;
+  if (!stageW || !stageH) return;
+  let boxW = stageW,
+    boxH = stageH,
+    left = 0,
+    top = 0;
+  if (videoWidth > 0 && videoHeight > 0) {
+    const scale = Math.min(stageW / videoWidth, stageH / videoHeight);
+    boxW = Math.max(1, Math.round(videoWidth * scale));
+    boxH = Math.max(1, Math.round(videoHeight * scale));
+    left = Math.round((stageW - boxW) / 2);
+    top = Math.round((stageH - boxH) / 2);
+  }
+  canvas.style.left = left + 'px';
+  canvas.style.top = top + 'px';
+  canvas.style.width = boxW + 'px';
+  canvas.style.height = boxH + 'px';
+}
+
 // One active overlay. Subtitle/font bytes are already fetched through viewer
 // grants; libraries never receive Plex URLs or choose external font services.
 export const subtitleRenderers = {
@@ -6,26 +73,39 @@ export const subtitleRenderers = {
       typeof WebAssembly === 'object' &&
       typeof Worker === 'function' &&
       typeof OffscreenCanvas === 'function' &&
+      typeof HTMLCanvasElement !== 'undefined' &&
       typeof HTMLCanvasElement.prototype.transferControlToOffscreen === 'function'
     );
   },
-  async create(video, format, assets, offset, signal, resolveMediaTime) {
+  async create(target, format, assets, offset, signal, resolveMediaTime) {
+    const surface = asMediaSurface(target);
+    const stageEl = surface.stageElement();
     const layer = document.createElement('div'),
       canvas = document.createElement('canvas');
     layer.className = 'subtitle-layer';
     layer.setAttribute('aria-hidden', 'true');
     canvas.className = 'subtitle-canvas';
     layer.append(canvas);
-    video.parentElement.append(layer);
+    stageEl?.append(layer);
     let renderer,
       renderAssFrame,
+      frameHandle,
       disposed = false,
       renderError;
-    const currentMediaTime = () =>
-      typeof resolveMediaTime === 'function' ? resolveMediaTime(video.currentTime) : video.currentTime;
+    const manualAssMode = format === 'ass' && (surface.isUbuPlayer() || !surface.videoElement);
+    const currentMediaTime = raw =>
+      typeof resolveMediaTime === 'function'
+        ? resolveMediaTime(Number.isFinite(raw) ? raw : surface.currentTime())
+        : Number.isFinite(raw)
+          ? raw
+          : surface.currentTime();
     const dispose = () => {
       if (disposed) return;
       disposed = true;
+      if (frameHandle !== undefined) {
+        surface.cancelFrame(frameHandle);
+        frameHandle = undefined;
+      }
       layer.remove();
       try {
         Promise.resolve(renderer?.destroy?.() || renderer?.dispose?.()).catch(() => {});
@@ -36,20 +116,51 @@ export const subtitleRenderers = {
       if (disposed || !renderer) return;
       const mediaTime = currentMediaTime();
       if (format === 'ass') {
-        if (!video.videoWidth || !video.videoHeight) return;
+        const w = surface.width(),
+          h = surface.height();
+        if (manualAssMode) placeContentBoxCanvas(canvas, stageEl, w, h);
+        if (!w || !h) return;
         void (renderAssFrame || renderer.manualRender)
           .call(
             renderer,
             {
               expectedDisplayTime: performance.now(),
-              width: video.videoWidth,
-              height: video.videoHeight,
+              width: w,
+              height: h,
               mediaTime,
             },
             true,
           )
           ?.catch(() => {});
-      } else renderer.renderAtMediaTime(mediaTime, true);
+      } else {
+        renderer.updateCanvasSize?.();
+        renderer.renderAtMediaTime(mediaTime, true);
+      }
+    };
+    const scheduleSurfaceFrameLoop = () => {
+      if (disposed || !manualAssMode || !surface.supportsFrameCallback()) return;
+      frameHandle = surface.requestFrame((now, meta) => {
+        frameHandle = undefined;
+        if (disposed || !renderer) return;
+        const w = meta?.width || surface.width(),
+          h = meta?.height || surface.height();
+        placeContentBoxCanvas(canvas, stageEl, w, h);
+        if (w > 0 && h > 0) {
+          void (renderAssFrame || renderer.manualRender)
+            .call(
+              renderer,
+              {
+                expectedDisplayTime: Number.isFinite(meta?.expectedDisplayTime) ? meta.expectedDisplayTime : now,
+                width: w,
+                height: h,
+                mediaTime: currentMediaTime(meta?.mediaTime),
+              },
+              false,
+            )
+            ?.catch(() => {});
+        }
+        scheduleSurfaceFrameLoop();
+      });
     };
     const wait = promise =>
       new Promise((resolve, reject) => {
@@ -82,8 +193,11 @@ export const subtitleRenderers = {
         const initialSubContent = assets.data
           ? new TextDecoder().decode(assets.data)
           : '[Script Info]\nScriptType: v4.00+\nPlayResX: 640\nPlayResY: 360\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n';
+        if (manualAssMode) {
+          placeContentBoxCanvas(canvas, stageEl, surface.width() || 1920, surface.height() || 1080);
+        }
         renderer = new JASSUB({
-          video,
+          ...(manualAssMode ? {} : { video: surface.videoElement }),
           canvas,
           subContent: initialSubContent,
           fonts: [fallbackFont, ...(assets.fonts || [])],
@@ -98,9 +212,7 @@ export const subtitleRenderers = {
         });
         const rawManualRender = renderer.manualRender.bind(renderer);
         renderAssFrame = rawManualRender;
-        // _handleRVFC passes raw browser video frame metadata.mediaTime into manualRender;
-        // normalize it through resolveMediaTime just like repaint() does.
-        if (typeof resolveMediaTime === 'function') {
+        if (!manualAssMode && typeof resolveMediaTime === 'function') {
           renderer.manualRender = (frameInfo, force = false) =>
             rawManualRender(
               frameInfo && typeof frameInfo === 'object'
@@ -116,15 +228,17 @@ export const subtitleRenderers = {
             );
         }
         await wait(renderer.ready);
+        if (manualAssMode) scheduleSurfaceFrameLoop();
       } else {
         const { PgsRenderer, VobSubRenderer } = await wait(import('/vendor/subtitles/libbitsub-renderer.js'));
         signal.throwIfAborted();
         const pushStream =
           (format === 'pgs' || format === 'vobsub') && !!(assets.subUrl || assets.pushStream) && !assets.data;
+        const videoTarget = surface.isUbuPlayer() ? createSurfaceVideoProxy(stageEl, surface) : surface.videoElement;
         await wait(
           new Promise((resolve, reject) => {
             const options = {
-              video,
+              video: videoTarget,
               canvas,
               container: layer,
               ...(pushStream
@@ -165,15 +279,15 @@ export const subtitleRenderers = {
       signal.throwIfAborted();
       repaint();
       const resizeObserver =
-        typeof ResizeObserver === 'function' && video.parentElement ? new ResizeObserver(() => repaint()) : undefined;
-      resizeObserver?.observe(video.parentElement);
-      for (const event of ['seeked', 'loadedmetadata', 'pause', 'playing', 'ratechange'])
-        video.addEventListener(event, repaint);
+        typeof ResizeObserver === 'function' && stageEl ? new ResizeObserver(() => repaint()) : undefined;
+      resizeObserver?.observe(stageEl);
+      for (const event of ['seeked', 'loadedmetadata', 'resize', 'pause', 'playing', 'ratechange'])
+        surface.addEventListener(event, repaint);
       const cleanup = () => {
         resizeObserver?.disconnect();
         signal.removeEventListener('abort', dispose);
-        for (const event of ['seeked', 'loadedmetadata', 'pause', 'playing', 'ratechange'])
-          video.removeEventListener(event, repaint);
+        for (const event of ['seeked', 'loadedmetadata', 'resize', 'pause', 'playing', 'ratechange'])
+          surface.removeEventListener(event, repaint);
         dispose();
       };
       return {
@@ -185,7 +299,11 @@ export const subtitleRenderers = {
             : format === 'ass'
               ? (async () => {
                   const text = new TextDecoder().decode(chunk);
-                  await (renderer.renderer?.setTrack ? renderer.renderer.setTrack(text) : Promise.resolve());
+                  if (renderer.renderer?.processData) {
+                    await renderer.renderer.processData(text);
+                  } else if (renderer.renderer?.setTrack) {
+                    await renderer.renderer.setTrack(text);
+                  }
                   repaint();
                   return 1;
                 })()

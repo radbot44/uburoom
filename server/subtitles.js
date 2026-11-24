@@ -60,7 +60,8 @@ async function load(media, signal) {
   const key = 'sidecar:' + track.id;
   media.subtitleCache ||= new Map();
   if (media.subtitleCache.has(key)) return media.subtitleCache.get(key);
-  const abort = AbortSignal.any([signal, media.subtitleAbort.signal, AbortSignal.timeout(30000)]);
+  media.subtitleAbort ||= new AbortController();
+  const abort = AbortSignal.any([signal, media.subtitleAbort.signal, AbortSignal.timeout(30000)].filter(Boolean));
   const resource = track.resources?.text || track.resources?.data;
   if (!resource) throw new PlaybackError('Subtitle selection no longer belongs to this file.');
   const text = await readText(

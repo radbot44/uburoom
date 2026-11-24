@@ -17,14 +17,76 @@ try {
 
 describeWasmSuite();
 
+function createMockWebCodecs() {
+  const stats = {
+    configureCount: 0,
+    resetCount: 0,
+    closeCount: 0,
+    configs: [],
+    chunks: [],
+  };
+  class MockEncodedVideoChunk {
+    constructor(init) {
+      this.type = init.type;
+      this.timestamp = init.timestamp;
+      this.duration = init.duration;
+      this.byteLength = init.data.byteLength;
+    }
+  }
+  class MockVideoDecoder {
+    static async isConfigSupported(config) {
+      return { supported: true, config };
+    }
+    constructor(init) {
+      this._output = init.output;
+      this._error = init.error;
+      this.state = 'unconfigured';
+      this.decodeQueueSize = 0;
+    }
+    configure(config) {
+      stats.configureCount++;
+      stats.configs.push(config);
+      this.state = 'configured';
+    }
+    decode(chunk) {
+      stats.chunks.push(chunk);
+      const width = stats.configs.at(-1)?.codedWidth || 320;
+      const height = stats.configs.at(-1)?.codedHeight || 180;
+      const frame = {
+        timestamp: chunk.timestamp,
+        duration: chunk.duration,
+        displayWidth: width,
+        displayHeight: height,
+        codedWidth: width,
+        codedHeight: height,
+        format: 'I420',
+        colorSpace: { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false },
+        close() {},
+      };
+      queueMicrotask(() => {
+        if (this.state === 'configured') this._output(frame);
+      });
+    }
+    async flush() {}
+    reset() {
+      stats.resetCount++;
+    }
+    close() {
+      stats.closeCount++;
+      this.state = 'closed';
+    }
+  }
+  return { stats, VideoDecoder: MockVideoDecoder, EncodedVideoChunk: MockEncodedVideoChunk };
+}
+
 function describeWasmSuite() {
   if (!hasFfmpeg) return;
   let tmpDir;
   let createWorkerEngine;
 
   before(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-libav-test-'));
-    const workerMod = await import(pathToFileURL(path.join(__dirname, '../../web/watch-file-worker.js')).href);
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-ubuplayer-test-'));
+    const workerMod = await import(pathToFileURL(path.join(__dirname, '../../web/ubuplayer-worker.js')).href);
     createWorkerEngine = workerMod.createWorkerEngine;
 
     const fontPath = path.join(tmpDir, 'DummyFont.ttf');
@@ -58,7 +120,7 @@ function describeWasmSuite() {
       '-f',
       'lavfi',
       '-i',
-      'testsrc2=size=320x180:rate=24:duration=3',
+      'testsrc2=size=160x90:rate=24:duration=3',
       '-f',
       'lavfi',
       '-i',
@@ -85,6 +147,8 @@ function describeWasmSuite() {
       '3:s:0',
       '-c:v',
       'libx264',
+      '-threads',
+      '1',
       '-preset',
       'ultrafast',
       '-pix_fmt',
@@ -112,7 +176,7 @@ function describeWasmSuite() {
       path.join(tmpDir, 'dts_dual.mkv'),
     ]);
 
-    // 2. HEVC 10-bit + TrueHD 5.1 MKV
+    // 2. HEVC 10-bit HDR10 (SMPTE ST 2084 + MasteringDisplay/ContentLight SEI) + TrueHD + E-AC-3 5.1 MKV
     execFileSync('ffmpeg', [
       '-y',
       '-hide_banner',
@@ -121,26 +185,40 @@ function describeWasmSuite() {
       '-f',
       'lavfi',
       '-i',
-      'testsrc2=size=320x180:rate=24:duration=4',
+      'testsrc2=size=160x90:rate=24:duration=4',
       '-f',
       'lavfi',
       '-i',
       'sine=frequency=523:sample_rate=48000:duration=4',
+      '-map',
+      '0:v:0',
+      '-map',
+      '1:a:0',
+      '-map',
+      '1:a:0',
       '-c:v',
       'libx265',
+      '-threads',
+      '1',
       '-preset',
       'ultrafast',
       '-pix_fmt',
       'yuv420p10le',
       '-x265-params',
-      'keyint=24:min-keyint=24:log-level=error',
-      '-c:a',
+      'keyint=24:min-keyint=24:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,50):max-cll=1000,400:log-level=error',
+      '-c:a:0',
       'truehd',
       '-strict',
       '-2',
-      '-ac',
+      '-ac:a:0',
+      '2',
+      '-c:a:1',
+      'eac3',
+      '-ac:a:1',
       '6',
-      path.join(tmpDir, 'hevc_truehd.mkv'),
+      '-b:a:1',
+      '384k',
+      path.join(tmpDir, 'hevc_hdr10_truehd.mkv'),
     ]);
   });
 
@@ -149,59 +227,78 @@ function describeWasmSuite() {
   });
 
   test(
-    'watch-file-worker demuxes MKV DTS 5.1 + ASS + font attachment, switches audio tracks, and outputs valid fMP4',
-    { timeout: 15000 },
+    'ubuplayer-worker demuxes MKV compressed packets + direct Float32 PCM and switches audio/subtitles without resetting VideoDecoder',
+    { timeout: 20000 },
     async () => {
       const fileBuf = fs.readFileSync(path.join(tmpDir, 'dts_dual.mkv'));
-      const vParts = [];
-      const aParts = [];
+      const mockWC = createMockWebCodecs();
+      const pcmBatches = [];
       const subEvents = [];
       let readyMsg = null;
+      let switchedMsg = null;
 
-      let doneResolve, doneReject;
-      const donePromise = new Promise((res, rej) => {
-        doneResolve = res;
-        doneReject = rej;
+      await new Promise((resolve, reject) => {
+        const engine = createWorkerEngine(msg => {
+          if (msg.type === 'read') {
+            const copy = new Uint8Array(fileBuf.subarray(msg.start, Math.min(fileBuf.length, msg.end)));
+            setImmediate(() => engine.onMessage({ type: 'readResult', id: msg.id, bytes: copy.buffer }));
+          } else if (msg.type === 'error') {
+            void engine.cleanup().then(() => reject(new Error(msg.message)));
+          } else if (msg.type === 'ready') {
+            readyMsg = msg;
+            engine.onMessage({ type: 'selectSubtitle', subGen: 1, subtitleId: msg.subtitleTracks[0].id, time: 0 });
+          } else if (msg.type === 'subtitleInit' || msg.type === 'subtitleData') {
+            subEvents.push(msg);
+          } else if (msg.type === 'audioPcm') {
+            pcmBatches.push(msg);
+            if (msg.audioGen === 0 && msg.eof && !switchedMsg) {
+              // Switch live to Track 2 (Japanese AC-3) mid-session without seeking video!
+              engine.onMessage({
+                type: 'selectAudio',
+                audioGen: 2,
+                audioId: readyMsg.audioTracks[1].id,
+                time: 1.0,
+                aheadSeconds: 10,
+              });
+            } else if (msg.audioGen === 2 && msg.samples > 0) {
+              void engine.cleanup().then(resolve);
+            }
+          } else if (msg.type === 'audioSwitched') {
+            switchedMsg = msg;
+          }
+        }, mockWC);
+
+        const initial = new Uint8Array(fileBuf.subarray(0, Math.min(fileBuf.length, 65536)));
+        engine.onMessage({
+          type: 'init',
+          fileSize: fileBuf.length,
+          aheadSeconds: 30,
+          initialBytes: initial.buffer,
+        });
       });
 
-      const engine = createWorkerEngine(msg => {
-        if (msg.type === 'read') {
-          const slice = fileBuf.subarray(msg.start, Math.min(fileBuf.length, msg.end));
-          const copy = new Uint8Array(slice);
-          setImmediate(() => engine.onMessage({ type: 'readResult', id: msg.id, bytes: copy.buffer }));
-        } else if (msg.type === 'error') {
-          doneReject(new Error(msg.message));
-        } else if (msg.type === 'ready') {
-          readyMsg = msg;
-          if (msg.videoInit?.byteLength) vParts.push(Buffer.from(msg.videoInit));
-          if (msg.audioInit?.byteLength) aParts.push(Buffer.from(msg.audioInit));
-          engine.onMessage({ type: 'selectSubtitle', subGen: 1, subtitleId: msg.subtitleTracks[0].id });
-        } else if (msg.type === 'subtitleInit' || msg.type === 'subtitleData') {
-          subEvents.push(msg);
-        } else if (msg.type === 'segment') {
-          if (msg.videoBytes?.byteLength) vParts.push(Buffer.from(msg.videoBytes));
-          if (msg.audioBytes?.byteLength) aParts.push(Buffer.from(msg.audioBytes));
-          if (msg.eof) doneResolve();
-        }
-      });
-
-      const initial = new Uint8Array(fileBuf.subarray(0, Math.min(fileBuf.length, 65536)));
-      engine.onMessage({
-        type: 'init',
-        fileSize: fileBuf.length,
-        flacSupported: true,
-        aheadSeconds: 30,
-        initialBytes: initial.buffer,
-      });
-
-      await donePromise;
       assert.ok(readyMsg, 'Worker emitted ready metadata');
-      assert.match(readyMsg.video.mime, /^video\/mp4; codecs="avc1\./);
+      assert.match(readyMsg.video.webCodecsCodec, /^avc1\./);
       assert.equal(readyMsg.audioTracks.length, 2, 'Detected both DTS 5.1 and AC-3 2.0 audio tracks');
       assert.equal(readyMsg.audioTracks[0].codec, 'dts');
       assert.equal(readyMsg.audioTracks[1].codec, 'ac3');
       assert.equal(readyMsg.subtitleTracks.length, 1);
 
+      // Verify VideoDecoder was configured ONCE and NEVER reset during selectSubtitle or selectAudio!
+      assert.equal(mockWC.stats.configureCount, 1, 'VideoDecoder configured once');
+      assert.equal(mockWC.stats.resetCount, 0, 'selectAudio and selectSubtitle never reset VideoDecoder');
+      assert.equal(mockWC.stats.chunks.length, 72, 'All 72 compressed H.264 packets fed directly to VideoDecoder');
+
+      // Verify direct Float32 stereo PCM output for DTS 5.1 and switched AC-3
+      const gen0Samples = pcmBatches.filter(b => b.audioGen === 0).reduce((acc, b) => acc + b.samples, 0);
+      assert.ok(gen0Samples > 48000 * 2.5, 'Decoded >2.5s of 48 kHz Float32 PCM from DTS 5.1');
+      assert.equal(switchedMsg?.selectedAudioId, readyMsg.audioTracks[1].id);
+      assert.ok(
+        pcmBatches.some(b => b.audioGen === 2 && b.samples > 0),
+        'Decoded switched AC-3 audio to Float32 PCM',
+      );
+
+      // Verify embedded ASS subtitle header, MKV TTF font attachment, and Dialogue packet extraction
       const subInit = subEvents.find(e => e.type === 'subtitleInit');
       assert.ok(subInit, 'Emitted ASS subtitleInit');
       assert.equal(subInit.fonts.length, 1, 'Extracted MKV TTF font attachment');
@@ -210,248 +307,89 @@ function describeWasmSuite() {
         subEvents.some(e => e.type === 'subtitleData'),
         'Streamed ASS Dialogue packet data',
       );
-
-      const vOut = path.join(tmpDir, 'verify_v.mp4');
-      const aOut = path.join(tmpDir, 'verify_a.mp4');
-      fs.writeFileSync(vOut, Buffer.concat(vParts));
-      fs.writeFileSync(aOut, Buffer.concat(aParts));
-      const vProbe = JSON.parse(
-        execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', vOut], { encoding: 'utf8' }),
-      );
-      const aProbe = JSON.parse(
-        execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', aOut], { encoding: 'utf8' }),
-      );
-      assert.equal(vProbe.streams[0].codec_name, 'h264');
-      assert.equal(aProbe.streams[0].codec_name, 'flac');
-      assert.equal(aProbe.streams[0].channels, 2);
-
-      await engine.cleanup();
-
-      // Verify live audio track switching to Track 2 (Japanese AC-3 -> AAC)
-      let switchedMsg = null;
-      await new Promise((resolve, reject) => {
-        const switchedEngine = createWorkerEngine(msg => {
-          if (msg.type === 'read') {
-            const copy = new Uint8Array(fileBuf.subarray(msg.start, Math.min(fileBuf.length, msg.end)));
-            setImmediate(() => switchedEngine.onMessage({ type: 'readResult', id: msg.id, bytes: copy.buffer }));
-          } else if (msg.type === 'ready') {
-            switchedEngine.onMessage({
-              type: 'selectAudio',
-              audioGen: 2,
-              seekGen: 2,
-              audioId: msg.audioTracks[1].id,
-              time: 1.0,
-              aheadSeconds: 10,
-            });
-          } else if (msg.type === 'audioSwitched') {
-            switchedMsg = msg;
-          } else if (msg.type === 'segment' && msg.audioGen === 2 && msg.audioBytes?.byteLength) {
-            void switchedEngine.cleanup().then(resolve);
-          } else if (msg.type === 'error') {
-            void switchedEngine.cleanup().then(() => reject(new Error(msg.message)));
-          }
-        });
-        switchedEngine.onMessage({
-          type: 'init',
-          fileSize: fileBuf.length,
-          flacSupported: false,
-          aheadSeconds: 10,
-        });
-      });
-
-      assert.ok(switchedMsg?.audioInit?.byteLength > 0, 'Produced fresh AAC fMP4 init segment on audio switch');
     },
   );
 
   test(
-    'watch-file-worker remuxes 10-bit HEVC (hvc1) + TrueHD 5.1 and preserves timestamps across mid-stream seek',
-    { timeout: 15000 },
+    'ubuplayer-worker detects 10-bit HEVC HDR10 metadata, decodes TrueHD 5.1 to Float32 PCM, and aligns mid-stream seek',
+    { timeout: 20000 },
     async () => {
-      const fileBuf = fs.readFileSync(path.join(tmpDir, 'hevc_truehd.mkv'));
-      const vParts = [];
-      const aParts = [];
+      const fileBuf = fs.readFileSync(path.join(tmpDir, 'hevc_hdr10_truehd.mkv'));
+      const mockWC = createMockWebCodecs();
       let readyMsg = null;
+      const pcmBatches = [];
+      const presentedFrames = [];
+      let audioDone = false;
 
       await new Promise((resolve, reject) => {
+        const maybeDone = engine => {
+          if (audioDone && presentedFrames.length > 0) {
+            void engine.cleanup().then(resolve);
+          }
+        };
         const engine = createWorkerEngine(msg => {
           if (msg.type === 'read') {
             const copy = new Uint8Array(fileBuf.subarray(msg.start, Math.min(fileBuf.length, msg.end)));
             setImmediate(() => engine.onMessage({ type: 'readResult', id: msg.id, bytes: copy.buffer }));
           } else if (msg.type === 'ready') {
             readyMsg = msg;
-            vParts.push(Buffer.from(msg.videoInit));
-            aParts.push(Buffer.from(msg.audioInit));
-          } else if (msg.type === 'segment') {
-            if (msg.videoBytes?.byteLength) vParts.push(Buffer.from(msg.videoBytes));
-            if (msg.audioBytes?.byteLength) aParts.push(Buffer.from(msg.audioBytes));
+          } else if (msg.type === 'framePresented') {
+            presentedFrames.push(msg);
+            maybeDone(engine);
+          } else if (msg.type === 'audioPcm') {
+            pcmBatches.push(msg);
             if (msg.eof) {
-              void engine.cleanup().then(resolve);
+              audioDone = true;
+              maybeDone(engine);
             }
           } else if (msg.type === 'error') {
             void engine.cleanup().then(() => reject(new Error(msg.message)));
           }
-        });
+        }, mockWC);
+
         engine.onMessage({
           type: 'init',
           fileSize: fileBuf.length,
-          flacSupported: true,
           startTime: 2.0,
           aheadSeconds: 10,
         });
       });
 
-      assert.match(readyMsg.video.mime, /^video\/mp4; codecs="hvc1\./, 'Tagged HEVC stream as hvc1');
-      const vOut = path.join(tmpDir, 'hevc_seek_v.mp4');
-      const aOut = path.join(tmpDir, 'hevc_seek_a.mp4');
-      fs.writeFileSync(vOut, Buffer.concat(vParts));
-      fs.writeFileSync(aOut, Buffer.concat(aParts));
-      const vProbe = JSON.parse(
-        execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', vOut], { encoding: 'utf8' }),
-      );
-      const aProbe = JSON.parse(
-        execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', aOut], { encoding: 'utf8' }),
-      );
-      assert.equal(vProbe.streams[0].codec_tag_string, 'hvc1');
-      assert.ok(Math.abs(Number(vProbe.streams[0].start_time) - 2.0) < 0.25, 'Seeked HEVC fMP4 starts near 2.0s');
+      assert.match(readyMsg.video.webCodecsCodec, /^hev1\.|^hvc1\./, 'Built WebCodecs HEVC codec string');
+      assert.equal(readyMsg.video.bitDepth, 10);
+      assert.equal(readyMsg.video.hdr, true);
+      assert.equal(readyMsg.video.hdrKind, 'hdr10');
+      assert.equal(readyMsg.video.maxCll, 1000);
+      assert.equal(readyMsg.video.maxFall, 400);
+      assert.equal(readyMsg.audioTracks.length, 2, 'Detected both TrueHD and E-AC-3 5.1 audio tracks');
+      assert.equal(readyMsg.audioTracks[0].codec, 'truehd');
+      assert.equal(readyMsg.audioTracks[1].codec, 'eac3');
+
+      assert.ok(mockWC.stats.chunks.length > 0, 'Fed seeked HEVC chunks to VideoDecoder');
+      assert.equal(mockWC.stats.chunks[0].type, 'key', 'First fed HEVC chunk after seek is a keyframe');
+      const firstVideoSec = mockWC.stats.chunks[0].timestamp / 1_000_000;
+      assert.ok(firstVideoSec <= 2.05, `VideoDecoder starts at preceding GOP keyframe <= 2.0s (got ${firstVideoSec}s)`);
+      assert.ok(presentedFrames.length > 0, 'Presented target video frame after discarding GOP pre-roll');
       assert.ok(
-        Math.abs(Number(aProbe.streams[0].start_time) - 2.0) < 0.25,
-        'Seeked TrueHD->FLAC fMP4 starts near 2.0s',
+        Math.abs(presentedFrames[0].mediaTime - 2.0) < 0.1,
+        `First presented frame after paused seek is at ~2.0s (got ${presentedFrames[0].mediaTime}s)`,
+      );
+
+      const firstAudio = pcmBatches.find(b => b.samples > 0);
+      assert.ok(firstAudio, 'Decoded TrueHD audio to Float32 PCM');
+      const firstAudioSec = firstAudio.startSample / firstAudio.sampleRate;
+      assert.ok(
+        Math.abs(firstAudioSec - 2.0) < 0.05,
+        `Seeked TrueHD PCM starts sample-accurately at 2.0s (got ${firstAudioSec}s)`,
       );
     },
   );
 
   test(
-    'watch-file-worker passes through MSE-native AAC audio without re-encoding and switches cleanly to decoded DTS',
-    { timeout: 15000 },
-    async () => {
-      const aacDtsPath = path.join(tmpDir, 'aac_dts.mkv');
-      execFileSync('ffmpeg', [
-        '-y',
-        '-hide_banner',
-        '-loglevel',
-        'error',
-        '-f',
-        'lavfi',
-        '-i',
-        'testsrc2=size=320x180:rate=24:duration=2',
-        '-f',
-        'lavfi',
-        '-i',
-        'sine=frequency=440:sample_rate=48000:duration=2',
-        '-f',
-        'lavfi',
-        '-i',
-        'sine=frequency=660:sample_rate=48000:duration=2',
-        '-map',
-        '0:v:0',
-        '-map',
-        '1:a:0',
-        '-map',
-        '2:a:0',
-        '-c:v',
-        'libx264',
-        '-preset',
-        'ultrafast',
-        '-pix_fmt',
-        'yuv420p',
-        '-g',
-        '24',
-        '-c:a:0',
-        'aac',
-        '-ac:a:0',
-        '2',
-        '-b:a:0',
-        '128k',
-        '-c:a:1',
-        'dca',
-        '-strict',
-        '-2',
-        '-ac:a:1',
-        '6',
-        '-b:a:1',
-        '768k',
-        aacDtsPath,
-      ]);
-
-      const fileBuf = fs.readFileSync(aacDtsPath);
-      const aParts = [];
-      let readyMsg = null;
-      await new Promise((resolve, reject) => {
-        const engine = createWorkerEngine(msg => {
-          if (msg.type === 'read') {
-            const copy = new Uint8Array(fileBuf.subarray(msg.start, Math.min(fileBuf.length, msg.end)));
-            setImmediate(() => engine.onMessage({ type: 'readResult', id: msg.id, bytes: copy.buffer }));
-          } else if (msg.type === 'ready') {
-            readyMsg = msg;
-            if (msg.audioInit?.byteLength) aParts.push(Buffer.from(msg.audioInit));
-          } else if (msg.type === 'segment') {
-            if (msg.audioBytes?.byteLength) aParts.push(Buffer.from(msg.audioBytes));
-            if (msg.eof) void engine.cleanup().then(resolve);
-          } else if (msg.type === 'error') {
-            void engine.cleanup().then(() => reject(new Error(msg.message)));
-          }
-        });
-        engine.onMessage({
-          type: 'init',
-          fileSize: fileBuf.length,
-          flacSupported: true,
-          passthroughAudioCodecs: ['aac', 'opus', 'flac'],
-          aheadSeconds: 10,
-        });
-      });
-
-      assert.equal(readyMsg.audioPassthrough, true);
-      assert.equal(readyMsg.audioMime, 'audio/mp4; codecs="mp4a.40.2"');
-      const aOut = path.join(tmpDir, 'passthrough_aac.mp4');
-      fs.writeFileSync(aOut, Buffer.concat(aParts));
-      const aProbe = JSON.parse(
-        execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', aOut], { encoding: 'utf8' }),
-      );
-      assert.equal(aProbe.streams[0].codec_name, 'aac');
-
-      let switchedMsg = null;
-      await new Promise((resolve, reject) => {
-        const engine = createWorkerEngine(msg => {
-          if (msg.type === 'read') {
-            const copy = new Uint8Array(fileBuf.subarray(msg.start, Math.min(fileBuf.length, msg.end)));
-            setImmediate(() => engine.onMessage({ type: 'readResult', id: msg.id, bytes: copy.buffer }));
-          } else if (msg.type === 'ready') {
-            engine.onMessage({
-              type: 'selectAudio',
-              audioGen: 2,
-              seekGen: 2,
-              audioId: msg.audioTracks[1].id,
-              time: 0,
-              aheadSeconds: 10,
-            });
-          } else if (msg.type === 'audioSwitched') {
-            switchedMsg = msg;
-          } else if (msg.type === 'segment' && msg.audioGen === 2 && msg.audioBytes?.byteLength) {
-            void engine.cleanup().then(resolve);
-          } else if (msg.type === 'error') {
-            void engine.cleanup().then(() => reject(new Error(msg.message)));
-          }
-        });
-        engine.onMessage({
-          type: 'init',
-          fileSize: fileBuf.length,
-          flacSupported: true,
-          passthroughAudioCodecs: ['aac', 'opus', 'flac'],
-          aheadSeconds: 10,
-        });
-      });
-
-      assert.equal(switchedMsg.audioPassthrough, false);
-      assert.equal(switchedMsg.audioMime, 'audio/mp4; codecs="flac"');
-    },
-  );
-
-  test(
-    'watch-file-worker preserves B-frame pyramid presentation timestamps in MKV without clamping and boosts discrete 5.1 center channel in dialogue mode',
-    { timeout: 15000 },
+    'ubuplayer-worker preserves B-frame pyramid presentation timestamps without synthetic DTS clamping and boosts discrete 5.1 center channel in dialogue mode',
+    { timeout: 20000 },
     async () => {
       const bframeMkv = path.join(tmpDir, 'bframes_51.mkv');
-      // 4-B-frame pyramid H.264 + 5.1 DTS with audio ONLY in the discrete Center (FC) channel.
       execFileSync('ffmpeg', [
         '-y',
         '-hide_banner',
@@ -460,7 +398,7 @@ function describeWasmSuite() {
         '-f',
         'lavfi',
         '-i',
-        'testsrc2=size=320x180:rate=24:duration=2',
+        'testsrc2=size=160x90:rate=24:duration=2',
         '-f',
         'lavfi',
         '-i',
@@ -473,6 +411,8 @@ function describeWasmSuite() {
         '[aout]',
         '-c:v',
         'libx264',
+        '-threads',
+        '1',
         '-preset',
         'fast',
         '-pix_fmt',
@@ -494,8 +434,8 @@ function describeWasmSuite() {
 
       const fileBuf = fs.readFileSync(bframeMkv);
       const runMode = async mode => {
-        const vParts = [];
-        const aParts = [];
+        const mockWC = createMockWebCodecs();
+        const leftChunks = [];
         let readyMsg = null;
         await new Promise((resolve, reject) => {
           const engine = createWorkerEngine(msg => {
@@ -504,62 +444,47 @@ function describeWasmSuite() {
               setImmediate(() => engine.onMessage({ type: 'readResult', id: msg.id, bytes: copy.buffer }));
             } else if (msg.type === 'ready') {
               readyMsg = msg;
-              if (msg.videoInit?.byteLength) vParts.push(Buffer.from(msg.videoInit));
-              if (msg.audioInit?.byteLength) aParts.push(Buffer.from(msg.audioInit));
-            } else if (msg.type === 'segment') {
-              if (msg.videoBytes?.byteLength) vParts.push(Buffer.from(msg.videoBytes));
-              if (msg.audioBytes?.byteLength) aParts.push(Buffer.from(msg.audioBytes));
+            } else if (msg.type === 'audioPcm') {
+              if (msg.left?.length) leftChunks.push(new Float32Array(msg.left));
               if (msg.eof) void engine.cleanup().then(resolve);
             } else if (msg.type === 'error') {
               void engine.cleanup().then(() => reject(new Error(msg.message)));
             }
-          });
+          }, mockWC);
           engine.onMessage({
             type: 'init',
             fileSize: fileBuf.length,
-            flacSupported: true,
             audioMode: mode,
             aheadSeconds: 10,
           });
         });
-        return { readyMsg, vBuf: Buffer.concat(vParts), aBuf: Buffer.concat(aParts) };
+        let sumSq = 0;
+        let count = 0;
+        for (const arr of leftChunks) {
+          for (let i = 0; i < arr.length; i++) {
+            sumSq += arr[i] * arr[i];
+            count++;
+          }
+        }
+        return {
+          readyMsg,
+          chunks: mockWC.stats.chunks,
+          rms: Math.sqrt(sumSq / Math.max(1, count)),
+        };
       };
 
+      // Run both concurrently to ALSO prove blockReadHandlers device-name isolation across concurrent sessions!
       const [normal, dialogue] = await Promise.all([runMode('normal'), runMode('dialogue')]);
       assert.equal(normal.readyMsg.surroundDialogueActive, false);
       assert.equal(dialogue.readyMsg.surroundDialogueActive, true);
 
-      // Verify B-frame pyramid PTS values are distinct and not clamped to DTS.
-      const vOut = path.join(tmpDir, 'bframes_v.mp4');
-      fs.writeFileSync(vOut, normal.vBuf);
-      const pkts = JSON.parse(
-        execFileSync('ffprobe', ['-v', 'error', '-show_packets', '-select_streams', 'v:0', '-of', 'json', vOut], {
-          encoding: 'utf8',
-        }),
-      ).packets;
-      const ptsList = pkts.map(p => Number(p.pts_time)).filter(Number.isFinite);
-      assert.equal(ptsList.length, 48, 'All 48 B-frame pyramid video packets preserved without drops');
-      const uniquePts = new Set(ptsList.map(t => Math.round(t * 1000)));
-      assert.equal(uniquePts.size, ptsList.length, 'No B-frame PTS values were clamped/duplicated');
+      assert.equal(normal.chunks.length, 48, 'All 48 B-frame pyramid packets fed to VideoDecoder');
+      const uniquePtsMs = new Set(normal.chunks.map(c => Math.round(c.timestamp / 1000)));
+      assert.equal(uniquePtsMs.size, 48, 'Every B-frame pyramid packet kept its distinct presentation timestamp');
 
-      // Verify discrete Center (FC) channel is louder in dialogue mode than normal mode.
-      const rmsOf = buf => {
-        const p = path.join(tmpDir, `rms_${Math.random().toString(36).slice(2)}.mp4`);
-        fs.writeFileSync(p, buf);
-        const pcm = execFileSync('ffmpeg', ['-v', 'error', '-i', p, '-f', 's16le', '-ac', '2', 'pipe:1']);
-        let sumSq = 0;
-        const samples = pcm.length / 2;
-        for (let i = 0; i < pcm.length; i += 2) {
-          const s = pcm.readInt16LE(i) / 32768;
-          sumSq += s * s;
-        }
-        return Math.sqrt(sumSq / Math.max(1, samples));
-      };
-      const normalRms = rmsOf(normal.aBuf);
-      const dialogueRms = rmsOf(dialogue.aBuf);
       assert.ok(
-        dialogueRms > normalRms * 1.4,
-        `Expected dialogue mode (${dialogueRms.toFixed(4)}) to boost discrete Center channel over normal (${normalRms.toFixed(4)})`,
+        dialogue.rms > normal.rms * 1.4,
+        `Expected dialogue mode (${dialogue.rms.toFixed(4)}) to boost discrete 5.1 Center channel over normal (${normal.rms.toFixed(4)})`,
       );
     },
   );

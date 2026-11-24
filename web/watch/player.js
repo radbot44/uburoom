@@ -17,12 +17,13 @@ export function mount(host, deps) {
   }
   deps.video.addEventListener('waiting', () => {
     deps.time.clearTimeout(store.stream.directStallTimer);
-    if (!store.room.state?.directDelivery) return;
+    if (!store.room.state?.directDelivery || deps.surface.isUbuPlayer()) return;
     const stream = store.room.state.streamVersion,
       position = deps.video.currentTime;
     store.stream.directStallTimer = deps.time.setTimeout(() => {
       if (
         store.room.state?.directDelivery &&
+        !deps.surface.isUbuPlayer() &&
         store.room.state.streamVersion === stream &&
         !deps.video.paused &&
         deps.video.readyState < 3 &&
@@ -32,15 +33,16 @@ export function mount(host, deps) {
     }, 8000);
   });
   for (const evt of ['playing', 'canplay', 'loadeddata']) {
-    deps.video.addEventListener(evt, () => clearDirectTimers(true));
+    deps.surface.addEventListener(evt, () => clearDirectTimers(true));
   }
   for (const evt of ['pause', 'seeked']) {
-    deps.video.addEventListener(evt, () => clearDirectTimers(false));
+    deps.surface.addEventListener(evt, () => clearDirectTimers(false));
   }
   deps.video.addEventListener('progress', () => {
     if (
       !store.stream.directStartupTimer ||
       !store.room.state?.directDelivery ||
+      deps.surface.isUbuPlayer() ||
       deps.video.readyState >= 2 ||
       deps.time.mono() - (store.stream.directStartupBegan || 0) >= 30000
     )
@@ -49,13 +51,19 @@ export function mount(host, deps) {
     deps.time.clearTimeout(store.stream.directStartupTimer);
     store.stream.directStartupTimer = deps.time.setTimeout(() => {
       store.stream.directStartupTimer = undefined;
-      if (store.room.state?.directDelivery && store.room.state.streamVersion === stream && deps.video.readyState < 2)
+      if (
+        store.room.state?.directDelivery &&
+        !deps.surface.isUbuPlayer() &&
+        store.room.state.streamVersion === stream &&
+        deps.video.readyState < 2
+      )
         void deps.proxyDirectFile();
     }, 8000);
   });
   window.addEventListener('online', () => {
     if (
       store.room.state?.directDelivery &&
+      !deps.surface.isUbuPlayer() &&
       !store.stream.directProbe &&
       !store.stream.directStartupTimer &&
       (deps.video.error || (deps.video.readyState < 2 && deps.video.networkState === 3))
@@ -63,10 +71,11 @@ export function mount(host, deps) {
       void deps.proxyDirectFile();
   });
   function watchFrames() {
-    if (!deps.video.requestVideoFrameCallback) return;
-    store.player.frameCallback = deps.video.requestVideoFrameCallback((now, metadata) => {
+    if (!deps.surface.supportsFrameCallback()) return;
+    store.player.frameCallback = deps.surface.requestFrame((now, metadata) => {
       store.player.videoFrames++;
       try {
+        const active = deps.activePlayer;
         const timing = deps.time.clock.read(metadata.expectedDisplayTime);
         const target = uburoomTiming.target(store.room.state, timing.serverTime);
         const frame = deps.time.presentation.frame(now, metadata, {
@@ -85,16 +94,16 @@ export function mount(host, deps) {
             sharedTarget: target,
             presentationErrorMs,
             smoothedPresentationErrorMs: frame.smoothedPresentationErrorMs,
-            paused: deps.video.paused,
+            paused: active.paused(),
             roomPaused: store.room.state?.state.paused,
-            seeking: deps.video.seeking,
+            seeking: active.seeking(),
             waiting: store.player.playerWaiting,
-            ready: deps.video.readyState,
-            rate: deps.video.playbackRate,
+            ready: active.readyState(),
+            rate: active.playbackRate(),
             syncMode: store.preferences.syncCorrectionMode,
             settling: deps.time.mono() - store.player.lastPresentationBreak < 2000,
             visibility: document.visibilityState,
-            bufferAhead: uburoomPlayback.bufferedAhead(deps.video.buffered, deps.video.currentTime),
+            bufferAhead: active.bufferedAhead(active.currentTime()),
           });
       } catch {
         /* Diagnostics cannot stop the decoded-frame evidence loop. */
@@ -146,7 +155,14 @@ export function mount(host, deps) {
       choppyDetector.triggerCooldown(10000, deps.time.mono());
       if (store.room.state?.mediaId && store.room.state.mediaId !== 'demo') {
         deps
-          .execute({ action: 'media.quality.set', args: { quality: store.preferences.preferredQuality } })
+          .execute({
+            action: 'media.quality.set',
+            args: {
+              quality: store.preferences.preferredQuality,
+              ubuplayer: deps.canUseUbuPlayer?.(),
+              gpuTonemap: deps.canGpuTonemap?.(),
+            },
+          })
           .catch(error => deps.fail(error.message));
       }
     }
@@ -174,13 +190,14 @@ export function mount(host, deps) {
       }
       return;
     }
-    const quality = deps.video.getVideoPlaybackQuality?.();
+    const active = deps.activePlayer;
+    const quality = deps.surface.playbackQuality();
     const conditions = {
-      paused: deps.video.paused || !!store.room.state?.state?.paused,
-      seeking: deps.video.seeking || store.player.seekDragging || store.player.sync?.timelinePending,
-      waiting: store.player.playerWaiting || deps.video.readyState < 3,
+      paused: active.paused() || !!store.room.state?.state?.paused,
+      seeking: active.seeking() || store.player.seekDragging || store.player.sync?.timelinePending,
+      waiting: store.player.playerWaiting || active.readyState() < 3,
       visible: document.visibilityState === 'visible',
-      active: !store.room.pending && !store.stream.qualityPending && deps.video.currentTime > 1,
+      active: !store.room.pending && !store.stream.qualityPending && active.currentTime() > 1,
     };
     const result = choppyDetector.update(deps.time.mono(), quality, conditions);
     if (result.rearmed) deps.diagnostics.record('playback-rearmed');
@@ -232,7 +249,7 @@ export function mount(host, deps) {
   }
   function decodedFrames() {
     if (deps.youtube?.isActive()) return deps.youtube.frames();
-    const quality = deps.video.getVideoPlaybackQuality?.();
+    const quality = deps.surface.playbackQuality();
     return store.player.videoFrames || (quality ? quality.totalVideoFrames - quality.droppedVideoFrames : undefined);
   }
   function checkVideoFrames() {
@@ -241,29 +258,26 @@ export function mount(host, deps) {
       store.player.frameStartedAt = undefined;
       return;
     }
+    const active = deps.activePlayer,
+      surface = deps.surface;
     const interrupted =
       !store.room.state?.mediaUrl ||
-      deps.video.paused ||
+      active.paused() ||
       !!store.room.state?.state?.paused ||
-      deps.video.seeking ||
+      active.seeking() ||
       store.player.seekDragging ||
       !!store.player.sync?.timelinePending ||
       store.room.pending ||
       store.stream.qualityPending ||
       !!store.stream.heldStream ||
       document.visibilityState !== 'visible';
-    store.player.playbackHealth = playbackHealthTracker.update(
-      deps.time.mono(),
-      deps.video.getVideoPlaybackQuality?.(),
-      {
-        stalled:
-          !!store.room.state?.mediaUrl &&
-          (store.player.playerWaiting || (!deps.video.paused && deps.video.readyState < 3)),
-        interrupted,
-      },
-    );
+    store.player.playbackHealth = playbackHealthTracker.update(deps.time.mono(), surface.playbackQuality(), {
+      stalled:
+        !!store.room.state?.mediaUrl && (store.player.playerWaiting || (!active.paused() && active.readyState() < 3)),
+      interrupted,
+    });
     deps.fallbackPlayback.tick({
-      bufferAhead: uburoomPlayback.bufferedAhead(deps.video.buffered, deps.video.currentTime),
+      bufferAhead: active.bufferedAhead(active.currentTime()),
       stallSeconds: playbackHealthTracker.currentStallSeconds(),
       interrupted: interrupted || store.player.autoplayBlocked,
       target: deps.expected(),
@@ -272,8 +286,8 @@ export function mount(host, deps) {
     // Hidden or minimized pages may stop producing frames while audio continues.
     if (
       !store.room.state?.mediaUrl ||
-      deps.video.paused ||
-      deps.video.seeking ||
+      active.paused() ||
+      active.seeking() ||
       store.player.autoplayBlocked ||
       store.player.playbackError ||
       store.stream.fallbackPending ||
@@ -286,12 +300,12 @@ export function mount(host, deps) {
     }
     const now = deps.time.mono();
     const frames = decodedFrames();
-    if (frames > 0 && deps.video.videoWidth > 0 && deps.video.videoHeight > 0) {
+    if (frames > 0 && surface.width() > 0 && surface.height() > 0) {
       store.player.noFramePlayingMs = 0;
       store.player.lastFrameCheckAt = now;
       return;
     }
-    if (!store.player.playerWaiting && deps.video.readyState >= 3 && deps.video.currentTime > 1) {
+    if (!store.player.playerWaiting && active.readyState() >= 3 && active.currentTime() > 1) {
       store.player.frameStartedAt ??= now;
       if (store.player.lastFrameCheckAt !== undefined) {
         store.player.noFramePlayingMs =
@@ -353,15 +367,16 @@ export function mount(host, deps) {
     store.player.playerWaiting = false;
     store.stream.av1?.destroy();
     store.stream.av1 = undefined;
-    store.stream.filePlayer?.destroy();
-    store.stream.filePlayer = undefined;
+    if (store.player.frameCallback !== undefined) deps.surface.cancelFrame(store.player.frameCallback);
+    store.player.frameCallback = undefined;
+    deps.surface.detachUbuPlayer();
+    store.stream.ubuplayer?.destroy?.();
+    store.stream.ubuplayer = undefined;
     deps.time.clearTimeout(store.stream.hlsRecoveryTimer);
     deps.time.clearTimeout(store.stream.hlsNativeErrorTimer);
     store.stream.hlsNativeErrorTimer = undefined;
     store.stream.hlsRecoveryCount = 0;
     $('acceleration-help').hidden = true;
-    if (store.player.frameCallback !== undefined) deps.video.cancelVideoFrameCallback?.(store.player.frameCallback);
-    store.player.frameCallback = undefined;
     store.player.frameStartedAt = undefined;
     store.player.noFramePlayingMs = 0;
     store.player.lastFrameCheckAt = undefined;
@@ -448,9 +463,11 @@ export function mount(host, deps) {
   }
   async function unlockLocal() {
     if (deps.youtube?.isActive()) return deps.youtube.unlock();
+    const active = deps.activePlayer,
+      surface = deps.surface;
     if (
       !store.room.state?.mediaUrl ||
-      deps.video.readyState < 2 ||
+      active.readyState() < 2 ||
       store.stream.probing ||
       store.player.playbackError ||
       store.player.sync.timelinePending
@@ -462,63 +479,65 @@ export function mount(host, deps) {
     let playTimer;
     try {
       await Promise.race([
-        deps.video.play(),
+        active.play(),
         new Promise((resolve, reject) => {
           playTimer = deps.time.setTimeout(() => {
-            if (store.room.state?.mediaVersion === version && store.stream.mediaSource === source) deps.video.pause();
+            if (store.room.state?.mediaVersion === version && store.stream.mediaSource === source) active.pause();
             reject(new DOMException('Playback is still buffering', 'AbortError'));
           }, 8500);
         }),
       ]);
       deps.time.clearTimeout(playTimer);
       if (
-        (decodedFrames() === 0 || !deps.video.videoWidth) &&
+        (decodedFrames() === 0 || !surface.width()) &&
         store.room.state?.mediaVersion === version &&
         store.stream.mediaSource === source &&
-        !deps.video.error
+        !surface.errorCode() &&
+        !store.player.playbackError
       ) {
         await new Promise(resolve => {
           let waitTimer, frameId;
           const check = () => {
             if (
-              (decodedFrames() > 0 && deps.video.videoWidth > 0) ||
+              (decodedFrames() > 0 && surface.width() > 0) ||
               store.room.state?.mediaVersion !== version ||
               store.stream.mediaSource !== source ||
-              deps.video.error
+              surface.errorCode() ||
+              store.player.playbackError
             ) {
               finish();
               return;
             }
-            if (typeof deps.video.requestVideoFrameCallback === 'function') {
-              frameId = deps.video.requestVideoFrameCallback(check);
+            if (surface.supportsFrameCallback()) {
+              frameId = surface.requestFrame(check);
             }
           };
           const finish = () => {
             deps.time.clearTimeout(waitTimer);
-            if (frameId !== undefined) deps.video.cancelVideoFrameCallback?.(frameId);
+            if (frameId !== undefined) surface.cancelFrame(frameId);
             for (const evt of ['loadeddata', 'canplay', 'playing', 'timeupdate', 'error'])
-              deps.video.removeEventListener?.(evt, check);
+              surface.removeEventListener(evt, check);
             resolve();
           };
           waitTimer = deps.time.setTimeout(finish, 8500);
           for (const evt of ['loadeddata', 'canplay', 'playing', 'timeupdate', 'error'])
-            deps.video.addEventListener?.(evt, check);
-          if (typeof deps.video.requestVideoFrameCallback === 'function') {
-            frameId = deps.video.requestVideoFrameCallback(check);
+            surface.addEventListener(evt, check);
+          if (surface.supportsFrameCallback()) {
+            frameId = surface.requestFrame(check);
           } else {
             check();
           }
         });
       }
       if (store.room.state?.mediaVersion !== version || store.stream.mediaSource !== source) return false;
-      const hasDecodedFrame = decodedFrames() > 0 && deps.video.videoWidth > 0;
+      const hasDecodedFrame = decodedFrames() > 0 && surface.width() > 0;
       if (!hasDecodedFrame && document.visibilityState === 'visible') {
         void deps.compatibleFallback('No video frames were decoded.');
         return false;
       }
       if (hasDecodedFrame) store.stream.readyVersion = version;
       store.player.autoplayBlocked = false;
-      if (store.room.state.state.paused) deps.video.pause();
+      if (store.room.state.state.paused) active.pause();
       return true;
     } catch (error) {
       if (store.room.state?.mediaVersion === version && error.name === 'NotAllowedError')
@@ -530,23 +549,24 @@ export function mount(host, deps) {
       deps.renderTransport();
     }
   }
-  deps.video.addEventListener('loadedmetadata', () => {
+  deps.surface.addEventListener('loadedmetadata', () => {
     void store.player.sync.synchronize();
   });
-  deps.video.addEventListener('canplay', () => {
+  deps.surface.addEventListener('canplay', () => {
     void store.player.sync.synchronize();
     if (store.room.state?.waitingForReady || store.room.state?.readiness) void deps.reportReadiness();
   });
-  deps.video.addEventListener('playing', () => {
+  deps.surface.addEventListener('playing', () => {
     deps.time.clearTimeout(store.stream.hlsNativeErrorTimer);
     store.stream.hlsNativeErrorTimer = undefined;
   });
-  deps.video.addEventListener('seeked', () => {
+  deps.surface.addEventListener('seeked', () => {
     void store.player.sync.synchronize();
     if (store.room.state?.waitingForReady || store.room.state?.readiness) void deps.reportReadiness();
   });
   deps.video.addEventListener('error', () => {
     if (
+      deps.surface.isUbuPlayer() ||
       !deps.video.getAttribute('src') ||
       !store.room.state?.mediaUrl ||
       !deps.video.error ||

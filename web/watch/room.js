@@ -1,6 +1,6 @@
 import * as uburoom from '../../shared/engine.mjs';
 import { uburoomAV1 } from '../watch-av1.js';
-import { uburoomFilePlayer } from '../watch-file-player.js';
+import { UbuPlayer } from '../ubuplayer.js';
 import * as uburoomControls from '../watch-controls.js';
 import * as uburoomDialogs from '../watch-dialogs.js';
 import * as uburoomPlayback from '../playback-policy.js';
@@ -264,12 +264,16 @@ export function mount(host, deps) {
     }
     const sidecar =
       store.stream.localSidecarSubtitle?.mediaVersion === view.mediaVersion ? store.stream.localSidecarSubtitle : null;
+    const ubuAllowed = deps.canUseUbuPlayer ? deps.canUseUbuPlayer() : store.identity.config?.ubuplayer !== false;
+    if (!ubuAllowed && store.stream.localFile) {
+      store.stream.localFile = undefined;
+    }
     const localFile =
-      view.format === 'local' && store.stream.localFile?.mediaVersion === view.mediaVersion
+      ubuAllowed && view.format === 'local' && store.stream.localFile?.mediaVersion === view.mediaVersion
         ? store.stream.localFile
         : null;
     if (view.format === 'local' && !localFile) {
-      // Tab reloaded while server still held localDelivery in reconnect grace: switch back to room stream.
+      // Tab reloaded (or UbuPlayer was disabled) while server held localDelivery: switch back to room stream cleanly without setting video.src = 'local://selected'.
       if (view.mediaVersion && !store.stream.localAutoResetVersion?.includes(view.mediaVersion)) {
         store.stream.localAutoResetVersion = [view.mediaVersion];
         queueMicrotask(() => {
@@ -278,7 +282,7 @@ export function mount(host, deps) {
             .catch(() => {});
         });
       }
-      return view;
+      return { ...view, mediaUrl: undefined };
     }
     if (!localFile && !sidecar) return view;
     const serverSubs = (view.tracks?.subtitles || []).map(s =>
@@ -494,59 +498,73 @@ export function mount(host, deps) {
         if (next.format === 'youtube-embed') {
           deps.youtube.attach(next);
         } else if (next.format === 'local') {
-          if (store.stream.localFile?.mediaVersion === next.mediaVersion) {
-            deps.watchFrames();
+          const canUbu = deps.canUseUbuPlayer ? deps.canUseUbuPlayer() : store.identity.config?.ubuplayer !== false;
+          if (canUbu && store.stream.localFile?.mediaVersion === next.mediaVersion) {
             const localFile = store.stream.localFile;
-            store.stream.filePlayer = new uburoomFilePlayer(
-              deps.video,
-              { file: localFile.file },
-              deps.expected,
-              message => {
-                store.player.playbackError = message;
-                deps.toasts.show('local-file-error', {
-                  type: 'error',
-                  title: 'Local file playback stopped',
-                  hint: message,
-                  symbol: 'alert-triangle',
-                  persistent: true,
-                  action: {
-                    label: 'Use room stream',
-                    run: () => {
-                      deps.toasts.dismiss('local-file-error');
-                      void deps.useRoomStream?.();
-                    },
+            const audioChain = deps.ensureAudioProcessingInput?.();
+            const wantHdr = uburoomPlayback.supportsHdrDisplay(undefined, hdrMode());
+            store.stream.ubuplayer = deps.surface.attachUbuPlayer(
+              canvas =>
+                new UbuPlayer(
+                  canvas,
+                  { file: localFile.file },
+                  deps.expected,
+                  message => {
+                    store.player.playbackError = message;
+                    deps.toasts.show('local-file-error', {
+                      type: 'error',
+                      title: 'Local file playback stopped',
+                      hint: message,
+                      symbol: 'alert-triangle',
+                      persistent: true,
+                      action: {
+                        label: 'Use room stream',
+                        run: () => {
+                          deps.toasts.dismiss('local-file-error');
+                          void deps.useRoomStream?.();
+                        },
+                      },
+                    });
                   },
-                });
-              },
-              {
-                duration: localFile.probed.duration || next.state?.duration,
-                audioId: next.tracks?.audioId,
-                audioMode: store.preferences.playerPreferences.audioMode || 'normal',
-                onAudioStateChange: () => {
-                  deps.applyAudioMode?.();
-                  deps.renderTracks?.();
-                },
-                subtitleId: String(next.tracks?.subtitleId || '').startsWith('local-s-')
-                  ? next.tracks.subtitleId
-                  : null,
-                onSubtitleInit: subMsg => {
-                  void deps.captions.setLocalSubtitle({
-                    key: `${localFile.key}:${subMsg.subtitleId}`,
-                    format: subMsg.format,
-                    data: subMsg.header,
-                    fonts: subMsg.fonts,
-                    pushStream: subMsg.format === 'pgs',
-                  });
-                },
-                onSubtitleCues: cues => deps.captions.appendLocalCues(cues),
-                onSubtitleData: (_fmt, bytes) => void deps.captions.appendLocalData(bytes),
-              },
+                  {
+                    duration: localFile.probed.duration || next.state?.duration,
+                    volume: (next.state?.volume ?? store.preferences.playerPreferences?.volume ?? 100) / 100,
+                    muted: Boolean(next.state?.muted ?? store.preferences.playerPreferences?.muted),
+                    targetHdr: wantHdr,
+                    audioContext: audioChain?.audioContext,
+                    audioDestination: audioChain?.destination,
+                    audioId: next.tracks?.audioId,
+                    audioMode: store.preferences.playerPreferences?.audioMode || 'normal',
+                    onAudioStateChange: () => {
+                      deps.applyAudioMode?.();
+                      deps.renderTracks?.();
+                    },
+                    subtitleId: String(next.tracks?.subtitleId || '').startsWith('local-s-')
+                      ? next.tracks.subtitleId
+                      : null,
+                    onSubtitleInit: subMsg => {
+                      void deps.captions.setLocalSubtitle({
+                        key: `${localFile.key}:${subMsg.subtitleId}`,
+                        format: subMsg.format,
+                        data: subMsg.header,
+                        fonts: subMsg.fonts,
+                        pushStream: subMsg.format === 'pgs',
+                      });
+                    },
+                    onSubtitleCues: cues => deps.captions.appendLocalCues(cues),
+                    onSubtitleData: (_fmt, bytes) => void deps.captions.appendLocalData(bytes),
+                  },
+                ),
             );
+            deps.watchFrames();
           }
         } else {
-          deps.watchFrames();
-          const canClientRemux =
-            uburoomPlayback.supportsClientRemux() && store.stream.clientRemuxFailed !== next.mediaVersion;
+          const canUseUbu =
+            (deps.canUseUbuPlayer ? deps.canUseUbuPlayer() : uburoomPlayback.supportsUbuPlayer()) &&
+            store.stream.ubuplayerFailed !== next.mediaVersion;
+          const canGpuTonemap =
+            canUseUbu && (deps.canGpuTonemap ? deps.canGpuTonemap() : uburoomPlayback.supportsGpuTonemap());
+          const ubuCaps = { ubuplayer: canUseUbu, gpuTonemap: canGpuTonemap };
           if (
             (next.format === 'file' &&
               uburoomPlayback.needsCompatible(
@@ -554,7 +572,7 @@ export function mount(host, deps) {
                 type => deps.video.canPlayType(type),
                 undefined,
                 hdrMode(),
-                canClientRemux,
+                ubuCaps,
               )) ||
             (next.format === 'hls' &&
               uburoomPlayback.needsVideoConversion(next, type => deps.video.canPlayType(type), undefined, hdrMode()))
@@ -564,6 +582,7 @@ export function mount(host, deps) {
               type => deps.video.canPlayType(type),
               undefined,
               hdrMode(),
+              next.format === 'file' ? ubuCaps : false,
             );
             const reason =
               next.hdrKind === 'dovi-p5' && videoUnsupported
@@ -692,46 +711,63 @@ export function mount(host, deps) {
             });
           else if (
             next.format === 'file' &&
-            canClientRemux &&
-            uburoomPlayback.needsClientRemux(next, type => deps.video.canPlayType(type))
+            canUseUbu &&
+            uburoomPlayback.needsUbuPlayer(next, type => deps.video.canPlayType(type), undefined, hdrMode(), ubuCaps)
           ) {
-            store.stream.filePlayer = new uburoomFilePlayer(
-              deps.video,
-              {
-                url: next.mediaUrl,
-                direct: !!next.directDelivery,
-                fileSize: next.deliveryInfo?.fileSize,
-              },
-              deps.expected,
-              (message, error) => {
-                if (error?.kind === 'direct-failed') {
-                  void deps.proxyDirectFile();
-                  return;
-                }
-                if (error?.kind === 'grant-expired') {
-                  void deps.refreshState().catch(() => deps.fail(message));
-                  return;
-                }
-                store.stream.clientRemuxFailed = next.mediaVersion;
-                void deps.compatibleFallback(message, error?.kind !== 'codec-unsupported');
-              },
-              {
-                duration: next.state?.duration,
-                audioId: next.tracks?.audioId,
-                audioMode: store.preferences.playerPreferences.audioMode || 'normal',
-                onAudioStateChange: () => {
-                  deps.applyAudioMode?.();
-                  deps.renderTracks?.();
-                },
-                serverAudioIds: (next.tracks?.audio || []).map(a => a.id),
-              },
+            const audioChain = deps.ensureAudioProcessingInput?.();
+            const wantHdr = uburoomPlayback.supportsHdrDisplay(undefined, hdrMode());
+            store.stream.ubuplayer = deps.surface.attachUbuPlayer(
+              canvas =>
+                new UbuPlayer(
+                  canvas,
+                  {
+                    url: next.mediaUrl,
+                    direct: !!next.directDelivery,
+                    fileSize: next.deliveryInfo?.fileSize,
+                  },
+                  deps.expected,
+                  (message, error) => {
+                    if (error?.kind === 'direct-failed') {
+                      void deps.proxyDirectFile();
+                      return;
+                    }
+                    if (error?.kind === 'grant-expired') {
+                      void deps.refreshState().catch(() => deps.fail(message));
+                      return;
+                    }
+                    store.stream.ubuplayerFailed = next.mediaVersion;
+                    void deps.compatibleFallback(message, error?.kind !== 'codec-unsupported');
+                  },
+                  {
+                    duration: next.state?.duration,
+                    volume: (next.state?.volume ?? store.preferences.playerPreferences?.volume ?? 100) / 100,
+                    muted: Boolean(next.state?.muted ?? store.preferences.playerPreferences?.muted),
+                    targetHdr: wantHdr,
+                    audioContext: audioChain?.audioContext,
+                    audioDestination: audioChain?.destination,
+                    audioId: next.tracks?.audioId,
+                    audioMode: store.preferences.playerPreferences?.audioMode || 'normal',
+                    onAudioStateChange: () => {
+                      deps.applyAudioMode?.();
+                      deps.renderTracks?.();
+                    },
+                    serverAudioIds: (next.tracks?.audio || []).map(a => a.id),
+                  },
+                ),
             );
-          } else if (next.directDelivery) void deps.attachDirectFile(next);
-          else {
+            deps.watchFrames();
+          } else if (next.directDelivery) {
+            deps.watchFrames();
+            void deps.attachDirectFile(next);
+          } else if (!String(next.mediaUrl).startsWith('local:')) {
+            deps.watchFrames();
             deps.video.removeAttribute('crossorigin');
             deps.video.src = next.mediaUrl;
           }
-          if (next.format === 'file') void deps.probePlaybackCapabilities({ type: 'file' });
+          if (!store.stream.ubuplayer && (uburoomPlayback.localFormat(next.format) || next.format === 'hls')) {
+            deps.watchFrames();
+          }
+          if (next.format === 'file' && !store.stream.ubuplayer) void deps.probePlaybackCapabilities({ type: 'file' });
         }
       }
     }
@@ -766,8 +802,8 @@ export function mount(host, deps) {
     } else if (wasExtended && !changed && store.stream.hls) {
       store.stream.hls.startLoad(deps.expected());
     }
-    if (!changed && store.stream.filePlayer && next.tracks?.audioId) {
-      store.stream.filePlayer.selectAudio(next.tracks.audioId);
+    if (!changed && store.stream.ubuplayer && next.tracks?.audioId) {
+      store.stream.ubuplayer.selectAudio(next.tracks.audioId);
     }
     deps.captions.update(next);
     queueMicrotask(() => {

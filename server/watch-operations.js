@@ -243,8 +243,17 @@ function watchOperations({
         action: 'media.volume.set',
         args: { percent: preferences.volume },
       }).args.percent;
-    for (const key of ['muted', 'plexReporting', 'plexWatchState', 'clientRemux'])
+    const allowUbu = config?.ubuplayer !== false && config?.transcoding?.ubuplayer !== false;
+    for (const key of ['muted', 'plexReporting', 'plexWatchState'])
       if (preferences[key] !== undefined) settings[key] = preferences[key];
+    const rawUbu = preferences.ubuplayer ?? preferences.clientRemux;
+    if (rawUbu !== undefined) {
+      settings.ubuplayer = allowUbu && Boolean(rawUbu);
+      settings.clientRemux = settings.ubuplayer;
+    }
+    if (preferences.gpuTonemap !== undefined) {
+      settings.gpuTonemap = allowUbu && Boolean(rawUbu ?? true) && Boolean(preferences.gpuTonemap);
+    }
     // A new viewer's saved subtitle choice shapes their first stream; their own later
     // choices in the room always win.
     if (
@@ -311,9 +320,31 @@ function watchOperations({
         }
         if (viewer.browserSubtitles === undefined) viewer.browserSubtitles = preferences.subtitles === 'browser';
         viewer.localCodecs = (preferences.codecs || '').split(',').filter(localFormat);
-        if (typeof preferences.clientRemux === 'boolean') viewer.clientRemux = preferences.clientRemux;
+        const allowUbu = config?.ubuplayer !== false && config?.transcoding?.ubuplayer !== false;
+        const nextUbu =
+          typeof preferences.ubuplayer === 'boolean'
+            ? preferences.ubuplayer
+            : typeof preferences.clientRemux === 'boolean'
+              ? preferences.clientRemux
+              : undefined;
+        if (nextUbu !== undefined) {
+          viewer.ubuplayer = allowUbu && nextUbu;
+          viewer.clientRemux = viewer.ubuplayer;
+          if (!viewer.ubuplayer) viewer.gpuTonemap = false;
+        } else if (!allowUbu) {
+          viewer.ubuplayer = false;
+          viewer.clientRemux = false;
+          viewer.gpuTonemap = false;
+        }
+        if (typeof preferences.gpuTonemap === 'boolean') {
+          viewer.gpuTonemap = Boolean(allowUbu && (viewer.ubuplayer ?? viewer.clientRemux) && preferences.gpuTonemap);
+        }
         if (preferences.delivery !== undefined) {
-          viewer.localDelivery = preferences.delivery === 'local';
+          viewer.localDelivery = preferences.delivery === 'local' && allowUbu;
+          viewer.localDeliveryNative = false;
+          viewer.localDeliveryVersion = undefined;
+        } else if (!allowUbu && viewer.localDelivery && !viewer.localDeliveryNative) {
+          viewer.localDelivery = false;
           viewer.localDeliveryVersion = undefined;
         } else if (
           viewer.localDelivery &&

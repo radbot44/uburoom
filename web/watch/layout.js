@@ -275,8 +275,8 @@ export function mount(host, deps) {
       const stage = $('stage'),
         viewingSection = $('viewing-section'),
         placeholder = $('pip-placeholder');
-      const width = Math.min(Math.max(deps.video.videoWidth || stage.clientWidth || 640, 320), 1920);
-      const height = Math.min(Math.max(deps.video.videoHeight || stage.clientHeight || 360, 180), 1080);
+      const width = Math.min(Math.max(deps.surface.width() || stage.clientWidth || 640, 320), 1920);
+      const height = Math.min(Math.max(deps.surface.height() || stage.clientHeight || 360, 180), 1080);
       const win = await window.documentPictureInPicture.requestWindow({
         width,
         height,
@@ -337,7 +337,7 @@ export function mount(host, deps) {
         },
         { once: true },
       );
-    } else if (deps.supportsVideoPiP) {
+    } else if (deps.supportsVideoPiP && deps.surface.canRequestVideoPiP()) {
       await deps.video.requestPictureInPicture();
       const tracks = store.room.state?.tracks;
       const hasSubtitles = !!tracks?.subtitleId;
@@ -398,7 +398,7 @@ export function mount(host, deps) {
   $('fullscreen').addEventListener('click', () => {
     // iPhones allow fullscreen only on the video itself, never on the player around it.
     if (!$('stage').requestFullscreen)
-      return deps.video.webkitEnterFullscreen
+      return !deps.surface.isUbuPlayer() && deps.video.webkitEnterFullscreen
         ? deps.video.webkitEnterFullscreen()
         : deps.fail('This browser cannot go fullscreen.');
     (document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen()).catch(error =>

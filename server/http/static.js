@@ -50,7 +50,7 @@ const DOCUMENTS = {
 };
 const SUBTITLE_VENDOR =
   /^\/vendor\/subtitles\/(jassub(?:-worker(?:-modern)?)?\.(?:js|wasm)|libbitsub(?:-renderer)?\.js|libbitsub_bg\.wasm|default\.woff2)$/;
-const WASM_WORKER_SCRIPT = /^(?:\/watch-file-worker\.js|\/vendor\/libav\/[^/]+\.mjs)$/;
+const WASM_WORKER_SCRIPT = /^(?:\/ubuplayer-worker\.js|\/vendor\/libav\/[^/]+\.mjs)$/;
 const IMMUTABLE_LIBAV_ASSET = /^\/vendor\/libav\/libav-\d+(?:\.\d+)+-[^/]+\.(?:mjs|wasm)$/;
 
 function etagMatches(clientEtag, serverEtag) {
@@ -68,6 +68,7 @@ function etagMatches(clientEtag, serverEtag) {
 function createStaticFiles({ config }) {
   const assetCache = new Map();
   const staticCache = new Map();
+  const ubuplayerEnabled = () => config?.ubuplayer !== false && config?.transcoding?.ubuplayer !== false;
   let themeScript;
   async function readAsset(file, encoding) {
     const key = file + (encoding ? ':' + encoding : '');
@@ -221,7 +222,7 @@ function createStaticFiles({ config }) {
         methods: ['GET', 'HEAD'],
         match: ctx => ctx.asset,
         async handle({ req, res, route }, asset) {
-          if (WASM_WORKER_SCRIPT.test(route)) {
+          if (ubuplayerEnabled() && WASM_WORKER_SCRIPT.test(route)) {
             res.setHeader(
               'Content-Security-Policy',
               "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; worker-src 'self' blob:",

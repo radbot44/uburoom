@@ -8,7 +8,6 @@ export function mount(host, deps) {
   function initializeSync() {
     store.player.sync = createSync({
       player: deps.activePlayer,
-      video: deps.video,
       timing: uburoomTiming,
       playback: uburoomPlayback,
       clock: deps.time.clock,
@@ -29,7 +28,8 @@ export function mount(host, deps) {
       expected,
       decodedFrames: deps.decodedFrames,
       // Start-delay estimates are kept per stream kind: players start differently on direct files, HLS and local formats.
-      streamKind: ({ state: current }) => (current?.directHls ? 'direct-hls' : current?.format || 'default'),
+      streamKind: ({ state: current }) =>
+        deps.surface?.isUbuPlayer?.() ? 'ubuplayer' : current?.directHls ? 'direct-hls' : current?.format || 'default',
       unlockLocal: deps.unlockLocal,
       reportReadiness,
       render: deps.renderTransport,
@@ -89,7 +89,9 @@ export function mount(host, deps) {
     const id = store.room.selected;
     const ytActive = Boolean(deps.youtube?.isActive());
     const adPlaying = ytActive && Boolean(deps.youtube?.isAdPlaying());
-    const hasError = Boolean(store.player.playbackError || (ytActive ? deps.youtube.errorCode() : deps.video.error));
+    const hasError = Boolean(
+      store.player.playbackError || (ytActive ? deps.youtube.errorCode() : deps.surface.errorCode()),
+    );
     const playerState = hasError
       ? 'error'
       : store.player.autoplayBlocked
@@ -124,7 +126,12 @@ export function mount(host, deps) {
       position: active.currentTime(),
       rate: active.playbackRate(),
       frames:
-        active.hasFrameEvidence === false ? 0 : uburoomPlayback.observationFrames(deps.video, store.player.videoFrames),
+        active.hasFrameEvidence === false
+          ? 0
+          : uburoomPlayback.observationFrames(
+              deps.surface.isUbuPlayer() ? deps.surface.ubuplayer() : deps.video,
+              store.player.videoFrames,
+            ),
       discontinuity: store.player.observationBreak,
       state: playerState,
       ...(playerState === 'buffering' ? { stalled: !store.stream.probing && !adPlaying } : {}),
@@ -149,7 +156,7 @@ export function mount(host, deps) {
     }
   }
   for (const event of ['playing', 'pause', 'waiting', 'seeking', 'seeked', 'ended', 'error'])
-    deps.video.addEventListener(event, () => {
+    deps.surface.addEventListener(event, () => {
       if (event === 'waiting') store.player.playerWaiting = true;
       if (event === 'playing' || event === 'seeked') store.player.playerWaiting = false;
       if (['pause', 'waiting', 'seeking', 'seeked', 'ended', 'error'].includes(event)) {
@@ -157,13 +164,13 @@ export function mount(host, deps) {
       }
       // Periodic samples include rate corrections; assigning playbackRate can
       // emit ratechange even when the rate is unchanged.
-      if (event !== 'ended' && !(event === 'pause' && deps.video.ended)) store.player.observationBreak++;
+      if (event !== 'ended' && !(event === 'pause' && deps.activePlayer.ended())) store.player.observationBreak++;
       void reportObservation(
         event === 'waiting' &&
           store.room.state?.pauseOnBuffering === true &&
           store.room.state.state.paused === false &&
-          !deps.video.paused &&
-          !deps.video.seeking &&
+          !deps.activePlayer.paused() &&
+          !deps.activePlayer.seeking() &&
           !store.stream.probing,
       );
     });
@@ -198,7 +205,7 @@ export function mount(host, deps) {
       (!store.room.state.state.paused ||
         (stateBuffered
           ? active.readyState() >= 3 || active.bufferedAhead(readyTarget) >= 0.5
-          : uburoomPlayback.readinessBuffered(deps.video.buffered, readyTarget, duration)));
+          : uburoomPlayback.readinessBuffered(deps.surface.buffered(), readyTarget, duration)));
     const hasFrames = active.readyState() >= 3 && (active.hasFrameEvidence === false || deps.decodedFrames() > 0);
     const ready = bufferedReady && hasFrames && store.stream.readyVersion === version && !store.player.playbackError;
     let blocker;

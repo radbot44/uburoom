@@ -75,13 +75,14 @@ export function createSubtitleOffsetStore(
   };
 }
 
-/* Saved viewer preferences: volume, quality, HDR, subtitles and audio language, subtitle appearance, audio mode and the sync correction mode; what this tab says about itself when it joins. */
+/* Saved viewer preferences: volume, quality, HDR, UbuPlayer, subtitles and audio language, subtitle appearance, audio mode and the sync correction mode; what this tab says about itself when it joins. */
 export function mount(host, deps) {
   const playerPreferenceKey = 'uburoom.player';
   store.preferences.playerPreferences = {
     volume: 30,
     muted: false,
     quality: '720p4',
+    useUbuPlayer: true,
     subtitleColor: '#ffffff',
     subtitleBg: 'shadow',
     subtitleSize: 'medium',
@@ -99,6 +100,8 @@ export function mount(host, deps) {
       if (Number.isFinite(saved.volume) && saved.volume >= 0 && saved.volume <= 100)
         store.preferences.playerPreferences.volume = saved.volume;
       if (typeof saved.muted === 'boolean') store.preferences.playerPreferences.muted = saved.muted;
+      if (typeof saved.useUbuPlayer === 'boolean')
+        store.preferences.playerPreferences.useUbuPlayer = saved.useUbuPlayer;
       if (typeof saved.plexReporting === 'boolean')
         store.preferences.playerPreferences.plexReporting = saved.plexReporting;
       if (typeof saved.plexWatchState === 'boolean')
@@ -139,6 +142,40 @@ export function mount(host, deps) {
     }
   } catch {}
   store.preferences.preferredQuality = store.preferences.playerPreferences.quality;
+
+  function operatorAllowsUbuPlayer() {
+    return store.identity.config?.ubuplayer !== false;
+  }
+  function canUseUbuPlayer() {
+    return (
+      operatorAllowsUbuPlayer() &&
+      store.preferences.playerPreferences.useUbuPlayer !== false &&
+      uburoomPlayback.supportsUbuPlayer()
+    );
+  }
+  function canGpuTonemap() {
+    return canUseUbuPlayer() && uburoomPlayback.supportsGpuTonemap();
+  }
+  function renderUbuPlayerSetting() {
+    const field = $('ubuplayer-settings'),
+      toggle = $('ubuplayer-enabled'),
+      hint = $('ubuplayer-hint');
+    if (!field || !toggle) return;
+    const operatorAllowed = operatorAllowsUbuPlayer();
+    field.hidden = !operatorAllowed;
+    if (!operatorAllowed) return;
+    const browserSupported = uburoomPlayback.supportsUbuPlayer();
+    toggle.disabled = !browserSupported;
+    toggle.checked = browserSupported && store.preferences.playerPreferences.useUbuPlayer !== false;
+    if (hint) {
+      hint.textContent = !browserSupported
+        ? 'Unavailable in this browser (requires WebCodecs, AudioWorklet, and OffscreenCanvas).'
+        : toggle.checked
+          ? 'Client container playback, surround audio decode, and HDR tone mapping in this browser.'
+          : 'Off in this browser; uburoom converts unsupported formats on the server instead.';
+    }
+  }
+
   let restoredPlayerSubtitles,
     restoringPlayerSubtitles = false;
   function rememberPlayerSubtitles(args) {
@@ -210,6 +247,8 @@ export function mount(host, deps) {
   }
   // What this tab says about itself when it joins a room.
   function viewerPreferences() {
+    const ubuActive = canUseUbuPlayer();
+    const gpuActive = canGpuTonemap();
     return {
       quality: store.preferences.preferredQuality,
       volume: Number(store.preferences.playerPreferences.volume),
@@ -232,8 +271,12 @@ export function mount(host, deps) {
         ? { audioPreference: 'language:' + store.preferences.playerPreferences.audio.language }
         : {}),
       ...(subtitleRenderers.supported() ? { subtitles: 'browser' } : {}),
-      clientRemux: uburoomPlayback.supportsClientRemux(),
-      ...(store.stream.localFile?.mediaVersion && store.stream.localFile.mediaVersion === store.room.state?.mediaVersion
+      ubuplayer: ubuActive,
+      gpuTonemap: gpuActive,
+      clientRemux: ubuActive,
+      ...(ubuActive &&
+      store.stream.localFile?.mediaVersion &&
+      store.stream.localFile.mediaVersion === store.room.state?.mediaVersion
         ? { delivery: 'local' }
         : {}),
       codecs: Object.keys(uburoomPlayback.LOCAL_CODECS)
@@ -281,16 +324,13 @@ export function mount(host, deps) {
     dialogue: 'Boosts speech clarity and vocal frequencies.',
     night: 'Compresses loud peaks and lifts quiet audio for night listening.',
   };
-  function initAudioGraph() {
-    if (audioSourceNode) return true;
+  function ensureAudioChainNodes() {
+    if (speechFilterNode && audioContext) return true;
     if (typeof window === 'undefined') return false;
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    if (!AudioCtx || !deps.video || typeof AudioCtx !== 'function') return false;
+    if (!AudioCtx || typeof AudioCtx !== 'function') return false;
     try {
       if (!audioContext) audioContext = new AudioCtx();
-      if (typeof audioContext.createMediaElementSource !== 'function') return false;
-      audioSourceNode = audioContext.createMediaElementSource(deps.video);
-
       speechFilterNode = audioContext.createBiquadFilter();
       speechFilterNode.type = 'peaking';
       speechFilterNode.frequency.value = 2500;
@@ -307,7 +347,6 @@ export function mount(host, deps) {
       makeupGainNode = audioContext.createGain();
       makeupGainNode.gain.value = 1.0;
 
-      audioSourceNode.connect(speechFilterNode);
       speechFilterNode.connect(compressorNode);
       compressorNode.connect(makeupGainNode);
       makeupGainNode.connect(audioContext.destination);
@@ -317,33 +356,41 @@ export function mount(host, deps) {
       return false;
     }
   }
+  function initVideoAudioGraph() {
+    if (!ensureAudioChainNodes()) return false;
+    if (audioSourceNode) return true;
+    if (!deps.video || typeof audioContext.createMediaElementSource !== 'function') return false;
+    try {
+      audioSourceNode = audioContext.createMediaElementSource(deps.video);
+      audioSourceNode.connect(speechFilterNode);
+      return true;
+    } catch (error) {
+      deps.diagnostics?.record?.('failure', { category: 'media', detail: 'audio-enhancement', reason: error.message });
+      return false;
+    }
+  }
+  function ensureAudioProcessingInput() {
+    if (!ensureAudioChainNodes()) return undefined;
+    applyAudioChainParameters(store.preferences.playerPreferences.audioMode || 'normal');
+    return { audioContext, destination: speechFilterNode };
+  }
   function resumeAudioContext() {
     if (store.room.state?.format === 'youtube-embed') return;
     if (audioContext && audioContext.state === 'suspended') {
       audioContext.resume().catch(() => {});
     }
   }
-  function applyAudioMode(mode) {
-    const targetMode = ['normal', 'dialogue', 'night'].includes(mode)
-      ? mode
-      : store.preferences.playerPreferences.audioMode || 'normal';
-    const select = $('audio-mode');
-    const hint = $('audio-mode-hint');
-    if (select && select.value !== targetMode) select.value = targetMode;
-    if (hint) hint.textContent = audioModeHints[targetMode] || audioModeHints.normal;
-    store.stream.filePlayer?.setAudioMode?.(targetMode);
-    if (targetMode === 'normal' && !audioSourceNode) return;
-    if (!initAudioGraph()) return;
-    resumeAudioContext();
+  function applyAudioChainParameters(targetMode) {
+    if (!speechFilterNode || !compressorNode || !makeupGainNode || !audioContext) return;
     const now = audioContext.currentTime;
-    const workerSurroundDialogue = Boolean(store.stream.filePlayer?.surroundDialogueActive);
+    const workerSurroundDialogue = Boolean(store.stream.ubuplayer?.surroundDialogueActive);
     if (targetMode === 'normal') {
       speechFilterNode.gain.setValueAtTime(0, now);
       compressorNode.threshold.setValueAtTime(0, now);
       compressorNode.ratio.setValueAtTime(1, now);
       makeupGainNode.gain.setValueAtTime(1.0, now);
     } else if (targetMode === 'dialogue') {
-      // Skip redundant 2.5 kHz stereo EQ when the worker is boosting the discrete 5.1/7.1 Center channel.
+      // Skip redundant 2.5 kHz stereo EQ when UbuPlayer is boosting the discrete 5.1/7.1 Center channel.
       speechFilterNode.gain.setValueAtTime(workerSurroundDialogue ? 0 : 5.0, now);
       compressorNode.threshold.setValueAtTime(-20, now);
       compressorNode.knee.setValueAtTime(12, now);
@@ -360,6 +407,27 @@ export function mount(host, deps) {
       compressorNode.release.setValueAtTime(0.25, now);
       makeupGainNode.gain.setValueAtTime(1.35, now);
     }
+  }
+  function applyAudioMode(mode) {
+    const targetMode = ['normal', 'dialogue', 'night'].includes(mode)
+      ? mode
+      : store.preferences.playerPreferences.audioMode || 'normal';
+    const select = $('audio-mode');
+    const hint = $('audio-mode-hint');
+    if (select && select.value !== targetMode) select.value = targetMode;
+    if (hint) hint.textContent = audioModeHints[targetMode] || audioModeHints.normal;
+    store.stream.ubuplayer?.setAudioMode?.(targetMode);
+    const ubuActive = Boolean(deps.surface?.isUbuPlayer?.() || store.stream.ubuplayer);
+    if (ubuActive) {
+      if (!ensureAudioChainNodes()) return;
+      resumeAudioContext();
+      applyAudioChainParameters(targetMode);
+      return;
+    }
+    if (targetMode === 'normal' && !audioSourceNode) return;
+    if (!initVideoAudioGraph()) return;
+    resumeAudioContext();
+    applyAudioChainParameters(targetMode);
   }
   function renderSyncPreference() {
     $('sync-correction').value = store.preferences.syncCorrectionMode;
@@ -416,10 +484,42 @@ export function mount(host, deps) {
   syncButtonGroup('hdr-mode', 'hdr-mode-group');
   applySubtitleAppearance();
   applyAudioMode(store.preferences.playerPreferences.audioMode);
+  renderUbuPlayerSetting();
   $('audio-mode')?.addEventListener('change', () => {
     const next = $('audio-mode').value;
     savePlayerPreferences({ audioMode: next });
     applyAudioMode(next);
+  });
+  $('ubuplayer-enabled')?.addEventListener('change', async () => {
+    const enabled = Boolean($('ubuplayer-enabled').checked);
+    savePlayerPreferences({ useUbuPlayer: enabled });
+    renderUbuPlayerSetting();
+    store.stream.ubuplayerFailed = undefined;
+    store.stream.localFallbackAttempts = new Set();
+    if (!enabled && (store.room.state?.format === 'local' || store.stream.localFile)) {
+      await deps.useRoomStream?.();
+    }
+    if (store.room.state?.mediaId && store.room.state.mediaId !== 'demo') {
+      const prevUrl = store.room.state.mediaUrl;
+      try {
+        await deps.execute({
+          action: 'media.quality.set',
+          args: {
+            quality: store.preferences.preferredQuality,
+            ubuplayer: canUseUbuPlayer(),
+            gpuTonemap: canGpuTonemap(),
+            reset: true,
+          },
+        });
+        if (store.room.state && store.room.state.mediaUrl === prevUrl) {
+          store.stream.mediaSource = undefined;
+          deps.applyState(store.room.state, true);
+        }
+      } catch (error) {
+        deps.fail(error.message);
+      }
+    }
+    deps.renderTracks?.();
   });
   const screenHdr = typeof matchMedia === 'function' ? matchMedia('(dynamic-range: high)') : undefined;
   function renderHdrMode() {
@@ -434,17 +534,29 @@ export function mount(host, deps) {
             (uburoomPlayback.supportsHdrDisplay() ? 'HDR' : 'SDR') +
             '.';
   }
-  // An HDR video at Original gets a new stream when the choice changes what it should be.
-  // Starting over from Original lets the usual decision apply the new choice.
+  // An HDR video at Original updates live on UbuPlayer, or requests a new stream when server-delivered.
   function reconsiderHdr() {
     const state = store.room.state,
       info = state?.deliveryInfo;
-    if (!info?.sourceHdr || info.sourceHdrKind === 'dovi-p5' || store.preferences.preferredQuality !== 'direct') return;
     const wantHdr = uburoomPlayback.supportsHdrDisplay(undefined, store.preferences.playerPreferences.hdrMode);
+    if (store.stream.ubuplayer && (state?.format === 'file' || state?.format === 'local')) {
+      store.stream.ubuplayer.setHdrTarget(wantHdr);
+      return;
+    }
+    if (!info?.sourceHdr || store.preferences.preferredQuality !== 'direct') return;
+    if (info.sourceHdrKind === 'dovi-p5' && !canGpuTonemap()) return;
     if (!!info.toneMapped !== wantHdr) return;
     store.stream.localFallbackAttempts = new Set();
     deps
-      .execute({ action: 'media.quality.set', args: { quality: store.preferences.preferredQuality, reset: true } })
+      .execute({
+        action: 'media.quality.set',
+        args: {
+          quality: store.preferences.preferredQuality,
+          ubuplayer: canUseUbuPlayer(),
+          gpuTonemap: canGpuTonemap(),
+          reset: true,
+        },
+      })
       .catch(error => deps.fail(error.message));
   }
   renderHdrMode();
@@ -466,10 +578,16 @@ export function mount(host, deps) {
     return subtitleOffsets.set(mediaId, track, offset);
   }
   return {
+    applyAudioMode,
     applySubtitleAppearance,
+    canGpuTonemap,
+    canUseUbuPlayer,
+    ensureAudioProcessingInput,
     getSubtitleOffset,
     loadSyncPreference,
+    operatorAllowsUbuPlayer,
     rememberPlayerSubtitles,
+    renderUbuPlayerSetting,
     restorePlayerSubtitles,
     resumeAudioContext,
     savePlayerPreferences,

@@ -33,6 +33,7 @@ function pageBootstrap({
     access: entryPolicy?.public(),
     guests: !!hub.guestsEnabled(),
     singleRoom: !!config.singleRoom,
+    ubuplayer: config.ubuplayer !== false && config.transcoding?.ubuplayer !== false,
     localFormats:
       config.transcoding && (!config.transcoding.uburoom || config.transcoding.policy === 'disabled')
         ? []

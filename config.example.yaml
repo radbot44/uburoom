@@ -285,6 +285,8 @@ transcoding:
   # only Plex has one, so it is skipped for Jellyfin and local folders. AV1 goes first
   # only with a working hardware encoder unless it is the last choice. [] disables conversion.
   outputs: [av1, provider]
+  # Allow UbuPlayer WebCodecs/AudioWorklet/OffscreenCanvas client playback and local file demuxing.
+  ubuplayer: true
 
   # Settings are for the uburoom encoder. Plex controls its own.
   # Software encoders: libsvtav1 (AV1), libvpx-vp9 (VP9), libvpx (VP8).

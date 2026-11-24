@@ -190,6 +190,7 @@ function startPgsJob(av1, media) {
   if (active >= 2 && slotWaiters.length >= 16)
     throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
   const controller = new AbortController();
+  media.subtitleAbort ||= new AbortController();
   const abort = AbortSignal.any([media.subtitleAbort.signal, controller.signal, AbortSignal.timeout(300000)]);
   const job = { media, version, controller, chunks: [], size: 0, listeners: new Set(), complete: false, error: null };
   job.promise = runOperation(abort, async () => {
@@ -521,6 +522,7 @@ async function load(av1, media, signal) {
   if (media.subtitleJob?.version === version) return awaitJob(media.subtitleJob.promise, signal);
   if (active >= 2 && slotWaiters.length >= 16)
     throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
+  media.subtitleAbort ||= new AbortController();
   const abort = AbortSignal.any([media.subtitleAbort.signal, AbortSignal.timeout(85000)]);
   const job = { media, version };
   job.promise = runOperation(abort, async () => {

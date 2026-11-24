@@ -20,7 +20,11 @@ const PERSONAL_KEYS = [
   'directProxyVersion',
   'browserSubtitles',
   'localCodecs',
+  'ubuplayer',
+  'gpuTonemap',
+  'clientRemux',
   'localDelivery',
+  'localDeliveryNative',
   'browserLoginHash',
 ];
 // The access a viewer's republish relies on is rechecked this often from their own presence.

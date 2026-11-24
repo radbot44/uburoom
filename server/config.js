@@ -66,6 +66,7 @@ const KEYS = [
   'transcoding.encoder',
   'transcoding.outputs',
   'transcoding.max_jobs',
+  'transcoding.ubuplayer',
   'transcoding.cpu_fallback',
   'transcoding.hardware_decode',
   'transcoding.qualities',
@@ -378,12 +379,15 @@ function normalizeConfig(
     throw new Error('transcoding.outputs supports av1, vp9, vp8 and provider');
   if (new Set(outputs).size !== outputs.length) throw new Error('transcoding.outputs must not repeat an output');
   const formats = outputs.filter(output => output !== 'provider');
+  const ubuplayer = boolean('transcoding.ubuplayer', true);
+  config.ubuplayer = ubuplayer;
   config.transcoding = {
     policy: choice('transcoding.policy', 'follow_provider', ['follow_provider', 'disabled', 'override']),
     outputs,
     // Whether a provider's own transcoder may be used, where the provider has one.
     provider: outputs.includes('provider'),
     uburoom: formats.length > 0,
+    ubuplayer,
     encoder: choice('transcoding.encoder', 'auto', ['auto', 'hardware', 'qsv', 'nvenc', 'software']),
     cpuFallback: boolean('transcoding.cpu_fallback', true),
     hardwareDecode: boolean('transcoding.hardware_decode', true),

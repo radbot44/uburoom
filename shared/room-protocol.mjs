@@ -431,6 +431,14 @@ const COMMANDS = Object.freeze({
           throw new Error('Invalid playback fallback');
         args.fallback = a.fallback;
       }
+      if (a.ubuplayer !== undefined) {
+        if (typeof a.ubuplayer !== 'boolean') throw new Error('Invalid UbuPlayer setting');
+        args.ubuplayer = a.ubuplayer;
+      }
+      if (a.gpuTonemap !== undefined) {
+        if (typeof a.gpuTonemap !== 'boolean') throw new Error('Invalid GPU tonemapping setting');
+        args.gpuTonemap = a.gpuTonemap;
+      }
       if (a.reset === true) args.reset = true;
       if (typeof a.reason === 'string') args.reason = a.reason.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 300);
       return args;
@@ -486,7 +494,12 @@ const COMMANDS = Object.freeze({
       if (a.mode !== 'local' && a.mode !== 'auto') throw new Error('Choose a playback source.');
       if (typeof a.mediaVersion !== 'string' || !VERSION.test(a.mediaVersion))
         throw new Error('Playback source selection expired.');
-      return { mode: a.mode, mediaVersion: a.mediaVersion };
+      const args = { mode: a.mode, mediaVersion: a.mediaVersion };
+      if (a.native !== undefined) {
+        if (typeof a.native !== 'boolean') throw new Error('Invalid local playback mode.');
+        args.native = a.native;
+      }
+      return args;
     },
   },
   'media.volume.set': { scope: 'personal', capability: null, handler: 'player', roomLocal: true },

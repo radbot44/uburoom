@@ -5,7 +5,8 @@
 // set `view.hlsRecoveryCount = 2` and read `view.playbackError` after a call. Elements the module looks up
 // are inert stand-ins; a module under test gets its real behaviour from the values the test supplies.
 const { store } = require('../../web/watch/store.js');
-const { createVideoElementAdapter } = require('../../shared/sync/player-adapter.mjs');
+const { createUbuPlayerAdapter, createVideoElementAdapter } = require('../../shared/sync/player-adapter.mjs');
+const { createMediaSurface } = require('../../web/media-surface.js');
 const { bufferedAhead } = require('../../web/playback-policy.js');
 
 const defaults = structuredClone(
@@ -24,6 +25,10 @@ const GLOBALS = new Set([
   'window',
   'fetch',
   'MediaSource',
+  'VideoDecoder',
+  'AudioWorkletNode',
+  'OffscreenCanvas',
+  'Worker',
   'localStorage',
   'sessionStorage',
   'innerWidth',
@@ -35,10 +40,12 @@ const GLOBALS = new Set([
 /** An element stand-in: records listeners, accepts any property, answers queries with more stand-ins. */
 function element(tag = 'div') {
   const listeners = {};
+  const multiListeners = new Map();
   const own = {
     tagName: tag.toUpperCase(),
     listeners,
     children: [],
+    options: [],
     dataset: {},
     style: { setProperty() {}, removeProperty() {} },
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
@@ -46,8 +53,18 @@ function element(tag = 'div') {
     disabled: false,
     textContent: '',
     value: '',
-    addEventListener: (type, run) => (listeners[type] = run),
-    removeEventListener() {},
+    addEventListener: (type, run) => {
+      if (!multiListeners.has(type)) multiListeners.set(type, new Set());
+      multiListeners.get(type).add(run);
+      listeners[type] = event => {
+        let result;
+        for (const fn of [...(multiListeners.get(type) || [])]) result = fn(event);
+        return result;
+      };
+    },
+    removeEventListener: (type, run) => {
+      multiListeners.get(type)?.delete(run);
+    },
     querySelector: () => element(),
     querySelectorAll: () => [],
     closest: () => null,
@@ -130,6 +147,11 @@ function mountModule(module, values = {}) {
   deps.video ??= element('video');
   deps.video.addEventListener ??= () => {};
   deps.video.removeEventListener ??= () => {};
+  deps.surface ??= createMediaSurface({
+    video: deps.video,
+    stage: globalThis.document.getElementById('stage'),
+    canvas: globalThis.document.getElementById('ubuplayer-canvas'),
+  });
   deps.youtube ??= {
     isActive: () => false,
     isAdPlaying: () => false,
@@ -143,8 +165,16 @@ function mountModule(module, values = {}) {
   const currentAdapter = () =>
     deps.youtube?.isActive?.() && deps.youtube.adapter
       ? deps.youtube.adapter
-      : createVideoElementAdapter(deps.video, { bufferedAhead });
+      : deps.surface?.isUbuPlayer?.() || store.stream.ubuplayer
+        ? createUbuPlayerAdapter(deps.surface?.ubuplayer?.() || store.stream.ubuplayer, { bufferedAhead })
+        : createVideoElementAdapter(deps.video, { bufferedAhead });
   deps.activePlayer ??= {
+    get hasFrameEvidence() {
+      return currentAdapter().hasFrameEvidence !== false;
+    },
+    get bufferModel() {
+      return currentAdapter().bufferModel || 'ranges';
+    },
     get supportsRateSync() {
       return currentAdapter().supportsRateSync !== false;
     },

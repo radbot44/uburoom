@@ -11,7 +11,14 @@ const { localFormat } = require('../shared/playback-policy.mjs');
  * @property {number} audioTracks - Audio tracks offered by the selected source.
  * @property {boolean} [sourceOnly] - Resolve the source without preparing delivery.
  * @property {boolean} [remux] - uburoom can copy this picture and convert only the sound (server/remux.js).
- * @property {boolean} [clientRemux] - Viewer's browser worker can demux containers, select audio tracks and decode home-theater audio from the original file.
+ * @property {boolean} [ubuplayer] - Viewer's UbuPlayer WebCodecs/AudioWorklet engine can demux containers, select audio tracks, and decode home-theater audio from the original file.
+ * @property {boolean} [clientRemux] - Legacy alias for UbuPlayer container/audio demux capability.
+ * @property {boolean} [gpuTonemap] - Viewer's UbuPlayer OffscreenCanvas GPU pipeline supports libplacebo-equivalent BT.2390 tonemapping and Dolby Vision reshaping.
+ * @property {boolean} [ubuplayerAllowed] - Server operator policy allowing UbuPlayer capabilities (true by default).
+ * @property {boolean} [hdr] - Whether the source video is HDR.
+ * @property {string} [hdrKind] - Source HDR format ('sdr', 'hdr10', 'hlg', 'dovi-p5', 'dovi-hdr10', 'dovi-hlg', 'dovi-sdr').
+ * @property {boolean} [hdrDisplay] - When provided, whether the viewer's display/mode outputs native HDR.
+ * @property {boolean} [doviNative] - When provided, whether the viewer's native media element decodes Dolby Vision Profile 5 directly.
  * @property {string[]} [outputs] - Outputs usable for this viewer, in configured priority order.
  */
 
@@ -36,21 +43,37 @@ function planDelivery({
   audioTracks,
   sourceOnly,
   remux,
+  ubuplayer,
   clientRemux,
+  gpuTonemap,
+  ubuplayerAllowed = true,
+  hdr,
+  hdrKind,
+  hdrDisplay,
+  doviNative,
   outputs = ['provider'],
 }) {
   if (sourceOnly) return { route: 'file', reason: 'source-only' };
   if (localFormat(fallback)) return { route: 'local', codec: fallback, reason: 'local-fallback' };
   if (fallback === 'provider') return { route: 'provider-hls', reason: 'provider-fallback' };
+  const canUbuPlayer = ubuplayerAllowed !== false && Boolean(ubuplayer ?? clientRemux);
+  const canGpuTonemap = canUbuPlayer && Boolean(gpuTonemap);
   if (fallback === 'audio' && quality === 'direct' && !burn)
     return { route: remux ? 'remux' : 'provider-hls', reason: 'audio-conversion' };
+  const hdrIncompatible =
+    hdrKind === 'dovi-p5'
+      ? hdrDisplay !== undefined
+        ? !(canGpuTonemap || (doviNative && hdrDisplay))
+        : gpuTonemap === false && !doviNative
+      : Boolean(hdr && hdrDisplay === false && !canGpuTonemap);
+  const needsCompat = Boolean(compatible || hdrIncompatible);
   const reason = burn
     ? 'burn-in'
-    : compatible
+    : needsCompat
       ? 'compatible'
       : quality !== 'direct'
         ? 'quality-limit'
-        : audioTracks > 1 && !clientRemux
+        : audioTracks > 1 && !canUbuPlayer
           ? 'multiple-audio'
           : undefined;
   if (!reason) return { route: 'file', reason: 'original' };

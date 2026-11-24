@@ -7,6 +7,7 @@ function runningSettings(config) {
   const select = (source, keys) => Object.fromEntries(keys.map(key => [key, source?.[key]]));
   const permissions = source => select(source, CAPABILITIES);
   const transcoding = config.transcoding;
+  const ubuplayer = config.ubuplayer !== undefined ? !!config.ubuplayer : transcoding?.ubuplayer !== false;
   return {
     source: 'running',
     settings: {
@@ -30,6 +31,7 @@ function runningSettings(config) {
       directory: select(config.directory, ['discord']),
       transcoding: {
         ...select(transcoding, ['policy', 'provider', 'uburoom', 'encoder', 'cpuFallback', 'maxJobs']),
+        ubuplayer,
         formats: transcoding?.formats?.slice() || [],
         allowOriginal: !!transcoding?.qualities?.some(quality => quality.id === 'direct'),
         qualities: (transcoding?.qualities || [])

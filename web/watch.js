@@ -1,4 +1,5 @@
-import { createVideoElementAdapter } from '../shared/sync/player-adapter.mjs';
+import { createUbuPlayerAdapter, createVideoElementAdapter } from '../shared/sync/player-adapter.mjs';
+import { createMediaSurface } from './media-surface.js';
 import * as uburoomPlayback from './playback-policy.js';
 import * as uburoomTiming from '../shared/sync/timing.mjs';
 import * as uburoomSyncQuality from '../shared/sync/quality.mjs';
@@ -129,10 +130,28 @@ deps.suppressedBuffering = suppressedBuffering;
 
 const video = $('video');
 deps.video = video;
+const surface = createMediaSurface({ video, stage: $('stage'), canvas: $('ubuplayer-canvas') });
+deps.surface = surface;
 const videoAdapter = createVideoElementAdapter(video, { bufferedAhead: uburoomPlayback.bufferedAhead });
+let cachedUbuInstance, cachedUbuAdapter;
+function getUbuPlayerAdapter() {
+  const inst = surface.ubuplayer() || store.stream.ubuplayer;
+  if (inst !== cachedUbuInstance || !cachedUbuAdapter) {
+    cachedUbuInstance = inst;
+    cachedUbuAdapter = createUbuPlayerAdapter(inst, { bufferedAhead: uburoomPlayback.bufferedAhead });
+  }
+  return cachedUbuAdapter;
+}
 deps.youtube = youtubePlayer.mount($('stage'), deps);
-const currentAdapter = () => (deps.youtube.isActive() ? deps.youtube.adapter : videoAdapter);
+const currentAdapter = () =>
+  deps.youtube.isActive() ? deps.youtube.adapter : surface.isUbuPlayer() ? getUbuPlayerAdapter() : videoAdapter;
 deps.activePlayer = {
+  get hasFrameEvidence() {
+    return currentAdapter().hasFrameEvidence !== false;
+  },
+  get bufferModel() {
+    return currentAdapter().bufferModel || 'ranges';
+  },
   get supportsRateSync() {
     return currentAdapter().supportsRateSync !== false;
   },
@@ -445,6 +464,7 @@ const harnessState = {
   hlsRefreshTimes: 'stream',
   providerNoticeShown: 'stream',
   av1: 'stream',
+  ubuplayer: 'stream',
   playbackError: 'player',
   playerWaiting: 'player',
   sync: 'player',
@@ -477,6 +497,7 @@ for (const name of [
   'roomLink',
   'selectRoom',
   'showDisconnectToast',
+  'surface',
   'toasts',
   'video',
 ])

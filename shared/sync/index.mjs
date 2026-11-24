@@ -36,7 +36,7 @@ export {
   START_DELAY,
 } from './timing.mjs';
 
-export { createVideoElementAdapter, normalizePlayerAdapter } from './player-adapter.mjs';
+export { createVideoElementAdapter, createUbuPlayerAdapter, normalizePlayerAdapter } from './player-adapter.mjs';
 
 export { createSync } from './client-sync.mjs';
 

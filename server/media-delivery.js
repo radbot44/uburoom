@@ -24,16 +24,19 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
     throw new PlaybackError('This quality is not offered by the server.');
   const { media, detail } = await provider.source(id, source, choices);
   media.lifecycleAbort ||= new AbortController();
+  media.subtitleAbort ||= new AbortController();
   media.quality = quality;
   const audio = media.selection.audio;
   if (audio) media.audioCodec = audio.codec;
   const burn = media.selection.subtitle?.available && media.selection.subtitle.delivery === 'burn';
   const effectiveAudioTracks = media.tracks.audio.length;
-  const clientRemux = !!choices.clientRemux;
+  const ubuplayerAllowed = pipeline.ubuplayer !== false;
+  const ubuplayer = ubuplayerAllowed && Boolean(choices.ubuplayer ?? choices.clientRemux);
+  const gpuTonemap = ubuplayer && Boolean(choices.gpuTonemap);
   const conversion =
     !choices.sourceOnly &&
     (!fallback || fallback === 'audio') &&
-    (burn || compatible || quality !== 'direct' || (effectiveAudioTracks > 1 && !clientRemux));
+    (burn || compatible || quality !== 'direct' || (effectiveAudioTracks > 1 && !ubuplayer));
   // A provider with a transcoder of its own keeps the picture through that instead.
   const remux =
     !choices.sourceOnly && typeof provider.startTranscode !== 'function' && !!pipeline.remux?.available(media);
@@ -45,7 +48,12 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
     audioTracks: effectiveAudioTracks,
     sourceOnly: choices.sourceOnly,
     remux,
-    clientRemux,
+    ubuplayer,
+    clientRemux: ubuplayer,
+    gpuTonemap,
+    ubuplayerAllowed,
+    hdr: media.hdr,
+    hdrKind: media.hdrKind,
     outputs: conversion ? await pipeline.usableOutputs(provider, choices.localCodecs) : undefined,
   });
   media.deliveryReason = plan.reason;
@@ -65,7 +73,7 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
   // slow part of that, so it starts now; it is remembered per file and changes nothing else.
   if (
     remux &&
-    !clientRemux &&
+    !ubuplayer &&
     plan.route === 'file' &&
     (media.tracks.audio.length > 1 || (audio && !BROWSER_AUDIO.has(String(audio.codec).toLowerCase())))
   )
@@ -107,7 +115,7 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
         directHls,
       );
     } catch (error) {
-      media.subtitleAbort.abort();
+      media.subtitleAbort?.abort();
       if (error instanceof PlaybackError) {
         const failure = Object.assign(new PlaybackError(error.message), {
           conversionCapacity: !!error.conversionCapacity,

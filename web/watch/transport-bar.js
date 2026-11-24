@@ -39,14 +39,17 @@ export function mount(host, deps) {
       (store.room.state?.qualities?.length ?? 2) <= 1 ||
       store.room.pending ||
       store.stream.qualityPending;
-    $('pip').disabled = !available || isEmbed;
+    const canPiP = deps.supportsDocPiP || (deps.supportsVideoPiP && deps.surface.canRequestVideoPiP());
+    $('pip').disabled = !available || isEmbed || !canPiP;
     const inPiP = !!store.player.pipWindow || document.pictureInPictureElement === deps.video;
     $('pip').setAttribute('aria-pressed', inPiP ? 'true' : 'false');
     $('pip').title = isEmbed
       ? 'Picture-in-Picture is unavailable for YouTube embeds'
-      : inPiP
-        ? 'Exit Picture-in-Picture'
-        : 'Picture-in-Picture';
+      : !canPiP
+        ? 'Picture-in-Picture requires Document Picture-in-Picture support'
+        : inPiP
+          ? 'Exit Picture-in-Picture'
+          : 'Picture-in-Picture';
     $('pip').setAttribute('aria-label', $('pip').title);
     const paused =
       !!store.room.state?.pauseAt || (store.room.state?.state.paused !== false && !store.room.state?.waitingForReady);
@@ -242,7 +245,15 @@ export function mount(host, deps) {
     // Choosing a quality starts over, so a fallback from earlier cannot pin this viewer.
     store.stream.localFallbackAttempts = new Set();
     deps
-      .execute({ action: 'media.quality.set', args: { quality: store.preferences.preferredQuality, reset: true } })
+      .execute({
+        action: 'media.quality.set',
+        args: {
+          quality: store.preferences.preferredQuality,
+          ubuplayer: deps.canUseUbuPlayer?.(),
+          gpuTonemap: deps.canGpuTonemap?.(),
+          reset: true,
+        },
+      })
       .catch(error => deps.fail(error.message));
   });
   function updateTimelineTooltip(event) {
@@ -427,7 +438,7 @@ export function mount(host, deps) {
       timeline.value = value;
       $('time').textContent = clock(value);
     }
-    const buffered = deps.youtube?.isActive() ? deps.youtube.bufferedRanges() : deps.video.buffered;
+    const buffered = deps.youtube?.isActive() ? deps.youtube.bufferedRanges() : deps.surface.buffered();
     timeline.style.setProperty(
       '--timeline-fill',
       uburoomPlayback.timeline(buffered, duration, value, store.room.state?.chapters),

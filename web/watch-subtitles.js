@@ -1,3 +1,4 @@
+import { asMediaSurface } from './media-surface.js';
 import { subtitleRenderers as uburoomSubtitleRenderers } from './subtitle-renderers.js';
 
 import { trace } from './trace.js';
@@ -520,8 +521,9 @@ function formatSubtitleOffset(value) {
   return (normalized > 0 ? '+' : normalized < 0 ? '−' : '') + Math.abs(normalized).toFixed(1) + ' s';
 }
 class uburoomSubtitles {
-  constructor(video, status, resolveMediaTime) {
-    this.video = video;
+  constructor(target, status, resolveMediaTime) {
+    this.surface = asMediaSurface(target);
+    this.video = this.surface.videoElement;
     this.status = status;
     this.resolveMediaTime = resolveMediaTime;
     this.cues = [];
@@ -529,12 +531,13 @@ class uburoomSubtitles {
     this.serverOffset = 0;
     this.generation = 0;
     this.key = '';
-    this.track = video.addTextTrack('subtitles', 'uburoom subtitles');
+    this.track = this.video.addTextTrack('subtitles', 'uburoom subtitles');
     this.track.mode = 'disabled';
     this.position = 'video';
     this.size = 'medium';
     this.controlsHeight = 0;
-    if (video.parentElement && typeof document !== 'undefined') {
+    const stageEl = this.surface.stageElement();
+    if (stageEl && typeof document !== 'undefined') {
       const layer = (this.layer = document.createElement('div')),
         bottom = (this.bottomCues = document.createElement('div')),
         top = (this.topCues = document.createElement('div'));
@@ -542,25 +545,29 @@ class uburoomSubtitles {
       bottom.className = 'subtitle-text-lines';
       top.className = 'subtitle-text-lines top';
       layer.append(top, bottom);
-      video.parentElement.append(layer);
-      this.track.addEventListener?.('cuechange', () => this.paint());
-      new ResizeObserver(() => this.place()).observe(video.parentElement);
-      for (const event of ['loadedmetadata', 'resize']) video.addEventListener?.(event, () => this.place());
+      stageEl.append(layer);
+      this.track.addEventListener?.('cuechange', () => {
+        if (!this.surface.isUbuPlayer()) this.paint();
+      });
+      new ResizeObserver(() => this.place()).observe(stageEl);
+      this.onPlace = () => this.place();
+      for (const event of ['loadedmetadata', 'resize']) this.surface.addEventListener(event, this.onPlace);
     }
-    video.textTracks.addEventListener('addtrack', event => {
+    this.video.textTracks?.addEventListener?.('addtrack', event => {
       if (event.track !== this.track) event.track.mode = 'disabled';
     });
     this.onTimeChange = () => {
-      this.windowScheduler?.check(this.mediaTime() - (this.offset || 0));
-      this.textWindows?.check(this.mediaTime() - (this.offset || 0));
+      const now = this.mediaTime();
+      this.windowScheduler?.check(now - (this.offset || 0));
+      this.textWindows?.check(now - (this.offset || 0));
+      if (this.surface.isUbuPlayer() && this.track.mode !== 'disabled') this.paint();
       this.syncStatus();
     };
-    for (const event of ['seeking', 'seeked', 'timeupdate']) video.addEventListener?.(event, this.onTimeChange);
+    for (const event of ['seeking', 'seeked', 'timeupdate']) this.surface.addEventListener(event, this.onTimeChange);
   }
   mediaTime() {
-    return typeof this.resolveMediaTime === 'function'
-      ? this.resolveMediaTime(this.video.currentTime)
-      : this.video.currentTime;
+    const raw = this.surface.currentTime();
+    return typeof this.resolveMediaTime === 'function' ? this.resolveMediaTime(raw) : raw;
   }
   syncStatus() {
     if ((!this.streaming && !this.windowScheduler) || !this.renderer) return;
@@ -651,7 +658,7 @@ class uburoomSubtitles {
       }
       this.status({ message: 'Preparing subtitles…', error: false, loading: true });
       const renderer = await uburoomSubtitleRenderers.create(
-        this.video,
+        this.surface,
         spec.format,
         {
           data: spec.data,
@@ -753,7 +760,15 @@ class uburoomSubtitles {
   }
   paint() {
     if (!this.layer) return;
-    const cues = this.track.mode === 'disabled' ? [] : Array.from(this.track.activeCues || []);
+    let cues = [];
+    if (this.track.mode !== 'disabled') {
+      if (this.surface.isUbuPlayer()) {
+        const now = this.mediaTime();
+        cues = Array.from(this.track.cues || []).filter(cue => now >= cue.startTime && now < cue.endTime);
+      } else {
+        cues = Array.from(this.track.activeCues || []);
+      }
+    }
     for (const [box, top] of [
       [this.topCues, true],
       [this.bottomCues, false],
@@ -774,17 +789,20 @@ class uburoomSubtitles {
   // Follows the visible picture, or the whole player, and clears the controls only when they would cover the text.
   place() {
     if (!this.layer) return;
-    const width = this.video.parentElement.clientWidth,
-      height = this.video.parentElement.clientHeight;
+    const stageEl = this.surface.stageElement();
+    const width = stageEl?.clientWidth || 0,
+      height = stageEl?.clientHeight || 0;
     if (!width || !height) return;
     let left = 0,
       top = 0,
       boxWidth = width,
       boxHeight = height;
-    if (this.position === 'video' && this.video.videoWidth && this.video.videoHeight) {
-      const scale = Math.min(width / this.video.videoWidth, height / this.video.videoHeight);
-      boxWidth = this.video.videoWidth * scale;
-      boxHeight = this.video.videoHeight * scale;
+    const videoW = this.surface.width(),
+      videoH = this.surface.height();
+    if (this.position === 'video' && videoW && videoH) {
+      const scale = Math.min(width / videoW, height / videoH);
+      boxWidth = videoW * scale;
+      boxHeight = videoH * scale;
       left = (width - boxWidth) / 2;
       top = (height - boxHeight) / 2;
     }
@@ -954,7 +972,7 @@ class uburoomSubtitles {
         }
         this.status({ message: 'Preparing subtitles…', error: false, loading: true });
         const renderer = await uburoomSubtitleRenderers.create(
-          this.video,
+          this.surface,
           value.format,
           { data, subUrl, index, fonts, fileName: value.fileName },
           this.offset || 0,
@@ -1111,7 +1129,10 @@ class uburoomSubtitles {
     }
   }
   destroy() {
-    for (const event of ['seeking', 'seeked', 'timeupdate']) this.video.removeEventListener?.(event, this.onTimeChange);
+    for (const event of ['seeking', 'seeked', 'timeupdate']) this.surface.removeEventListener(event, this.onTimeChange);
+    if (this.onPlace) {
+      for (const event of ['loadedmetadata', 'resize']) this.surface.removeEventListener(event, this.onPlace);
+    }
     this.reset();
   }
 }

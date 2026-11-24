@@ -26,6 +26,64 @@ import { bufferedAhead as computeBufferedAhead } from './timing.mjs';
  */
 
 /**
+ * @typedef {Object} UbuPlayerLike
+ * @property {number|(()=>number)} readyState
+ * @property {number|(()=>number)} currentTime
+ * @property {number|(()=>number)} duration
+ * @property {boolean|(()=>boolean)} paused
+ * @property {boolean|(()=>boolean)} ended
+ * @property {boolean|(()=>boolean)} seeking
+ * @property {number|(()=>number)} playbackRate
+ * @property {{length:number, start:(index:number)=>number, end:(index:number)=>number}} [buffered]
+ * @property {(seconds:number)=>void} [seek]
+ * @property {(rate:number)=>void} [setPlaybackRate]
+ * @property {(volumeUnit:number, muted:boolean)=>void} [setAudio]
+ * @property {number} [volume]
+ * @property {boolean} [muted]
+ * @property {()=>Promise<unknown>} play
+ * @property {()=>void} pause
+ * @property {(position:number)=>number} [bufferedAhead]
+ * @property {(position:number, toleranceSeconds?:number)=>boolean} [isBufferedAt]
+ * @property {(callback:(now:number, metadata:any)=>void)=>number} [requestVideoFrameCallback]
+ * @property {(id:number)=>void} [cancelVideoFrameCallback]
+ * @property {(type:string, listener:()=>void)=>void} [addEventListener]
+ * @property {(type:string, listener:()=>void)=>void} [removeEventListener]
+ */
+
+function measureFirstFrame(target, getCurrentTime, isSeeking) {
+  if (!target || typeof target.requestVideoFrameCallback !== 'function') return Promise.resolve(undefined);
+  const began = globalThis.performance.now(),
+    from = getCurrentTime();
+  return new Promise(resolve => {
+    let id, timer;
+    const finish = value => {
+      clearTimeout(timer);
+      target.removeEventListener?.('pause', interrupt);
+      target.removeEventListener?.('seeking', interrupt);
+      try {
+        target.cancelVideoFrameCallback?.(id);
+      } catch {}
+      resolve(value);
+    };
+    const interrupt = () => finish(undefined);
+    const frame = (at, metadata) => {
+      if (!isSeeking() && metadata?.mediaTime > from + 0.001) {
+        const shown = Number.isFinite(metadata.expectedDisplayTime)
+          ? metadata.expectedDisplayTime
+          : Number.isFinite(metadata.presentationTime)
+            ? metadata.presentationTime
+            : at;
+        finish(Math.max(0, shown - began));
+      } else id = target.requestVideoFrameCallback(frame);
+    };
+    target.addEventListener?.('pause', interrupt);
+    target.addEventListener?.('seeking', interrupt);
+    timer = setTimeout(interrupt, 2000);
+    id = target.requestVideoFrameCallback(frame);
+  });
+}
+
+/**
  * Wrap an HTMLMediaElement-compatible object behind the abstract PlayerAdapter interface.
  * Preserves direct property reads and writes on `video` for full DOM and test compatibility.
  * @param {{
@@ -69,36 +127,11 @@ export function createVideoElementAdapter(video, helpers = {}) {
       if (video) video.pause();
     },
     measureStart() {
-      if (!video || typeof video.requestVideoFrameCallback !== 'function') return Promise.resolve(undefined);
-      const began = globalThis.performance.now(),
-        from = video.currentTime;
-      return new Promise(resolve => {
-        let id, timer;
-        const finish = value => {
-          clearTimeout(timer);
-          video.removeEventListener?.('pause', interrupt);
-          video.removeEventListener?.('seeking', interrupt);
-          try {
-            video.cancelVideoFrameCallback?.(id);
-          } catch {}
-          resolve(value);
-        };
-        const interrupt = () => finish(undefined);
-        const frame = (at, metadata) => {
-          if (!video.seeking && metadata?.mediaTime > from + 0.001) {
-            const shown = Number.isFinite(metadata.expectedDisplayTime)
-              ? metadata.expectedDisplayTime
-              : Number.isFinite(metadata.presentationTime)
-                ? metadata.presentationTime
-                : at;
-            finish(Math.max(0, shown - began));
-          } else id = video.requestVideoFrameCallback(frame);
-        };
-        video.addEventListener?.('pause', interrupt);
-        video.addEventListener?.('seeking', interrupt);
-        timer = setTimeout(interrupt, 2000);
-        id = video.requestVideoFrameCallback(frame);
-      });
+      return measureFirstFrame(
+        video,
+        () => (video ? video.currentTime : 0),
+        () => Boolean(video?.seeking),
+      );
     },
     bufferedAhead: position => (video ? aheadFn(video.buffered, position) : 0),
     isBufferedAt(position, toleranceSeconds = 0.05) {
@@ -113,12 +146,92 @@ export function createVideoElementAdapter(video, helpers = {}) {
 }
 
 /**
- * Resolve either an explicit `PlayerAdapter` or an `HTMLMediaElement`-like `video`.
- * @param {{player?:PlayerAdapter, video?:any, playback?:{bufferedAhead?:(buffered:any, position:number)=>number}}} host
+ * Wrap a native WebCodecs + AudioWorklet + OffscreenCanvas `UbuPlayer` instance behind `PlayerAdapter`.
+ * Reads playback time directly from `UbuPlayer`'s hardware audio output clock without any hidden `<video>`.
+ * @param {UbuPlayerLike | null | undefined} ubuplayer
+ * @param {{bufferedAhead?:(buffered:any, position:number)=>number}} [helpers]
+ * @returns {PlayerAdapter}
+ */
+export function createUbuPlayerAdapter(ubuplayer, helpers = {}) {
+  const aheadFn = helpers.bufferedAhead || computeBufferedAhead;
+  const readNum = (field, fallback) => {
+    if (!ubuplayer) return fallback;
+    const value = typeof ubuplayer[field] === 'function' ? ubuplayer[field]() : ubuplayer[field];
+    return typeof value === 'number' ? value : fallback;
+  };
+  const readBool = (field, fallback) => {
+    if (!ubuplayer) return fallback;
+    const value = typeof ubuplayer[field] === 'function' ? ubuplayer[field]() : ubuplayer[field];
+    return value === undefined ? fallback : Boolean(value);
+  };
+  return {
+    hasFrameEvidence: true,
+    bufferModel: 'ranges',
+    supportsRateSync: true,
+    readyState: () => readNum('readyState', 0),
+    currentTime: () => readNum('currentTime', 0),
+    seek(seconds) {
+      if (!ubuplayer || !Number.isFinite(seconds)) return;
+      const clamped = Math.max(0, seconds);
+      if (typeof ubuplayer.seek === 'function') ubuplayer.seek(clamped);
+      else ubuplayer.currentTime = clamped;
+    },
+    duration: () => readNum('duration', NaN),
+    paused: () => readBool('paused', true),
+    ended: () => readBool('ended', false),
+    seeking: () => readBool('seeking', false),
+    playbackRate: () => readNum('playbackRate', 1),
+    setPlaybackRate(rate) {
+      if (!ubuplayer || !Number.isFinite(rate) || rate <= 0) return;
+      if (typeof ubuplayer.setPlaybackRate === 'function') ubuplayer.setPlaybackRate(rate);
+      else if (ubuplayer.playbackRate !== rate) ubuplayer.playbackRate = rate;
+    },
+    setAudio(volumeUnit, muted) {
+      if (!ubuplayer) return;
+      if (typeof ubuplayer.setAudio === 'function') {
+        ubuplayer.setAudio(volumeUnit, muted);
+        return;
+      }
+      if (Number.isFinite(volumeUnit)) ubuplayer.volume = Math.max(0, Math.min(1, volumeUnit));
+      if (typeof muted === 'boolean') ubuplayer.muted = muted;
+    },
+    play: () => (ubuplayer ? ubuplayer.play() : Promise.resolve()),
+    pause() {
+      if (ubuplayer) ubuplayer.pause();
+    },
+    measureStart() {
+      return measureFirstFrame(
+        ubuplayer,
+        () => readNum('currentTime', 0),
+        () => readBool('seeking', false),
+      );
+    },
+    bufferedAhead(position) {
+      if (!ubuplayer) return 0;
+      if (typeof ubuplayer.bufferedAhead === 'function') return ubuplayer.bufferedAhead(position);
+      return ubuplayer.buffered ? aheadFn(ubuplayer.buffered, position) : 0;
+    },
+    isBufferedAt(position, toleranceSeconds = 0.05) {
+      if (!ubuplayer) return false;
+      if (typeof ubuplayer.isBufferedAt === 'function') return ubuplayer.isBufferedAt(position, toleranceSeconds);
+      const buffered = ubuplayer.buffered;
+      if (!buffered || !Number.isFinite(buffered.length)) return false;
+      for (let i = 0; i < buffered.length; i++) {
+        if (position >= buffered.start(i) - toleranceSeconds && position < buffered.end(i)) return true;
+      }
+      return false;
+    },
+  };
+}
+
+/**
+ * Resolve either an explicit `PlayerAdapter`, a `UbuPlayer` instance, or an `HTMLMediaElement`-like `video`.
+ * @param {{player?:PlayerAdapter, ubuplayer?:UbuPlayerLike, video?:any, playback?:{bufferedAhead?:(buffered:any, position:number)=>number}}} host
  * @returns {PlayerAdapter}
  */
 export function normalizePlayerAdapter(host) {
   if (host?.player) return host.player;
+  if (host?.ubuplayer) return createUbuPlayerAdapter(host.ubuplayer, { bufferedAhead: host.playback?.bufferedAhead });
   if (host && 'video' in host)
     return createVideoElementAdapter(host.video, { bufferedAhead: host.playback?.bufferedAhead });
   throw new Error('Synchronization requires a player adapter or video element');

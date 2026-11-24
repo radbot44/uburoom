@@ -8,7 +8,7 @@ export function mount(host, deps) {
   function viewerHealth() {
     const active = deps.activePlayer,
       ytError = deps.youtube?.errorCode() || 0,
-      errorCode = ytError || deps.video.error?.code,
+      errorCode = ytError || deps.surface.errorCode(),
       round = value => Math.round(value * 10) / 10;
     const error =
       store.stream.hlsNetworkFailure || errorCode === 2
@@ -101,7 +101,7 @@ export function mount(host, deps) {
   function syncQualityEligible(timing, { allowWaiting = false, forBuffer = false } = {}) {
     const shared = store.room.state?.state,
       active = deps.activePlayer,
-      hasError = Boolean(store.player.playbackError || deps.youtube?.errorCode() || deps.video.error);
+      hasError = Boolean(store.player.playbackError || deps.youtube?.errorCode() || deps.surface.errorCode());
     return !!(
       store.room.selected &&
       store.room.state?.id === store.room.selected &&
@@ -128,7 +128,7 @@ export function mount(host, deps) {
   }
   function syncQualityBufferEligible(timing, at = deps.time.mono()) {
     const active = deps.activePlayer,
-      hasError = Boolean(store.player.playbackError || deps.youtube?.errorCode() || deps.video.error);
+      hasError = Boolean(store.player.playbackError || deps.youtube?.errorCode() || deps.surface.errorCode());
     return !!(
       store.room.state?.mediaUrl &&
       store.room.state.state &&
@@ -211,7 +211,7 @@ export function mount(host, deps) {
     const timing = deps.time.clock.read(),
       at = deps.time.mono(),
       active = deps.activePlayer,
-      hasError = Boolean(store.player.playbackError || deps.youtube?.errorCode() || deps.video.error);
+      hasError = Boolean(store.player.playbackError || deps.youtube?.errorCode() || deps.surface.errorCode());
     const clockReliable = syncQualityClockUsable(timing);
     if (!clockReliable) deps.syncQuality.breakSample(at);
     const isBuffering = store.player.playerWaiting || (!active.paused() && active.readyState() < 3);

@@ -2,7 +2,7 @@ import * as uburoomIcons from '../icons.js';
 import * as uburoomPlayback from '../playback-policy.js';
 import * as uburoomPlayerUI from '../watch-player-ui.js';
 import * as uburoomPopover from '../watch-popover.js';
-import { probeLocalFile } from '../watch-file-player.js';
+import { probeLocalFile } from '../ubuplayer.js';
 import {
   formatSubtitleOffset,
   normalizeSubtitleOffset,
@@ -128,7 +128,7 @@ export function mount(host, deps) {
     );
   }
   const captions = new uburoomSubtitles(
-    deps.video,
+    deps.surface,
     value => {
       store.player.trackNotice = value.message;
       store.player.trackNoticeError = value.error;
@@ -144,11 +144,11 @@ export function mount(host, deps) {
       }
     },
     mediaTime =>
-      store.player.sync.timelinePending || deps.video.readyState < 1
+      store.player.sync.timelinePending || deps.activePlayer.readyState() < 1
         ? deps.expected()
         : Number.isFinite(mediaTime)
           ? mediaTime
-          : deps.video.currentTime,
+          : deps.activePlayer.currentTime(),
   );
   store.player.subtitleLayout = () =>
     captions.appearance({
@@ -167,6 +167,7 @@ export function mount(host, deps) {
     changeTrack,
     captions,
     beforeSettings: () => {
+      deps.renderUbuPlayerSetting?.();
       renderMediaInformation(store.room.state);
       renderVideoCheck();
       store.player.trackContext = store.room.state
@@ -189,9 +190,13 @@ export function mount(host, deps) {
   }
   function renderLocalSourceControls() {
     const state = store.room.state;
-    const canUseLocal = Boolean(state?.mediaId && state?.format !== 'youtube-embed');
+    const operatorAllowed = deps.operatorAllowsUbuPlayer ? deps.operatorAllowsUbuPlayer() : true;
+    const ubuAllowed = deps.canUseUbuPlayer ? deps.canUseUbuPlayer() : operatorAllowed;
+    const sourceField = $('playback-source-field');
+    if (sourceField) sourceField.hidden = !operatorAllowed;
+    const canUseLocal = Boolean(operatorAllowed && state?.mediaId && state?.format !== 'youtube-embed');
     const activeLocal =
-      state?.format === 'local' && store.stream.localFile?.mediaVersion === state?.mediaVersion
+      ubuAllowed && state?.format === 'local' && store.stream.localFile?.mediaVersion === state?.mediaVersion
         ? store.stream.localFile
         : null;
     const chooseBtn = $('local-file-choose');
@@ -199,7 +204,7 @@ export function mount(host, deps) {
     const statusEl = $('local-file-status');
     const mismatchBox = $('local-file-mismatch');
     if (chooseBtn) {
-      chooseBtn.disabled = !canUseLocal || localProbePending || store.room.pending;
+      chooseBtn.disabled = !canUseLocal || !ubuAllowed || localProbePending || store.room.pending;
       chooseBtn.textContent = activeLocal ? 'Change local file…' : 'Choose local file…';
     }
     if (clearBtn) {
@@ -213,6 +218,7 @@ export function mount(host, deps) {
     if (statusEl && !localProbePending && !pendingLocalCandidate) {
       if (!state?.mediaId) statusEl.textContent = 'Choose a video in the room first.';
       else if (state.format === 'youtube-embed') statusEl.textContent = 'Unavailable for embedded YouTube videos.';
+      else if (!ubuAllowed) statusEl.textContent = 'Enable Use UbuPlayer above to play a local file.';
       else if (activeLocal) statusEl.textContent = 'Playing local file: ' + activeLocal.name;
       else statusEl.textContent = 'Streaming from room. Pick a downloaded copy on this device to play locally.';
       statusEl.classList.remove('error');
@@ -287,7 +293,8 @@ export function mount(host, deps) {
   }
   async function handleLocalFilePicked(file) {
     const state = store.room.state;
-    if (!file || !state?.mediaVersion) return;
+    const ubuAllowed = deps.canUseUbuPlayer ? deps.canUseUbuPlayer() : store.identity.config?.ubuplayer !== false;
+    if (!file || !state?.mediaVersion || !ubuAllowed) return;
     const mediaVersion = state.mediaVersion;
     localProbePending = true;
     pendingLocalCandidate = null;
@@ -299,9 +306,9 @@ export function mount(host, deps) {
     }
     renderLocalSourceControls();
     try {
-      const probed = await probeLocalFile(file);
+      const probed = await probeLocalFile(file, { ubuplayerEnabled: ubuAllowed });
       if (store.room.state?.mediaVersion !== mediaVersion) return;
-      if (!probed.mseSupported) {
+      if (!probed.webCodecsSupported) {
         if (statusEl) {
           statusEl.textContent = `This browser cannot hardware-decode ${(probed.video?.codec || 'the').toUpperCase()} video in ${file.name}. Keep using the room stream.`;
           statusEl.classList.add('error');
@@ -404,8 +411,8 @@ export function mount(host, deps) {
         info.reason === 'youtube-embed-fallback' ? 'Direct from YouTube (fallback from yt-dlp)' : 'Direct from YouTube';
       return;
     }
-    const mediaWidth = deps.video.videoWidth || info?.width,
-      mediaHeight = deps.video.videoHeight || info?.height;
+    const mediaWidth = deps.surface.width() || info?.width,
+      mediaHeight = deps.surface.height() || info?.height;
     $('media-information').textContent = info
       ? [
           mediaWidth && mediaHeight ? mediaWidth + ' x ' + mediaHeight : null,
@@ -421,8 +428,8 @@ export function mount(host, deps) {
           info.format === 'local'
             ? 'Local file' + (next.localFileName ? ' (' + next.localFileName + ')' : '')
             : info.format === 'file'
-              ? store.stream.filePlayer
-                ? 'Original file (client audio decode)'
+              ? store.stream.ubuplayer
+                ? 'Original file (UbuPlayer)'
                 : 'Original file'
               : info.format === 'hls'
                 ? ['audio-conversion', 'multiple-audio'].includes(info.reason)
@@ -515,7 +522,7 @@ export function mount(host, deps) {
         ? [
             uburoomPlayerUI.trackLabel(audio),
             (store.room.state.format !== 'file' ||
-              (!!store.stream.filePlayer && !store.stream.filePlayer.audioPassthrough)) &&
+              (!!store.stream.ubuplayer && !store.stream.ubuplayer.audioPassthrough)) &&
               audio.channels !== 2 &&
               'Stereo playback',
           ]
@@ -584,6 +591,7 @@ export function mount(host, deps) {
           store.room.pending || !store.room.state.plexReporting.watchStateAllowed;
       }
     }
+    deps.renderUbuPlayerSetting?.();
     renderRichPresence();
     renderLocalSourceControls();
     const isEmbed = store.room.state?.format === 'youtube-embed';
@@ -642,7 +650,7 @@ export function mount(host, deps) {
           ? activeLocal.probed.audioTracks.find(a => a.default)?.id || activeLocal.probed.audioTracks[0]?.id || null
           : args.audioId;
       activeLocal.audioId = targetAudio;
-      store.stream.filePlayer?.selectAudio(targetAudio);
+      store.stream.ubuplayer?.selectAudio(targetAudio);
       deps.applyState(store.room.state, true);
       if (args.subtitleId === undefined && args.subtitleMode === undefined && args.subtitleOffset === undefined) {
         renderTracks();
@@ -653,7 +661,7 @@ export function mount(host, deps) {
       const subId = args.subtitleId;
       if (subId === 'local-sidecar' && store.stream.localSidecarSubtitle?.mediaVersion === state.mediaVersion) {
         if (activeLocal) activeLocal.subtitleId = 'local-sidecar';
-        store.stream.filePlayer?.selectSubtitle(null);
+        store.stream.ubuplayer?.selectSubtitle(null);
         await captions.setLocalSubtitle(store.stream.localSidecarSubtitle.spec);
         deps.applyState({ ...state, subtitleUrl: undefined }, true);
         renderTracks();
@@ -661,14 +669,14 @@ export function mount(host, deps) {
       }
       if (String(subId).startsWith('local-s-') && activeLocal) {
         activeLocal.subtitleId = subId;
-        store.stream.filePlayer?.selectSubtitle(subId);
+        store.stream.ubuplayer?.selectSubtitle(subId);
         deps.applyState({ ...state, subtitleUrl: undefined }, true);
         renderTracks();
         return;
       }
       if (activeLocal) {
         activeLocal.subtitleId = subId;
-        store.stream.filePlayer?.selectSubtitle(null);
+        store.stream.ubuplayer?.selectSubtitle(null);
       }
       if (store.stream.localSidecarSubtitle && subId !== 'local-sidecar') {
         await captions.setLocalSubtitle(null);

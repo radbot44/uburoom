@@ -66,7 +66,7 @@ export function mount(host, deps) {
         store.room.state,
         type => deps.video.canPlayType(type),
         undefined,
-        store.preferences.playerPreferences.hdrMode,
+        store.preferences.playerPreferences?.hdrMode,
       );
     if (
       preferHLS &&
@@ -79,8 +79,9 @@ export function mount(host, deps) {
     if (!candidates.length) {
       store.stream.av1?.destroy();
       store.stream.av1 = undefined;
-      store.stream.filePlayer?.destroy();
-      store.stream.filePlayer = undefined;
+      deps.surface.detachUbuPlayer();
+      store.stream.ubuplayer?.destroy?.();
+      store.stream.ubuplayer = undefined;
       deps.video.pause();
       store.player.playbackError =
         reason + ' No remaining compatible conversion is available. Check the server codec/encoder settings.';
@@ -95,8 +96,9 @@ export function mount(host, deps) {
     deps.diagnosticSample('fallback');
     store.stream.av1?.destroy();
     store.stream.av1 = undefined;
-    store.stream.filePlayer?.destroy();
-    store.stream.filePlayer = undefined;
+    deps.surface.detachUbuPlayer();
+    store.stream.ubuplayer?.destroy?.();
+    store.stream.ubuplayer = undefined;
     deps.stopHls('fallback');
     try {
       for (const codec of candidates) {
@@ -110,6 +112,8 @@ export function mount(host, deps) {
                 store.room.state.preferredQuality || store.preferences.preferredQuality || store.room.state.quality,
               ...(codec === 'audio' ? {} : { compatible: true }),
               fallback: codec,
+              ubuplayer: false,
+              gpuTonemap: false,
               reason: [reason, store.stream.fallbackDetail].filter(Boolean).join(' '),
             },
           });
@@ -219,6 +223,7 @@ export function mount(host, deps) {
       }),
   });
   function canHoldStream(next) {
+    const active = deps.activePlayer;
     if (
       deps.activity ||
       store.player.layout === 'phone' ||
@@ -226,15 +231,15 @@ export function mount(host, deps) {
       store.room.state?.format === 'youtube-embed' ||
       next?.format === 'local' ||
       store.room.state?.format === 'local' ||
-      !(store.stream.hls || store.stream.av1 || store.stream.filePlayer) ||
+      !(store.stream.hls || store.stream.av1 || store.stream.ubuplayer) ||
       !store.room.state?.mediaUrl ||
       store.player.playbackError
     )
       return false;
     if (
       deps.time.mono() - store.stream.lastQualityRequest > 10000 ||
-      deps.video.readyState < 3 ||
-      uburoomPlayback.bufferedAhead(deps.video.buffered, deps.video.currentTime) <= HOLD_RESERVE + 1
+      active.readyState() < 3 ||
+      active.bufferedAhead(active.currentTime()) <= HOLD_RESERVE + 1
     )
       return false;
     return (
@@ -244,29 +249,30 @@ export function mount(host, deps) {
     );
   }
   const fileNeedsAudioStream = next =>
-    !(uburoomPlayback.supportsClientRemux() && store.stream.clientRemuxFailed !== next.mediaVersion) &&
+    !(deps.canUseUbuPlayer?.() && store.stream.ubuplayerFailed !== next.mediaVersion) &&
     next.format === 'file' &&
     /^(h264|avc1|hevc|h265|hvc1|hev1)$/i.test(next.videoCodec || '') &&
     !uburoomPlayback.needsVideoConversion(
       next,
       type => deps.video.canPlayType(type),
       undefined,
-      store.preferences.playerPreferences.hdrMode,
+      store.preferences.playerPreferences?.hdrMode,
     ) &&
     ((store.identity.config.outputs || ['provider']).includes('provider') || store.identity.config.copyVideo) &&
     uburoomPlayback.needsAudioConversion(next, type => deps.video.canPlayType(type));
   function holdStream(next) {
+    const active = deps.activePlayer;
     const hold = (store.stream.heldStream = { next, started: deps.time.mono() });
     deps.diagnostics.record('stream-hold', { format: next.format });
     store.stream.hls?.stopLoad();
     store.stream.av1?.hold();
-    store.stream.filePlayer?.hold();
-    const room = uburoomPlayback.bufferedAhead(deps.video.buffered, deps.video.currentTime) - HOLD_RESERVE;
+    store.stream.ubuplayer?.hold();
+    const room = active.bufferedAhead(active.currentTime()) - HOLD_RESERVE;
     hold.timer = deps.time.setTimeout(
       () => {
         if (store.stream.heldStream === hold) releaseStream('timeout');
       },
-      Math.min(HOLD_LIMIT_MS, (room * 1000) / Math.max(deps.video.playbackRate, 1)),
+      Math.min(HOLD_LIMIT_MS, (room * 1000) / Math.max(active.playbackRate(), 1)),
     );
     prepareHeldStream(hold);
   }
@@ -305,6 +311,8 @@ export function mount(host, deps) {
         args: {
           quality: hold.next.preferredQuality || store.preferences.preferredQuality || hold.next.quality,
           fallback: 'audio',
+          ubuplayer: false,
+          gpuTonemap: false,
           reason: 'The browser does not support the original codecs.',
         },
       });

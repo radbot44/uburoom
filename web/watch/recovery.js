@@ -8,35 +8,39 @@ export function mount(host, deps) {
   // frame of a new stream is the anchor, so wait for the real one at the room's position.
   let frameHold, frameHoldTimer, frameHoldShown;
   function holdLastFrame() {
-    if (deps.video.readyState < 2 || !deps.video.videoWidth) return;
+    const surface = deps.surface;
+    if (surface.readyState() < 2 || !surface.width()) return;
     if (!frameHold) {
       frameHold = document.createElement('canvas');
       frameHold.id = 'frame-hold';
       frameHold.classList.add('frame-hold');
       frameHold.hidden = true;
-      deps.video.after(frameHold);
+      (surface.canvasElement() || deps.video).after(frameHold);
     }
-    frameHold.width = deps.video.videoWidth;
-    frameHold.height = deps.video.videoHeight;
-    frameHold.style.scale = deps.video.style.scale;
-    frameHold.style.translate = deps.video.style.translate;
-    try {
-      frameHold.getContext('2d').drawImage(deps.video, 0, 0);
-    } catch {
-      return;
-    }
+    const activeEl = surface.activeElement();
+    frameHold.width = surface.width();
+    frameHold.height = surface.height();
+    frameHold.style.scale = activeEl?.style?.scale || '';
+    frameHold.style.translate = activeEl?.style?.translate || '';
+    if (!surface.drawCurrentFrameTo(frameHold.getContext('2d'))) return;
     frameHold.hidden = false;
     frameHoldShown = deps.time.mono();
     deps.time.clearTimeout(frameHoldTimer);
     frameHoldTimer = deps.time.setTimeout(releaseLastFrame, 8000);
     const shown = () => {
       if (frameHold.hidden) return;
-      if (store.player.sync.timelinePending || deps.video.seeking || deps.video.readyState < 2)
-        return void deps.video.requestVideoFrameCallback(shown);
+      if (store.player.sync.timelinePending || surface.seeking() || surface.readyState() < 2)
+        return void surface.requestFrame(shown);
       releaseLastFrame();
     };
-    if (deps.video.requestVideoFrameCallback) queueMicrotask(() => deps.video.requestVideoFrameCallback(shown));
-    else deps.video.addEventListener('playing', releaseLastFrame, { once: true });
+    if (surface.supportsFrameCallback()) queueMicrotask(() => surface.requestFrame(shown));
+    else {
+      const oncePlaying = () => {
+        surface.removeEventListener('playing', oncePlaying);
+        releaseLastFrame();
+      };
+      surface.addEventListener('playing', oncePlaying);
+    }
   }
   function releaseLastFrame() {
     deps.time.clearTimeout(frameHoldTimer);

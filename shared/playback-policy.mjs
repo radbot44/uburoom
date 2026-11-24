@@ -353,41 +353,104 @@ const CONTAINER_MIME = Object.freeze({
   mpegts: 'video/mp2t',
   avi: 'video/x-msvideo',
 });
-function supportsClientRemux(
-  mse = typeof globalThis.MediaSource !== 'undefined' ? globalThis.MediaSource : undefined,
+
+let cachedDefaultGpuTonemap;
+function supportsGpuTonemap(options = {}) {
+  const isDefault =
+    options === undefined ||
+    (options &&
+      typeof options === 'object' &&
+      !('OffscreenCanvas' in options) &&
+      !('webgpu' in options) &&
+      !('webgl2' in options));
+  if (isDefault && cachedDefaultGpuTonemap !== undefined) return cachedDefaultGpuTonemap;
+  const CanvasCtor = options?.OffscreenCanvas ?? globalThis.OffscreenCanvas;
+  if (typeof CanvasCtor !== 'function') return false;
+  let supported = false;
+  try {
+    if (options?.webgpu !== undefined) {
+      supported = Boolean(options.webgpu);
+    } else if (options?.webgl2 !== undefined) {
+      supported = Boolean(options.webgl2);
+    } else {
+      const probe = new CanvasCtor(1, 1);
+      const gl = probe.getContext?.('webgl2');
+      supported = Boolean(gl);
+    }
+  } catch {
+    supported = false;
+  }
+  if (isDefault) cachedDefaultGpuTonemap = supported;
+  return supported;
+}
+
+function supportsUbuPlayer({
+  videoDecoder = typeof globalThis.VideoDecoder === 'function',
+  audioWorklet = typeof globalThis.AudioWorkletNode === 'function',
+  offscreenCanvas = typeof globalThis.OffscreenCanvas === 'function',
   wasm = typeof globalThis.WebAssembly === 'object',
   worker = typeof globalThis.Worker === 'function',
-) {
-  if (!wasm || !worker || typeof mse?.isTypeSupported !== 'function') return false;
-  try {
-    return (
-      mse.isTypeSupported('video/mp4; codecs="avc1.42E01E"') &&
-      (mse.isTypeSupported('audio/mp4; codecs="flac"') || mse.isTypeSupported('audio/mp4; codecs="mp4a.40.2"'))
-    );
-  } catch {
-    return false;
-  }
+  ubuplayerEnabled = true,
+} = {}) {
+  if (ubuplayerEnabled === false) return false;
+  return Boolean(wasm && worker && videoDecoder && audioWorklet && offscreenCanvas);
 }
-function needsVideoConversion(source, canPlayType, matchMedia, hdrMode, clientRemux = false) {
+
+function supportsClientRemux(options) {
+  if (options && typeof options === 'object' && ('videoDecoder' in options || 'ubuplayerEnabled' in options)) {
+    return supportsUbuPlayer(options);
+  }
+  return supportsUbuPlayer();
+}
+
+function resolveUbuPlayerOptions(ubuplayerOrOptions = false, gpuTonemapArg = false) {
+  if (ubuplayerOrOptions && typeof ubuplayerOrOptions === 'object') {
+    const canUbuPlayer =
+      ubuplayerOrOptions.ubuplayerEnabled !== false &&
+      Boolean(ubuplayerOrOptions.ubuplayer ?? ubuplayerOrOptions.clientRemux);
+    return {
+      canUbuPlayer,
+      canGpuTonemap: canUbuPlayer && Boolean(ubuplayerOrOptions.gpuTonemap),
+    };
+  }
+  const canUbuPlayer = Boolean(ubuplayerOrOptions);
+  return {
+    canUbuPlayer,
+    canGpuTonemap: canUbuPlayer && Boolean(gpuTonemapArg),
+  };
+}
+
+function needsVideoConversion(
+  source,
+  canPlayType,
+  matchMedia,
+  hdrMode,
+  ubuplayerOrOptions = false,
+  gpuTonemap = false,
+) {
   // Positive answers remain only hints. Only an explicit negative for every
   // representative family probe rules out an initial HEVC direct-play trial.
   // Test Main/Main10 and both sample entries: bare `hvc1` alone is insufficient.
   if (!source || typeof canPlayType !== 'function') return false;
+  const { canUbuPlayer, canGpuTonemap } = resolveUbuPlayerOptions(ubuplayerOrOptions, gpuTonemap);
+  const fileWithUbuPlayer = canUbuPlayer && (source.format === 'file' || source.format === 'local');
   try {
     const rawContainer = String(source.container || '').toLowerCase();
-    if (source.format === 'file' && rawContainer && !clientRemux) {
+    if (source.format === 'file' && rawContainer && !fileWithUbuPlayer) {
       if (/^(mkv|matroska|ts|mpegts|avi)$/i.test(rawContainer)) {
         const mime = CONTAINER_MIME[rawContainer];
         if (mime && canPlayType(mime) === '') return true;
       }
     }
-    const baseMime = (!clientRemux && source.format === 'file' && CONTAINER_MIME[rawContainer]) || 'video/mp4';
+    const baseMime = (!fileWithUbuPlayer && source.format === 'file' && CONTAINER_MIME[rawContainer]) || 'video/mp4';
     if (source.hdrKind === 'dovi-p5') {
-      if (!supportsHdrDisplay(matchMedia, hdrMode)) return true;
-      const dovi = ['dvh1.05.06', 'dvhe.05.06'];
-      if (dovi.every(codec => canPlayType(`${baseMime}; codecs="${codec}"`) === '')) return true;
+      if (!(fileWithUbuPlayer && canGpuTonemap)) {
+        if (!supportsHdrDisplay(matchMedia, hdrMode)) return true;
+        const dovi = ['dvh1.05.06', 'dvhe.05.06'];
+        if (dovi.every(codec => canPlayType(`${baseMime}; codecs="${codec}"`) === '')) return true;
+      }
     } else if (source.hdr) {
-      if (!supportsHdrDisplay(matchMedia, hdrMode)) return true;
+      if (!(fileWithUbuPlayer && canGpuTonemap) && !supportsHdrDisplay(matchMedia, hdrMode)) return true;
     }
     if (/^(h264|avc1)$/i.test(source.videoCodec || '') && Number(source.bitDepth) > 8) {
       const hi10 = ['avc1.6e0028', 'avc1.6e0033'];
@@ -435,17 +498,33 @@ function needsAudioConversion(source, canPlayType) {
   }
   return false;
 }
-function needsClientRemux(source, canPlayType) {
-  if (!source || source.format !== 'file') return false;
+function needsUbuPlayer(source, canPlayType, matchMedia, hdrMode = 'auto', options = {}) {
+  if (!source || (source.format !== 'file' && source.format !== 'local')) return false;
   const rawContainer = String(source.container || '').toLowerCase();
   if (/^(mkv|matroska|ts|mpegts|avi)$/i.test(rawContainer)) return true;
   if ((source.tracks?.audio?.length || 0) > 1) return true;
-  if (source.hdrKind === 'dovi-p7') return true;
+  if (source.hdrKind === 'dovi-p7' || Number(source.doviProfile) === 7) return true;
+  const gpuTonemap = typeof options === 'boolean' ? options : Boolean(options?.gpuTonemap);
+  if (source.hdrKind === 'dovi-p5') {
+    if (!supportsHdrDisplay(matchMedia, hdrMode)) return gpuTonemap;
+    if (typeof canPlayType === 'function') {
+      const dovi = ['dvh1.05.06', 'dvhe.05.06'];
+      if (dovi.every(codec => canPlayType(`video/mp4; codecs="${codec}"`) === '')) return gpuTonemap;
+    } else if (gpuTonemap) {
+      return true;
+    }
+  } else if (source.hdr && !supportsHdrDisplay(matchMedia, hdrMode) && gpuTonemap) {
+    return true;
+  }
   return needsAudioConversion(source, canPlayType);
 }
-function needsCompatible(source, canPlayType, matchMedia, hdrMode, clientRemux = false) {
-  if (needsVideoConversion(source, canPlayType, matchMedia, hdrMode, clientRemux)) return true;
-  if (clientRemux) return false;
+function needsClientRemux(source, canPlayType, matchMedia, hdrMode = 'auto', options = {}) {
+  return needsUbuPlayer(source, canPlayType, matchMedia, hdrMode, options);
+}
+function needsCompatible(source, canPlayType, matchMedia, hdrMode, ubuplayerOrOptions = false, gpuTonemap = false) {
+  if (needsVideoConversion(source, canPlayType, matchMedia, hdrMode, ubuplayerOrOptions, gpuTonemap)) return true;
+  const { canUbuPlayer } = resolveUbuPlayerOptions(ubuplayerOrOptions, gpuTonemap);
+  if (canUbuPlayer && (source?.format === 'file' || source?.format === 'local')) return false;
   return needsAudioConversion(source, canPlayType);
 }
 function observationClock() {
@@ -824,9 +903,12 @@ export {
   readinessBuffered,
   timeline,
   supportsHdrDisplay,
+  supportsGpuTonemap,
+  supportsUbuPlayer,
   supportsClientRemux,
   needsVideoConversion,
   needsAudioConversion,
+  needsUbuPlayer,
   needsClientRemux,
   needsCompatible,
   observationClock,

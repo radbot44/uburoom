@@ -46,6 +46,8 @@ module.exports = {
     return actor ? this.hub.mediaFor(actor, serverId) : (await this.providers.select(serverId)).root;
   },
   streamChoices(viewer) {
+    const allowUbu = this.ubuplayerEnabled();
+    const canUbu = allowUbu && Boolean(viewer.ubuplayer ?? viewer.clientRemux);
     return JSON.stringify([
       viewer.preferredQuality || viewer.quality,
       viewer.compatible,
@@ -53,7 +55,8 @@ module.exports = {
       viewer.trackChoice,
       viewer.browserSubtitles,
       viewer.localCodecs,
-      viewer.clientRemux,
+      canUbu,
+      canUbu && Boolean(viewer.gpuTonemap),
     ]);
   },
   preloadViewer(room, preload, source, viewerId, viewer) {
@@ -112,12 +115,16 @@ module.exports = {
       throw new PlaybackError(
         'No available quality is at or below your preferred setting. Your preference has been kept.',
       );
+    const allowUbu = this.ubuplayerEnabled();
+    const canUbu = allowUbu && Boolean(viewer.ubuplayer ?? viewer.clientRemux);
     const prepare = (value, sharedOnly = false) =>
       this.prepareOutput(room, viewer, provider, source, value, compatible, fallback, {
         ...viewer.trackChoice,
         browserSubtitles: viewer.browserSubtitles,
         localCodecs: viewer.localCodecs,
-        clientRemux: viewer.clientRemux,
+        ubuplayer: canUbu,
+        clientRemux: canUbu,
+        gpuTonemap: canUbu && Boolean(viewer.gpuTonemap),
         shareKey: [room.roomId, room.mediaVersion],
         shareWaitMs: 8000,
         ...opts,
@@ -249,8 +256,13 @@ module.exports = {
       }
       if (viewer.media?.unavailable) viewer.media = undefined;
     }
-    if (viewer.localDelivery && viewer.localDeliveryVersion && viewer.localDeliveryVersion !== version) {
+    if (
+      viewer.localDelivery &&
+      ((viewer.localDeliveryVersion && viewer.localDeliveryVersion !== version) ||
+        (!this.ubuplayerEnabled() && !viewer.localDeliveryNative))
+    ) {
       viewer.localDelivery = false;
+      viewer.localDeliveryNative = false;
       viewer.localDeliveryVersion = undefined;
     }
     if (!room.media) return;
@@ -288,6 +300,7 @@ module.exports = {
         if (preparedLocal && typeof preparedLocal.provider?.stop === 'function' && preparedLocal.tracks) {
           preparedLocal.format = 'local';
           preparedLocal.deliveryReason = 'local-file';
+          preparedLocal.subtitleAbort ||= new AbortController();
           if (previous) SubtitleResources.transfer(previous, preparedLocal);
           viewer.media = preparedLocal;
         } else {
@@ -314,11 +327,12 @@ module.exports = {
         return viewer.media;
       });
     }
-    if (!viewer.localDelivery && viewer.media?.format === 'local') viewer.media = undefined;
+    const leavingLocal = !viewer.localDelivery && viewer.media?.format === 'local';
     const background =
       !!this.fallbackFor(room, viewer) && (viewer.media?.bootstrapFallback || viewer.media?.playbackError);
     if (
       viewer.media &&
+      !leavingLocal &&
       viewer.mediaVersion === version &&
       (!viewer.media.principal || !provider || viewer.media.principal === provider.principal) &&
       (!background || this.clock.now() < (viewer.fallbackRetryAt || 0))
@@ -346,7 +360,7 @@ module.exports = {
       async () => {
         // Bootstrap and the chosen output share one preparation lifetime, so
         // concurrent polls cannot create competing metadata or conversion work.
-        if (!viewer.media && this.fallbackFor(room, viewer)) {
+        if ((!viewer.media || leavingLocal) && this.fallbackFor(room, viewer)) {
           await this.replaceViewer(
             room,
             actor,

@@ -15,6 +15,7 @@ const SubtitleResources = require('./subtitle-resources');
 class MediaPipeline {
   /** @param {any} [config] @param {{logger?: any, execute?: Function}} [options] */
   constructor(config = {}, { logger, execute } = {}) {
+    this.ubuplayer = config.ubuplayer !== false && config.transcoding?.ubuplayer !== false;
     this.cacheBudget = new CacheBudget();
     this.qualityOptions = config.transcoding?.qualities || QUALITIES;
     this.conversionPolicy = new ConversionPolicy(config.transcoding);

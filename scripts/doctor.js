@@ -742,6 +742,30 @@ function checkMediaTools(config) {
       remediation:
         'Fallback requires an enabled uburoom output and working FFmpeg/FFprobe; it never uses the Plex transcoder.',
     });
+  const ubuplayerEnabled = config.ubuplayer !== false && config.transcoding?.ubuplayer !== false;
+  if (ubuplayerEnabled) {
+    const libavWrapper = path.join(__dirname, '..', 'web', 'vendor', 'libav', 'libav-uburoom.mjs');
+    const ubuWorker = path.join(__dirname, '..', 'web', 'ubuplayer-worker.js');
+    const assetsPresent = fs.existsSync(libavWrapper) && fs.existsSync(ubuWorker);
+    checks.push({
+      category: 'Media Tools',
+      name: 'UbuPlayer client playback',
+      status: assetsPresent ? 'pass' : 'warn',
+      message: assetsPresent
+        ? 'Enabled (transcoding.ubuplayer: true); worker and libav.js assets present.'
+        : 'Enabled (transcoding.ubuplayer: true), but UbuPlayer worker or libav.js vendor assets are missing.',
+      remediation: assetsPresent
+        ? undefined
+        : 'Restore web/ubuplayer-worker.js and web/vendor/libav/* or set transcoding.ubuplayer: false.',
+    });
+  } else {
+    checks.push({
+      category: 'Media Tools',
+      name: 'UbuPlayer client playback',
+      status: 'pass',
+      message: 'Disabled by operator policy (transcoding.ubuplayer: false); unsupported formats convert on the server.',
+    });
+  }
   const ffmpeg = config.ffmpegPath || findOnPath('ffmpeg');
   const ffprobe = config.ffprobePath || findOnPath('ffprobe');
 

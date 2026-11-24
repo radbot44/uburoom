@@ -17,6 +17,11 @@ const { ROOM_KEYS, PERSONAL_KEYS, ACCESS_RECHECK_MS } = require('./common');
  * Methods of Watch (server/watch.js), which composes these modules onto its prototype.
  */
 module.exports = {
+  /** Whether the server operator allows UbuPlayer client playback. */
+  ubuplayerEnabled() {
+    const cfg = this.hub?.config;
+    return cfg?.ubuplayer !== false && cfg?.transcoding?.ubuplayer !== false && this.pipeline?.ubuplayer !== false;
+  },
   beginReadiness(room, now = this.clock.now(), waitMs = 10000) {
     beginReadiness(room, now, waitMs);
     this.coordinator.schedule(room);
@@ -93,30 +98,44 @@ module.exports = {
         directProxyVersion: viewer.directProxyVersion,
         browserSubtitles: viewer.browserSubtitles,
         localCodecs: viewer.localCodecs,
+        ubuplayer: viewer.ubuplayer,
+        gpuTonemap: viewer.gpuTonemap,
         clientRemux: viewer.clientRemux,
         localDelivery: viewer.localDelivery,
+        localDeliveryNative: viewer.localDeliveryNative,
         localDeliveryVersion: viewer.localDeliveryVersion,
       }),
       /** @type {(saved: any, event: {quality?: string | null, preferences?: any}) => any} */
-      admit: (saved, { quality = '720p', preferences = {} }) => ({
-        quality: saved?.quality || (Engine.validQuality(quality) ? quality : '720p4'),
-        preferredQuality:
-          saved?.preferredQuality || (Engine.validQuality(quality) ? Engine.qualityId(quality) : '720p4'),
-        volume: saved?.volume ?? preferences.volume ?? 30,
-        muted: saved?.muted ?? preferences.muted ?? false,
-        plexReporting: saved?.plexReporting ?? preferences.plexReporting ?? true,
-        plexWatchState: saved?.plexWatchState ?? preferences.plexWatchState ?? false,
-        trackChoice: saved?.trackChoice ?? preferences.trackChoice,
-        subtitleOffset: saved?.subtitleOffset,
-        compatible: saved?.compatible,
-        fallback: saved?.fallback,
-        directProxyVersion: saved?.directProxyVersion,
-        browserSubtitles: saved?.browserSubtitles,
-        localCodecs: saved?.localCodecs,
-        clientRemux: saved?.clientRemux ?? preferences.clientRemux ?? false,
-        localDelivery: saved?.localDelivery ?? false,
-        localDeliveryVersion: saved?.localDeliveryVersion,
-      }),
+      admit: (saved, { quality = '720p', preferences = {} }) => {
+        const allowUbu = this.ubuplayerEnabled();
+        const wantUbu =
+          allowUbu &&
+          Boolean(saved?.ubuplayer ?? preferences.ubuplayer ?? saved?.clientRemux ?? preferences.clientRemux ?? false);
+        const wantGpuTonemap = wantUbu && Boolean(saved?.gpuTonemap ?? preferences.gpuTonemap ?? false);
+        const savedLocalAllowed = Boolean(saved?.localDelivery && (allowUbu || saved?.localDeliveryNative));
+        return {
+          quality: saved?.quality || (Engine.validQuality(quality) ? quality : '720p4'),
+          preferredQuality:
+            saved?.preferredQuality || (Engine.validQuality(quality) ? Engine.qualityId(quality) : '720p4'),
+          volume: saved?.volume ?? preferences.volume ?? 30,
+          muted: saved?.muted ?? preferences.muted ?? false,
+          plexReporting: saved?.plexReporting ?? preferences.plexReporting ?? true,
+          plexWatchState: saved?.plexWatchState ?? preferences.plexWatchState ?? false,
+          trackChoice: saved?.trackChoice ?? preferences.trackChoice,
+          subtitleOffset: saved?.subtitleOffset,
+          compatible: saved?.compatible,
+          fallback: saved?.fallback,
+          directProxyVersion: saved?.directProxyVersion,
+          browserSubtitles: saved?.browserSubtitles,
+          localCodecs: saved?.localCodecs,
+          ubuplayer: wantUbu,
+          gpuTonemap: wantGpuTonemap,
+          clientRemux: wantUbu,
+          localDelivery: savedLocalAllowed,
+          localDeliveryNative: saved?.localDeliveryNative ?? false,
+          localDeliveryVersion: savedLocalAllowed ? saved?.localDeliveryVersion : undefined,
+        };
+      },
       capacity: (room, userId) => {
         try {
           this.roomState.checkCapacity(room, userId);

@@ -24,8 +24,8 @@ export function mount(host, deps) {
       store.room.state.visibility !== 'private' ||
       store.room.state.viewers !== 1 ||
       store.room.pending ||
-      deps.video.paused ||
-      deps.video.readyState < 3
+      deps.activePlayer.paused() ||
+      deps.activePlayer.readyState() < 3
     )
       return;
     soak = {
@@ -101,12 +101,14 @@ export function mount(host, deps) {
     // Diagnostics must never interrupt playback, even during MediaSource teardown.
     try {
       const active = deps.activePlayer,
+        surface = deps.surface,
         ytActive = Boolean(deps.youtube?.isActive()),
-        quality = ytActive ? undefined : deps.video.getVideoPlaybackQuality?.(),
+        quality = ytActive ? undefined : surface.playbackQuality(),
         tracks = store.room.state?.tracks,
-        rect = (ytActive ? $('youtube-stage') || deps.video : deps.video).getBoundingClientRect(),
+        activeEl = ytActive ? $('youtube-stage') || surface.activeElement() : surface.activeElement(),
+        rect = activeEl.getBoundingClientRect(),
         timing = deps.time.clock.read(),
-        buffered = ytActive ? deps.youtube.bufferedRanges() : deps.video.buffered,
+        buffered = ytActive ? deps.youtube.bufferedRanges() : surface.buffered(),
         position = active.currentTime();
       const sharedTarget = uburoomTiming.target(store.room.state, timing.serverTime);
       const control = store.player.sync?.control;
@@ -114,7 +116,7 @@ export function mount(host, deps) {
         position,
         target: deps.expected(),
         ready: active.readyState(),
-        network: ytActive ? 1 : deps.video.networkState,
+        network: ytActive ? 1 : surface.networkState(),
         ...timing,
         clockValid: timing.valid,
         sharedTarget,
@@ -138,9 +140,9 @@ export function mount(host, deps) {
         jsHeapTotal: performance.memory?.totalJSHeapSize,
         jsHeapLimit: performance.memory?.jsHeapSizeLimit,
         callbackFrames: store.player.videoFrames,
-        width: deps.video.videoWidth,
-        height: deps.video.videoHeight,
-        mediaError: ytActive ? deps.youtube.errorCode() || undefined : deps.video.error?.code,
+        width: surface.width(),
+        height: surface.height(),
+        mediaError: ytActive ? deps.youtube.errorCode() || undefined : surface.errorCode(),
         online: navigator.onLine,
         visibility: document.visibilityState,
         inViewport:
@@ -189,7 +191,7 @@ export function mount(host, deps) {
     'abort',
     'ratechange',
   ])
-    deps.video.addEventListener(event, () => {
+    deps.surface.addEventListener(event, () => {
       if (event === 'playing') deps.resumeAudioContext();
       if (event === 'waiting' && store.connection.disconnectExtended) deps.fullPlayerClear();
       if (['pause', 'seeking', 'emptied'].includes(event)) deps.choppyDetector.interrupt();
@@ -228,8 +230,8 @@ export function mount(host, deps) {
       store.room.state.visibility !== 'private' ||
       store.room.state.viewers !== 1 ||
       store.room.pending ||
-      deps.video.paused ||
-      deps.video.readyState < 3;
+      deps.activePlayer.paused() ||
+      deps.activePlayer.readyState() < 3;
     if (store.room.selected || store.room.state || store.stream.mediaSource) diagnosticSample();
     if (soak && !soak.finishing && !soak.done) {
       if (store.room.selected !== soak.room || (store.room.state && store.room.state.mediaVersion !== soak.media))
@@ -259,7 +261,7 @@ export function mount(host, deps) {
           .replace(/\bhttps?:\/\/\S+/g, '[link]')
           .slice(0, 200) || undefined;
     const tracks = store.room.state?.tracks,
-      quality = deps.video.getVideoPlaybackQuality?.();
+      quality = deps.surface.playbackQuality();
     return {
       report: 'uburoom diagnostics',
       schema: 1,
@@ -281,7 +283,7 @@ export function mount(host, deps) {
         position: +deps.activePlayer.currentTime().toFixed(2),
         target: +(deps.expected() || 0).toFixed(2),
         bufferedAhead: +deps.activePlayer.bufferedAhead(deps.activePlayer.currentTime()).toFixed(2),
-        size: [deps.video.videoWidth, deps.video.videoHeight],
+        size: [deps.surface.width(), deps.surface.height()],
         frames: quality && { total: quality.totalVideoFrames, dropped: quality.droppedVideoFrames },
         chunkSeconds: store.stream.av1?.chunkTime && +store.stream.av1.chunkTime.toFixed(2),
         held: !!store.stream.heldStream,

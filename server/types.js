@@ -69,8 +69,11 @@
  * @property {string} [fallback] - Fallback codec or transcode profile if incompatible.
  * @property {boolean} browserSubtitles - Whether client supports browser-rendered subtitles.
  * @property {string[]} [localCodecs] - Browser-supported local MSE video formats.
- * @property {boolean} [clientRemux] - Whether browser supports libav client demuxing and audio decoding.
+ * @property {boolean} [ubuplayer] - Whether viewer tab enables UbuPlayer WebCodecs/AudioWorklet playback.
+ * @property {boolean} [gpuTonemap] - Whether viewer's UbuPlayer OffscreenCanvas supports GPU HDR/DoVi tonemapping.
+ * @property {boolean} [clientRemux] - Legacy alias for UbuPlayer container/audio demux capability.
  * @property {boolean} [localDelivery] - Whether viewer plays a local file from disk instead of room media bytes.
+ * @property {boolean} [localDeliveryNative] - Whether active local file plays directly in native video without UbuPlayer.
  * @property {string} [localDeliveryVersion] - Room mediaVersion to which personal local-file playback is scoped.
  * @property {boolean} [activity] - Server-verified Activity identity; excludes direct Plex delivery.
  * @property {string} [directProxyVersion] - Media generation pinned to proxy recovery for this viewer.

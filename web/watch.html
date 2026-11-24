@@ -146,6 +146,7 @@
           <section id="viewing-section" class="viewing-section" aria-label="Room player">
             <div class="stage paused" id="stage" tabindex="-1">
               <video id="video" class="video" playsinline preload="auto"></video>
+              <canvas id="ubuplayer-canvas" class="video ubuplayer-canvas" hidden></canvas>
               <div id="youtube-stage" class="youtube-stage" hidden>
                 <div id="youtube-mount" class="youtube-mount"></div>
                 <div id="youtube-shield" class="youtube-shield" aria-hidden="true"></div>
@@ -853,6 +854,22 @@
                   <div class="player-settings-grid" id="player-page-playback">
                     <section class="settings-panel settings-group">
                       <h3>Video</h3>
+                      <div class="settings-field" id="ubuplayer-settings">
+                        <label class="watch-switch-label"
+                          ><input
+                            id="ubuplayer-enabled"
+                            type="checkbox"
+                            role="switch"
+                            class="watch-switch"
+                            aria-label="Use UbuPlayer"
+                            aria-describedby="ubuplayer-hint"
+                            checked
+                          />Use UbuPlayer</label
+                        >
+                        <p id="ubuplayer-hint" class="hint">
+                          Client container playback, surround audio decode, and HDR tone mapping in this browser.
+                        </p>
+                      </div>
                       <div class="settings-field" id="playback-source-field">
                         <label>Source</label>
                         <input

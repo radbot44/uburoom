@@ -48,10 +48,26 @@ module.exports = {
     if (declared.handler === 'stream') return this.refreshStream(room, viewer, args, actor, ticket);
     if (declared.handler === 'delivery') return this.changeDelivery(room, viewer, args, actor, ticket);
     if (declared.handler === 'quality') {
+      const allowUbu = this.ubuplayerEnabled();
+      if (typeof args.ubuplayer === 'boolean') {
+        viewer.ubuplayer = allowUbu && args.ubuplayer;
+        viewer.clientRemux = viewer.ubuplayer;
+        if (!viewer.ubuplayer) {
+          viewer.gpuTonemap = false;
+          if (viewer.localDelivery && !viewer.localDeliveryNative) {
+            viewer.localDelivery = false;
+            viewer.localDeliveryVersion = undefined;
+          }
+        }
+      }
+      if (typeof args.gpuTonemap === 'boolean') {
+        viewer.gpuTonemap = Boolean(allowUbu && (viewer.ubuplayer ?? viewer.clientRemux) && args.gpuTonemap);
+      }
       if (!args.compatible && !args.fallback && args.quality) {
         viewer.preferredQuality = Engine.qualityId(args.quality);
-        if (viewer.localDelivery) {
+        if (viewer.localDelivery && args.ubuplayer === undefined && args.gpuTonemap === undefined && !args.reset) {
           viewer.localDelivery = false;
+          viewer.localDeliveryNative = false;
           viewer.localDeliveryVersion = undefined;
         }
       }
@@ -168,9 +184,11 @@ module.exports = {
         (selection.subtitle?.delivery === 'burn' || current.selection.subtitle?.delivery === 'burn') &&
         (selection.subtitle?.id !== current.selection.subtitle?.id ||
           selection.subtitle?.delivery !== current.selection.subtitle?.delivery);
+      const allowUbu = this.ubuplayerEnabled();
+      const canUbuPlayer = allowUbu && Boolean(viewer.ubuplayer ?? viewer.clientRemux);
       const clientHandlesAudio =
-        current.format === 'local' ||
-        (current.format === 'file' && viewer.clientRemux && !viewer.compatible && !viewer.fallback);
+        (current.format === 'local' && (allowUbu || viewer.localDeliveryNative)) ||
+        (current.format === 'file' && canUbuPlayer && !viewer.compatible && !viewer.fallback);
       if (
         (!clientHandlesAudio && selection.audio?.id !== current.selection.audio?.id) ||
         burnChanged ||
@@ -193,7 +211,9 @@ module.exports = {
                 ...choices,
                 browserSubtitles: viewer.browserSubtitles,
                 localCodecs: viewer.localCodecs,
-                clientRemux: viewer.clientRemux,
+                ubuplayer: canUbuPlayer,
+                clientRemux: canUbuPlayer,
+                gpuTonemap: canUbuPlayer && Boolean(viewer.gpuTonemap),
                 shareKey: [room.roomId, version],
                 authorized,
               },
@@ -254,6 +274,12 @@ module.exports = {
       };
     if (room.media.format === 'youtube-embed')
       return { status: 'unsupported', message: 'Local files cannot replace embedded YouTube playback.' };
+    if (args.mode === 'local' && !this.ubuplayerEnabled() && args.native !== true) {
+      return {
+        status: 'unsupported',
+        message: 'Local file playback requires UbuPlayer, which is disabled on this server.',
+      };
+    }
     if (viewer.preparing || viewer.change)
       return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
     return this.changeStream(viewer, async () => {
@@ -268,20 +294,25 @@ module.exports = {
             room.viewers.get(actor.watchViewerId) !== viewer
           )
             return false;
+          if (wantLocal && !this.ubuplayerEnabled() && args.native !== true) return 'disabled';
           viewer.localDelivery = wantLocal;
+          viewer.localDeliveryNative = wantLocal && args.native === true;
           viewer.localDeliveryVersion = wantLocal ? version : undefined;
           if (!wantLocal && viewer.media?.format === 'local') {
             this.tracking.end(viewer, 'stream-changed');
             void this.reporting?.end(viewer, 'stream-changed');
-            const previous = viewer.media;
-            viewer.media = undefined;
             viewer.ready = false;
-            if (previous) void this.providers.stop(previous);
           }
           return true;
         },
         false,
       );
+      if (updated === 'disabled') {
+        return {
+          status: 'unsupported',
+          message: 'Local file playback requires UbuPlayer, which is disabled on this server.',
+        };
+      }
       if (!updated) return expired();
       await this.prepareStream(room, actor, actor.watchViewerId);
       this.changed(room);

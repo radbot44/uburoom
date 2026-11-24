@@ -518,6 +518,7 @@ function mount({ request, trigger }) {
   field(transcoding, 'transcoding.max_jobs', 'Maximum shared conversion jobs', 'number');
   checkbox(panels.transcoding, 'transcoding.provider', 'Allow media server conversion');
   checkbox(panels.transcoding, 'transcoding.uburoom', 'Allow uburoom conversion');
+  checkbox(panels.transcoding, 'transcoding.ubuplayer', 'Allow UbuPlayer client playback');
   checkbox(panels.transcoding, 'transcoding.cpu_fallback', 'Allow software fallback');
   node('h3', panels.transcoding, 'uburoom video formats');
   labels['transcoding.formats'] = 'uburoom video formats';

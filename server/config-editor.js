@@ -31,6 +31,7 @@ const EDITABLE = new Set([
   'transcoding.policy',
   'transcoding.provider',
   'transcoding.uburoom',
+  'transcoding.ubuplayer',
   'transcoding.encoder',
   'transcoding.formats',
   'transcoding.max_jobs',
@@ -89,6 +90,8 @@ function editableSettings(config) {
     'transcoding.policy': config.transcoding.policy,
     'transcoding.provider': config.transcoding.provider,
     'transcoding.uburoom': config.transcoding.uburoom,
+    'transcoding.ubuplayer':
+      config.ubuplayer !== undefined ? !!config.ubuplayer : config.transcoding.ubuplayer !== false,
     'transcoding.encoder': config.transcoding.encoder,
     'transcoding.formats': config.transcoding.formats.slice(),
     'transcoding.max_jobs': config.transcoding.maxJobs,
