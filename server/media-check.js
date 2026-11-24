@@ -112,7 +112,14 @@ class MediaChecks {
     items.push(this.trackItem(media, streams));
     items.push(...((await media.provider?.checks?.file?.(media)) || []));
     const video = streams.find(stream => stream.codec_type === 'video');
-    const hdr = this.hdrItem(video);
+    const usable =
+      typeof this.pipeline?.usableOutputs === 'function'
+        ? await this.pipeline.usableOutputs(media?.provider, ['av1', 'vp9', 'vp8']).catch(() => [])
+        : [];
+    const hdr = this.hdrItem(video, {
+      hasLocalTonemap: usable.some(o => o !== 'provider'),
+      ubuplayerEnabled: this.pipeline?.ubuplayer !== false,
+    });
     if (hdr) items.push(hdr);
     const images = (media.tracks?.subtitles || []).filter(track => IMAGE_SUBTITLES.has(track.codec));
     if (images.length)
@@ -128,17 +135,18 @@ class MediaChecks {
     if (duration > 60) items.push(await this.bitrateItem(media, duration, average));
     return items.filter(Boolean);
   }
-  hdrItem(video) {
+  hdrItem(video, { hasLocalTonemap = false, ubuplayerEnabled = this.pipeline?.ubuplayer !== false } = {}) {
     if (!video) return null;
     const hdrInfo = classifyHdr(video);
     if (hdrInfo.kind === 'dovi-p5') {
-      const hasLocalTonemap = Boolean(this.pipeline?.av1?.ffmpeg);
       return {
         level: hasLocalTonemap ? 'info' : 'warning',
         topic: 'hdr',
         title: hdrInfo.label,
         detail: hasLocalTonemap
-          ? 'Played directly with client-side tone-mapping in UbuPlayer; converted qualities are tone-mapped by uburoom.'
+          ? ubuplayerEnabled
+            ? 'Played directly with client-side tone-mapping in UbuPlayer; converted qualities are tone-mapped by uburoom.'
+            : 'Converted qualities are tone-mapped by uburoom.'
           : 'Profile 5 uses proprietary Dolby Vision color without an HDR10 fallback layer; browsers without Profile 5 support require uburoom tone-mapping.',
       };
     }

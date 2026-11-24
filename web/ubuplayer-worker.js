@@ -645,7 +645,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
   }
 
   function insertDecodedFrame(frame) {
-    if (closed) {
+    if (closed || waitingForKeyFrame) {
       try {
         frame.close();
       } catch {}
@@ -876,19 +876,33 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     }
 
     frameQueue.shift();
+    if (!renderer) {
+      try {
+        head.frame.close();
+      } catch {}
+      if (!closed) {
+        postMessageFn({
+          type: 'error',
+          kind: 'codec-unsupported',
+          seekGen,
+          message: 'No GPU video renderer is available for UbuPlayer.',
+        });
+      }
+      return;
+    }
     renderingFrame = true;
+    const drawSeekGen = seekGen;
     const frame = head.frame;
     const width = frame.displayWidth || frame.codedWidth || vStream?.width || 0;
     const height = frame.displayHeight || frame.codedHeight || vStream?.height || 0;
     try {
-      if (renderer) {
-        await renderer.renderFrame(frame, vStream, head.rpu || latestRpu, targetHdr);
-      }
+      await renderer.renderFrame(frame, vStream, head.rpu || latestRpu, targetHdr);
+      if (closed || drawSeekGen !== seekGen) return;
       totalVideoFrames++;
       firstFramePresented = true;
       postMessageFn({
         type: 'framePresented',
-        seekGen,
+        seekGen: drawSeekGen,
         mediaTime: head.ptsSec,
         width,
         height,
@@ -898,10 +912,11 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
         bufferedEnd: Math.max(bufferedStart, effectiveBufferedEnd()),
       });
     } catch (err) {
-      if (!closed) {
+      if (!closed && drawSeekGen === seekGen) {
         postMessageFn({
           type: 'error',
           kind: 'render-failed',
+          seekGen: drawSeekGen,
           message: err?.message || 'GPU frame rendering failed.',
         });
       }
@@ -910,11 +925,12 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
       try {
         frame.close();
       } catch {}
-    }
-
-    feedVideoDecoder();
-    if (!closed && (!clockPaused || !firstFramePresented)) {
-      scheduleRenderTick(0);
+      if (!closed) {
+        feedVideoDecoder();
+        if (!clockPaused || !firstFramePresented) {
+          scheduleRenderTick(0);
+        }
+      }
     }
   }
 
@@ -1159,6 +1175,15 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
       renderer = await createOffscreenRenderer(offscreenCanvas, {
         preferWebGpu: msg.preferWebGpu !== false,
         targetHdr,
+      });
+      if (!renderer) {
+        throw Object.assign(new Error('No WebGPU or WebGL2 renderer could be initialized for UbuPlayer.'), {
+          kind: 'codec-unsupported',
+        });
+      }
+    } else if (typeof VideoDecoderCtor === 'function' && !packetInspectMode) {
+      throw Object.assign(new Error('No OffscreenCanvas surface is available for UbuPlayer.'), {
+        kind: 'codec-unsupported',
       });
     }
     await initVideoDecoder();

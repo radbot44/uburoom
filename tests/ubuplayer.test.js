@@ -409,6 +409,30 @@ test('Dolby Vision RPU parser, NAL 62/63 inspector, BT.2390 tonemap uniforms, an
   });
   assert.ok(uboP5C2.lmsToRgbMatrix[0] > 3.1 && uboP5C2.lmsToRgbMatrix[1] < -2.2, 'DoVi P5 c2 applies LMS->BT.2020');
 
+  // Verify UbuPlayer does not emit 'playing' on progress while a seek is still waiting for audio
+  const ubuMod = await import(pathToFileURL(path.join(__dirname, '../web/ubuplayer.js')).href);
+  const player = new ubuMod.UbuPlayer(null, { url: 'https://fixture.invalid/test.mkv' });
+  player.hasAudioTrack = true;
+  player._paused = false;
+  player._seeking = true;
+  player._readyState = 2;
+  player.seekGen = 3;
+  player.anchorMediaTime = 80;
+  const emitted = [];
+  player.addEventListener('playing', () => emitted.push('playing'));
+  player.addEventListener('canplay', () => emitted.push('canplay'));
+  player.handleWorkerMessage({
+    type: 'progress',
+    seekGen: 3,
+    bufferedStart: 80,
+    bufferedEnd: 95,
+    videoEof: false,
+    audioEof: false,
+  });
+  assert.ok(emitted.includes('canplay'), 'canplay fires when video buffer is ahead');
+  assert.equal(emitted.includes('playing'), false, 'playing must not fire while seek still awaits audio');
+  player.destroy();
+
   const uboHdr = computeTonemapUniforms({ hdr: true, hdrKind: 'hdr10', maxCll: 1000 }, null, {
     targetHdr: true,
   });

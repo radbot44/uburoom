@@ -1708,10 +1708,18 @@ function mount(
   async function moveItem(entryId, targetRank) {
     const state = getState();
     if (!state?.id) return;
-    await request('room.queue.command', {
-      roomId: state.id,
-      args: { action: 'move', entryId, targetRank, expectedRevision: queueRevision(state) },
-    });
+    try {
+      await request('room.queue.command', {
+        roomId: state.id,
+        args: { action: 'move', entryId, targetRank, expectedRevision: queueRevision(state) },
+      });
+    } catch (err) {
+      if (err?.status === 409 || /queue changed/i.test(err?.message || '')) {
+        await changed();
+        await fetchData(true);
+      }
+      throw err;
+    }
     await changed();
     await fetchData(true);
   }

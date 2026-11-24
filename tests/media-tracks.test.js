@@ -1313,30 +1313,60 @@ test('codecMatches and trackItem handle PCM audio and embedded closed captions w
   });
   assert.equal(p5Item.level, 'warning');
   assert.equal(p5Item.title, 'Dolby Vision (Profile 5)');
-  const checksWithLocal = new MediaChecks({ pipeline: { av1: { ffmpeg: 'ffmpeg' } } });
-  const p5LocalItem = checksWithLocal.hdrItem({
-    codec_type: 'video',
-    side_data_list: [{ side_data_type: 'DOVI configuration record', dv_profile: 5, bl_signal_compatibility_id: 0 }],
-  });
+  const checksWithLocal = new MediaChecks({ pipeline: { av1: { ffmpeg: 'ffmpeg' }, ubuplayer: true } });
+  const p5LocalItem = checksWithLocal.hdrItem(
+    {
+      codec_type: 'video',
+      side_data_list: [{ side_data_type: 'DOVI configuration record', dv_profile: 5, bl_signal_compatibility_id: 0 }],
+    },
+    { hasLocalTonemap: true, ubuplayerEnabled: true },
+  );
   assert.equal(p5LocalItem.level, 'info');
+  assert.match(p5LocalItem.detail, /UbuPlayer/);
+  const p5NoUbuItem = checksWithLocal.hdrItem(
+    {
+      codec_type: 'video',
+      side_data_list: [{ side_data_type: 'DOVI configuration record', dv_profile: 5, bl_signal_compatibility_id: 0 }],
+    },
+    { hasLocalTonemap: true, ubuplayerEnabled: false },
+  );
+  assert.equal(p5NoUbuItem.level, 'info');
+  assert.doesNotMatch(p5NoUbuItem.detail, /UbuPlayer/);
 
   const { PlexChecks } = require('../server/sources/plex/checks');
-  const plexWithLocal = new PlexChecks({
-    pipeline: {
-      av1: { ffmpeg: 'ffmpeg' },
-      conversionPolicy: { settings: { outputs: ['av1', 'provider'] } },
-      qualities: () => [
-        { id: 'direct', label: 'Original' },
-        { id: '1080p', label: '1080p · 20 Mbps' },
-      ],
-    },
-    startDecision: async (_media, q) =>
-      q === 'direct'
-        ? { ok: true }
-        : { ok: false, reason: 'File is unplayable. DoVi (Profile 5) color space is not supported.' },
-  });
-  const doviDecision = await plexWithLocal.decisionItem({ sourceHdrKind: 'dovi-p5' });
+  const makePlexChecks = ({ usable = ['av1', 'provider'], ubuplayer = true, reason }) =>
+    new PlexChecks({
+      pipeline: {
+        ubuplayer,
+        av1: { ffmpeg: 'ffmpeg' },
+        conversionPolicy: { settings: { outputs: ['av1', 'provider'] } },
+        usableOutputs: async () => usable,
+        qualities: () => [
+          { id: 'direct', label: 'Original' },
+          { id: '1080p', label: '1080p · 20 Mbps' },
+        ],
+      },
+      startDecision: async (_media, q) => (q === 'direct' ? { ok: true } : { ok: false, reason }),
+    });
+  const doviReason = 'File is unplayable. DoVi (Profile 5) color space is not supported.';
+  const doviDecision = await makePlexChecks({ reason: doviReason }).decisionItem({ sourceHdrKind: 'dovi-p5' });
   assert.equal(doviDecision.level, 'info');
+  assert.match(doviDecision.detail, /UbuPlayer/);
+  const doviNoUbuDecision = await makePlexChecks({ ubuplayer: false, reason: doviReason }).decisionItem({
+    sourceHdrKind: 'dovi-p5',
+  });
+  assert.equal(doviNoUbuDecision.level, 'info');
+  assert.doesNotMatch(doviNoUbuDecision.detail, /UbuPlayer/);
+  // Unrelated Plex failure on a Profile 5 file must remain a problem
+  const outageDecision = await makePlexChecks({ reason: 'service unavailable' }).decisionItem({
+    sourceHdrKind: 'dovi-p5',
+  });
+  assert.equal(outageDecision.level, 'problem');
+  // Profile 5 refusal with no usable local encoder must remain a problem
+  const noLocalDecision = await makePlexChecks({ usable: ['provider'], reason: doviReason }).decisionItem({
+    sourceHdrKind: 'dovi-p5',
+  });
+  assert.equal(noLocalDecision.level, 'problem');
   const p7Item = checks.hdrItem({
     codec_type: 'video',
     color_transfer: 'smpte2084',

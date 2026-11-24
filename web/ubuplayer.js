@@ -668,6 +668,7 @@ export class UbuPlayer {
       return;
     }
     if (msg.type === 'error') {
+      if (msg.seekGen !== undefined && msg.seekGen !== this.seekGen) return;
       const error = Object.assign(new Error(msg.message || 'UbuPlayer playback failed.'), {
         ...(msg.kind ? { kind: msg.kind } : {}),
       });
@@ -714,7 +715,7 @@ export class UbuPlayer {
         if (this._readyState < 4) {
           this._readyState = 4;
           this.emit('canplay');
-          if (!this._paused) this.emit('playing');
+          if (!this._paused && !this._seeking) this.emit('playing');
         }
       }
       if (!this.hasAudioTrack && this.videoEof && !this._paused && this.currentTime >= (this._duration || 0) - 0.05) {
@@ -920,7 +921,9 @@ export class UbuPlayer {
       this.anchorContextTime = this.hardwareOutputContextTime();
     }
     this._paused = false;
-    this.workletNode?.port.postMessage({ type: 'play' });
+    if (!this._seeking) {
+      this.workletNode?.port.postMessage({ type: 'play' });
+    }
     this.sendClockSync();
     this.startClockSyncLoop();
     this.emit('play');

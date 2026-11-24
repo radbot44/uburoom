@@ -46,22 +46,25 @@ class PlexChecks {
     const name = quality => labels.get(quality);
     const refused = results.filter(result => !result.ok);
     if (refused.length) {
-      const hasLocalConverter = Boolean(pipeline.av1?.ffmpeg) && outputs.some(o => o !== 'provider');
-      const onlyDoviP5Transcode =
-        hasLocalConverter &&
-        refused.every(
-          result =>
-            result.quality !== 'direct' &&
-            (media?.sourceHdrKind === 'dovi-p5' || /dovi.*profile\s*5|profile\s*5.*dovi/i.test(result.reason || '')),
-        );
+      const onlyDoviP5Transcode = refused.every(
+        result => result.quality !== 'direct' && /dovi.*profile\s*5|profile\s*5.*dovi/i.test(result.reason || ''),
+      );
       if (onlyDoviP5Transcode) {
-        return {
-          level: 'info',
-          topic: 'plex',
-          title: 'Plex does not convert Dolby Vision Profile 5',
-          detail:
-            'Original plays directly with UbuPlayer, and uburoom handles converted qualities with its own tone-mapping.',
-        };
+        const usable =
+          typeof pipeline.usableOutputs === 'function'
+            ? await pipeline.usableOutputs(this.plex, ['av1', 'vp9', 'vp8']).catch(() => [])
+            : [];
+        if (usable.some(o => o !== 'provider')) {
+          return {
+            level: 'info',
+            topic: 'plex',
+            title: 'Plex does not convert Dolby Vision Profile 5',
+            detail:
+              pipeline.ubuplayer !== false
+                ? 'Original plays directly with UbuPlayer, and uburoom handles converted qualities with its own tone-mapping.'
+                : 'uburoom handles converted qualities with its own tone-mapping.',
+          };
+        }
       }
       return {
         level: 'problem',
