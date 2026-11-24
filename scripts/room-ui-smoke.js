@@ -662,6 +662,31 @@ async function main() {
       await run('queueUI.add({mediaId:"demo",title:"Autoplay successor",duration:60})');
       await until(count('#queue-upcoming-list .queue-entry') + '===1', 'Successor queued');
       const endingEntry = queueOf(id).current.id;
+      const nowPlaying = '.queue-now-playing';
+      const removeCurrent = '.queue-current-remove';
+      await until(attr(nowPlaying, 'data-entry-id') + '===' + JSON.stringify(endingEntry), 'Current queue occurrence');
+      await run(`(() => {
+        const call = transport.call;
+        let release;
+        const gate = new Promise(resolve => { release = resolve; });
+        const probe = window.nowPlayingProbe = {
+          oldRemove: document.querySelector(${JSON.stringify(removeCurrent)}),
+          reads: 0,
+          removes: [],
+          release() { transport.call = call; release(); },
+        };
+        transport.call = async function (op, payload, options) {
+          if (op === 'room.queue' || op === 'room.history') {
+            probe.reads++;
+            await gate;
+          }
+          if (op === 'room.queue.command' && payload.args.action === 'remove') {
+            probe.removes.push(payload.args);
+            throw new Error('Fixture intercepted queue removal');
+          }
+          return call.call(this, op, payload, options);
+        };
+      })()`);
       await run(seekTo(54));
       await until(text('#time') + '.startsWith("0:54")', 'Seek near end');
       await run(pressId('player-play'));
@@ -671,6 +696,11 @@ async function main() {
         'Natural end starts countdown',
       );
       assert.equal(queueOf(id).current, null);
+      await until('nowPlayingProbe.reads > 0', 'Queue and History reads intentionally blocked');
+      await until(
+        hasText(nowPlaying, 'No video selected') + ' && !nowPlayingProbe.oldRemove.isConnected',
+        'Now Playing clears before the paged reads settle',
+      );
       assert.equal(!!app.watch.rooms.get(id).media, false);
       await run('window.scrollTo(0,0)');
       await shot('countdown');
@@ -698,7 +728,21 @@ async function main() {
         hidden('#ending-stage') + ' && ' + attr('#player-play', 'aria-label') + '==="Pause"',
         'Next video started',
       );
-      assert.notEqual(queueOf(id).current?.id, endingEntry);
+      const startedEntry = queueOf(id).current?.id;
+      assert.notEqual(startedEntry, endingEntry);
+      await until(
+        attr(nowPlaying, 'data-entry-id') + '===' + JSON.stringify(startedEntry),
+        'Now Playing follows the new occurrence while list reads are still blocked',
+      );
+      await run('nowPlayingProbe.oldRemove.click()');
+      assert.deepEqual(await run('nowPlayingProbe.removes'), [], 'Stale Remove cannot target the new occurrence');
+      await run(press(removeCurrent));
+      assert.deepEqual(
+        await run('nowPlayingProbe.removes'),
+        [{ action: 'remove', entryId: startedEntry, advance: false, expectedRevision: queueOf(id).queueRevision }],
+        'Current Remove uses the displayed occurrence and its snapshot revision',
+      );
+      await run('nowPlayingProbe.release(); delete window.nowPlayingProbe');
       await run('queueUI.add({mediaId:"demo",title:"Final item",duration:60})');
       await until(count('#queue-upcoming-list .queue-entry') + '===1', 'Final item queued');
       await run(seekTo(54));

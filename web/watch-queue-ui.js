@@ -40,7 +40,7 @@ function mount(
     hadHistory = false;
   let centerAfterFetch = true;
   let currentKey = '';
-  let currentId;
+  let currentTargetKey;
   let capabilityKey = '';
 
   function formatSubtitle(item) {
@@ -1008,8 +1008,31 @@ function mount(
     emptyBrowse.disabled = !getMe?.() || (!!state && !state.canBrowse);
   }
 
-  function renderNowPlaying() {
+  // Now Playing is a view of the latest room snapshot, not of the paged queue.
+  function nowPlayingTarget(state) {
+    return JSON.stringify([
+      state?.id,
+      state?.epoch,
+      state?.queueSummary?.current?.id,
+      state?.mediaId,
+      state?.mediaVersion,
+    ]);
+  }
+
+  function requireNowPlaying(target) {
     const state = getState();
+    if (!state?.durable || nowPlayingTarget(state) !== target) {
+      throw new Error('The current video changed. Try again from Now Playing.');
+    }
+    return state;
+  }
+
+  function renderNowPlaying(state) {
+    const target = nowPlayingTarget(state);
+    if (currentTargetKey !== target) {
+      currentTargetKey = target;
+      centerPending = centerAfterFetch = true;
+    }
     const empty = !state?.mediaId && !state?.queueSummary?.current;
     host.classList.toggle('queue-no-current', empty);
     host.classList.toggle(
@@ -1019,7 +1042,8 @@ function mount(
     updateViewsVisibility();
     if (empty) {
       delete nowPlayingBox.dataset.entryId;
-      if (currentKey !== 'empty') {
+      const key = JSON.stringify(['empty', state?.id, state ? !!state.canBrowse : !!getMe?.()]);
+      if (currentKey !== key) {
         nowPlayingBox.replaceChildren();
         node('p', nowPlayingBox, 'No video selected');
         const browse = button(
@@ -1030,8 +1054,9 @@ function mount(
           !state ? !getMe?.() : !state?.canBrowse,
         );
         node('span', browse, 'Browse media');
-        currentKey = 'empty';
+        currentKey = key;
       }
+      if (centerPending) requestAnimationFrame(() => centerCurrent());
       return;
     }
     const current = state?.queueSummary?.current;
@@ -1039,8 +1064,7 @@ function mount(
     const duration = current?.duration || state?.state?.duration || 0;
     const position = state?.state?.position ?? current?.position ?? 0;
     const key = JSON.stringify([
-      state?.id,
-      item.id,
+      target,
       item.mediaId,
       item.title,
       item.thumb,
@@ -1050,10 +1074,7 @@ function mount(
       state?.capabilities?.chooseMedia,
     ]);
     if (currentKey !== key) {
-      const changedItem = currentId !== current?.id;
-      currentId = current?.id;
       currentKey = key;
-      if (changedItem) centerPending = centerAfterFetch = true;
       nowPlayingBox.replaceChildren();
       nowPlayingBox.dataset.entryId = current?.id || '';
       const top = node('div', nowPlayingBox, undefined, 'queue-now-playing-header');
@@ -1063,8 +1084,8 @@ function mount(
         moves,
         'Remove current video',
         'close',
-        () => removeCurrent(false),
-        !state?.capabilities?.editQueue || !state?.capabilities?.chooseMedia,
+        () => removeCurrent(target, current?.id),
+        !current?.id || !state?.capabilities?.editQueue || !state?.capabilities?.chooseMedia,
         'queue-current-remove',
       );
       art(nowPlayingBox, item);
@@ -1081,7 +1102,9 @@ function mount(
         'play',
         async () => {
           try {
-            await execute({ action: getState()?.state?.paused ? 'media.play' : 'media.pause' });
+            const latest = requireNowPlaying(target);
+            if (!latest.capabilities?.playPause) return;
+            await execute({ action: latest.state?.paused ? 'media.play' : 'media.pause' });
           } catch (error) {
             uburoomPopover.show(playBtn, { text: error.message, state: 'error' });
           }
@@ -1093,7 +1116,10 @@ function mount(
         actions,
         'Skip to next video',
         'end',
-        () => execute({ action: 'media.next' }),
+        () => {
+          const latest = requireNowPlaying(target);
+          if (latest.hasNext && latest.capabilities?.chooseMedia) return execute({ action: 'media.next' });
+        },
         !state?.hasNext || !state?.capabilities?.chooseMedia,
         'queue-current-skip',
       );
@@ -1644,13 +1670,11 @@ function mount(
             refetchNeeded = true;
             continue;
           }
-          // Publish the current item and both lists together from one revision.
+          // Only publish Queue and History pages that match the current room revision.
           currentQueue = qRes;
           currentHistory = hRes;
           lastFetchedRevision = qRes.queueRevision;
           lastFetchedRoomId = roomId;
-          renderHeaderBadge(getState().queueSummary);
-          renderNowPlaying();
           if (centerAfterFetch) {
             centerPending = true;
             centerAfterFetch = false;
@@ -1735,12 +1759,20 @@ function mount(
     await fetchData(true);
   }
 
-  async function removeCurrent(advance) {
-    const state = getState(),
-      entryId = state?.queueSummary?.current?.id;
-    if (!entryId) return;
-    await mutate('remove', { entryId, advance });
+  async function removeCurrent(target, entryId) {
+    const state = requireNowPlaying(target);
+    if (!entryId || !state.capabilities?.editQueue || !state.capabilities?.chooseMedia) return;
+    // Preserve the revision from the same snapshot that confirmed this exact occurrence.
+    // The server can then reject a concurrent transition instead of removing a history item.
+    const expectedRevision = state.queueSummary.queueRevision;
+    if (!Number.isInteger(expectedRevision)) throw new Error('Wait for the queue to refresh before removing.');
+    await request(
+      'room.queue.command',
+      { roomId: state.id, args: { action: 'remove', entryId, advance: false, expectedRevision } },
+      { timeoutMs: 35000 },
+    );
     await changed();
+    await fetchData(true);
   }
 
   async function clearQueue() {
@@ -1949,7 +1981,7 @@ function mount(
       currentQueue = { items: [], total: 0, queueRevision: 0 };
       currentHistory = { items: [], total: 0 };
       renderTab();
-      renderNowPlaying();
+      renderNowPlaying(state);
       renderSuggestions();
       renderHeaderBadge();
       return;
@@ -1959,7 +1991,6 @@ function mount(
       currentQueue = { items: [], total: 0, queueRevision: 0 };
       currentHistory = { items: [], total: 0 };
       currentKey = '';
-      currentId = undefined;
       centerPending = centerAfterFetch = true;
       clearArtwork();
       lastFetchedRoomId = state.id;
@@ -1974,7 +2005,6 @@ function mount(
         lastAutoNextKey = autoNextKey;
         renderTab();
       }
-      renderNowPlaying();
       updateUpcomingTimes();
     }
     const permissions = JSON.stringify(state.capabilities);
@@ -1982,6 +2012,7 @@ function mount(
       capabilityKey = permissions;
       renderTab();
     }
+    renderNowPlaying(state);
     renderSuggestions();
     renderHeaderBadge(queueSummary);
     if (queueSummary) {
