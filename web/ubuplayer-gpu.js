@@ -979,7 +979,7 @@ export function inspectHevcPacket(data, nalLenSize = 4, rpuCtx, options = {}) {
  *   minLuminance?: number,
  * }} colorMeta
  * @param {ReturnType<typeof parseDolbyVisionRpu> | null} [rpuMeta]
- * @param {{targetHdr?: boolean, sdrWhiteNits?: number, inputMode?: 'bt709-override'|'planar10'|'hdr-rgb'|'passthrough'}} [options]
+ * @param {{targetHdr?: boolean, sdrWhiteNits?: number, inputMode?: 'bt709-override'|'planar10'|'passthrough'}} [options]
  */
 export function computeTonemapUniforms(colorMeta = {}, rpuMeta = null, options = {}) {
   const targetHdr = Boolean(options.targetHdr);
@@ -1257,11 +1257,8 @@ vec3 srgbToLinear(vec3 c) {
   return mix(lo, hi, greaterThan(c, vec3(0.04045)));
 }
 
-vec3 linearToSrgb(vec3 c) {
-  c = max(c, vec3(0.0));
-  vec3 lo = c * 12.92;
-  vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
-  return mix(lo, hi, greaterThan(c, vec3(0.0031308)));
+vec3 linearToBt1886(vec3 c) {
+  return pow(max(c, vec3(0.0)), vec3(1.0 / 2.4));
 }
 
 float pqEotf(float e) {
@@ -1396,84 +1393,58 @@ void main() {
     return;
   }
 
+  vec3 ycc = sampleRawYcc(vUv);
+  if (uDeband == 1) {
+    vec2 px = 12.0 / max(uResolution, vec2(1.0));
+    float h = ignNoise(gl_FragCoord.xy, uScaleParams.w) * 6.2831853;
+    vec2 dir = vec2(cos(h), sin(h)) * px;
+    vec3 n1 = sampleRawYcc(clamp(vUv + dir, 0.0, 1.0));
+    vec3 n2 = sampleRawYcc(clamp(vUv - dir, 0.0, 1.0));
+    vec3 avg = 0.5 * (n1 + n2);
+    vec3 diff = abs(ycc - avg);
+    bvec3 smoothMask = lessThan(diff, vec3(uScaleParams.y));
+    ycc = vec3(
+      smoothMask.x ? avg.x : ycc.x,
+      smoothMask.y ? avg.y : ycc.y,
+      smoothMask.z ? avg.z : ycc.z
+    );
+  }
+
+  if (uUseDoviReshape == 1) {
+    ycc = applyDoviReshaping(ycc);
+  } else if (uFullRange == 0) {
+    ycc.x = clamp((ycc.x - (64.0 / 1023.0)) * (1023.0 / 876.0), 0.0, 1.0);
+    ycc.yz = clamp((ycc.yz - (512.0 / 1023.0)) * (1023.0 / 896.0) + 0.5, 0.0, 1.0);
+  }
+
   vec3 linearBt2020;
-  if (uInputMode == 3) {
-    vec3 nlRgb = clamp(texture(uTexRgb, vUv).rgb, 0.0, 1.0);
-    if (uDeband == 1) {
-      vec2 px = 12.0 / max(uResolution, vec2(1.0));
-      float h = ignNoise(gl_FragCoord.xy, uScaleParams.w) * 6.2831853;
-      vec2 dir = vec2(cos(h), sin(h)) * px;
-      vec3 n1 = clamp(texture(uTexRgb, clamp(vUv + dir, 0.0, 1.0)).rgb, 0.0, 1.0);
-      vec3 n2 = clamp(texture(uTexRgb, clamp(vUv - dir, 0.0, 1.0)).rgb, 0.0, 1.0);
-      vec3 avg = 0.5 * (n1 + n2);
-      vec3 diff = abs(nlRgb - avg);
-      bvec3 smoothMask = lessThan(diff, vec3(uScaleParams.y));
-      nlRgb = vec3(
-        smoothMask.x ? avg.x : nlRgb.x,
-        smoothMask.y ? avg.y : nlRgb.y,
-        smoothMask.z ? avg.z : nlRgb.z
-      );
-    }
-    if (uTransferType == 1) {
-      linearBt2020 = pqEotf3(nlRgb);
-    } else if (uTransferType == 2) {
-      linearBt2020 = hlgToLinearNits(nlRgb);
-    } else {
-      linearBt2020 = srgbToLinear(nlRgb) * (uScaleParams.x / 10000.0);
-    }
+  if (uIsDoviP5 == 1) {
+    // Row-major matrix multiply on reshaped IPTPQc2
+    vec3 centered = ycc - uYccOffset;
+    vec3 lmsPrime = vec3(
+      dot(uYccToRgb[0], centered),
+      dot(uYccToRgb[1], centered),
+      dot(uYccToRgb[2], centered)
+    );
+    vec3 lmsLinear = pqEotf3(lmsPrime);
+    linearBt2020 = vec3(
+      dot(uLmsToRgb[0], lmsLinear),
+      dot(uLmsToRgb[1], lmsLinear),
+      dot(uLmsToRgb[2], lmsLinear)
+    );
   } else {
-    vec3 ycc = sampleRawYcc(vUv);
-    if (uDeband == 1) {
-      vec2 px = 12.0 / max(uResolution, vec2(1.0));
-      float h = ignNoise(gl_FragCoord.xy, uScaleParams.w) * 6.2831853;
-      vec2 dir = vec2(cos(h), sin(h)) * px;
-      vec3 n1 = sampleRawYcc(clamp(vUv + dir, 0.0, 1.0));
-      vec3 n2 = sampleRawYcc(clamp(vUv - dir, 0.0, 1.0));
-      vec3 avg = 0.5 * (n1 + n2);
-      vec3 diff = abs(ycc - avg);
-      bvec3 smoothMask = lessThan(diff, vec3(uScaleParams.y));
-      ycc = vec3(
-        smoothMask.x ? avg.x : ycc.x,
-        smoothMask.y ? avg.y : ycc.y,
-        smoothMask.z ? avg.z : ycc.z
-      );
-    }
-
-    if (uUseDoviReshape == 1) {
-      ycc = applyDoviReshaping(ycc);
-    } else if (uFullRange == 0) {
-      ycc.x = clamp((ycc.x - (64.0 / 1023.0)) * (1023.0 / 876.0), 0.0, 1.0);
-      ycc.yz = clamp((ycc.yz - (512.0 / 1023.0)) * (1023.0 / 896.0) + 0.5, 0.0, 1.0);
-    }
-
-    if (uIsDoviP5 == 1) {
-      // Row-major matrix multiply on reshaped IPTPQc2
-      vec3 centered = ycc - uYccOffset;
-      vec3 lmsPrime = vec3(
-        dot(uYccToRgb[0], centered),
-        dot(uYccToRgb[1], centered),
-        dot(uYccToRgb[2], centered)
-      );
-      vec3 lmsLinear = pqEotf3(lmsPrime);
-      linearBt2020 = vec3(
-        dot(uLmsToRgb[0], lmsLinear),
-        dot(uLmsToRgb[1], lmsLinear),
-        dot(uLmsToRgb[2], lmsLinear)
-      );
+    vec3 centered = ycc - uYccOffset;
+    vec3 nonLinearRgb = clamp(vec3(
+      dot(uYccToRgb[0], centered),
+      dot(uYccToRgb[1], centered),
+      dot(uYccToRgb[2], centered)
+    ), 0.0, 1.0);
+    if (uTransferType == 1) {
+      linearBt2020 = pqEotf3(nonLinearRgb);
+    } else if (uTransferType == 2) {
+      linearBt2020 = hlgToLinearNits(nonLinearRgb);
     } else {
-      vec3 centered = ycc - uYccOffset;
-      vec3 nonLinearRgb = clamp(vec3(
-        dot(uYccToRgb[0], centered),
-        dot(uYccToRgb[1], centered),
-        dot(uYccToRgb[2], centered)
-      ), 0.0, 1.0);
-      if (uTransferType == 1) {
-        linearBt2020 = pqEotf3(nonLinearRgb);
-      } else if (uTransferType == 2) {
-        linearBt2020 = hlgToLinearNits(nonLinearRgb);
-      } else {
-        linearBt2020 = srgbToLinear(nonLinearRgb) * (uScaleParams.x / 10000.0);
-      }
+      linearBt2020 = srgbToLinear(nonLinearRgb) * (uScaleParams.x / 10000.0);
     }
   }
   linearBt2020 = max(linearBt2020, vec3(0.0));
@@ -1507,9 +1478,9 @@ void main() {
     return;
   }
 
-  vec3 srgb = linearToSrgb(clamp(outLinear, 0.0, 1.0));
+  vec3 sdrOut = linearToBt1886(clamp(outLinear, 0.0, 1.0));
   float dither = (ignNoise(gl_FragCoord.xy, uScaleParams.w) - 0.5) * uScaleParams.z;
-  fragColor = vec4(clamp(srgb + dither, 0.0, 1.0), 1.0);
+  fragColor = vec4(clamp(sdrOut + dither, 0.0, 1.0), 1.0);
 }
 `;
 
@@ -1572,11 +1543,8 @@ const PQ_C1: f32 = 0.8359375;
 const PQ_C2: f32 = 18.8515625;
 const PQ_C3: f32 = 18.6875;
 
-fn linearToSrgb(cIn: vec3<f32>) -> vec3<f32> {
-  let c = max(cIn, vec3<f32>(0.0));
-  let lo = c * 12.92;
-  let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
-  return select(lo, hi, c > vec3<f32>(0.0031308));
+fn linearToBt1886(cIn: vec3<f32>) -> vec3<f32> {
+  return pow(max(cIn, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4));
 }
 
 fn srgbToLinear(cIn: vec3<f32>) -> vec3<f32> {
@@ -1703,73 +1671,52 @@ fn fsMain(in: VsOut) -> @location(0) vec4<f32> {
     return textureSampleLevel(texRgb, samp, in.uv, 0.0);
   }
 
+  var ycc = sampleRawYcc(in.uv);
+  if (u.deband == 1u) {
+    let px = 12.0 / max(u.resolution, vec2<f32>(1.0));
+    let ang = ignNoise(in.pos.xy, u.scaleParams.w) * 6.2831853;
+    let dir = vec2<f32>(cos(ang), sin(ang)) * px;
+    let n1 = sampleRawYcc(clamp(in.uv + dir, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let n2 = sampleRawYcc(clamp(in.uv - dir, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let avg = 0.5 * (n1 + n2);
+    let diff = abs(ycc - avg);
+    ycc = select(ycc, avg, diff < vec3<f32>(u.scaleParams.y));
+  }
+
+  if (u.useDoviReshape == 1u) {
+    ycc = applyDoviReshaping(ycc);
+  } else if (u.fullRange == 0u) {
+    ycc.x = clamp((ycc.x - (64.0 / 1023.0)) * (1023.0 / 876.0), 0.0, 1.0);
+    ycc.y = clamp((ycc.y - (512.0 / 1023.0)) * (1023.0 / 896.0) + 0.5, 0.0, 1.0);
+    ycc.z = clamp((ycc.z - (512.0 / 1023.0)) * (1023.0 / 896.0) + 0.5, 0.0, 1.0);
+  }
+
+  let centered = ycc - u.yccOffset.xyz;
   var linearBt2020: vec3<f32>;
-  if (u.inputMode == 3u) {
-    var nlRgb = clamp(textureSampleLevel(texRgb, samp, in.uv, 0.0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    if (u.deband == 1u) {
-      let px = 12.0 / max(u.resolution, vec2<f32>(1.0));
-      let ang = ignNoise(in.pos.xy, u.scaleParams.w) * 6.2831853;
-      let dir = vec2<f32>(cos(ang), sin(ang)) * px;
-      let n1 = clamp(textureSampleLevel(texRgb, samp, clamp(in.uv + dir, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-      let n2 = clamp(textureSampleLevel(texRgb, samp, clamp(in.uv - dir, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-      let avg = 0.5 * (n1 + n2);
-      let diff = abs(nlRgb - avg);
-      nlRgb = select(nlRgb, avg, diff < vec3<f32>(u.scaleParams.y));
-    }
+  if (u.isDoviP5 == 1u) {
+    let lmsPrime = vec3<f32>(
+      dot(u.yccRow0.xyz, centered),
+      dot(u.yccRow1.xyz, centered),
+      dot(u.yccRow2.xyz, centered)
+    );
+    let lmsLin = vec3<f32>(pqEotf(lmsPrime.x), pqEotf(lmsPrime.y), pqEotf(lmsPrime.z));
+    linearBt2020 = vec3<f32>(
+      dot(u.lmsRow0.xyz, lmsLin),
+      dot(u.lmsRow1.xyz, lmsLin),
+      dot(u.lmsRow2.xyz, lmsLin)
+    );
+  } else {
+    let nlRgb = clamp(vec3<f32>(
+      dot(u.yccRow0.xyz, centered),
+      dot(u.yccRow1.xyz, centered),
+      dot(u.yccRow2.xyz, centered)
+    ), vec3<f32>(0.0), vec3<f32>(1.0));
     if (u.transferType == 1u) {
       linearBt2020 = vec3<f32>(pqEotf(nlRgb.x), pqEotf(nlRgb.y), pqEotf(nlRgb.z));
     } else if (u.transferType == 2u) {
       linearBt2020 = hlgToLinearNits(nlRgb);
     } else {
       linearBt2020 = srgbToLinear(nlRgb) * (u.scaleParams.x / 10000.0);
-    }
-  } else {
-    var ycc = sampleRawYcc(in.uv);
-    if (u.deband == 1u) {
-      let px = 12.0 / max(u.resolution, vec2<f32>(1.0));
-      let ang = ignNoise(in.pos.xy, u.scaleParams.w) * 6.2831853;
-      let dir = vec2<f32>(cos(ang), sin(ang)) * px;
-      let n1 = sampleRawYcc(clamp(in.uv + dir, vec2<f32>(0.0), vec2<f32>(1.0)));
-      let n2 = sampleRawYcc(clamp(in.uv - dir, vec2<f32>(0.0), vec2<f32>(1.0)));
-      let avg = 0.5 * (n1 + n2);
-      let diff = abs(ycc - avg);
-      ycc = select(ycc, avg, diff < vec3<f32>(u.scaleParams.y));
-    }
-
-    if (u.useDoviReshape == 1u) {
-      ycc = applyDoviReshaping(ycc);
-    } else if (u.fullRange == 0u) {
-      ycc.x = clamp((ycc.x - (64.0 / 1023.0)) * (1023.0 / 876.0), 0.0, 1.0);
-      ycc.y = clamp((ycc.y - (512.0 / 1023.0)) * (1023.0 / 896.0) + 0.5, 0.0, 1.0);
-      ycc.z = clamp((ycc.z - (512.0 / 1023.0)) * (1023.0 / 896.0) + 0.5, 0.0, 1.0);
-    }
-
-    let centered = ycc - u.yccOffset.xyz;
-    if (u.isDoviP5 == 1u) {
-      let lmsPrime = vec3<f32>(
-        dot(u.yccRow0.xyz, centered),
-        dot(u.yccRow1.xyz, centered),
-        dot(u.yccRow2.xyz, centered)
-      );
-      let lmsLin = vec3<f32>(pqEotf(lmsPrime.x), pqEotf(lmsPrime.y), pqEotf(lmsPrime.z));
-      linearBt2020 = vec3<f32>(
-        dot(u.lmsRow0.xyz, lmsLin),
-        dot(u.lmsRow1.xyz, lmsLin),
-        dot(u.lmsRow2.xyz, lmsLin)
-      );
-    } else {
-      let nlRgb = clamp(vec3<f32>(
-        dot(u.yccRow0.xyz, centered),
-        dot(u.yccRow1.xyz, centered),
-        dot(u.yccRow2.xyz, centered)
-      ), vec3<f32>(0.0), vec3<f32>(1.0));
-      if (u.transferType == 1u) {
-        linearBt2020 = vec3<f32>(pqEotf(nlRgb.x), pqEotf(nlRgb.y), pqEotf(nlRgb.z));
-      } else if (u.transferType == 2u) {
-        linearBt2020 = hlgToLinearNits(nlRgb);
-      } else {
-        linearBt2020 = srgbToLinear(nlRgb) * (u.scaleParams.x / 10000.0);
-      }
     }
   }
   linearBt2020 = max(linearBt2020, vec3<f32>(0.0));
@@ -1803,9 +1750,9 @@ fn fsMain(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(outLin, 1.0);
   }
 
-  let srgb = linearToSrgb(clamp(outLin, vec3<f32>(0.0), vec3<f32>(1.0)));
+  let sdrOut = linearToBt1886(clamp(outLin, vec3<f32>(0.0), vec3<f32>(1.0)));
   let dither = (ignNoise(in.pos.xy, u.scaleParams.w) - 0.5) * u.scaleParams.z;
-  return vec4<f32>(clamp(srgb + dither, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+  return vec4<f32>(clamp(sdrOut + dither, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
 }
 `;
 
@@ -1949,14 +1896,7 @@ function createWebGl2Renderer(canvas, initialTargetHdr = false) {
       }
 
       const wrapped = wrapFramePreventingSdrClamp(rawFrame, colorMeta);
-      let inputModeCode =
-        wrapped.inputMode === 'bt709-override'
-          ? 1
-          : wrapped.inputMode === 'planar10'
-            ? 2
-            : wrapped.inputMode === 'hdr-rgb'
-              ? 3
-              : 0;
+      let inputModeCode = wrapped.inputMode === 'bt709-override' ? 1 : wrapped.inputMode === 'planar10' ? 2 : 0;
 
       try {
         if (inputModeCode === 2 && typeof rawFrame.allocationSize === 'function') {
@@ -1994,7 +1934,7 @@ function createWebGl2Renderer(canvas, initialTargetHdr = false) {
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, texRgb);
           gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-          if ((inputModeCode === 1 || inputModeCode === 3) && canHalfFloatVideoUpload && gl.RGBA16F && gl.HALF_FLOAT) {
+          if (inputModeCode === 1 && canHalfFloatVideoUpload && gl.RGBA16F && gl.HALF_FLOAT) {
             try {
               gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, wrapped.frame);
               if (typeof gl.getError === 'function' && gl.getError() !== gl.NO_ERROR) {
@@ -2204,7 +2144,7 @@ async function createWebGpuRenderer(canvas, initialTargetHdr = false) {
         // Already probed/configured
       }
       const wrapped = wrapFramePreventingSdrClamp(rawFrame, colorMeta, { allowPlanar10: false });
-      const inputModeCode = wrapped.inputMode === 'bt709-override' ? 1 : wrapped.inputMode === 'hdr-rgb' ? 3 : 0;
+      const inputModeCode = wrapped.inputMode === 'bt709-override' ? 1 : 0;
       const effectiveHdr = Boolean(wantHdr && hdrConfigured);
       try {
         ensureFrameTexture(w, h, currentFormat);
