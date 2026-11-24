@@ -682,8 +682,9 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     }
     let description = vStream.extradata?.length && !isAnnexB ? vStream.extradata : undefined;
     const wantRawHdrDecode = Boolean(vStream.hdr || (vStream.hdrKind && vStream.hdrKind !== 'sdr'));
+    const rawHdrFullRange = Boolean(vStream.fullRange || vStream.hdrKind === 'dovi-p5');
     if (wantRawHdrDecode && vStream.codecName === 'hevc' && description) {
-      const patched = patchHvccForRawHdrDecode(description);
+      const patched = patchHvccForRawHdrDecode(description, { fullRange: rawHdrFullRange });
       if (patched.patched) description = patched.extradata;
     }
     const baseCfg = {
@@ -697,7 +698,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
               primaries: 'bt709',
               transfer: 'iec61966-2-1',
               matrix: 'bt709',
-              fullRange: true,
+              fullRange: rawHdrFullRange,
             },
           }
         : {}),
@@ -1284,6 +1285,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
       if (vStream.codecName === 'hevc' && !vStream.isAnnexB) {
         const inspected = inspectHevcPacket(packetData, vStream.nalLengthSize, doviRpuCtx, {
           patchSpsVui: Boolean(vStream.hdr || (vStream.hdrKind && vStream.hdrKind !== 'sdr')),
+          fullRange: Boolean(vStream.fullRange || vStream.hdrKind === 'dovi-p5'),
         });
         packetData = inspected.packetData;
         if (inspected.masteringDisplay) {

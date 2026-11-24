@@ -137,7 +137,7 @@ function writeBitsInPlace(bytes, bitPos, count, value) {
  * @param {Uint8Array} nal
  * @returns {{nal: Uint8Array, patched: boolean}}
  */
-export function patchHevcSpsVuiToSdrFullRange(nal) {
+export function patchHevcSpsVuiToSdrFullRange(nal, { fullRange = false } = {}) {
   if (!nal || nal.length < 16 || ((nal[0] >> 1) & 0x3f) !== 33) {
     return { nal, patched: false };
   }
@@ -279,7 +279,7 @@ export function patchHevcSpsVuiToSdrFullRange(nal) {
     }
 
     const rbspPatched = rbspOrig.slice();
-    writeBitInPlace(rbspPatched, fullRangePos, 1);
+    writeBitInPlace(rbspPatched, fullRangePos, fullRange ? 1 : 0);
     if (colourDescPresent) {
       writeBitsInPlace(rbspPatched, primariesPos, 8, 1); // BT.709 primaries
       writeBitsInPlace(rbspPatched, transferPos, 8, 13); // IEC 61966-2-1 (sRGB)
@@ -302,7 +302,7 @@ export function patchHevcSpsVuiToSdrFullRange(nal) {
  * @param {Uint8Array} extradata
  * @returns {{extradata: Uint8Array, patched: boolean}}
  */
-export function patchHvccForRawHdrDecode(extradata) {
+export function patchHvccForRawHdrDecode(extradata, options = {}) {
   if (!extradata || extradata.length < 23 || extradata[0] !== 1) {
     return { extradata, patched: false };
   }
@@ -327,7 +327,7 @@ export function patchHvccForRawHdrDecode(extradata) {
       let nal = extradata.subarray(offset, offset + len);
       offset += len;
       if (nalType === 33) {
-        const res = patchHevcSpsVuiToSdrFullRange(nal);
+        const res = patchHevcSpsVuiToSdrFullRange(nal, options);
         if (res.patched) {
           nal = res.nal;
           anyPatched = true;
@@ -934,7 +934,9 @@ export function inspectHevcPacket(data, nalLenSize = 4, rpuCtx, options = {}) {
     const nalType = (data[nalStart] >> 1) & 0x3f;
     if (nalType !== 62 && nalType !== 63) {
       if (nalType === 33 && patchSpsVui) {
-        const res = patchHevcSpsVuiToSdrFullRange(data.subarray(nalStart, nalStart + len));
+        const res = patchHevcSpsVuiToSdrFullRange(data.subarray(nalStart, nalStart + len), {
+          fullRange: Boolean(options?.fullRange),
+        });
         const nalOut = res.nal;
         const lenBuf = new Uint8Array(nalLenSize);
         let v = nalOut.length;
@@ -1130,12 +1132,11 @@ export function computeTonemapUniforms(colorMeta = {}, rpuMeta = null, options =
   };
 }
 
-function isBt709FullRangeSrgb(cs) {
+function isBt709SrgbOverride(cs) {
   return Boolean(
     cs &&
     cs.primaries === 'bt709' &&
     cs.matrix === 'bt709' &&
-    cs.fullRange === true &&
     (cs.transfer === 'iec61966-2-1' || cs.transfer === 'srgb'),
   );
 }
@@ -1151,19 +1152,25 @@ function isBt709FullRangeSrgb(cs) {
 export function wrapFramePreventingSdrClamp(frame, colorMeta = {}, options = {}) {
   const fmt = String(frame?.format || '');
   if (options.allowPlanar10 !== false && /^I4(20|22|44)P10$/i.test(fmt)) {
-    return { frame, owned: false, inputMode: 'planar10' };
+    return { frame, owned: false, inputMode: 'planar10', rangeAlreadyExpanded: false };
   }
   const isHdr = Boolean(colorMeta.hdr || (colorMeta.hdrKind && colorMeta.hdrKind !== 'sdr'));
   if (!isHdr) {
-    return { frame, owned: false, inputMode: 'passthrough' };
+    return { frame, owned: false, inputMode: 'passthrough', rangeAlreadyExpanded: false };
   }
   // If SPS VUI patching + VideoDecoderConfig.colorSpace already stamped the hardware VideoFrame
-  // as full-range BT.709/sRGB, use it directly with zero cloning!
-  if (isBt709FullRangeSrgb(frame?.colorSpace)) {
-    return { frame, owned: false, inputMode: 'bt709-override' };
+  // as BT.709/sRGB, use it directly with zero cloning. When frame.colorSpace.fullRange is false,
+  // Chromium's YUV->RGB stage already expanded studio [64..940] -> [0..1], so skip shader range expansion!
+  if (isBt709SrgbOverride(frame?.colorSpace)) {
+    return {
+      frame,
+      owned: false,
+      inputMode: 'bt709-override',
+      rangeAlreadyExpanded: frame.colorSpace.fullRange === false,
+    };
   }
   if (typeof globalThis.VideoFrame !== 'function') {
-    return { frame, owned: false, inputMode: 'passthrough' };
+    return { frame, owned: false, inputMode: 'passthrough', rangeAlreadyExpanded: false };
   }
   try {
     const wrapped = new globalThis.VideoFrame(frame, {
@@ -1176,15 +1183,20 @@ export function wrapFramePreventingSdrClamp(frame, colorMeta = {}, options = {})
         fullRange: true,
       },
     });
-    if (!isBt709FullRangeSrgb(wrapped?.colorSpace)) {
+    if (!isBt709SrgbOverride(wrapped?.colorSpace)) {
       try {
         wrapped.close?.();
       } catch {}
-      return { frame, owned: false, inputMode: 'passthrough' };
+      return { frame, owned: false, inputMode: 'passthrough', rangeAlreadyExpanded: false };
     }
-    return { frame: wrapped, owned: true, inputMode: 'bt709-override' };
+    return {
+      frame: wrapped,
+      owned: true,
+      inputMode: 'bt709-override',
+      rangeAlreadyExpanded: wrapped.colorSpace.fullRange === false,
+    };
   } catch {
-    return { frame, owned: false, inputMode: 'passthrough' };
+    return { frame, owned: false, inputMode: 'passthrough', rangeAlreadyExpanded: false };
   }
 }
 
@@ -1999,10 +2011,14 @@ function createWebGl2Renderer(canvas, initialTargetHdr = false) {
         }
 
         const effectiveHdr = Boolean(wantHdr && hdrConfigured);
-        const u = computeTonemapUniforms(colorMeta, rpuMeta, {
-          targetHdr: effectiveHdr,
-          inputMode: inputModeCode === 2 ? 'planar10' : inputModeCode === 1 ? 'bt709-override' : 'passthrough',
-        });
+        const u = computeTonemapUniforms(
+          wrapped.rangeAlreadyExpanded ? { ...colorMeta, fullRange: true } : colorMeta,
+          rpuMeta,
+          {
+            targetHdr: effectiveHdr,
+            inputMode: inputModeCode === 2 ? 'planar10' : inputModeCode === 1 ? 'bt709-override' : 'passthrough',
+          },
+        );
 
         frameCounter = (frameCounter + 1) % 1024;
         gl.viewport(0, 0, w, h);
@@ -2197,10 +2213,14 @@ async function createWebGpuRenderer(canvas, initialTargetHdr = false) {
           h,
         ]);
 
-        const u = computeTonemapUniforms(colorMeta, rpuMeta, {
-          targetHdr: effectiveHdr,
-          inputMode: wrapped.inputMode,
-        });
+        const u = computeTonemapUniforms(
+          wrapped.rangeAlreadyExpanded ? { ...colorMeta, fullRange: true } : colorMeta,
+          rpuMeta,
+          {
+            targetHdr: effectiveHdr,
+            inputMode: wrapped.inputMode,
+          },
+        );
 
         frameCounter = (frameCounter + 1) % 1024;
         uF32.fill(0);
