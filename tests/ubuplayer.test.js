@@ -390,7 +390,7 @@ test('Dolby Vision RPU parser, NAL 62/63 inspector, BT.2390 tonemap uniforms, an
     };
     const ignored = wrapFramePreventingSdrClamp(gpuBackedHdrFrame, { hdr: true, hdrKind: 'hdr10', fullRange: false });
     assert.equal(ignored.owned, false);
-    assert.equal(ignored.inputMode, 'passthrough');
+    assert.equal(ignored.inputMode, 'hdr-rgb');
     assert.equal(ignored.frame, gpuBackedHdrFrame);
     assert.equal(ignoredClosed, true);
   } finally {
