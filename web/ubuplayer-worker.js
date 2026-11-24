@@ -378,6 +378,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
 
   const VideoDecoderCtor = runtimeOptions.VideoDecoder ?? globalThis.VideoDecoder;
   const EncodedVideoChunkCtor = runtimeOptions.EncodedVideoChunk ?? globalThis.EncodedVideoChunk;
+  const createRendererFn = runtimeOptions.createOffscreenRenderer ?? createOffscreenRenderer;
 
   function nowMs() {
     return typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -1172,7 +1173,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     await configureStreamDiscards(vFmtCtx, [vStream.index]);
 
     if (offscreenCanvas) {
-      renderer = await createOffscreenRenderer(offscreenCanvas, {
+      renderer = await createRendererFn(offscreenCanvas, {
         preferWebGpu: msg.preferWebGpu !== false,
         targetHdr,
       });

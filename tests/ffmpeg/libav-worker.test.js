@@ -76,7 +76,14 @@ function createMockWebCodecs() {
       this.state = 'closed';
     }
   }
-  return { stats, VideoDecoder: MockVideoDecoder, EncodedVideoChunk: MockEncodedVideoChunk };
+  const createOffscreenRenderer = async () => ({
+    backend: 'mock',
+    hdrOutputActive: false,
+    renderFrame: async () => {},
+    setTargetHdr() {},
+    destroy() {},
+  });
+  return { stats, VideoDecoder: MockVideoDecoder, EncodedVideoChunk: MockEncodedVideoChunk, createOffscreenRenderer };
 }
 
 function describeWasmSuite() {
@@ -274,6 +281,7 @@ function describeWasmSuite() {
           fileSize: fileBuf.length,
           aheadSeconds: 30,
           initialBytes: initial.buffer,
+          canvas: {},
         });
       });
 
@@ -352,6 +360,7 @@ function describeWasmSuite() {
           fileSize: fileBuf.length,
           startTime: 2.0,
           aheadSeconds: 10,
+          canvas: {},
         });
       });
 
@@ -456,6 +465,7 @@ function describeWasmSuite() {
             fileSize: fileBuf.length,
             audioMode: mode,
             aheadSeconds: 10,
+            canvas: {},
           });
         });
         let sumSq = 0;
