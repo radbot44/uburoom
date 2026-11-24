@@ -31,7 +31,8 @@ class PlexChecks {
   /** What Plex says it would do, for Original and the best converted quality. */
   async decisionItem(media) {
     const pipeline = this.plex.pipeline;
-    if (!pipeline.conversionPolicy?.settings?.outputs?.includes('provider')) return;
+    const outputs = pipeline.conversionPolicy?.settings?.outputs || [];
+    if (!outputs.includes('provider')) return;
     const offered = pipeline.qualities(media),
       labels = new Map(offered.map(q => [q.id, q.id === 'direct' ? 'Original' : q.label || q.id]));
     const checks = ['direct', offered.find(q => q.id !== 'direct')?.id].filter(id => id && labels.has(id));
@@ -44,13 +45,31 @@ class PlexChecks {
     }
     const name = quality => labels.get(quality);
     const refused = results.filter(result => !result.ok);
-    if (refused.length)
+    if (refused.length) {
+      const hasLocalConverter = Boolean(pipeline.av1?.ffmpeg) && outputs.some(o => o !== 'provider');
+      const onlyDoviP5Transcode =
+        hasLocalConverter &&
+        refused.every(
+          result =>
+            result.quality !== 'direct' &&
+            (media?.sourceHdrKind === 'dovi-p5' || /dovi.*profile\s*5|profile\s*5.*dovi/i.test(result.reason || '')),
+        );
+      if (onlyDoviP5Transcode) {
+        return {
+          level: 'info',
+          topic: 'plex',
+          title: 'Plex does not convert Dolby Vision Profile 5',
+          detail:
+            'Original plays directly with UbuPlayer, and uburoom handles converted qualities with its own tone-mapping.',
+        };
+      }
       return {
         level: 'problem',
         topic: 'plex',
         title: 'Plex says it would not play ' + refused.map(result => name(result.quality)).join(' or '),
         detail: refused.map(result => name(result.quality) + ': ' + result.reason).join(' '),
       };
+    }
     return {
       level: 'ok',
       topic: 'plex',

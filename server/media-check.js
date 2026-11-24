@@ -132,12 +132,14 @@ class MediaChecks {
     if (!video) return null;
     const hdrInfo = classifyHdr(video);
     if (hdrInfo.kind === 'dovi-p5') {
+      const hasLocalTonemap = Boolean(this.pipeline?.av1?.ffmpeg);
       return {
-        level: 'warning',
+        level: hasLocalTonemap ? 'info' : 'warning',
         topic: 'hdr',
         title: hdrInfo.label,
-        detail:
-          'Profile 5 uses proprietary Dolby Vision color without an HDR10 fallback layer; browsers without Profile 5 support require uburoom tone-mapping.',
+        detail: hasLocalTonemap
+          ? 'Played directly with client-side tone-mapping in UbuPlayer; converted qualities are tone-mapped by uburoom.'
+          : 'Profile 5 uses proprietary Dolby Vision color without an HDR10 fallback layer; browsers without Profile 5 support require uburoom tone-mapping.',
       };
     }
     if (hdrInfo.kind === 'dovi-hdr10' || hdrInfo.kind === 'dovi-hlg') {
