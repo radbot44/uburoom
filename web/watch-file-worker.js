@@ -612,6 +612,9 @@ export function createWorkerEngine(postMessageFn) {
 
   async function init(msg) {
     libav = await getSharedLibAV();
+    if (typeof libav.av_log_set_level === 'function') {
+      await libav.av_log_set_level(libav.AV_LOG_ERROR);
+    }
     fileSize = msg.fileSize;
     outAudioCodec = msg.flacSupported ? 'flac' : 'aac';
     audioMode = ['normal', 'dialogue', 'night'].includes(msg.audioMode) ? msg.audioMode : 'normal';
@@ -930,7 +933,7 @@ export function createWorkerEngine(postMessageFn) {
     if (closed || !fmtCtx || eofReached || bufferedUntil >= targetUntil) return false;
     const curSeekGen = seekGen;
     const curAudioGen = audioGen;
-    const [readRes, packetsByStream] = await libav.ff_read_frame_multi(fmtCtx, readPkt, { limit: 262144 });
+    const [readRes, packetsByStream] = await libav.ff_read_frame_multi(fmtCtx, readPkt, { limit: 1048576 });
     if (closed || curSeekGen !== seekGen) return false;
     const isEof = readRes === libav.AVERROR_EOF;
 
@@ -996,17 +999,24 @@ export function createWorkerEngine(postMessageFn) {
         if (synthesizeVideoDts && lastVideoDts === null) {
           let offset = 0;
           let minLead = Infinity;
+          let firstSp = null;
+          let firstDur = null;
           for (const p of writePkts) {
             const hasPts = p.pts !== undefined && p.ptshi !== -0x80000000;
             const dur =
               p.duration > 0 ? Math.max(1, Math.round(p.duration * scale)) : Math.max(1, Math.round(vOutTbDen / 60));
+            if (firstDur === null) firstDur = dur;
             if (hasPts) {
               const sp = Math.max(0, Math.round(libav.i64tof64(p.pts, p.ptshi || 0) * scale));
+              if (firstSp === null) firstSp = sp;
               if (sp - offset < minLead) minLead = sp - offset;
             }
             offset += dur;
           }
-          if (Number.isFinite(minLead)) syntheticStartDts = minLead;
+          // Guarantee at least a 4-frame B-frame reorder lead even when a single 4K keyframe fills the first batch.
+          const minSafetyLead = firstSp !== null && firstDur !== null ? firstSp - 4 * firstDur : Infinity;
+          const chosenLead = Math.min(minLead, minSafetyLead);
+          if (Number.isFinite(chosenLead)) syntheticStartDts = chosenLead;
         }
         for (const p of writePkts) {
           p.stream_index = 0;
@@ -1033,7 +1043,7 @@ export function createWorkerEngine(postMessageFn) {
             sd = Math.round(rawDts * scale);
             if (lastVideoDts !== null && sd <= lastVideoDts) sd = lastVideoDts + 1;
           } else {
-            sd = lastVideoDts === null ? (syntheticStartDts ?? sp - 2 * dur) : lastVideoDts + dur;
+            sd = lastVideoDts === null ? (syntheticStartDts ?? sp - 4 * dur) : lastVideoDts + dur;
           }
           lastVideoDts = sd;
           // Preserve exact presentation timestamp (never clamp sp to sd) so >2 B-frame pyramids stay in order.
