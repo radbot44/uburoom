@@ -86,7 +86,7 @@ function syncRoomUrl(id, slug) {
   }
   const currentSlug =
     slug ||
-    (store.room.state?.id === id ? store.room.state.slug : undefined) ||
+    (store.room.state?.id === id ? store.room.state?.slug : undefined) ||
     store.lobby.knownRooms.find(r => r.id === id)?.slug;
   const target =
     id && currentSlug ? '/room/' + encodeURIComponent(currentSlug) : id ? '/room/' + encodeURIComponent(id) : '/';
