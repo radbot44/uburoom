@@ -415,6 +415,20 @@ export class BitReader {
   }
 }
 
+function mulMatrix3x3(a, b) {
+  return [
+    a[0] * b[0] + a[1] * b[3] + a[2] * b[6],
+    a[0] * b[1] + a[1] * b[4] + a[2] * b[7],
+    a[0] * b[2] + a[1] * b[5] + a[2] * b[8],
+    a[3] * b[0] + a[4] * b[3] + a[5] * b[6],
+    a[3] * b[1] + a[4] * b[4] + a[5] * b[7],
+    a[3] * b[2] + a[4] * b[5] + a[5] * b[8],
+    a[6] * b[0] + a[7] * b[3] + a[8] * b[6],
+    a[6] * b[1] + a[7] * b[4] + a[8] * b[7],
+    a[6] * b[2] + a[7] * b[5] + a[8] * b[8],
+  ];
+}
+
 function invMatrix3x3(m) {
   const [a, b, c, d, e, f, g, h, i] = m;
   const A = e * i - f * h;
@@ -1029,9 +1043,14 @@ export function computeTonemapUniforms(colorMeta = {}, rpuMeta = null, options =
     if (rpuMeta?.color?.yccToRgbMatrix && rpuMeta.color.rgbToLmsMatrix) {
       yccToRgbMatrix = rpuMeta.color.yccToRgbMatrix;
       yccToRgbOffset = rpuMeta.color.yccToRgbOffset || [0, 0, 0];
-      const invRgbToLms = invMatrix3x3(rpuMeta.color.rgbToLmsMatrix);
-      // DM rgb_to_lms_matrix is BT.2020/P3 -> LMS; invert to LMS -> linear BT.2020
-      lmsToRgbMatrix = invRgbToLms || LMS_TO_BT2020_MATRIX;
+      // For Profile 5 IPTPQc2 (signalColorSpace === 2), DM rgb_to_lms_matrix is the c2 crosstalk
+      // removal matrix (LMS_c2 -> LMS), which must be followed by LMS -> linear BT.2020 RGB.
+      if (rpuMeta.color.signalColorSpace === 2) {
+        lmsToRgbMatrix = mulMatrix3x3(LMS_TO_BT2020_MATRIX, rpuMeta.color.rgbToLmsMatrix);
+      } else {
+        const invRgbToLms = invMatrix3x3(rpuMeta.color.rgbToLmsMatrix);
+        lmsToRgbMatrix = invRgbToLms || LMS_TO_BT2020_MATRIX;
+      }
     } else {
       // Standard IPTPQc2 -> LMS' with neutral chroma offset [0, 0.5, 0.5]
       yccToRgbMatrix = IPTPQ_TO_LMS_MATRIX;

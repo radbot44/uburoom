@@ -1021,7 +1021,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
             hdrKind = 'dovi-hlg';
           } else if (doviCfg.blCompatId === 2 && colorTrc !== 16) {
             hdr = false;
-            hdrKind = 'dovi-sdr';
+            hdrKind = 'sdr';
           } else {
             hdr = true;
             hdrKind = 'dovi-hdr10';

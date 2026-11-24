@@ -385,6 +385,30 @@ test('Dolby Vision RPU parser, NAL 62/63 inspector, BT.2390 tonemap uniforms, an
   assert.equal(uboHdrExpanded.recompressStudioForDovi, false);
   assert.equal(uboHdrExpanded.fullRange, true);
 
+  // Verify DoVi P5 IPTPQc2 (signalColorSpace === 2) composes LMS_TO_BT2020 * rgbToLmsMatrix
+  const p5C2Rpu = {
+    ...parsed,
+    color: {
+      ...parsed.color,
+      signalColorSpace: 2,
+      rgbToLmsMatrix: [
+        17081 / 16384,
+        -349 / 16384,
+        -349 / 16384,
+        -349 / 16384,
+        17081 / 16384,
+        -349 / 16384,
+        -349 / 16384,
+        -349 / 16384,
+        17081 / 16384,
+      ],
+    },
+  };
+  const uboP5C2 = computeTonemapUniforms({ hdr: true, hdrKind: 'dovi-p5', doviProfile: 5, fullRange: true }, p5C2Rpu, {
+    targetHdr: false,
+  });
+  assert.ok(uboP5C2.lmsToRgbMatrix[0] > 3.1 && uboP5C2.lmsToRgbMatrix[1] < -2.2, 'DoVi P5 c2 applies LMS->BT.2020');
+
   const uboHdr = computeTonemapUniforms({ hdr: true, hdrKind: 'hdr10', maxCll: 1000 }, null, {
     targetHdr: true,
   });
