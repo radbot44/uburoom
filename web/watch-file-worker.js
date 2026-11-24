@@ -852,7 +852,12 @@ export function createWorkerEngine(postMessageFn) {
     if (Number.isFinite(msg.startTime) && msg.startTime > 0.5) {
       await performSeek(msg.startTime, seekGen);
     }
-    targetUntil = (msg.startTime || 0) + (msg.aheadSeconds || 30);
+    let effectiveAhead = msg.aheadSeconds || 30;
+    if (fileSize > 0 && duration > 0) {
+      const budgetSec = Math.max(4, Math.floor((72 * 1024 * 1024) / (fileSize / duration)));
+      effectiveAhead = Math.min(effectiveAhead, budgetSec);
+    }
+    targetUntil = (msg.startTime || 0) + effectiveAhead;
     setTimeout(() => pumpLoop(), 0);
   }
 
@@ -1287,6 +1292,11 @@ export function createWorkerEngine(postMessageFn) {
           if (!closed) postMessageFn({ type: 'error', message: err?.message || 'Could not open media container.' });
         }
       });
+      return;
+    }
+    if (msg.type === 'pause') {
+      if (Number.isInteger(msg.seekGen) && msg.seekGen > seekGen) seekGen = msg.seekGen;
+      targetUntil = bufferedUntil;
       return;
     }
     if (msg.type === 'pump') {

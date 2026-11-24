@@ -8,6 +8,10 @@ import * as uburoomPlayback from './playback-policy.js';
 
 const HTTP_CHUNK_BYTES = 2 * 1024 * 1024;
 const MAX_HTTP_CHUNKS = 8;
+const TARGET_MSE_BYTES = 72 * 1024 * 1024;
+const TARGET_BEHIND_BYTES = 20 * 1024 * 1024;
+const MIN_AHEAD_SECONDS = 4;
+const MIN_BEHIND_SECONDS = 2;
 
 function detectPassthroughAudioCodecs() {
   if (typeof MediaSource === 'undefined' || typeof MediaSource.isTypeSupported !== 'function') return [];
@@ -248,6 +252,10 @@ export class uburoomFilePlayer {
     this.audioGen = 0;
     this.subGen = 0;
     this.duration = Number(options.duration) || 0;
+    this.fileSize = 0;
+    this.maxAheadSeconds = uburoomPlayback.BUFFER.ahead;
+    this.maxBehindSeconds = uburoomPlayback.BUFFER.behind;
+    this.quotaPausedAt = null;
     this.selectedAudioId = options.audioId || null;
     this.selectedSubtitleId = options.subtitleId || null;
     this.audioMode = ['normal', 'dialogue', 'night'].includes(options.audioMode) ? options.audioMode : 'normal';
@@ -284,9 +292,33 @@ export class uburoomFilePlayer {
     this.held = true;
   }
 
+  updateBufferBudget(fileSize = this.fileSize, duration = this.duration) {
+    if (fileSize > 0) this.fileSize = fileSize;
+    if (duration > 0) this.duration = duration;
+    if (this.fileSize > 0 && this.duration > 0) {
+      const bytesPerSec = this.fileSize / this.duration;
+      if (bytesPerSec > 0) {
+        const ahead = Math.floor(TARGET_MSE_BYTES / bytesPerSec);
+        const behind = Math.floor(TARGET_BEHIND_BYTES / bytesPerSec);
+        this.maxAheadSeconds = Math.max(MIN_AHEAD_SECONDS, Math.min(uburoomPlayback.BUFFER.ahead, ahead));
+        this.maxBehindSeconds = Math.max(MIN_BEHIND_SECONDS, Math.min(uburoomPlayback.BUFFER.behind, behind));
+      }
+    }
+  }
+
+  bufferedEndAt(seconds) {
+    const buf = this.video.buffered;
+    if (!buf?.length) return seconds;
+    for (let i = 0; i < buf.length; i++) {
+      if (seconds >= buf.start(i) - 0.5 && seconds <= buf.end(i) + 0.5) return buf.end(i);
+    }
+    return seconds;
+  }
+
   async start() {
     const { fileSize, initialBytes } = await this.reader.probe();
     if (this.destroyed || this.abort.signal.aborted) return;
+    this.updateBufferBudget(fileSize, this.duration);
 
     this.worker = new Worker('/watch-file-worker.js', { type: 'module' });
     this.worker.onerror = ev => this.fail(ev.error || new Error(ev.message || 'Media worker crashed.'));
@@ -307,7 +339,7 @@ export class uburoomFilePlayer {
         audioId: this.selectedAudioId,
         serverAudioIds: this.options.serverAudioIds,
         startTime: startPos,
-        aheadSeconds: uburoomPlayback.BUFFER.ahead,
+        aheadSeconds: this.maxAheadSeconds,
         initialBytes: initialBytes.buffer,
       },
       [initialBytes.buffer],
@@ -346,14 +378,33 @@ export class uburoomFilePlayer {
   }
 
   async appendSafe(sb, bytes) {
-    if (!sb || !bytes?.byteLength || this.destroyed || this.source.readyState !== 'open') return;
+    if (!sb || !bytes?.byteLength || this.destroyed || this.source.readyState !== 'open') return true;
     try {
       await this.bufferOp(sb, () => sb.appendBuffer(bytes));
+      return true;
     } catch (err) {
-      if (err?.name === 'QuotaExceededError' || /quota/i.test(err?.message || '')) {
+      if (err?.name === 'QuotaExceededError' || /quota|sourcebuffer is full/i.test(err?.message || '')) {
         await this.evictBehind(true);
-        await this.bufferOp(sb, () => sb.appendBuffer(bytes));
-        return;
+        try {
+          await this.bufferOp(sb, () => sb.appendBuffer(bytes));
+          return true;
+        } catch (retryErr) {
+          if (retryErr?.name === 'QuotaExceededError' || /quota|sourcebuffer is full/i.test(retryErr?.message || '')) {
+            const now = Math.max(0, Number(this.video.currentTime) || 0);
+            const ahead = uburoomPlayback.bufferedAhead(this.video.buffered, now);
+            if (ahead >= 1.5) {
+              // Buffer ahead is full (e.g. high-bitrate 4K UHD peak): shrink budget and pause worker
+              // until playback advances and evicts behind, instead of aborting playback.
+              this.maxAheadSeconds = Math.max(MIN_AHEAD_SECONDS, Math.floor(this.maxAheadSeconds * 0.65));
+              this.maxBehindSeconds = Math.max(MIN_BEHIND_SECONDS, Math.floor(this.maxBehindSeconds * 0.5));
+              this.quotaPausedAt = this.bufferedEndAt(now);
+              this.seekGen++;
+              this.worker?.postMessage({ type: 'pause', seekGen: this.seekGen });
+              return false;
+            }
+          }
+          throw retryErr;
+        }
       }
       throw err;
     }
@@ -362,14 +413,20 @@ export class uburoomFilePlayer {
   async evictBehind(aggressive = false) {
     if (this.destroyed || this.source.readyState !== 'open') return;
     const now = Number(this.video.currentTime) || 0;
-    const keepBehind = aggressive ? 8 : uburoomPlayback.BUFFER.behind;
+    const keepBehind = aggressive ? MIN_BEHIND_SECONDS : this.maxBehindSeconds;
     const cut = Math.max(0, now - keepBehind);
-    if (cut <= 1) return;
+    const farAheadCut = now + this.maxAheadSeconds + 15;
     for (const sb of [this.videoBuffer, this.audioBuffer]) {
       if (!sb || sb.updating || !sb.buffered?.length) continue;
       const start = sb.buffered.start(0);
-      if (cut > start + 1) {
+      if (cut > 1 && cut > start + 0.5) {
         await this.bufferOp(sb, () => sb.remove(0, cut)).catch(() => {});
+      }
+      if (aggressive && sb.buffered?.length) {
+        const lastEnd = sb.buffered.end(sb.buffered.length - 1);
+        if (lastEnd > farAheadCut + 2) {
+          await this.bufferOp(sb, () => sb.remove(farAheadCut, lastEnd + 1)).catch(() => {});
+        }
       }
     }
   }
@@ -421,7 +478,7 @@ export class uburoomFilePlayer {
           chapters: msg.chapters,
         };
         if (msg.duration > 0) {
-          this.duration = msg.duration;
+          this.updateBufferBudget(this.fileSize, msg.duration);
           try {
             this.source.duration = msg.duration;
           } catch {}
@@ -455,10 +512,12 @@ export class uburoomFilePlayer {
           await this.appendSafe(this.videoBuffer, new Uint8Array(msg.videoInit));
         }
         if (msg.videoBytes?.byteLength && this.videoBuffer) {
-          await this.appendSafe(this.videoBuffer, new Uint8Array(msg.videoBytes));
+          const ok = await this.appendSafe(this.videoBuffer, new Uint8Array(msg.videoBytes));
+          if (!ok || msg.seekGen !== this.seekGen) return;
         }
         if (msg.audioGen === this.audioGen && msg.audioBytes?.byteLength && this.audioBuffer) {
-          await this.appendSafe(this.audioBuffer, new Uint8Array(msg.audioBytes));
+          const ok = await this.appendSafe(this.audioBuffer, new Uint8Array(msg.audioBytes));
+          if (!ok || msg.seekGen !== this.seekGen) return;
         }
         await this.evictBehind(false);
         if (msg.eof && !this.endSignalled && this.source.readyState === 'open') {
@@ -539,13 +598,14 @@ export class uburoomFilePlayer {
     }
     if (Math.abs(pos - this.lastSeekTarget) < 0.2) return;
     this.lastSeekTarget = pos;
+    this.quotaPausedAt = null;
     this.endSignalled = false;
     const gen = ++this.seekGen;
     this.worker.postMessage({
       type: 'seek',
       seekGen: gen,
       time: pos,
-      aheadSeconds: uburoomPlayback.BUFFER.ahead,
+      aheadSeconds: this.maxAheadSeconds,
     });
   }
 
@@ -553,11 +613,24 @@ export class uburoomFilePlayer {
     if (this.destroyed || this.held || !this.worker) return;
     const pos = Math.max(0, Number(this.video.currentTime) || 0);
     const ahead = uburoomPlayback.bufferedAhead(this.video.buffered, pos);
-    const threshold = urgent ? uburoomPlayback.BUFFER.ahead : uburoomPlayback.BUFFER.ahead * 0.65;
+    const threshold = urgent ? this.maxAheadSeconds : this.maxAheadSeconds * 0.65;
     if (ahead < threshold && !this.endSignalled) {
+      if (this.quotaPausedAt !== null) {
+        const resumeAt = Math.max(pos, this.bufferedEndAt(pos));
+        this.quotaPausedAt = null;
+        void this.enqueueAppend(() => this.evictBehind(false));
+        const gen = ++this.seekGen;
+        this.worker.postMessage({
+          type: 'seek',
+          seekGen: gen,
+          time: resumeAt,
+          aheadSeconds: this.maxAheadSeconds,
+        });
+        return;
+      }
       this.worker.postMessage({
         type: 'pump',
-        targetUntil: pos + uburoomPlayback.BUFFER.ahead,
+        targetUntil: pos + this.maxAheadSeconds,
       });
     }
   }
@@ -565,6 +638,7 @@ export class uburoomFilePlayer {
   selectAudio(audioId) {
     if (this.destroyed || !this.worker || audioId === this.selectedAudioId) return;
     this.selectedAudioId = audioId;
+    this.quotaPausedAt = null;
     this.endSignalled = false;
     const aGen = ++this.audioGen;
     const sGen = ++this.seekGen;
@@ -576,7 +650,7 @@ export class uburoomFilePlayer {
       seekGen: sGen,
       audioId,
       time: pos,
-      aheadSeconds: uburoomPlayback.BUFFER.ahead,
+      aheadSeconds: this.maxAheadSeconds,
     });
   }
 
@@ -585,6 +659,7 @@ export class uburoomFilePlayer {
     if (this.destroyed || nextMode === this.audioMode) return;
     this.audioMode = nextMode;
     if (!this.worker) return;
+    this.quotaPausedAt = null;
     this.endSignalled = false;
     const aGen = ++this.audioGen;
     const sGen = ++this.seekGen;
@@ -596,7 +671,7 @@ export class uburoomFilePlayer {
       audioGen: aGen,
       seekGen: sGen,
       time: pos,
-      aheadSeconds: uburoomPlayback.BUFFER.ahead,
+      aheadSeconds: this.maxAheadSeconds,
     });
   }
 
@@ -610,7 +685,7 @@ export class uburoomFilePlayer {
       subGen: gen,
       subtitleId: this.selectedSubtitleId,
       time: this.selectedSubtitleId ? pos : undefined,
-      aheadSeconds: uburoomPlayback.BUFFER.ahead,
+      aheadSeconds: this.maxAheadSeconds,
     });
   }
 
