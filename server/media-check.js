@@ -210,7 +210,9 @@ class MediaChecks {
       : timeoutController.signal;
     const execute = () =>
       av1.input({ ...media, start: media.sourceStart }, signal, url =>
-        av1.run(av1.ffprobe, ['-v', 'error', ...args, url], signal, 120000, 16 * 1024 * 1024),
+        av1.run(av1.ffprobe, ['-v', 'error', ...args, url], signal, 120000, 16 * 1024 * 1024, undefined, {
+          priority: 'background',
+        }),
       );
     return execute().finally(() => clearTimeout(timer));
   }

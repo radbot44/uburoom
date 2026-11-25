@@ -261,11 +261,13 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
       const onGrantAbort = () => source.destroy();
       if (grant.abort?.signal.aborted) source.destroy();
       else grant.abort?.signal.addEventListener('abort', onGrantAbort, { once: true });
+      const endRangeStream = watch.pipeline?.beginRangeStream?.();
       try {
         await pipeline(source, res);
       } catch {
         if (!res.destroyed) res.destroy();
       } finally {
+        endRangeStream?.();
         grant.abort?.signal.removeEventListener('abort', onGrantAbort);
       }
       return;
@@ -291,6 +293,7 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
       if (!res.writableEnded) abort.abort();
     };
     const onGrantAbort = () => abort.abort();
+    let endRangeStream;
     res.on('close', disconnect);
     if (grant.abort?.signal.aborted) abort.abort();
     else grant.abort?.signal.addEventListener('abort', onGrantAbort, { once: true });
@@ -331,6 +334,7 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
         if (response.headers.has(name)) headers[name] = response.headers.get(name);
       res.writeHead(response.status, headers);
       if (req.method === 'HEAD') return res.end();
+      endRangeStream = watch.pipeline?.beginRangeStream?.();
       await pipeline(Readable.fromWeb(response.body), res, { signal: abort.signal });
     } catch (error) {
       if (!res.headersSent)
@@ -350,6 +354,7 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
         );
       else if (!res.destroyed) res.destroy();
     } finally {
+      endRangeStream?.();
       clearTimeout(timer);
       res.off('close', disconnect);
       grant.abort?.signal.removeEventListener('abort', onGrantAbort);

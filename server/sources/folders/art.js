@@ -154,6 +154,8 @@ class LocalArt {
         signal,
         TIMEOUT_MS,
         MAX_PICTURE,
+        undefined,
+        { priority: 'background' },
       );
     } catch {
       this.logger?.debug?.('Local', `No ${kind} picture could be made for "${entry.title}"`);
@@ -279,6 +281,8 @@ class LocalArt {
         signal(),
         TIMEOUT_MS,
         MAX_PICTURE,
+        undefined,
+        { priority: 'background' },
       );
       if (!Buffer.isBuffer(bytes) || !bytes.length) throw unavailable();
       return bytes;

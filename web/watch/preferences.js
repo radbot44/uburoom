@@ -165,14 +165,17 @@ export function mount(host, deps) {
     field.hidden = !operatorAllowed;
     if (!operatorAllowed) return;
     const browserSupported = uburoomPlayback.supportsUbuPlayer();
+    const localOnlySupported = !browserSupported && uburoomPlayback.supportsUbuPlayer({ localFile: true });
     toggle.disabled = !browserSupported;
     toggle.checked = browserSupported && store.preferences.playerPreferences.useUbuPlayer !== false;
     if (hint) {
-      hint.textContent = !browserSupported
-        ? 'Unavailable in this browser (requires WebCodecs, AudioWorklet, and OffscreenCanvas).'
-        : toggle.checked
-          ? 'Plays additional video formats, surround sound, and HDR directly in your browser. Required for local files.'
-          : 'Off in this browser; uburoom converts unsupported formats on the server instead.';
+      hint.textContent = localOnlySupported
+        ? 'Native fullscreen is used for room streams on iPhone; UbuPlayer remains available for local files.'
+        : !browserSupported
+          ? 'Unavailable in this browser (requires WebCodecs, AudioWorklet, and OffscreenCanvas).'
+          : toggle.checked
+            ? 'Plays additional video formats, surround sound, and HDR directly in your browser. Required for local files.'
+            : 'Off in this browser; uburoom converts unsupported formats on the server instead.';
     }
   }
 

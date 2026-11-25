@@ -33,6 +33,8 @@ class MediaPipeline {
     this.hlsPool = new HLSPool(media => media.provider.stop(media));
     /** Copies a file's picture and converts only its sound, for providers with no transcoder. */
     this.remux = new Remux(this.av1);
+    this.activeRangeStreams = 0;
+    this.lastRangeStreamAt = 0;
   }
   /** The offered qualities a source can fill: none above its own bitrate or picture height. */
   qualities(media) {
@@ -67,9 +69,27 @@ class MediaPipeline {
     media.releaseConversion?.();
     media.releaseConversion = undefined;
   }
-  /** Whether a conversion for playback is running, so background work can wait for it. */
+  /** Track active HTTP range/proxy playback streams so background scans yield cleanly. */
+  beginRangeStream() {
+    this.activeRangeStreams++;
+    this.lastRangeStreamAt = Date.now();
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      this.activeRangeStreams = Math.max(0, this.activeRangeStreams - 1);
+      this.lastRangeStreamAt = Date.now();
+    };
+  }
+  /** Whether playback conversion, remuxing, or range streaming is active, so background work can wait. */
   get busy() {
-    return this.av1.groups.size > 0 || this.hlsPool.groups.size > 0;
+    return (
+      this.av1.groups.size > 0 ||
+      this.hlsPool.groups.size > 0 ||
+      this.remux.sessions.size > 0 ||
+      this.activeRangeStreams > 0 ||
+      Date.now() - this.lastRangeStreamAt < 10000
+    );
   }
   /** The best quality a conversion may produce. */
   maxTranscodeQuality() {

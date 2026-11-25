@@ -792,7 +792,10 @@ class AV1 {
     this.maxActive = Math.min(config.transcoding?.maxJobs || 2, Math.floor(this.maxBytes / this.jobBytes));
     this.run = (...args) => {
       const invoke = () => execute(...args);
-      const job = Promise.resolve().then(() => (this.processGate ? this.processGate.run(args[2], invoke) : invoke()));
+      const priority = args[6]?.priority;
+      const job = Promise.resolve().then(() =>
+        this.processGate ? this.processGate.run(args[2], invoke, priority ? { priority } : undefined) : invoke(),
+      );
       this.jobs.add(job);
       job.finally(() => this.jobs.delete(job)).catch(() => {});
       return job;
@@ -805,7 +808,10 @@ class AV1 {
     };
     this.stream = (...args) => {
       const invoke = () => stream(...args);
-      const job = Promise.resolve().then(() => (this.processGate ? this.processGate.run(args[2], invoke) : invoke()));
+      const priority = args[6]?.priority;
+      const job = Promise.resolve().then(() =>
+        this.processGate ? this.processGate.run(args[2], invoke, priority ? { priority } : undefined) : invoke(),
+      );
       this.jobs.add(job);
       job.finally(() => this.jobs.delete(job)).catch(() => {});
       return job;

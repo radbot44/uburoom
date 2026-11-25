@@ -122,6 +122,8 @@ class ConversionPolicy {
   }
 }
 
+const PROCESS_PRIORITY = Object.freeze({ urgent: 0, normal: 1, background: 2 });
+
 class ProcessGate {
   constructor(limit = 6, maxWaiters = 64) {
     this.limit = Math.max(1, limit);
@@ -129,7 +131,7 @@ class ProcessGate {
     this.active = 0;
     this.waiters = [];
   }
-  async acquire(signal) {
+  async acquire(signal, { priority = 'normal' } = {}) {
     if (signal?.aborted) throw signal.reason || new PlaybackError('Media process cancelled.');
     if (this.active < this.limit && !this.waiters.length) {
       this.active++;
@@ -145,8 +147,10 @@ class ProcessGate {
         conversionCapacity: true,
       });
     }
+    const rank = PROCESS_PRIORITY[priority] ?? PROCESS_PRIORITY.normal;
     await new Promise((resolve, reject) => {
       const entry = {
+        rank,
         resolve: () => {
           signal?.removeEventListener('abort', onAbort);
           resolve();
@@ -169,7 +173,11 @@ class ProcessGate {
   }
   release() {
     while (this.waiters.length) {
-      const next = this.waiters.shift();
+      let bestIdx = 0;
+      for (let i = 1; i < this.waiters.length; i++) {
+        if (this.waiters[i].rank < this.waiters[bestIdx].rank) bestIdx = i;
+      }
+      const [next] = this.waiters.splice(bestIdx, 1);
       if (next) {
         next.resolve();
         return;
@@ -177,8 +185,8 @@ class ProcessGate {
     }
     this.active = Math.max(0, this.active - 1);
   }
-  async run(signal, action) {
-    const release = await this.acquire(signal);
+  async run(signal, action, options) {
+    const release = await this.acquire(signal, options);
     try {
       return await action();
     } finally {

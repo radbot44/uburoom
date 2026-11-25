@@ -232,7 +232,7 @@ export function mount(host, deps) {
   function renderLocalSourceControls() {
     const state = store.room.state;
     const operatorAllowed = deps.operatorAllowsUbuPlayer ? deps.operatorAllowsUbuPlayer() : true;
-    const ubuAllowed = deps.canUseUbuPlayer ? deps.canUseUbuPlayer() : operatorAllowed;
+    const ubuAllowed = deps.canUseUbuPlayer ? deps.canUseUbuPlayer({ localFile: true }) : operatorAllowed;
     const sourceField = $('playback-source-field');
     if (sourceField) sourceField.hidden = !operatorAllowed;
     const canUseLocal = Boolean(operatorAllowed && state?.mediaId && state?.format !== 'youtube-embed');
@@ -334,7 +334,9 @@ export function mount(host, deps) {
   }
   async function handleLocalFilePicked(file) {
     const state = store.room.state;
-    const ubuAllowed = deps.canUseUbuPlayer ? deps.canUseUbuPlayer() : store.identity.config?.ubuplayer !== false;
+    const ubuAllowed = deps.canUseUbuPlayer
+      ? deps.canUseUbuPlayer({ localFile: true })
+      : store.identity.config?.ubuplayer !== false;
     if (!file || !state?.mediaVersion || !ubuAllowed) return;
     const mediaVersion = state.mediaVersion;
     localProbePending = true;

@@ -191,6 +191,9 @@
     align-items: flex-start;
     padding: var(--space-12) var(--space-16);
   }
+  .setup-check[hidden] {
+    display: none;
+  }
   .setup-check + .setup-check {
     border-top: 1px solid var(--border);
   }

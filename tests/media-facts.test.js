@@ -293,3 +293,44 @@ test('MediaFacts enforces maxEntries and maxBytes LRU bounds', async () => {
     facts.close();
   }
 });
+
+test('ProcessGate schedules live normal/urgent work ahead of background tasks and preserves FIFO within rank', async () => {
+  const { ProcessGate } = require('../server/transcoding-policy');
+  const gate = new ProcessGate(1);
+  const releaseFirst = await gate.acquire();
+  const order = [];
+  const pBg1 = gate.run(undefined, async () => order.push('bg1'), { priority: 'background' });
+  const pBg2 = gate.run(undefined, async () => order.push('bg2'), { priority: 'background' });
+  const pNormal = gate.run(undefined, async () => order.push('normal'));
+  const pUrgent = gate.run(undefined, async () => order.push('urgent'), { priority: 'urgent' });
+  const abortCtrl = new AbortController();
+  const pAborted = gate.run(abortCtrl.signal, async () => order.push('aborted'), { priority: 'urgent' });
+  abortCtrl.abort();
+  await assert.rejects(pAborted);
+
+  releaseFirst();
+  await Promise.all([pBg1, pBg2, pNormal, pUrgent]);
+  assert.deepEqual(order, ['urgent', 'normal', 'bg1', 'bg2']);
+});
+
+test('MediaPipeline.busy reflects active remux sessions and active HTTP range streams', async () => {
+  const { MediaPipeline } = require('../server/media-pipeline');
+  const pipeline = new MediaPipeline();
+  try {
+    assert.equal(pipeline.busy, false);
+    const endRange = pipeline.beginRangeStream();
+    assert.equal(pipeline.busy, true);
+    endRange();
+    // Recent range-stream window keeps background scans paused briefly
+    assert.equal(pipeline.busy, true);
+    pipeline.lastRangeStreamAt = 0;
+    assert.equal(pipeline.busy, false);
+
+    pipeline.remux.sessions.set('remux-key', { id: 's1' });
+    assert.equal(pipeline.busy, true);
+    pipeline.remux.sessions.clear();
+    assert.equal(pipeline.busy, false);
+  } finally {
+    await pipeline.close();
+  }
+});

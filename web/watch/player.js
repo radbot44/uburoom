@@ -370,6 +370,7 @@ export function mount(host, deps) {
     if (store.player.frameCallback !== undefined) deps.surface.cancelFrame(store.player.frameCallback);
     store.player.frameCallback = undefined;
     deps.surface.detachUbuPlayer();
+    deps.updatePipVisibility?.();
     store.stream.ubuplayer?.destroy?.();
     store.stream.ubuplayer = undefined;
     deps.time.clearTimeout(store.stream.hlsRecoveryTimer);
