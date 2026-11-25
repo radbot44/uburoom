@@ -16,12 +16,25 @@ function packetPtsSec(libav, pkt, tbNum, tbDen, originSec = 0) {
   return undefined;
 }
 
-function packetPosBytes(libav, pkt) {
-  if (pkt.pos !== undefined && pkt.poshi !== -0x80000000) {
-    const val = libav.i64tof64(pkt.pos, pkt.poshi || 0);
-    return val >= 0 ? val : undefined;
+async function probePacketPos(libav, ctx, pkt, vIdx, aIdx) {
+  let firstVPos;
+  let firstAPos;
+  for (let i = 0; i < 64 && (firstVPos === undefined || firstAPos === undefined); i++) {
+    const ret = await libav.av_read_frame(ctx, pkt);
+    if (ret < 0) break;
+    const sIdx = await libav.AVPacket_stream_index(pkt);
+    const pLo = await libav.AVPacket_pos(pkt);
+    const pHi = await libav.AVPacket_poshi(pkt);
+    await libav.av_packet_unref(pkt);
+    if (pHi !== -0x80000000 || pLo !== 0) {
+      const pos = libav.i64tof64(pLo, pHi);
+      if (pos >= 0) {
+        if (sIdx === vIdx && firstVPos === undefined) firstVPos = pos;
+        if (sIdx === aIdx && firstAPos === undefined) firstAPos = pos;
+      }
+    }
   }
-  return undefined;
+  return { firstVPos, firstAPos };
 }
 
 /**
@@ -197,21 +210,10 @@ export async function runDemuxArchWorkload({
       let activeAudio = aStreams[0] || null;
       const activeSub = enableLocalSubtitle ? sStreams[0] || null : null;
 
-      // Locality Probe for Arch C
+      // Locality Probe for Arch C using AVPacket_pos via av_read_frame
       let splitAudioMode = arch === 'arch-a';
       if (arch === 'arch-c' && vStream && activeAudio && totalFonts === 0) {
-        let firstVPos;
-        let firstAPos;
-        for (let step = 0; step < 8 && (firstVPos === undefined || firstAPos === undefined); step++) {
-          const [res, byStream] = await libav.ff_read_frame_multi(pCtx, pPkt, { limit: 262144 });
-          for (const vp of byStream[vStream.index] || []) {
-            if (firstVPos === undefined) firstVPos = packetPosBytes(libav, vp);
-          }
-          for (const ap of byStream[activeAudio.index] || []) {
-            if (firstAPos === undefined) firstAPos = packetPosBytes(libav, ap);
-          }
-          if (res === libav.AVERROR_EOF) break;
-        }
+        const { firstVPos, firstAPos } = await probePacketPos(libav, pCtx, pPkt, vStream.index, activeAudio.index);
         if (
           firstVPos !== undefined &&
           firstAPos !== undefined &&

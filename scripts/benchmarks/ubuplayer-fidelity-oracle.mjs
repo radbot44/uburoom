@@ -141,9 +141,9 @@ export function runDeltaEOracleReport() {
   // Writing linear BT.709 light directly vs extended-sRGB / display-p3-linear blowout check
   const midGrayLin = 0.18;
   const sdrMidGrayNits = midGrayLin * 203.0; // 36.54 nits
-  const rawSrgbCodeword = srgbOetf(midGrayLin); // ~0.461
-  const linearDisplayP3BlowoutNits = srgbEotf(rawSrgbCodeword) * 203.0; // if non-linear treated as linear, or inverse
-  const rawLinWrittenToExtendedCanvasNits = srgbEotf(midGrayLin) * 203.0; // 0.18 treated as sRGB codeword -> 0.027 * 203 = 5.5 nits (or pow(0.18, 1/2.2) = 0.459 vs 0.18 = 2.55x error)
+  const rawSrgbCodeword = srgbOetf(midGrayLin); // ~0.4614
+  const srgbCodewordOnLinearCanvasNits = rawSrgbCodeword * 203.0; // ~93.66 nits (2.56x midtone blowout!)
+  const rawLinWrittenToExtendedCanvasNits = srgbEotf(midGrayLin) * 203.0; // 0.18 treated as sRGB codeword -> 5.52 nits
   const p3Mapped = matMul3(BT709_TO_P3, [midGrayLin, midGrayLin, midGrayLin]);
 
   const hdrLevelsNits = [0.05, 1, 10, 100, 203, 1000, 4000];
@@ -153,16 +153,71 @@ export function runDeltaEOracleReport() {
     bt2390ToHdr1000Nits: Number(bt2390EetfNits(nits, 1000).toFixed(3)),
   }));
 
+  // FFmpeg libplacebo reference pixel check (1000-nit & 203-nit PQ patches -> BT.2390 SDR)
+  let libplaceboCheck = { available: false };
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ubu-oracle-'));
+  try {
+    const pq1000 = Math.round(pqInverseEotf(1000) * 65535);
+    const pq203 = Math.round(pqInverseEotf(203) * 65535);
+    const makePatch = (val, file) => {
+      const raw = Buffer.alloc(16 * 16 * 6);
+      for (let i = 0; i < 16 * 16; i++) {
+        raw.writeUInt16LE(val, i * 6);
+        raw.writeUInt16LE(val, i * 6 + 2);
+        raw.writeUInt16LE(val, i * 6 + 4);
+      }
+      const inPath = path.join(tmpDir, `${file}.rgb`);
+      const outPath = path.join(tmpDir, `${file}_out.rgb`);
+      fs.writeFileSync(inPath, raw);
+      execFileSync('ffmpeg', [
+        '-y',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-f',
+        'rawvideo',
+        '-pix_fmt',
+        'rgb48le',
+        '-s',
+        '16x16',
+        '-i',
+        inPath,
+        '-vf',
+        'setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,libplacebo=tonemapping=bt.2390:colorspace=bt709:color_primaries=bt709:color_trc=iec61966-2-1:format=rgb24',
+        '-f',
+        'rawvideo',
+        '-pix_fmt',
+        'rgb24',
+        outPath,
+      ]);
+      const out = fs.readFileSync(outPath);
+      return out[0] / 255;
+    };
+    const out1000 = makePatch(pq1000, 'p1000');
+    const out203 = makePatch(pq203, 'p203');
+    libplaceboCheck = {
+      available: true,
+      pq1000SdrCodeword: Number(out1000.toFixed(4)),
+      pq203SdrCodeword: Number(out203.toFixed(4)),
+    };
+  } catch (err) {
+    libplaceboCheck = { available: false, reason: err.message };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+
   return {
     sdrComparisons,
     sdrOnHdrMidGray: {
       expectedNits: Number(sdrMidGrayNits.toFixed(2)),
       srgbCodeword: Number(rawSrgbCodeword.toFixed(4)),
       rawLinearOnSrgbCanvasNits: Number(rawLinWrittenToExtendedCanvasNits.toFixed(2)),
-      blowoutRatio: Number((linearDisplayP3BlowoutNits / sdrMidGrayNits).toFixed(2)),
+      srgbCodewordOnLinearCanvasNits: Number(srgbCodewordOnLinearCanvasNits.toFixed(2)),
+      srgbOnLinearBlowoutRatio: Number((srgbCodewordOnLinearCanvasNits / sdrMidGrayNits).toFixed(2)),
       p3Neutral: p3Mapped.map(v => Number(v.toFixed(4))),
     },
     hdrEetfPoints,
+    libplaceboCheck,
   };
 }
 
