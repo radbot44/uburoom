@@ -198,6 +198,11 @@ export function mount(host, deps) {
         void deps.lobbyEvents.refresh();
     }
   }
+  function updatePipVisibility() {
+    const noDocPipUbu =
+      Boolean(deps.surface?.isUbuPlayer?.()) && typeof window.documentPictureInPicture === 'undefined';
+    $('pip').hidden = deps.activity || !deps.supportsPiP || noDocPipUbu;
+  }
   function updateActivityLayout(event) {
     if (event) store.player.layoutMode = event.layout_mode;
     const pip =
@@ -211,10 +216,11 @@ export function mount(host, deps) {
       store.player.playerUI?.reset();
       if ($('tracks-dialog').open) $('tracks-dialog').close();
     }
+    updatePipVisibility();
   }
   document.body.classList.toggle('activity', deps.activity);
   $('fullscreen').hidden = $('theater').hidden = deps.activity;
-  $('pip').hidden = deps.activity || !deps.supportsPiP;
+  updatePipVisibility();
   if (deps.activity) {
     $('brand-link').href = '/' + location.search;
     $('brand-link').setAttribute('aria-label', 'uburoom watch');
@@ -409,5 +415,14 @@ export function mount(host, deps) {
     $('fullscreen').title = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
     $('fullscreen').setAttribute('aria-label', $('fullscreen').title);
   });
-  return { drawer, placeRoomBar, returnToVideo, selectSection, toggleDrawer, updateActivityLayout, updateSectionTabs };
+  return {
+    drawer,
+    placeRoomBar,
+    returnToVideo,
+    selectSection,
+    toggleDrawer,
+    updateActivityLayout,
+    updatePipVisibility,
+    updateSectionTabs,
+  };
 }

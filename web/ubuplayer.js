@@ -44,6 +44,7 @@ export class HttpRangeReader {
     this.etag = undefined;
     this.chunks = new Map();
     this.inflight = new Map();
+    this.inflightControllers = new Set();
   }
   fetchInit(rangeHeader, extraSignal) {
     const signals = [this.signal, extraSignal, AbortSignal.timeout(this.direct ? 10000 : 35000)].filter(Boolean);
@@ -55,12 +56,12 @@ export class HttpRangeReader {
       signal: AbortSignal.any(signals),
     };
   }
-  async fetchSpan(start, endInclusive) {
+  async fetchSpan(start, endInclusive, extraSignal) {
     let response;
     try {
-      response = await fetch(this.url, this.fetchInit(`bytes=${start}-${endInclusive}`));
+      response = await fetch(this.url, this.fetchInit(`bytes=${start}-${endInclusive}`, extraSignal));
     } catch (err) {
-      if (this.direct) err.kind = 'direct-failed';
+      if (this.direct && err?.name !== 'AbortError') err.kind = 'direct-failed';
       throw err;
     }
     if (!response.ok) {
@@ -154,28 +155,40 @@ export class HttpRangeReader {
       this.chunks.delete(oldest);
     }
   }
-  async getChunk(chunkIdx) {
+  async getChunk(chunkIdx, { speculative = false } = {}) {
     if (this.chunks.has(chunkIdx)) {
       const hit = this.chunks.get(chunkIdx);
       this.chunks.delete(chunkIdx);
       this.chunks.set(chunkIdx, hit);
       return hit;
     }
-    if (this.inflight.has(chunkIdx)) return this.inflight.get(chunkIdx);
+    const existing = this.inflight.get(chunkIdx);
+    if (existing) {
+      if (!speculative && existing.speculative) {
+        existing.speculative = false;
+        if (existing.controller) this.inflightControllers.delete(existing.controller);
+      }
+      return existing.promise;
+    }
     const start = chunkIdx * HTTP_CHUNK_BYTES;
     if (this.size && start >= this.size) return new Uint8Array(0);
     const endInclusive = this.size
       ? Math.min(this.size - 1, start + HTTP_CHUNK_BYTES - 1)
       : start + HTTP_CHUNK_BYTES - 1;
-    const req = this.fetchSpan(start, endInclusive)
+    const controller = speculative && typeof AbortController === 'function' ? new AbortController() : null;
+    const entry = { promise: null, controller, speculative: Boolean(speculative) };
+    if (controller && entry.speculative) this.inflightControllers.add(controller);
+    const req = this.fetchSpan(start, endInclusive, controller?.signal)
       .then(bytes => {
         this.storeChunk(chunkIdx, bytes);
         return bytes;
       })
       .finally(() => {
-        this.inflight.delete(chunkIdx);
+        if (controller) this.inflightControllers.delete(controller);
+        if (this.inflight.get(chunkIdx) === entry) this.inflight.delete(chunkIdx);
       });
-    this.inflight.set(chunkIdx, req);
+    entry.promise = req;
+    this.inflight.set(chunkIdx, entry);
     return req;
   }
   async read(start, end) {
@@ -199,7 +212,7 @@ export class HttpRangeReader {
     }
     if (firstChunk === lastChunk && this.size && (lastChunk + 1) * HTTP_CHUNK_BYTES < this.size) {
       if (!this.chunks.has(lastChunk + 1) && !this.inflight.has(lastChunk + 1)) {
-        void this.getChunk(lastChunk + 1).catch(() => {});
+        void this.getChunk(lastChunk + 1, { speculative: true }).catch(() => {});
       }
     }
     if (parts.length === 1) return parts[0].slice();
@@ -211,7 +224,17 @@ export class HttpRangeReader {
     }
     return out;
   }
+  abortSpeculative() {
+    if (!this.inflightControllers) return;
+    for (const controller of [...this.inflightControllers]) {
+      try {
+        controller.abort();
+      } catch {}
+    }
+    this.inflightControllers.clear();
+  }
   abort() {
+    this.abortSpeculative();
     this.chunks.clear();
     this.inflight.clear();
   }
@@ -351,14 +374,19 @@ export class UbuPlayer {
     this.audioContext = options.audioContext || null;
     this.ownsAudioContext = false;
     this.audioDestination = options.audioDestination || null;
+    this.downstreamAudioLatencySec =
+      Number(options.downstreamAudioLatencySec) > 0 ? Number(options.downstreamAudioLatencySec) : 0;
     this.workletNode = null;
     this.anchorMediaTime = Math.max(0, Number(target?.()) || 0);
     this.anchorContextTime = null;
     this.anchorPerfMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this._lastMonotonicMediaTime = null;
     this.workletClockValid = false;
     this.lastUnderruns = 0;
     this.underrunWaiting = false;
     this.audioSwitchGen = 0;
+    this.audioSwitchTargetTime = null;
+    this.audioSwitchPlayTimer = null;
     this.seekFrameReady = false;
     this.workletBufferedSeconds = 0;
 
@@ -438,6 +466,7 @@ export class UbuPlayer {
     if (this._paused || this._seeking) {
       return this.clampTime(this.anchorMediaTime);
     }
+    let raw;
     if (
       this.hasAudioTrack &&
       !this.audioSwitchGen &&
@@ -447,12 +476,19 @@ export class UbuPlayer {
       this.anchorContextTime !== null
     ) {
       const outTime = this.hardwareOutputContextTime();
-      const deltaCtx = Math.max(-0.05, outTime - this.anchorContextTime);
-      return this.clampTime(this.anchorMediaTime + deltaCtx * this._playbackRate);
+      const downstreamSec = Number(this.downstreamAudioLatencySec) || 0;
+      const deltaCtx = outTime - this.anchorContextTime - downstreamSec;
+      raw = this.clampTime(this.anchorMediaTime + deltaCtx * this._playbackRate);
+    } else {
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const elapsed = Math.max(0, (now - this.anchorPerfMs) / 1000);
+      raw = this.clampTime(this.anchorMediaTime + elapsed * this._playbackRate);
     }
-    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    const elapsed = Math.max(0, (now - this.anchorPerfMs) / 1000);
-    return this.clampTime(this.anchorMediaTime + elapsed * this._playbackRate);
+    if (Number.isFinite(this._lastMonotonicMediaTime)) {
+      raw = Math.max(this._lastMonotonicMediaTime, raw);
+    }
+    this._lastMonotonicMediaTime = raw;
+    return raw;
   }
 
   set currentTime(seconds) {
@@ -475,7 +511,8 @@ export class UbuPlayer {
         }
       } catch {}
     }
-    return Number(this.audioContext.currentTime) || 0;
+    const fallbackLat = (Number(this.audioContext.baseLatency) || 0) + (Number(this.audioContext.outputLatency) || 0);
+    return Math.max(0, (Number(this.audioContext.currentTime) || 0) - fallbackLat);
   }
 
   updateBufferedObject() {
@@ -535,8 +572,14 @@ export class UbuPlayer {
     this.frameCallbacks.delete(id);
   }
 
-  hold() {
-    this.held = true;
+  hold(held = true) {
+    const next = Boolean(held);
+    if (this.destroyed || this.held === next) return;
+    this.held = next;
+    if (next) {
+      this.reader?.abortSpeculative?.();
+    }
+    this.worker?.postMessage({ type: 'hold', held: next });
   }
 
   async initAudioEngine() {
@@ -549,13 +592,20 @@ export class UbuPlayer {
       return null;
     }
     await ensureWorkletModule(this.audioContext);
-    if (this.destroyed) return null;
+    if (this.destroyed || this.abort.signal.aborted) return null;
     const node = new AudioWorkletNode(this.audioContext, 'ubuplayer-worklet', {
       numberOfInputs: 0,
       numberOfOutputs: 1,
       outputChannelCount: [2],
       processorOptions: { sampleRate: this.audioContext.sampleRate || SAMPLE_RATE },
     });
+    if (this.destroyed || this.abort.signal.aborted) {
+      try {
+        node.port.close?.();
+        node.disconnect();
+      } catch {}
+      return null;
+    }
     const dest = this.audioDestination || this.audioContext.destination;
     node.connect(dest);
     node.port.onmessage = ev => this.handleWorkletMessage(ev.data);
@@ -572,7 +622,12 @@ export class UbuPlayer {
     if (this.destroyed || this.abort.signal.aborted) return;
 
     const workerAudioPort = await this.initAudioEngine();
-    if (this.destroyed || this.abort.signal.aborted) return;
+    if (this.destroyed || this.abort.signal.aborted) {
+      try {
+        workerAudioPort?.close?.();
+      } catch {}
+      return;
+    }
 
     let offscreen = null;
     if (this.canvasElement && typeof this.canvasElement.transferControlToOffscreen === 'function') {
@@ -585,6 +640,7 @@ export class UbuPlayer {
 
     const startPos = Math.max(0, Number(this.target?.()) || 0);
     this.anchorMediaTime = startPos;
+    this._lastMonotonicMediaTime = null;
     this.bufferedStart = startPos;
     this.bufferedEnd = startPos;
 
@@ -610,6 +666,9 @@ export class UbuPlayer {
       },
       transfers,
     );
+    if (this.held) {
+      this.worker.postMessage({ type: 'hold', held: true });
+    }
   }
 
   finishSeekIfReady() {
@@ -624,7 +683,8 @@ export class UbuPlayer {
     this.seekFrameReady = false;
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     this.anchorPerfMs = now;
-    if (this.audioContext) this.anchorContextTime = this.hardwareOutputContextTime();
+    this.anchorContextTime = null;
+    this.workletClockValid = false;
     if (!this._paused) {
       this.workletNode?.port.postMessage({ type: 'play' });
     }
@@ -644,8 +704,37 @@ export class UbuPlayer {
       this.workletBufferedSeconds = Number(msg.bufferedSeconds) || 0;
       if (this.audioSwitchGen) {
         if (msg.audioGen >= this.audioSwitchGen && (this.workletBufferedSeconds >= 0.1 || msg.eofDrained)) {
+          const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+          const liveWall = this.clampTime(
+            this.anchorMediaTime + Math.max(0, (now - this.anchorPerfMs) / 1000) * this._playbackRate,
+          );
+          const targetPos = this.audioSwitchTargetTime;
+          if (!this._paused && !msg.playing && Number.isFinite(targetPos) && liveWall < targetPos - 0.015) {
+            if (!this.audioSwitchPlayTimer) {
+              const waitMs = Math.max(
+                1,
+                Math.round(((targetPos - liveWall) * 1000) / Math.max(0.5, this._playbackRate)),
+              );
+              const switchGen = this.audioSwitchGen;
+              this.audioSwitchPlayTimer = setTimeout(() => {
+                this.audioSwitchPlayTimer = null;
+                if (!this.destroyed && !this._paused && this.audioSwitchGen === switchGen) {
+                  this.workletNode?.port.postMessage({ type: 'play' });
+                }
+              }, waitMs);
+            }
+            return;
+          }
+          if (this.audioSwitchPlayTimer) {
+            clearTimeout(this.audioSwitchPlayTimer);
+            this.audioSwitchPlayTimer = null;
+          }
           this.audioSwitchGen = 0;
+          this.audioSwitchTargetTime = null;
           this.lastUnderruns = msg.underruns;
+          if (!this._paused && !msg.playing) {
+            this.workletNode?.port.postMessage({ type: 'play' });
+          }
         } else {
           return;
         }
@@ -836,6 +925,11 @@ export class UbuPlayer {
       this.options.onSubtitleInit?.(msg);
       return;
     }
+    if (msg.type === 'subtitleReset') {
+      if (msg.subGen !== this.subGen) return;
+      this.options.onSubtitleReset?.();
+      return;
+    }
     if (msg.type === 'subtitleCues') {
       if (msg.subGen !== this.subGen) return;
       this.options.onSubtitleCues?.(msg.cues);
@@ -905,6 +999,7 @@ export class UbuPlayer {
     const sampleRate = this.audioContext?.sampleRate || SAMPLE_RATE;
     this.anchorMediaTime = pos;
     this.anchorPerfMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this._lastMonotonicMediaTime = pos;
     this.workletClockValid = false;
     this.workletNode?.port.postMessage({
       type: 'reset',
@@ -958,9 +1053,8 @@ export class UbuPlayer {
     }
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     this.anchorPerfMs = now;
-    if (this.audioContext) {
-      this.anchorContextTime = this.hardwareOutputContextTime();
-    }
+    this.anchorContextTime = null;
+    this.workletClockValid = false;
     this._paused = false;
     if (!this._seeking) {
       this.workletNode?.port.postMessage({ type: 'play' });
@@ -978,7 +1072,12 @@ export class UbuPlayer {
     const frozenTime = this.currentTime;
     this._paused = true;
     this.anchorMediaTime = frozenTime;
+    this._lastMonotonicMediaTime = frozenTime;
     this.anchorPerfMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (this.audioSwitchPlayTimer) {
+      clearTimeout(this.audioSwitchPlayTimer);
+      this.audioSwitchPlayTimer = null;
+    }
     this.workletNode?.port.postMessage({ type: 'pause' });
     this.stopClockSyncLoop();
     this.sendClockSync();
@@ -994,7 +1093,14 @@ export class UbuPlayer {
     this.seekFrameReady = false;
     this.workletBufferedSeconds = 0;
     this.underrunWaiting = false;
+    if (this.audioSwitchPlayTimer) {
+      clearTimeout(this.audioSwitchPlayTimer);
+      this.audioSwitchPlayTimer = null;
+    }
+    this.audioSwitchGen = 0;
+    this.audioSwitchTargetTime = null;
     this.anchorMediaTime = clamped;
+    this._lastMonotonicMediaTime = null;
     this.anchorPerfMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
     this.workletClockValid = false;
     if (this._readyState > 1) this._readyState = 1;
@@ -1023,7 +1129,8 @@ export class UbuPlayer {
     const pos = this.currentTime;
     this.anchorMediaTime = pos;
     this.anchorPerfMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    if (this.audioContext) this.anchorContextTime = this.hardwareOutputContextTime();
+    this.anchorContextTime = null;
+    this.workletClockValid = false;
     this._playbackRate = clamped;
     this.workletNode?.port.postMessage({ type: 'rate', rate: clamped });
     this.sendClockSync();
@@ -1049,29 +1156,44 @@ export class UbuPlayer {
     this.emit('volumechange');
   }
 
-  selectAudio(audioId) {
-    if (this.destroyed || !this.worker || audioId === this.selectedAudioId) return;
-    this.selectedAudioId = audioId;
+  beginAudioSwitch() {
+    if (this.audioSwitchPlayTimer) {
+      clearTimeout(this.audioSwitchPlayTimer);
+      this.audioSwitchPlayTimer = null;
+    }
     const aGen = ++this.audioGen;
     this.audioSwitchGen = aGen;
     const pos = this.currentTime;
+    const targetPos = this._paused ? pos : this.clampTime(pos + 0.25);
     const sampleRate = this.audioContext?.sampleRate || SAMPLE_RATE;
     this.anchorMediaTime = pos;
     this.anchorPerfMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this._lastMonotonicMediaTime = pos;
+    this.audioSwitchTargetTime = targetPos;
     this.workletClockValid = false;
     this.workletBufferedSeconds = 0;
     this.underrunWaiting = false;
+    if (!this._paused) {
+      this.workletNode?.port.postMessage({ type: 'pause' });
+    }
     this.workletNode?.port.postMessage({
       type: 'reset',
       seekGen: this.seekGen,
       audioGen: aGen,
-      startSample: Math.round(pos * sampleRate),
+      startSample: Math.round(targetPos * sampleRate),
     });
+    return { aGen, targetPos };
+  }
+
+  selectAudio(audioId) {
+    if (this.destroyed || !this.worker || audioId === this.selectedAudioId) return;
+    this.selectedAudioId = audioId;
+    const { aGen, targetPos } = this.beginAudioSwitch();
     this.worker.postMessage({
       type: 'selectAudio',
       audioGen: aGen,
       audioId,
-      time: pos,
+      time: targetPos,
       aheadSeconds: uburoomPlayback.BUFFER.ahead,
     });
   }
@@ -1081,26 +1203,12 @@ export class UbuPlayer {
     if (this.destroyed || nextMode === this.audioMode) return;
     this.audioMode = nextMode;
     if (!this.worker) return;
-    const aGen = ++this.audioGen;
-    this.audioSwitchGen = aGen;
-    const pos = this.currentTime;
-    const sampleRate = this.audioContext?.sampleRate || SAMPLE_RATE;
-    this.anchorMediaTime = pos;
-    this.anchorPerfMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    this.workletClockValid = false;
-    this.workletBufferedSeconds = 0;
-    this.underrunWaiting = false;
-    this.workletNode?.port.postMessage({
-      type: 'reset',
-      seekGen: this.seekGen,
-      audioGen: aGen,
-      startSample: Math.round(pos * sampleRate),
-    });
+    const { aGen, targetPos } = this.beginAudioSwitch();
     this.worker.postMessage({
       type: 'setAudioMode',
       mode: nextMode,
       audioGen: aGen,
-      time: pos,
+      time: targetPos,
     });
   }
 
@@ -1136,6 +1244,10 @@ export class UbuPlayer {
     if (this.destroyed) return;
     this.destroyed = true;
     this.stopClockSyncLoop();
+    if (this.audioSwitchPlayTimer) {
+      clearTimeout(this.audioSwitchPlayTimer);
+      this.audioSwitchPlayTimer = null;
+    }
     this.abort.abort();
     this.reader?.abort();
     this.frameCallbacks.clear();
@@ -1144,6 +1256,7 @@ export class UbuPlayer {
       try {
         this.workletNode.port.postMessage({ type: 'pause' });
         this.workletNode.port.onmessage = null;
+        this.workletNode.port.close?.();
         this.workletNode.disconnect();
       } catch {}
       this.workletNode = null;

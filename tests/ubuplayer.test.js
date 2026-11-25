@@ -68,14 +68,14 @@ test('createUbuPlayerAdapter and UbuPlayerAudioCore provide pitch-preserved WSOL
   const workletMod = await import(pathToFileURL(path.join(__dirname, '../web/ubuplayer-worklet.js')).href);
   const { UbuPlayerAudioCore } = workletMod;
 
-  // 1. Verify bit-exact 1.0x passthrough
+  // 1. Verify bit-exact 1.0x passthrough (below -0.2 dBTP limiter ceiling, delayed by limiterLookahead)
   const core1x = new UbuPlayerAudioCore({ sampleRate: 48000 });
   const totalIn = 4800; // 100 ms
   const inL = new Float32Array(totalIn);
   const inR = new Float32Array(totalIn);
   for (let i = 0; i < totalIn; i++) {
-    inL[i] = Math.sin((2 * Math.PI * 440 * i) / 48000);
-    inR[i] = Math.cos((2 * Math.PI * 440 * i) / 48000);
+    inL[i] = 0.85 * Math.sin((2 * Math.PI * 440 * i) / 48000);
+    inR[i] = 0.85 * Math.cos((2 * Math.PI * 440 * i) / 48000);
   }
   core1x.reset(48000, { seekGen: 1, audioGen: 1 });
   core1x.push(inL, inR, 48000);
@@ -83,11 +83,16 @@ test('createUbuPlayerAdapter and UbuPlayerAudioCore provide pitch-preserved WSOL
   const outL = new Float32Array(128);
   const outR = new Float32Array(128);
   core1x.render(outL, outR);
-  for (let i = 0; i < 128; i++) {
-    assert.ok(Math.abs(outL[i] - inL[i]) < 1e-6, '1.0x passthrough preserves exact Float32 samples');
-    assert.ok(Math.abs(outR[i] - inR[i]) < 1e-6);
+  const d = core1x.limiterLookahead;
+  for (let i = 0; i < d; i++) {
+    assert.equal(outL[i], 0);
+    assert.equal(outR[i], 0);
   }
-  assert.equal(core1x.currentMediaSample, 48000 + 128);
+  for (let i = d; i < 128; i++) {
+    assert.ok(Math.abs(outL[i] - inL[i - d]) < 1e-6, '1.0x passthrough preserves exact Float32 samples');
+    assert.ok(Math.abs(outR[i] - inR[i - d]) < 1e-6);
+  }
+  assert.equal(core1x.currentMediaSample, 48000 + 128 - d);
 
   // 2. Verify WSOLA micro-rate stretching at 1.03x and 0.97x preserves 440 Hz pitch while advancing media clock at target rate
   for (const rate of [1.03, 0.97]) {

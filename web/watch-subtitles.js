@@ -656,6 +656,9 @@ class uburoomSubtitles {
     this.invalidateCueSnapshot();
     this.paint();
   }
+  resetLocalRenderer() {
+    this.renderer?.reset?.();
+  }
   reset() {
     this.generation++;
     this.abort?.abort();

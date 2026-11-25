@@ -268,7 +268,10 @@ export function mount(host, deps) {
     }
     const sidecar =
       store.stream.localSidecarSubtitle?.mediaVersion === view.mediaVersion ? store.stream.localSidecarSubtitle : null;
-    const ubuAllowed = deps.canUseUbuPlayer ? deps.canUseUbuPlayer() : store.identity.config?.ubuplayer !== false;
+    const isLocalMode = view.format === 'local' || store.stream.localFile?.mediaVersion === view.mediaVersion;
+    const ubuAllowed = deps.canUseUbuPlayer
+      ? deps.canUseUbuPlayer({ localFile: isLocalMode })
+      : store.identity.config?.ubuplayer !== false;
     if (!ubuAllowed && store.stream.localFile) {
       store.stream.localFile = undefined;
     }
@@ -523,7 +526,9 @@ export function mount(host, deps) {
         if (next.format === 'youtube-embed') {
           deps.youtube.attach(next);
         } else if (next.format === 'local') {
-          const canUbu = deps.canUseUbuPlayer ? deps.canUseUbuPlayer() : store.identity.config?.ubuplayer !== false;
+          const canUbu = deps.canUseUbuPlayer
+            ? deps.canUseUbuPlayer({ localFile: true })
+            : store.identity.config?.ubuplayer !== false;
           if (canUbu && store.stream.localFile?.mediaVersion === next.mediaVersion) {
             const localFile = store.stream.localFile;
             const audioChain = deps.ensureAudioProcessingInput?.();
@@ -558,6 +563,7 @@ export function mount(host, deps) {
                     targetHdr: wantHdr,
                     audioContext: audioChain?.audioContext,
                     audioDestination: audioChain?.destination,
+                    downstreamAudioLatencySec: audioChain?.downstreamAudioLatencySec || 0,
                     audioId: next.tracks?.audioId,
                     audioMode: store.preferences.playerPreferences?.audioMode || 'normal',
                     onAudioStateChange: () => {
@@ -576,6 +582,7 @@ export function mount(host, deps) {
                         pushStream: subMsg.format === 'pgs',
                       });
                     },
+                    onSubtitleReset: () => deps.captions.resetLocalRenderer?.(),
                     onSubtitleCues: cues => deps.captions.appendLocalCues(cues),
                     onSubtitleData: (_fmt, bytes) => void deps.captions.appendLocalData(bytes),
                   },
@@ -762,8 +769,7 @@ export function mount(host, deps) {
                         if (store.room.selected !== next.id || store.room.state?.mediaVersion !== next.mediaVersion)
                           return;
                         store.stream.ubuplayerGrantRetry = undefined;
-                        store.player.playbackError =
-                          hint || 'Stream access expired. Use Retry to reload playback.';
+                        store.player.playbackError = hint || 'Stream access expired. Use Retry to reload playback.';
                         deps.fail(store.player.playbackError);
                         deps.toasts.show('ubuplayer-grant-retry', {
                           type: 'error',
@@ -805,10 +811,7 @@ export function mount(host, deps) {
                         store.stream.ubuplayerGrantRetry = grantKey;
                         void Promise.resolve(deps.refreshState())
                           .then(res => {
-                            if (
-                              store.room.selected !== next.id ||
-                              store.room.state?.mediaVersion !== next.mediaVersion
-                            )
+                            if (store.room.selected !== next.id || store.room.state?.mediaVersion !== next.mediaVersion)
                               return;
                             if (res?.reason === 'access-lost') return;
                             if (res?.ok === false || store.stream.ubuplayer?.destroyed) {
@@ -833,6 +836,7 @@ export function mount(host, deps) {
                     targetHdr: wantHdr,
                     audioContext: audioChain?.audioContext,
                     audioDestination: audioChain?.destination,
+                    downstreamAudioLatencySec: audioChain?.downstreamAudioLatencySec || 0,
                     audioId: next.tracks?.audioId,
                     audioMode: store.preferences.playerPreferences?.audioMode || 'normal',
                     onAudioStateChange: () => {
@@ -984,6 +988,7 @@ export function mount(host, deps) {
     document.title = next.title + ' · uburoom';
     renderVisibility();
     deps.renderTransport();
+    deps.updatePipVisibility?.();
     if (resumed) {
       deps.queueUI.restorePosition();
       deps.diagnostics.record('control-reconnected', {
