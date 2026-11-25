@@ -53,8 +53,8 @@ const REQUIRED_DECODERS = [
   'subrip',
   'webvtt',
   'ass',
-  'hdmv_pgs_subtitle',
-  'dvd_subtitle',
+  'pgssub',
+  'dvdsub',
 ];
 const REQUIRED_HWACCELS = ['vulkan', 'cuda', 'd3d11va', 'qsv', 'dxva2'];
 const REQUIRED_FILTERS = [
@@ -75,7 +75,7 @@ const REQUIRED_FILTERS = [
   'ass',
 ];
 const REQUIRED_MUXERS = ['webm', 'segment', 'matroska', 'mp4', 'mpegts', 'hls'];
-const REQUIRED_DEMUXERS = ['matroska', 'mov', 'webm', 'mpegts', 'hls', 'srt', 'webvtt', 'ass', 'sup'];
+const REQUIRED_DEMUXERS = ['matroska', 'mov', 'webm', 'mpegts', 'hls', 'srt', 'webvtt', 'ass', 'sup', 'vobsub'];
 
 function hasToken(output, token) {
   const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

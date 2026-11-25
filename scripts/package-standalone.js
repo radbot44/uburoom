@@ -332,6 +332,146 @@ function buildDoctorBat() {
   ].join('\r\n');
 }
 
+function findBashExe() {
+  if (process.platform !== 'win32') return 'bash';
+  const candidates = [
+    'C:\\Program Files\\Git\\bin\\bash.exe',
+    'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
+    'bash.exe',
+  ];
+  return candidates.find(candidate => candidate === 'bash.exe' || fs.existsSync(candidate));
+}
+
+function resolveFfmpegBuildDeps(ffbRoot, stageDir) {
+  const bashExe = findBashExe();
+  const listScript = path.join(stageDir, 'list-deps.sh');
+  fs.writeFileSync(
+    listScript,
+    [
+      'set -e',
+      'cd "$1"',
+      'source util/vars.sh win64 gpl 8.1',
+      'for s in scripts.d/*.sh scripts.d/*/*.sh; do',
+      '  SCRIPT_REPO=""',
+      '  SCRIPT_COMMIT=""',
+      '  SCRIPT_MIRROR=""',
+      '  SCRIPT_REPO2=""',
+      '  SCRIPT_COMMIT2=""',
+      '  SCRIPT_MIRROR2=""',
+      '  SCRIPT_SKIP=""',
+      '  ffbuild_enabled() { return 0; }',
+      '  source "$s"',
+      '  if [ -z "$SCRIPT_SKIP" ] && ffbuild_enabled >/dev/null 2>&1 && [ -n "$SCRIPT_REPO" ]; then',
+      '    printf "%s|%s|%s|%s|%s|%s|%s\\n" "$s" "$SCRIPT_REPO" "$SCRIPT_COMMIT" "$SCRIPT_MIRROR" "$SCRIPT_REPO2" "$SCRIPT_COMMIT2" "$SCRIPT_MIRROR2"',
+      '  fi',
+      'done',
+      '',
+    ].join('\n'),
+  );
+  const unixRoot = ffbRoot.replace(/\\/g, '/');
+  const unixScript = listScript.replace(/\\/g, '/');
+  const raw = execFileSync(bashExe, [unixScript, unixRoot], { encoding: 'utf8', windowsHide: true });
+  const deps = [];
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const [scriptPath, repo, commit, mirror, repo2, commit2, mirror2] = line.split('|');
+    const baseName = path.basename(scriptPath, '.sh').replace(/^\d+-/, '');
+    if (repo && commit) {
+      deps.push({ name: baseName, scriptPath, repo, commit, mirror });
+    }
+    if (repo2 && commit2) {
+      deps.push({ name: `${baseName}-extra`, scriptPath, repo: repo2, commit: commit2, mirror: mirror2 });
+    }
+  }
+  return deps;
+}
+
+function directArchiveCandidates(repo, commit) {
+  const cleanRepo = repo.replace(/\.git$/i, '').replace(/\/+$/, '');
+  const urls = [];
+  if (/^https:\/\/github\.com\/[^/]+\/[^/]+$/i.test(cleanRepo)) {
+    urls.push(`${cleanRepo}/archive/${commit}.tar.gz`);
+  } else if (/^https:\/\/(?:gitlab\.freedesktop\.org|code\.videolan\.org)\//i.test(cleanRepo)) {
+    const project = path.basename(cleanRepo);
+    urls.push(`${cleanRepo}/-/archive/${commit}/${project}-${commit}.tar.gz`);
+  }
+  return urls;
+}
+
+async function fetchDepSourceTarball(dep, destPath, stageDir, fetchImpl = fetch) {
+  if (fs.existsSync(destPath) && fs.statSync(destPath).size > 0) return destPath;
+  fs.mkdirSync(path.dirname(destPath), { recursive: true });
+  const tmpFile = `${destPath}.tmp-${process.pid}`;
+  try {
+    for (const url of directArchiveCandidates(dep.repo, dep.commit)) {
+      try {
+        const res = await fetchImpl(url, { redirect: 'follow', signal: AbortSignal.timeout(120000) });
+        if (!res.ok) continue;
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) {
+          fs.writeFileSync(tmpFile, buf);
+          fs.renameSync(tmpFile, destPath);
+          return destPath;
+        }
+      } catch {}
+    }
+
+    const repos = [dep.mirror, dep.repo].filter(Boolean);
+    for (const repoUrl of repos) {
+      const gitDir = fs.mkdtempSync(path.join(stageDir, 'git-'));
+      try {
+        execFileSync('git', ['init', '--quiet', gitDir], { windowsHide: true, stdio: 'ignore' });
+        let fetched = false;
+        try {
+          execFileSync('git', ['-C', gitDir, 'fetch', '--quiet', '--depth=1', repoUrl, dep.commit], {
+            windowsHide: true,
+            stdio: 'ignore',
+            timeout: 180000,
+          });
+          fetched = true;
+        } catch {
+          try {
+            execFileSync('git', ['-C', gitDir, 'fetch', '--quiet', repoUrl], {
+              windowsHide: true,
+              stdio: 'ignore',
+              timeout: 300000,
+            });
+            fetched = true;
+          } catch {}
+        }
+        if (fetched) {
+          execFileSync('git', ['-C', gitDir, 'archive', '--format=tar.gz', '-o', tmpFile, dep.commit], {
+            windowsHide: true,
+            stdio: 'ignore',
+            timeout: 60000,
+          });
+          if (fs.existsSync(tmpFile) && fs.statSync(tmpFile).size > 0) {
+            fs.renameSync(tmpFile, destPath);
+            return destPath;
+          }
+        }
+      } catch {
+      } finally {
+        fs.rmSync(gitDir, { recursive: true, force: true });
+      }
+    }
+    throw new Error(`Could not archive Corresponding Source for ${dep.name} (${dep.repo} @ ${dep.commit})`);
+  } finally {
+    fs.rmSync(tmpFile, { force: true });
+  }
+}
+
+async function runPool(items, limit, worker) {
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+}
+
 async function archiveCorrespondingSource({ manifest, archiveDir, outDir, meta, stamp, fetchImpl = fetch }) {
   const sourcesDir = path.join(archiveDir, 'sources');
   fs.mkdirSync(sourcesDir, { recursive: true });
@@ -341,7 +481,7 @@ async function archiveCorrespondingSource({ manifest, archiveDir, outDir, meta, 
     const ff = manifest.ffmpeg;
     const nodeDep = manifest.node;
 
-    const recordArtifact = (role, url, destPath) => {
+    const recordArtifact = (role, url, destPath, extra = {}) => {
       const sha256 = sha256File(destPath);
       const size = fs.statSync(destPath).size;
       provenance.artifacts.push({
@@ -350,6 +490,7 @@ async function archiveCorrespondingSource({ manifest, archiveDir, outDir, meta, 
         url,
         sha256,
         size,
+        ...extra,
       });
       return sha256;
     };
@@ -367,9 +508,32 @@ async function archiveCorrespondingSource({ manifest, archiveDir, outDir, meta, 
     const ffmpegSrcUrl = `https://github.com/FFmpeg/FFmpeg/archive/${ff.gitCommit}.zip`;
     const ffmpegSrcZip = await ensureSourceFile('ffmpeg-source', ffmpegSrcUrl, `ffmpeg-${ff.version}.zip`);
 
-    // 2. FFmpeg-Builds tag snapshot
+    // 2. FFmpeg-Builds tag snapshot + statically linked win64-gpl-8.1 dependency snapshots
     const buildsUrl = `https://github.com/FFmpeg-Builds/FFmpeg-Builds/archive/refs/tags/${ff.releaseTag}.zip`;
     const buildsZip = await ensureSourceFile('ffmpeg-builds-recipes', buildsUrl, `FFmpeg-Builds-${ff.releaseTag}.zip`);
+
+    const ffbExtract = path.join(stage, 'ffb');
+    extractZip(buildsZip, ffbExtract);
+    const ffbRoot = findSingleSubdir(ffbExtract);
+    const deps = resolveFfmpegBuildDeps(ffbRoot, stage);
+    const depsDir = path.join(sourcesDir, 'deps');
+    fs.mkdirSync(depsDir, { recursive: true });
+
+    const depResults = new Array(deps.length);
+    await runPool(deps, 6, async (dep, idx) => {
+      const safeCommit = dep.commit.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 16);
+      const fileName = `${dep.name}-${safeCommit}.tar.gz`;
+      const destPath = path.join(depsDir, fileName);
+      await fetchDepSourceTarball(dep, destPath, stage, fetchImpl);
+      depResults[idx] = { dep, destPath };
+    });
+    for (const item of depResults) {
+      recordArtifact('ffmpeg-static-dependency', item.dep.repo, item.destPath, {
+        name: item.dep.name,
+        commit: item.dep.commit,
+        recipe: item.dep.scriptPath,
+      });
+    }
 
     // 3. Node.js source tarball verified against official SHASUMS256.txt
     const shasumsDest = path.join(sourcesDir, `node-${nodeDep.version}-SHASUMS256.txt`);
@@ -404,16 +568,10 @@ async function archiveCorrespondingSource({ manifest, archiveDir, outDir, meta, 
     fs.copyFileSync(nodeSrcDest, path.join(stageUpstream, path.basename(nodeSrcDest)));
     fs.copyFileSync(shasumsDest, path.join(stageUpstream, path.basename(shasumsDest)));
 
-    // Copy any already-archived dependency snapshots from sourcesDir/deps if populated
-    const depsDir = path.join(sourcesDir, 'deps');
-    if (fs.existsSync(depsDir)) {
-      fs.cpSync(depsDir, path.join(stageUpstream, 'deps'), { recursive: true });
-      for (const name of fs.readdirSync(depsDir).sort()) {
-        const full = path.join(depsDir, name);
-        if (fs.statSync(full).isFile()) {
-          recordArtifact('ffmpeg-static-dependency', 'FFmpeg-Builds scripts.d', full);
-        }
-      }
+    const stageDeps = path.join(stageUpstream, 'deps');
+    fs.mkdirSync(stageDeps, { recursive: true });
+    for (const item of depResults) {
+      fs.copyFileSync(item.destPath, path.join(stageDeps, path.basename(item.destPath)));
     }
 
     for (const file of trackedRepoFiles(ROOT)) {

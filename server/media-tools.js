@@ -745,6 +745,7 @@ function cpuTonemap(hdrInfo) {
 }
 
 module.exports = {
+  isValidWebm,
   findOnPath,
   findBundledTool,
   findSiblingTool,
