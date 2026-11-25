@@ -150,7 +150,10 @@ class MediaChecks {
     let hasSkippedDirectCheck = false;
     if (!canStartProbe && media && fromProvider(media)) {
       hasSkippedDirectCheck = true;
-      const fileChecks = (await media.provider?.checks?.file?.(media).catch(() => [])) || [];
+      const fileChecks =
+        (await Promise.resolve()
+          .then(() => media.provider?.checks?.file?.(media))
+          .catch(() => [])) || [];
       skippedItems.push(...fileChecks);
       const hdrVideo = this.hdrVideoFromMetadata(media);
       if (hdrVideo) {

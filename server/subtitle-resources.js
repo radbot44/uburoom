@@ -518,6 +518,36 @@ class SubtitleResourceManager {
     return entry;
   }
 
+  findCachedFullTrack(fullKey, media) {
+    const entry = this.fullTracks.get(fullKey);
+    if (!entry) return null;
+    this.counters.fullHits++;
+    this.fullTracks.delete(fullKey);
+    this.fullTracks.set(fullKey, entry);
+    this.attachFullTrackToMedia(media, entry);
+    return entry;
+  }
+
+  findCachedWindow(trackScopeKey, delivery, qStartMs, qEndMs, media) {
+    const trackWinMap = this.trackWindows.get(trackScopeKey);
+    if (!trackWinMap) return null;
+    for (const item of trackWinMap.values()) {
+      if (
+        item.delivery === delivery &&
+        item.startMs <= qStartMs &&
+        item.endMs >= qEndMs &&
+        item.endMs - item.startMs <= MAX_WINDOW_DURATION_MS
+      ) {
+        this.counters.windowHits++;
+        this.windowLru.delete(item);
+        this.windowLru.add(item);
+        this.attachWindowToMedia(media, item);
+        return { format: delivery, startMs: item.startMs, endMs: item.endMs, data: item.data, cues: item.cues };
+      }
+    }
+    return null;
+  }
+
   async load(av1, media, signal) {
     if (this.closed) throw new PlaybackError('Server is shutting down.');
     const { track } = source(media),
@@ -530,12 +560,8 @@ class SubtitleResourceManager {
     const trackScopeKey = `${scope}|${tKey}`;
     const fullKey = `${scope}|track|${tKey}`;
 
-    const previous = this.fullTracks.get(fullKey);
+    const previous = this.findCachedFullTrack(fullKey, media);
     if (previous) {
-      this.counters.fullHits++;
-      this.fullTracks.delete(fullKey);
-      this.fullTracks.set(fullKey, previous);
-      this.attachFullTrackToMedia(media, previous);
       return {
         format: previous.format,
         fileName: previous.fileName,
@@ -550,6 +576,15 @@ class SubtitleResourceManager {
       facts = await factsService.inspect(media, { signal: callerSignal });
       if (media.captionVersion !== version || media.selection?.subtitle?.id !== track.id)
         throw new PlaybackError('Subtitle selection changed.');
+      const postFacts = this.findCachedFullTrack(fullKey, media);
+      if (postFacts) {
+        return {
+          format: postFacts.format,
+          fileName: postFacts.fileName,
+          assets: postFacts.assets,
+          size: postFacts.size,
+        };
+      }
     }
 
     let flight = this.loadJobs.get(fullKey);
@@ -745,19 +780,21 @@ class SubtitleResourceManager {
     const fullKey = `${scope}|track|${tKey}`;
     const pipeKey = `${scope}|pipe|${tKey}`;
 
-    const previous = this.fullTracks.get(fullKey);
-    if (previous?.assets?.has('data')) {
-      this.counters.fullHits++;
-      this.fullTracks.delete(fullKey);
-      this.fullTracks.set(fullKey, previous);
-      this.attachFullTrackToMedia(media, previous);
-      const data = previous.assets.get('data');
+    const serveCachedPipe = entry => {
+      const data = entry.assets.get('data');
       res.writeHead(200, {
         'Content-Type': 'application/octet-stream',
         'Content-Length': data.length,
         'Cache-Control': 'no-store',
       });
       res.end(req?.method === 'HEAD' ? undefined : data);
+    };
+
+    const previous = this.fullTracks.get(fullKey)?.assets?.has('data')
+      ? this.findCachedFullTrack(fullKey, media)
+      : null;
+    if (previous) {
+      serveCachedPipe(previous);
       return;
     }
     if (req?.method === 'HEAD') {
@@ -772,6 +809,13 @@ class SubtitleResourceManager {
       facts = await factsService.inspect(media, { signal: callerSignal });
       if (media.captionVersion !== version || media.selection?.subtitle?.id !== track.id)
         throw new PlaybackError('Subtitle selection changed.');
+      const postFacts = this.fullTracks.get(fullKey)?.assets?.has('data')
+        ? this.findCachedFullTrack(fullKey, media)
+        : null;
+      if (postFacts) {
+        serveCachedPipe(postFacts);
+        return;
+      }
     }
 
     let job = this.pipeJobs.get(pipeKey);
@@ -861,6 +905,7 @@ class SubtitleResourceManager {
           job.graceTimer = setTimeout(() => {
             if (!job.complete && job.listeners.size === 0) job.controller?.abort();
           }, this.idleMs);
+          job.graceTimer.unref?.();
         }
       }
     }
@@ -889,23 +934,8 @@ class SubtitleResourceManager {
     const trackScopeKey = `${scope}|${tKey}`;
     const winKey = `${scope}|win|${tKey}|${qStartMs}-${qEndMs}`;
 
-    const trackWinMap = this.trackWindows.get(trackScopeKey);
-    if (trackWinMap) {
-      for (const item of trackWinMap.values()) {
-        if (
-          item.delivery === track.delivery &&
-          item.startMs <= qStartMs &&
-          item.endMs >= qEndMs &&
-          item.endMs - item.startMs <= MAX_WINDOW_DURATION_MS
-        ) {
-          this.counters.windowHits++;
-          this.windowLru.delete(item);
-          this.windowLru.add(item);
-          this.attachWindowToMedia(media, item);
-          return { format: track.delivery, startMs: item.startMs, endMs: item.endMs, data: item.data, cues: item.cues };
-        }
-      }
-    }
+    const cachedWin = this.findCachedWindow(trackScopeKey, track.delivery, qStartMs, qEndMs, media);
+    if (cachedWin) return cachedWin;
 
     if (!av1?.ffmpeg || !Number.isSafeInteger(track.index))
       throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
@@ -916,6 +946,8 @@ class SubtitleResourceManager {
       facts = await factsService.inspect(media, { signal: callerSignal });
       if (media.captionVersion !== version || media.selection?.subtitle?.id !== track.id)
         throw new PlaybackError('Subtitle selection changed.');
+      const postFactsWin = this.findCachedWindow(trackScopeKey, track.delivery, qStartMs, qEndMs, media);
+      if (postFactsWin) return postFactsWin;
     }
 
     let flight = this.windowJobs.get(winKey);

@@ -186,7 +186,7 @@ test('pipe streams PGS chunks progressively with a 300s idle timeout and caches 
   const job = slowMedia.subtitleJob;
   slowResponse.destroy();
   await slow;
-  await job.promise.catch(() => {});
+  await Promise.all([job.promise.catch(() => {}), new Promise(resolve => setTimeout(resolve, 1550))]);
   assert.equal(streamSignal.aborted, true, 'last disconnected consumer cancels extraction');
   assert.equal(slowMedia.subtitleJob, undefined);
   clear(slowMedia);
