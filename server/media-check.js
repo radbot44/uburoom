@@ -72,10 +72,26 @@ class MediaChecks {
   /** The full report for a room's current video. */
   async report(media) {
     const entry = this.start(media);
-    const live = (await media?.provider?.checks?.server?.().catch(() => [])) || [];
+    const serverCheck = media?.provider?.checks?.server;
+    const hasServerCheck = typeof serverCheck === 'function';
+    let live = [];
+    if (hasServerCheck) {
+      try {
+        live = (await serverCheck()) || [];
+      } catch (error) {
+        live = [
+          {
+            level: 'warning',
+            topic: 'provider',
+            title: "Provider check couldn't run",
+            detail: String(error?.message || error || 'The media server could not be checked.').slice(0, 200),
+          },
+        ];
+      }
+    }
     const items = [...(entry?.items || []), ...live.filter(Boolean)];
     const checking = !!entry && !entry.items;
-    const applicable = !!entry || live.length > 0;
+    const applicable = !!entry || hasServerCheck;
     const status = !applicable ? 'not-applicable' : checking ? 'checking' : 'checked';
     if (checking) items.push({ level: 'info', topic: 'file', title: 'Checking the file…' });
     items.sort((a, b) => LEVELS.indexOf(a.level) - LEVELS.indexOf(b.level));

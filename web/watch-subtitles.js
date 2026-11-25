@@ -959,7 +959,8 @@ class uburoomSubtitles {
         this.textWindows = new uburoomTextWindows(
           value.window,
           cues => {
-            let replaced = false;
+            let replaced = false,
+              added = false;
             for (const cue of cues) {
               const key = cueDedupKey(cue);
               const existing = this.cuesByKey.get(key);
@@ -972,6 +973,7 @@ class uburoomSubtitles {
                 this.cues.push(cue);
                 this.cuesByKey.set(key, cue);
                 this.addCue(cue);
+                added = true;
               }
             }
             if (this.cues.length > 2500) {
@@ -991,6 +993,7 @@ class uburoomSubtitles {
               replaced = true;
             }
             if (replaced) this.rebuild();
+            else if (added) this.paint();
           },
           (error, failed) => {
             this.status(

@@ -138,6 +138,30 @@ test('a fresh socket rejoin takes the new video and its private stream immediate
     state: { ...lanes.room, state: { ...lanes.room.state, position: 125 } },
   });
   assert.equal((await renewing).state.position, 125);
+
+  // An old-generation join completing after a new socket is installed cannot overwrite roomLanes.
+  const staleJoin = Promise.withResolvers();
+  const oldSocket = transport.socket;
+  const origJoin = transport.join.bind(transport);
+  transport.join = () => staleJoin.promise;
+  const stalePromise = mounted.deps.roomLink.join(roomId);
+  transport.join = origJoin;
+  oldSocket.close(1006);
+  roomVersion++;
+  lanes = item('third', 55);
+  applied = Promise.withResolvers();
+  await transport.connect();
+  const third = await applied.promise;
+  assert.equal(third.mediaId, 'third');
+  staleJoin.resolve({
+    roomId,
+    viewerId,
+    room: { version: roomVersion + 99, state: item('stale', 10).room },
+    viewer: { version: 99, state: item('stale', 10).viewer },
+  });
+  await assert.rejects(stalePromise, /Room connection lost/);
+  assert.equal(mounted.view.roomLanes.room.state.mediaId, 'third');
+  assert.equal(mounted.view.roomLanes.viewer.state.volume, 55);
 });
 
 test('socket diagnostics distinguish an abnormal loss from an intentional reconnect', async () => {

@@ -522,8 +522,14 @@ function mount(
   function signalError(message, action) {
     note.textContent = message;
     note.classList.add('library-error');
-    retry.hidden = false;
+    retry.hidden = !action;
     errorAction = action;
+  }
+  function signalNotice(message) {
+    note.textContent = message;
+    note.classList.remove('library-error');
+    retry.hidden = true;
+    errorAction = undefined;
   }
   function resetStatus() {
     note.textContent = '';
@@ -1113,13 +1119,17 @@ function mount(
     count.hidden = details || (atHome && !homeSearching);
     count.textContent = screen.loading
       ? 'Loading…'
-      : screen.partial
-        ? screen.items.length + ' loaded (partial)'
-        : screen.total == null
-          ? screen.items.length + ' loaded'
-          : screen.items.length < screen.total
-            ? screen.items.length + ' of ' + screen.total + ' items'
-            : screen.total + (screen.total === 1 ? ' item' : ' items');
+      : screen.partial && screen.limited
+        ? screen.items.length + ' loaded (partial, limit reached)'
+        : screen.partial
+          ? screen.items.length + ' loaded (partial)'
+          : screen.limited
+            ? screen.items.length + ' loaded (limit reached)'
+            : screen.total == null
+              ? screen.items.length + ' loaded'
+              : screen.items.length < screen.total
+                ? screen.items.length + ' of ' + screen.total + ' items'
+                : screen.total + (screen.total === 1 ? ' item' : ' items');
     results.classList.toggle('episodes', screen.kind === 'season' || !!screen.onlySeason);
     results.hidden = details || (atHome && !homeSearching);
     landing.hidden = !atHome || homeSearching;
@@ -1198,15 +1208,19 @@ function mount(
         node(
           'p',
           results,
-          screen.partial
-            ? 'No matches in the available libraries.'
-            : screen.q || screen.genre || screen.year
-              ? 'No matches. Try another search or clear the filters.'
-              : isLink
-                ? 'Paste a YouTube video or playlist link above to preview or queue it.'
-                : screen.tab === 'collections'
-                  ? 'No collections in this library.'
-                  : 'No titles here yet.',
+          screen.partial && screen.limited
+            ? 'Not all libraries were searched, and some could not be reached. Narrow your search to check more.'
+            : screen.partial
+              ? 'No matches in the available libraries.'
+              : screen.limited
+                ? 'Not all libraries were searched. Narrow your search to check more.'
+                : screen.q || screen.genre || screen.year
+                  ? 'No matches. Try another search or clear the filters.'
+                  : isLink
+                    ? 'Paste a YouTube video or playlist link above to preview or queue it.'
+                    : screen.tab === 'collections'
+                      ? 'No collections in this library.'
+                      : 'No titles here yet.',
           'library-empty',
         );
       }
@@ -1297,7 +1311,10 @@ function mount(
       catalogVersion = generation;
     resetStatus();
     current.pageError = false;
-    if (!append) current.partial = false;
+    if (!append) {
+      current.partial = false;
+      current.limited = false;
+    }
     current.loading = true;
     if (append) renderTools();
     else renderResults();
@@ -1356,6 +1373,7 @@ function mount(
       current.total = data.total;
       current.nextOffset = data.nextOffset;
       current.partial = !!data.partial;
+      current.limited = !!data.limited;
       if (data.source) current.source = data.source;
       current.loading = false;
       if (append) {
@@ -1365,8 +1383,14 @@ function mount(
         setBusy(busy);
         void refreshRoomMedia();
       } else renderResults();
-      if (current.partial)
+      if (current.partial && current.limited)
+        signalError(
+          'Some libraries could not be searched and the search limit was reached. Narrow your search to see more.',
+          () => void loadPage(false),
+        );
+      else if (current.partial)
         signalError('Some libraries could not be searched. Showing partial results.', () => void loadPage(false));
+      else if (current.limited) signalNotice('Not all libraries were searched. Narrow your search to see more.');
       void checkAvailability(added, current);
     } catch (error) {
       if (version !== requestVersion || catalogVersion !== generation || error.name === 'AbortError') return;

@@ -331,8 +331,7 @@ class MediaProviders {
       if (byServer !== 0) return byServer;
       return String(a.id || '').localeCompare(String(b.id || ''));
     };
-    const isUnsupported = error =>
-      error?.code === 'UNSUPPORTED' || error?.status === 405 || error?.status === 501;
+    const isUnsupported = error => error?.code === 'UNSUPPORTED' || error?.status === 405 || error?.status === 501;
 
     if (!this._searchCache) this._searchCache = new Map();
     const now = Date.now();
@@ -518,12 +517,14 @@ class MediaProviders {
     const items = state.merged.slice(offset, offset + pageSize);
     const hasBuffered = state.streams.some(s => s.head < s.buffer.length);
     const hasUnfinished = state.streams.some(s => !s.done);
+    const hasUnsearched = state.streams.some(s => !s.done && !s.answered);
     const hasMore = offset + items.length < state.merged.length || hasBuffered || hasUnfinished;
     const nextOffset = hasMore && items.length > 0 ? offset + items.length : null;
     const partial = unavailableCount > 0;
+    const limited = state.truncated || hasUnsearched || (hasUnfinished && nextOffset === null);
 
     let total = null;
-    if (!partial && !state.truncated) {
+    if (!partial && !limited) {
       if (!hasUnfinished) {
         total = state.merged.length + state.streams.reduce((sum, s) => sum + (s.buffer.length - s.head), 0);
         if (hasBuffered && state.duplicatesDropped > 0) total = null;
@@ -544,6 +545,7 @@ class MediaProviders {
       offset,
       nextOffset,
       partial,
+      limited,
       ...(partial ? { unavailableCount } : {}),
     };
   }

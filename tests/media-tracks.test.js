@@ -1607,4 +1607,85 @@ test('MediaChecks report distinguishes not-applicable media from a completed cle
   assert.equal(cleanReport.checking, false);
   assert.equal(cleanReport.level, 'ok');
   assert.ok(Number.isFinite(cleanReport.checkedAt));
+
+  // Provider-only check returning empty list is checked/ok (not not-applicable).
+  const providerOnlyClean = await checks.report({
+    title: 'Provider clean',
+    provider: { checks: { server: async () => [] } },
+  });
+  assert.equal(providerOnlyClean.applicable, true);
+  assert.equal(providerOnlyClean.status, 'checked');
+  assert.equal(providerOnlyClean.level, 'ok');
+  assert.deepEqual(providerOnlyClean.items, []);
+
+  // Provider-only check rejection is reported as a warning, distinct from not-applicable.
+  const providerOnlyFail = await checks.report({
+    title: 'Provider unreachable',
+    provider: {
+      checks: {
+        server: async () => {
+          throw new Error('Plex server timed out');
+        },
+      },
+    },
+  });
+  assert.equal(providerOnlyFail.applicable, true);
+  assert.equal(providerOnlyFail.status, 'checked');
+  assert.equal(providerOnlyFail.level, 'warning');
+  assert.equal(providerOnlyFail.items.length, 1);
+  assert.equal(providerOnlyFail.items[0].topic, 'provider');
+  assert.match(providerOnlyFail.items[0].detail, /timed out/);
+
+  // Healthy local file check + provider rejection preserves file check and surfaces provider warning.
+  const partialFail = await checked.report({
+    sourceKey: 'clean-file',
+    title: 'Clean Movie',
+    provider: {
+      checks: {
+        server: async () => {
+          throw new Error('Provider offline');
+        },
+      },
+    },
+  });
+  assert.equal(partialFail.applicable, true);
+  assert.equal(partialFail.status, 'checked');
+  assert.equal(partialFail.level, 'warning');
+  assert.ok(Number.isFinite(partialFail.checkedAt));
+  assert.equal(partialFail.items[0].topic, 'provider');
+  assert.equal(partialFail.items[0].level, 'warning');
+  assert.ok(
+    partialFail.items.some(i => i.level === 'ok'),
+    'local file check item is preserved',
+  );
+
+  // Real file issue + provider rejection keeps both items, ordered with problem first.
+  const issueChecks = new MediaChecks({ pipeline: {} });
+  const issueMedia = {
+    sourceKey: 'issue-file',
+    title: 'Broken Movie',
+    provider: {
+      checks: {
+        server: async () => {
+          throw new Error('Provider offline');
+        },
+      },
+    },
+  };
+  issueChecks.files.set('issue-file', {
+    promise: Promise.resolve([]),
+    items: [{ level: 'problem', topic: 'file', title: 'Unsupported codec' }],
+    checkedAt: 1234,
+  });
+  const combined = await issueChecks.report(issueMedia);
+  assert.equal(combined.applicable, true);
+  assert.equal(combined.status, 'checked');
+  assert.equal(combined.level, 'problem');
+  assert.deepEqual(
+    combined.items.map(i => [i.level, i.topic]),
+    [
+      ['problem', 'file'],
+      ['warning', 'provider'],
+    ],
+  );
 });

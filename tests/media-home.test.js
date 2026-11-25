@@ -244,10 +244,7 @@ test('Media Home cross-library search distinguishes failed sections, unsupported
       }),
     },
   ]);
-  await assert.rejects(
-    () => allFail.search({ userId: 'u1' }, { q: 'test' }),
-    /search backend down/,
-  );
+  await assert.rejects(() => allFail.search({ userId: 'u1' }, { q: 'test' }), /search backend down/);
 
   // Healthy + failed section -> partial: true, total: null.
   // Unsupported section (501) -> skipped cleanly without marking partial.
@@ -286,6 +283,90 @@ test('Media Home cross-library search distinguishes failed sections, unsupported
     () => mix.search({ userId: 'u1' }, { q: 'alien' }, undefined, { signal: ac.signal }),
     err => err.name === 'AbortError',
   );
+});
+
+test('Media Home cross-library search reports budget-limited results separately from provider failures and exhaustion', async () => {
+  // 25 healthy sections where only section 25 matches -> budget limit reached, never a complete zero.
+  const twentyFiveSections = Array.from({ length: 25 }, (_, i) => ({ id: 's' + (i + 1), title: 'Lib ' + (i + 1) }));
+  const wideProvider = {
+    kind: 'plex',
+    serverName: 'WIDE',
+    root: { configured: true },
+    identity: async () => 'srv-wide',
+    scopeFor: async () => ({
+      browse: async query => {
+        if (!query.section) return { items: twentyFiveSections };
+        const items = query.section === 's25' ? [{ id: 'hit', title: 'Hidden Gem' }] : [];
+        return { items, total: items.length, offset: 0, nextOffset: null };
+      },
+    }),
+  };
+  const wide = new MediaProviders([wideProvider]);
+  const wideRes = await wide.search({ userId: 'u1' }, { q: 'hidden' });
+  assert.equal(wideRes.items.length, 0);
+  assert.equal(wideRes.partial, false, 'healthy sections hitting the fetch cap are not provider failures');
+  assert.equal(wideRes.limited, true, 'unsearched section 25 marks the result budget-limited');
+  assert.equal(wideRes.total, null);
+  assert.equal(wideRes.nextOffset, null);
+
+  // Mixed provider failure + budget limit reports both partial and limited separately.
+  const failingProvider = {
+    kind: 'plex',
+    serverName: 'DOWN',
+    root: { configured: true },
+    identity: async () => 'srv-down',
+    scopeFor: async () => {
+      throw new Error('offline');
+    },
+  };
+  const mixedWide = new MediaProviders([wideProvider, failingProvider]);
+  const mixedRes = await mixedWide.search({ userId: 'u1' }, { q: 'hidden' });
+  assert.equal(mixedRes.partial, true);
+  assert.equal(mixedRes.unavailableCount, 1);
+  assert.equal(mixedRes.limited, true);
+  assert.equal(mixedRes.total, null);
+
+  // One healthy section with 481 hits stops at 480 (10 pages) and marks limited: true instead of complete.
+  const many = Array.from({ length: 481 }, (_, i) => ({
+    id: String(i + 1),
+    title: `Hit ${String(i + 1).padStart(3, '0')}`,
+  }));
+  const deepProvider = new MediaProviders([
+    {
+      kind: 'plex',
+      serverName: 'DEEP',
+      root: { configured: true },
+      identity: async () => 'srv-deep',
+      scopeFor: async () => ({
+        browse: async query => {
+          if (!query.section) return { items: [{ id: 'm1', title: 'Movies' }] };
+          const offset = Number(query.offset || 0);
+          const slice = many.slice(offset, offset + 48);
+          return {
+            items: slice,
+            total: many.length,
+            offset,
+            nextOffset: offset + slice.length < many.length ? offset + slice.length : null,
+          };
+        },
+      }),
+    },
+  ]);
+  let offset = 0,
+    last;
+  for (let page = 0; page < 10; page++) {
+    last = await deepProvider.search({ userId: 'u1' }, { q: 'hit', offset });
+    if (page < 9) {
+      assert.equal(last.limited, false);
+      assert.equal(last.nextOffset, (page + 1) * 48);
+      offset = last.nextOffset;
+    }
+  }
+  assert.equal(last.items.length, 48);
+  assert.equal(last.nextOffset, null);
+  assert.equal(last.partial, false);
+  assert.equal(last.limited, true, 'hitting maxSectionPages marks the result limited');
+  assert.equal(last.total, null, 'budget-truncated results never claim a complete total');
 });
 
 test('the Plex catalog reads On Deck and recent additions twenty at a time, keeping progress', async t => {

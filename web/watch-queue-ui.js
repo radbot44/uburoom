@@ -1205,10 +1205,7 @@ function mount(
     row.replaceWith(nextRow);
     if (focusClass) {
       const match = nextRow.querySelector('.' + focusClass);
-      const target =
-        match && !match.disabled
-          ? match
-          : nextRow.querySelector('button:not([disabled])') || nextRow;
+      const target = match && !match.disabled ? match : nextRow.querySelector('button:not([disabled])') || nextRow;
       target?.focus?.();
     }
   }
@@ -1225,7 +1222,9 @@ function mount(
     ];
     for (const list of lists) {
       if (!list) continue;
-      for (const row of list.querySelectorAll(':scope > .queue-entry:not(.queue-entry-auto), :scope > .queue-history-entry')) {
+      for (const row of list.querySelectorAll(
+        ':scope > .queue-entry:not(.queue-entry-auto), :scope > .queue-history-entry',
+      )) {
         const rowStale = pageStale || (!!currentId && row.dataset.entryId === currentId);
         row.dataset.stale = String(rowStale);
         row.classList.toggle('queue-entry-stale', rowStale);
@@ -1247,10 +1246,23 @@ function mount(
   }
 
   let fetchErrorMessage = '';
+  let fetchRetrying = false;
+  let retryHadFocus = false;
   function renderFetchStatus() {
     let banner = footer.querySelector('.queue-sync-status');
     if (!fetchErrorMessage) {
-      banner?.remove();
+      if (banner) {
+        const restoreFocus = retryHadFocus || banner.contains(doc.activeElement);
+        retryHadFocus = false;
+        banner.remove();
+        if (restoreFocus && (!doc.activeElement || doc.activeElement === doc.body)) {
+          const target =
+            host.querySelector(
+              '.queue-tab[aria-selected="true"], #queue-shuffle:not(:disabled), #queue-clear-queue:not(:disabled), button:not(:disabled)',
+            ) || host;
+          target.focus?.({ preventScroll: true });
+        }
+      }
       return;
     }
     if (!banner) {
@@ -1258,17 +1270,32 @@ function mount(
       banner.setAttribute('role', 'status');
       footer.prepend(banner);
     }
-    banner.replaceChildren();
-    node('span', banner, 'Queue could not refresh: ' + fetchErrorMessage, 'queue-sync-message');
-    const retry = button(
-      banner,
-      'Retry',
-      'refresh',
-      () => void fetchData(true),
-      false,
-      'quiet queue-sync-retry',
-    );
-    uburoomControls.content(retry, { label: 'Retry', icon: 'refresh' });
+    let message = banner.querySelector('.queue-sync-message');
+    if (!message) message = node('span', banner, '', 'queue-sync-message');
+    message.textContent = fetchRetrying ? 'Retrying queue refresh…' : 'Queue could not refresh: ' + fetchErrorMessage;
+    let retry = banner.querySelector('.queue-sync-retry');
+    if (!retry) {
+      retry = button(
+        banner,
+        'Retry',
+        'refresh',
+        () => {
+          if (fetching) return;
+          retryHadFocus = doc.activeElement === retry;
+          fetchRetrying = true;
+          renderFetchStatus();
+          void fetchData(true);
+        },
+        false,
+        'quiet queue-sync-retry',
+      );
+      uburoomControls.content(retry, { label: 'Retry', icon: 'refresh' });
+    }
+    uburoomControls.busy(retry, fetchRetrying, { label: 'Retrying…' });
+    if (!fetchRetrying && retryHadFocus) {
+      retryHadFocus = false;
+      if (!doc.activeElement || doc.activeElement === doc.body) retry.focus?.({ preventScroll: true });
+    }
   }
 
   function updateUpcomingTimes() {
@@ -1818,6 +1845,7 @@ function mount(
           }
           // Only publish Queue and History pages that match the current room revision.
           fetchErrorMessage = '';
+          fetchRetrying = false;
           currentQueue = qRes;
           currentHistory = hRes;
           lastFetchedRevision = qRes.queueRevision;
@@ -1829,6 +1857,7 @@ function mount(
           renderTab();
         } catch (error) {
           fetchErrorMessage = error?.message || 'Unable to load queue';
+          fetchRetrying = false;
           syncPageActionStates(getState());
           renderFetchStatus();
           fail?.(error.message);
@@ -1837,6 +1866,10 @@ function mount(
       } while (refetchNeeded);
     })().finally(() => {
       fetching = null;
+      if (fetchRetrying) {
+        fetchRetrying = false;
+        renderFetchStatus();
+      }
     });
     return fetching;
   }

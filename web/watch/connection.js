@@ -89,6 +89,10 @@ export function mount(host, deps) {
       return store.connection.transport.call(op, input, options);
     });
   }
+  function socketGeneration(transport = store.connection.transport) {
+    if (!transport?.ready) return undefined;
+    return transport.socket ?? transport;
+  }
   // This tab's own room messages. Each resolves with the server's answer or rejects with its refusal.
   const roomLink = {
     /** Joins (or renews this tab's place in) a room and takes both lanes of its view. */
@@ -96,34 +100,28 @@ export function mount(host, deps) {
       return tracked('room-poll', async () => {
         if (deps.controlProbe?.rejects(id, store.room.selected))
           throw new TypeError('Controlled room-poll interruption');
-        if (!store.connection.transport?.ready)
-          throw new TypeError('Room connection unavailable; retry after reconnecting');
+        const transport = store.connection.transport;
+        const generation = socketGeneration(transport);
+        if (!generation) throw new TypeError('Room connection unavailable; retry after reconnecting');
         const joinSequence = (store.connection.joinSequence = (store.connection.joinSequence || 0) + 1);
-        const joined = await store.connection.transport.join(
-          id,
-          store.identity.viewerId,
-          deps.viewerPreferences(),
-          options,
-        );
+        const joined = await transport.join(id, store.identity.viewerId, deps.viewerPreferences(), options);
+        if (socketGeneration() !== generation) throw new TypeError('Room connection lost; reconnecting');
         const existing = store.connection.roomLanes;
         if (joinSequence !== store.connection.joinSequence) {
           const current =
-            existing?.roomId === id && existing.viewerId === joined.viewerId
+            existing?.socket === generation && existing.roomId === id && existing.viewerId === joined.viewerId
               ? existing
               : { room: joined.room, viewer: joined.viewer };
           return { ...uburoomWire.mergeView(current.room.state, current.viewer.state), timing: joined.timing };
         }
-        const keepRoom =
-          existing?.roomId === id &&
-          existing.viewerId === joined.viewerId &&
-          existing.room.version > joined.room.version;
+        const sameSocket =
+          existing?.socket === generation && existing.roomId === id && existing.viewerId === joined.viewerId;
+        const keepRoom = sameSocket && existing.room.version > joined.room.version;
         const room = keepRoom ? existing.room : joined.room;
-        const keepViewer =
-          existing?.roomId === id &&
-          existing.viewerId === joined.viewerId &&
-          existing.viewer.version > joined.viewer.version;
+        const keepViewer = sameSocket && existing.viewer.version > joined.viewer.version;
         const viewer = keepViewer ? existing.viewer : joined.viewer;
         store.connection.roomLanes = {
+          socket: generation,
           roomId: id,
           viewerId: joined.viewerId,
           room,
@@ -152,8 +150,11 @@ export function mount(host, deps) {
    * describe the same video; an older lane, or one for another room, is dropped.
    */
   function receiveLane(message) {
+    const generation = socketGeneration();
     if (
+      !generation ||
       !store.connection.roomLanes ||
+      store.connection.roomLanes.socket !== generation ||
       message.roomId !== store.connection.roomLanes.roomId ||
       message.viewerId !== store.connection.roomLanes.viewerId
     )

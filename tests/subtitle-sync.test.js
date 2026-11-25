@@ -536,3 +536,185 @@ test('uburoomSubtitles caches UbuPlayer cue snapshot across paints and skips unc
     global.ResizeObserver = originalResizeObserver;
   }
 });
+
+test('paused UbuPlayer paints newly arrived text subtitle windows without waiting for timeupdate and ignores stale responses', async () => {
+  const originalVttCue = global.VTTCue;
+  const originalDocument = global.document;
+  const originalResizeObserver = global.ResizeObserver;
+  const originalFetch = global.fetch;
+
+  class FakeElement {
+    constructor(tag) {
+      this.tagName = tag.toUpperCase();
+      this.className = '';
+      this.children = [];
+      this.replaceCalls = 0;
+      this.style = { setProperty: () => {} };
+      this.clientWidth = 1280;
+      this.clientHeight = 720;
+    }
+    append(...nodes) {
+      this.children.push(...nodes);
+    }
+    replaceChildren(...nodes) {
+      this.replaceCalls++;
+      this.children = [...nodes];
+    }
+    textContent() {
+      return this.children
+        .map(child => (typeof child === 'string' ? child : child.tagName === 'BR' ? '\n' : child.textContent()))
+        .join('');
+    }
+  }
+
+  global.VTTCue = class FakeVTTCue {
+    constructor(startTime, endTime, text) {
+      this.startTime = startTime;
+      this.endTime = endTime;
+      this.text = text;
+    }
+  };
+  global.document = { createElement: tag => new FakeElement(tag) };
+  global.ResizeObserver = class FakeResizeObserver {
+    observe() {}
+  };
+
+  try {
+    const rawCues = [];
+    const track = {
+      mode: 'disabled',
+      activeCues: [],
+      get cues() {
+        return this.mode === 'disabled' ? null : rawCues;
+      },
+      addCue: cue => rawCues.push(cue),
+      removeCue: cue => {
+        const idx = rawCues.indexOf(cue);
+        if (idx >= 0) rawCues.splice(idx, 1);
+      },
+      addEventListener: () => {},
+    };
+    const stage = new FakeElement('div');
+    let now = 5;
+    const listeners = new Map();
+    const surface = {
+      isMediaSurface: true,
+      videoElement: {
+        addTextTrack: () => track,
+        textTracks: { addEventListener: () => {} },
+      },
+      stageElement: () => stage,
+      isUbuPlayer: () => true,
+      currentTime: () => now,
+      width: () => 1280,
+      height: () => 720,
+      addEventListener: (event, fn) => listeners.set(event, fn),
+      removeEventListener: event => listeners.delete(event),
+    };
+
+    const statuses = [];
+    const gates = new Map();
+    const fetchCues = new Map([
+      [
+        '/subs/a/0',
+        {
+          startMs: 0,
+          endMs: 60000,
+          cues: [{ start: 4, end: 8, text: 'Initial paused line', settings: '' }],
+        },
+      ],
+      [
+        '/subs/a/120000',
+        {
+          startMs: 110000,
+          endMs: 180000,
+          cues: [
+            { start: 120, end: 126, text: 'First overlap', settings: '' },
+            { start: 120, end: 124, text: 'Second overlap', settings: '' },
+          ],
+        },
+      ],
+      [
+        '/subs/b/120000',
+        {
+          startMs: 110000,
+          endMs: 180000,
+          cues: [{ start: 120, end: 126, text: 'Track B line', settings: '' }],
+        },
+      ],
+    ]);
+
+    global.fetch = async (url, { signal } = {}) => {
+      const parsed = new URL(url, 'https://example.test');
+      if (!parsed.pathname.endsWith('/window')) {
+        return new Response(JSON.stringify({ format: 'cues', window: parsed.pathname + '/0/window' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const atMs = Number(parsed.searchParams.get('atMs'));
+      const prefix = parsed.pathname.startsWith('/subs/b/') ? '/subs/b/' : '/subs/a/';
+      const key = prefix + (atMs >= 100000 ? '120000' : '0');
+      const gate = gates.get(key);
+      if (gate) {
+        await Promise.race([
+          gate.promise,
+          new Promise((_, reject) => {
+            if (signal?.aborted) reject(signal.reason);
+            else signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+          }),
+        ]);
+      }
+      const payload = fetchCues.get(key);
+      return new Response(JSON.stringify(payload.cues), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Subtitle-Start-Ms': String(payload.startMs),
+          'X-Subtitle-End-Ms': String(payload.endMs),
+        },
+      });
+    };
+
+    const subs = new uburoomSubtitles(surface, s => statuses.push(s));
+
+    // 1. Enabling while paused: delayed initial window paints on arrival without timeupdate.
+    const initialGate = Promise.withResolvers();
+    gates.set('/subs/a/0', initialGate);
+    subs.update({ subtitleUrl: '/subs/a', tracks: { subtitleOffset: 0 } });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(subs.bottomCues.textContent(), '');
+    initialGate.resolve();
+    await new Promise(resolve => setTimeout(resolve, 15));
+    assert.equal(subs.bottomCues.textContent(), 'Initial paused line');
+    assert.equal(statuses.at(-1)?.loading, false);
+
+    // 2. Pause-seek into an uncovered window delayed until after seeked: paints both overlapping lines on arrival.
+    const seekGate = Promise.withResolvers();
+    gates.set('/subs/a/120000', seekGate);
+    now = 121;
+    listeners.get('seeked')?.();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(subs.bottomCues.textContent(), '');
+    seekGate.resolve();
+    await new Promise(resolve => setTimeout(resolve, 15));
+    assert.equal(subs.bottomCues.textContent(), 'First overlapSecond overlap');
+    assert.equal(statuses.at(-1)?.loading, false);
+    assert.equal(statuses.at(-1)?.message, '');
+
+    // 3. Stale response after switching track does not overwrite the new track's captions.
+    const staleGate = Promise.withResolvers();
+    gates.set('/subs/a/0', staleGate);
+    subs.update({ subtitleUrl: '/subs/b', tracks: { subtitleOffset: 0 } });
+    staleGate.resolve();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(subs.bottomCues.textContent(), 'Track B line');
+
+    subs.destroy();
+  } finally {
+    global.VTTCue = originalVttCue;
+    global.document = originalDocument;
+    global.ResizeObserver = originalResizeObserver;
+    global.fetch = originalFetch;
+  }
+});
