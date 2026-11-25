@@ -2,6 +2,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const util = require('node:util');
+const { privateFile, writePrivateFileSync, ensurePrivateDirectorySync } = require('./local-tls');
+
+const DEFAULT_MAX_LOG_BYTES = 25 * 1024 * 1024;
 
 /**
  * @typedef {'error' | 'warn' | 'info' | 'debug'} LogLevel
@@ -135,14 +138,18 @@ class Logger {
    *   level?: LogLevel,
    *   file?: string,
    *   requests?: boolean,
-   *   isTTY?: boolean
+   *   isTTY?: boolean,
+   *   maxFileBytes?: number
    * }} [options]
    */
   constructor(options = {}) {
     this.level = this._validLevel(options.level) ? options.level.toLowerCase() : 'info';
     this.requests = options.requests !== false;
     this.isTTY = options.isTTY !== undefined ? options.isTTY : process.stdout.isTTY && !process.env.NO_COLOR;
-    this.fileStream = null;
+    this.maxFileBytes =
+      Number.isFinite(options.maxFileBytes) && options.maxFileBytes > 0 ? options.maxFileBytes : DEFAULT_MAX_LOG_BYTES;
+    this.fileFd = null;
+    this.fileBytes = 0;
     this.filePath = null;
     /** @type {Set<(level:string, tag:string, message:string) => void>} */
     this.taps = new Set();
@@ -168,42 +175,60 @@ class Logger {
     return target <= current;
   }
 
+  _closeFd() {
+    if (this.fileFd === null) return;
+    const fd = this.fileFd;
+    this.fileFd = null;
+    fs.closeSync(fd);
+  }
+
+  _rotateIfNeeded(incomingBytes) {
+    if (this.fileFd === null || !this.filePath) return;
+    if (this.fileBytes === 0 || this.fileBytes + incomingBytes <= this.maxFileBytes) return;
+    const target = this.filePath;
+    const backup = target + '.1';
+    this._closeFd();
+    fs.rmSync(backup, { force: true });
+    fs.renameSync(target, backup);
+    privateFile(backup);
+    writePrivateFileSync(target, '');
+    this.fileFd = fs.openSync(target, 'a', 0o600);
+    this.fileBytes = 0;
+  }
+
   setFile(filePath) {
-    if (this.fileStream) {
-      try {
-        this.fileStream.end();
-      } catch (err) {
-        process.stderr.write(`[uburoom:logger] Could not close previous log file stream: ${err.message}\n`);
-      } finally {
-        this.fileStream = null;
-      }
+    try {
+      this._closeFd();
+    } catch (err) {
+      process.stderr.write(`[uburoom:logger] Could not close previous log file: ${err.message}\n`);
     }
+    this.fileBytes = 0;
     if (!filePath) {
       this.filePath = null;
       return;
     }
     try {
       const resolved = path.resolve(filePath);
-      fs.mkdirSync(path.dirname(resolved), { recursive: true });
-      fs.closeSync(fs.openSync(resolved, 'a'));
-      this.fileStream = fs.createWriteStream(resolved, { flags: 'a', encoding: 'utf8' });
-      this.fileStream.on('error', err => {
-        process.stderr.write(`[uburoom:logger] File stream error (${err.message}). Falling back to console only.\n`);
-        this.fileStream = null;
-      });
+      ensurePrivateDirectorySync(path.dirname(resolved));
+      if (!fs.existsSync(resolved)) writePrivateFileSync(resolved, '');
+      else privateFile(resolved);
+      this.fileFd = fs.openSync(resolved, 'a', 0o600);
+      this.fileBytes = fs.statSync(resolved).size;
       this.filePath = resolved;
+      if (this.fileBytes >= this.maxFileBytes) this._rotateIfNeeded(1);
     } catch (err) {
+      try {
+        this._closeFd();
+      } catch {}
+      this.filePath = null;
       process.stderr.write(`[uburoom:logger] Could not open log file ${filePath}: ${err.message}\n`);
     }
   }
 
   async close() {
-    if (!this.fileStream) return;
-    const stream = this.fileStream;
-    this.fileStream = null;
-    await new Promise(resolve => {
-      stream.end(resolve);
-    });
+    try {
+      this._closeFd();
+    } catch {}
   }
 
   /**
@@ -254,9 +279,19 @@ class Logger {
     }
 
     // Write to log file if configured
-    if (this.fileStream && this.fileStream.writable) {
+    if (this.fileFd !== null) {
       const plainMsg = `${time} ${levelUpper} ${cleanTag ? cleanTag + ' ' : ''}${stripAnsi(formattedMsg)}\n`;
-      this.fileStream.write(plainMsg);
+      const byteLength = Buffer.byteLength(plainMsg, 'utf8');
+      try {
+        this._rotateIfNeeded(byteLength);
+        fs.writeSync(this.fileFd, plainMsg, null, 'utf8');
+        this.fileBytes += byteLength;
+      } catch (err) {
+        process.stderr.write(`[uburoom:logger] File write error (${err.message}). Falling back to console only.\n`);
+        try {
+          this._closeFd();
+        } catch {}
+      }
     }
   }
 

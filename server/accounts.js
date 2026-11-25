@@ -3,33 +3,18 @@ const { repositories } = require('./repositories');
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID, randomBytes, createCipheriv, createDecipheriv } = require('node:crypto');
-const { spawnSync } = require('node:child_process');
 const { openDatabase } = require('./database');
 const { initializeSchema } = require('./storage');
+const { privateFile, writePrivateFileSync, ensurePrivateDirectorySync } = require('./local-tls');
 
-function privateFile(file) {
-  if (process.platform !== 'win32') {
-    fs.chmodSync(file, 0o600);
-    return;
-  }
-  const script = `$ErrorActionPreference='Stop'; $taskAcl=[System.Security.AccessControl.FileSecurity]::new(); $taskOwner=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; $taskAcl.SetOwner($taskOwner); $taskAcl.SetAccessRuleProtection($true,$false); foreach($taskSid in @($taskOwner,[System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))){$taskRule=[System.Security.AccessControl.FileSystemAccessRule]::new($taskSid,[System.Security.AccessControl.FileSystemRights]::FullControl,[System.Security.AccessControl.AccessControlType]::Allow); [void]$taskAcl.AddAccessRule($taskRule)}; [System.IO.File]::SetAccessControl($env:UBUROOM_PRIVATE_FILE,$taskAcl)`;
-  if (
-    spawnSync(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-      { env: { ...process.env, UBUROOM_PRIVATE_FILE: file }, windowsHide: true },
-    ).status !== 0
-  )
-    throw new Error('Cannot protect uburoom private files');
-}
 function credentialVault(fileOrKey) {
   let key;
   if (Buffer.isBuffer(fileOrKey)) {
     key = fileOrKey;
   } else if (fileOrKey) {
-    fs.mkdirSync(path.dirname(fileOrKey), { recursive: true });
-    if (!fs.existsSync(fileOrKey)) fs.writeFileSync(fileOrKey, randomBytes(32), { flag: 'wx', mode: 0o600 });
-    privateFile(fileOrKey);
+    ensurePrivateDirectorySync(path.dirname(fileOrKey));
+    if (!fs.existsSync(fileOrKey)) writePrivateFileSync(fileOrKey, randomBytes(32));
+    else privateFile(fileOrKey);
     key = fs.readFileSync(fileOrKey);
   } else key = randomBytes(32);
   if (key.length !== 32) throw new Error('Invalid uburoom credential encryption key');
@@ -94,7 +79,7 @@ function authenticateDatabaseEnvelopes(db, vault) {
 
 class Accounts {
   constructor(file, vault) {
-    if (file) fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (file && file !== ':memory:') ensurePrivateDirectorySync(path.dirname(file));
     let canary;
     this.persistence = openDatabase(file, initializeSchema, db => {
       // Authenticate all durable envelopes before startup sweeps, context changes
