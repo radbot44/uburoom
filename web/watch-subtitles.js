@@ -506,6 +506,29 @@ function appendCueText(parent, text) {
       );
   }
 }
+function sameCueList(prev, next) {
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i++) {
+    if (prev[i] !== next[i]) return false;
+  }
+  return true;
+}
+function renderCueBox(box, cues) {
+  if (!cues.length) {
+    box.replaceChildren();
+    return;
+  }
+  const nodes = new Array(cues.length);
+  for (let i = 0; i < cues.length; i++) {
+    const row = document.createElement('div'),
+      text = document.createElement('span');
+    row.className = 'subtitle-cue';
+    row.append(text);
+    appendCueText(text, cues[i].text);
+    nodes[i] = row;
+  }
+  box.replaceChildren(...nodes);
+}
 const SUBTITLE_OFFSET_MIN = -30;
 const SUBTITLE_OFFSET_MAX = 30;
 function normalizeSubtitleOffset(value, fallback = 0) {
@@ -533,6 +556,9 @@ class uburoomSubtitles {
     this.key = '';
     this.track = this.video.addTextTrack('subtitles', 'uburoom subtitles');
     this.track.mode = 'disabled';
+    this.cueSnapshot = null;
+    this.renderedTopCues = [];
+    this.renderedBottomCues = [];
     this.position = 'video';
     this.size = 'medium';
     this.controlsHeight = 0;
@@ -590,15 +616,28 @@ class uburoomSubtitles {
     this.streamSynced = synced;
     this.status({ message: synced ? '' : 'Loading subtitles…', error: false, loading: !synced });
   }
+  invalidateCueSnapshot() {
+    this.cueSnapshot = null;
+  }
+  setTrackMode(mode) {
+    if (this.track.mode === mode) return;
+    this.track.mode = mode;
+    this.invalidateCueSnapshot();
+  }
+  getCueSnapshot() {
+    if (this.cueSnapshot === null) this.cueSnapshot = Array.from(this.track.cues || []);
+    return this.cueSnapshot;
+  }
   // Native fullscreen shows only the video, so text cues move to the browser's own
   // captions there. Other subtitle formats draw in the page and cannot follow.
   nativeFullscreen(active) {
-    if (active && this.track.mode === 'hidden') this.track.mode = 'showing';
-    if (!active && this.track.mode === 'showing') this.track.mode = 'hidden';
+    if (active && this.track.mode === 'hidden') this.setTrackMode('showing');
+    if (!active && this.track.mode === 'showing') this.setTrackMode('hidden');
     return !!this.renderer;
   }
   clearCues() {
     for (const cue of Array.from(this.track.cues || [])) this.track.removeCue(cue);
+    this.invalidateCueSnapshot();
     this.paint();
   }
   reset() {
@@ -623,7 +662,7 @@ class uburoomSubtitles {
     this.renderer?.destroy();
     this.renderer = undefined;
     this.clearCues();
-    this.track.mode = 'disabled';
+    this.setTrackMode('disabled');
     this.status({ message: '', error: false, loading: false });
   }
   setOffset(value) {
@@ -649,7 +688,7 @@ class uburoomSubtitles {
     const abort = (this.abort = new AbortController());
     try {
       if (spec.format === 'cues') {
-        this.track.mode = 'hidden';
+        this.setTrackMode('hidden');
         this.cues = Array.isArray(spec.cues) ? [...spec.cues] : [];
         this.rebuild();
         this.loaded = true;
@@ -676,7 +715,7 @@ class uburoomSubtitles {
       }
       this.renderer = renderer;
       renderer.offset(this.offset || 0);
-      this.track.mode = 'disabled';
+      this.setTrackMode('disabled');
       this.loaded = true;
       this.paint();
       this.status({ message: '', error: false, loading: false });
@@ -719,7 +758,7 @@ class uburoomSubtitles {
           this.setOffset(normalizedServer);
         }
       }
-      this.track.mode = this.renderer ? 'disabled' : 'hidden';
+      this.setTrackMode(this.renderer ? 'disabled' : 'hidden');
       return;
     }
     const key = state.subtitleUrl?.replace(/^\/api\/watch\/media\/[a-f0-9]+\//, '') || '';
@@ -740,7 +779,7 @@ class uburoomSubtitles {
       this.status({ message: state.tracks?.subtitleError || '', error: !!state.tracks?.subtitleError, loading: false });
       return;
     }
-    this.track.mode = this.renderer ? 'disabled' : 'hidden';
+    this.setTrackMode(this.renderer ? 'disabled' : 'hidden');
     if (this.streaming || this.windowScheduler) this.syncStatus();
     if (!this.loaded && !this.loading && !this.timer && this.attempts < 3) void this.load();
   }
@@ -757,34 +796,42 @@ class uburoomSubtitles {
     const line = /(?:^|\s)line:(\d{1,3})(?:\.\d+)?%/.exec(item.settings || '');
     cue.uburoomTop = !!line && Number(line[1]) < 50;
     this.track.addCue(cue);
+    this.invalidateCueSnapshot();
   }
   paint() {
     if (!this.layer) return;
-    let cues = [];
+    const topList = [];
+    const bottomList = [];
     if (this.track.mode !== 'disabled') {
       if (this.surface.isUbuPlayer()) {
         const now = this.mediaTime();
-        cues = Array.from(this.track.cues || []).filter(cue => now >= cue.startTime && now < cue.endTime);
+        const snapshot = this.getCueSnapshot();
+        for (let i = 0; i < snapshot.length; i++) {
+          const cue = snapshot[i];
+          if (now >= cue.startTime && now < cue.endTime) {
+            if (cue.uburoomTop) topList.push(cue);
+            else bottomList.push(cue);
+          }
+        }
       } else {
-        cues = Array.from(this.track.activeCues || []);
+        const active = this.track.activeCues;
+        if (active) {
+          for (let i = 0; i < active.length; i++) {
+            const cue = active[i];
+            if (cue.uburoomTop) topList.push(cue);
+            else bottomList.push(cue);
+          }
+        }
       }
     }
-    for (const [box, top] of [
-      [this.topCues, true],
-      [this.bottomCues, false],
-    ])
-      box.replaceChildren(
-        ...cues
-          .filter(cue => !!cue.uburoomTop === top)
-          .map(cue => {
-            const row = document.createElement('div'),
-              text = document.createElement('span');
-            row.className = 'subtitle-cue';
-            row.append(text);
-            appendCueText(text, cue.text);
-            return row;
-          }),
-      );
+    if (!sameCueList(this.renderedTopCues, topList)) {
+      this.renderedTopCues = topList;
+      renderCueBox(this.topCues, topList);
+    }
+    if (!sameCueList(this.renderedBottomCues, bottomList)) {
+      this.renderedBottomCues = bottomList;
+      renderCueBox(this.bottomCues, bottomList);
+    }
   }
   // Follows the visible picture, or the whole player, and clears the controls only when they would cover the text.
   place() {
@@ -985,7 +1032,7 @@ class uburoomSubtitles {
         }
         this.renderer = renderer;
         renderer.offset(this.offset || 0);
-        this.track.mode = 'disabled';
+        this.setTrackMode('disabled');
         this.paint();
         if (value.window && value.format === 'pgs') {
           this.streamSynced = undefined;

@@ -311,3 +311,199 @@ test('uburoomSubtitles refetches pruned text windows and restores dropped cues o
     global.fetch = originalFetch;
   }
 });
+
+test('uburoomSubtitles caches UbuPlayer cue snapshot across paints and skips unchanged caption DOM updates', async () => {
+  const originalVttCue = global.VTTCue;
+  const originalDocument = global.document;
+  const originalResizeObserver = global.ResizeObserver;
+
+  class FakeElement {
+    constructor(tag) {
+      this.tagName = tag.toUpperCase();
+      this.className = '';
+      this.children = [];
+      this.replaceCalls = 0;
+      this.style = { setProperty: () => {} };
+      this.clientWidth = 1280;
+      this.clientHeight = 720;
+    }
+    append(...nodes) {
+      this.children.push(...nodes);
+    }
+    replaceChildren(...nodes) {
+      this.replaceCalls++;
+      this.children = [...nodes];
+    }
+    textContent() {
+      return this.children
+        .map(child => (typeof child === 'string' ? child : child.tagName === 'BR' ? '\n' : child.textContent()))
+        .join('');
+    }
+  }
+
+  global.VTTCue = class FakeVTTCue {
+    constructor(startTime, endTime, text) {
+      this.startTime = startTime;
+      this.endTime = endTime;
+      this.text = text;
+    }
+  };
+  global.document = {
+    createElement: tag => new FakeElement(tag),
+  };
+  global.ResizeObserver = class FakeResizeObserver {
+    observe() {}
+  };
+
+  try {
+    const rawCues = [];
+    let cuesReads = 0;
+    const track = {
+      mode: 'disabled',
+      activeCues: [],
+      get cues() {
+        cuesReads++;
+        return this.mode === 'disabled' ? null : rawCues;
+      },
+      addCue: cue => rawCues.push(cue),
+      removeCue: cue => {
+        const idx = rawCues.indexOf(cue);
+        if (idx >= 0) rawCues.splice(idx, 1);
+        const activeIdx = track.activeCues.indexOf(cue);
+        if (activeIdx >= 0) track.activeCues.splice(activeIdx, 1);
+      },
+      addEventListener: () => {},
+    };
+    const stage = new FakeElement('div');
+    let now = 0;
+    let ubuPlayer = true;
+    const listeners = new Map();
+    const surface = {
+      isMediaSurface: true,
+      videoElement: {
+        addTextTrack: () => track,
+        textTracks: { addEventListener: () => {} },
+      },
+      stageElement: () => stage,
+      isUbuPlayer: () => ubuPlayer,
+      currentTime: () => now,
+      width: () => 1280,
+      height: () => 720,
+      addEventListener: (event, fn) => listeners.set(event, fn),
+      removeEventListener: event => listeners.delete(event),
+    };
+
+    const subs = new uburoomSubtitles(surface, () => {});
+    await subs.setLocalSubtitle({
+      key: 'local-1',
+      format: 'cues',
+      cues: [
+        { start: 1, end: 5, text: '<i>Shared</i> &amp; long', settings: '' },
+        { start: 2, end: 4, text: 'Top A', settings: 'line:10%' },
+        { start: 4, end: 6, text: 'Top A', settings: 'line:10%' },
+      ],
+    });
+
+    // Initial rebuild reads track.cues lazily once for paint (plus clearCues while empty).
+    cuesReads = 0;
+    subs.topCues.replaceCalls = 0;
+    subs.bottomCues.replaceCalls = 0;
+
+    // t=1.0 (inclusive start): bottom cue appears, top stays empty.
+    now = 1;
+    subs.paint();
+    assert.equal(cuesReads, 0, 'snapshot reused after initial build');
+    assert.equal(subs.bottomCues.textContent(), 'Shared & long');
+    assert.equal(subs.topCues.textContent(), '');
+    assert.equal(subs.bottomCues.replaceCalls, 1);
+    assert.equal(subs.topCues.replaceCalls, 0);
+    const firstBottomNode = subs.bottomCues.children[0];
+
+    // Repeated paints within the same cue produce zero DOM mutations and zero track.cues reads.
+    for (let i = 0; i < 10; i++) {
+      now = 1 + i * 0.05;
+      subs.paint();
+    }
+    assert.equal(cuesReads, 0);
+    assert.equal(subs.bottomCues.replaceCalls, 1);
+    assert.equal(subs.topCues.replaceCalls, 0);
+    assert.equal(subs.bottomCues.children[0], firstBottomNode);
+
+    // t=2.0: top cue enters while bottom cue remains unchanged -> only top updates.
+    now = 2;
+    subs.paint();
+    assert.equal(subs.topCues.textContent(), 'Top A');
+    assert.equal(subs.topCues.replaceCalls, 1);
+    assert.equal(subs.bottomCues.replaceCalls, 1, 'unchanged bottom box not rebuilt');
+    const firstTopNode = subs.topCues.children[0];
+
+    // t=4.0 (exclusive end of first Top A, inclusive start of second Top A): identical text in a distinct cue updates.
+    now = 4;
+    subs.paint();
+    assert.equal(subs.topCues.textContent(), 'Top A');
+    assert.equal(subs.topCues.replaceCalls, 2);
+    assert.notEqual(subs.topCues.children[0], firstTopNode);
+    assert.equal(subs.bottomCues.replaceCalls, 1);
+
+    // t=5.0 (exclusive end of bottom cue): bottom clears once, stays cleared on subsequent gap ticks.
+    now = 5;
+    subs.paint();
+    assert.equal(subs.bottomCues.textContent(), '');
+    assert.equal(subs.bottomCues.replaceCalls, 2);
+    now = 5.5;
+    subs.paint();
+    assert.equal(subs.bottomCues.replaceCalls, 2);
+
+    // Appending cues invalidates snapshot once; next paint sees new cue without per-cue rebuilds.
+    subs.appendLocalCues([
+      { start: 10, end: 12, text: 'Appended 1', settings: '' },
+      { start: 12, end: 14, text: 'Appended 2', settings: '' },
+    ]);
+    assert.equal(cuesReads, 1, 'batch append rebuilt snapshot lazily once on paint');
+    now = 10.5;
+    subs.paint();
+    assert.equal(cuesReads, 1);
+    assert.equal(subs.bottomCues.textContent(), 'Appended 1');
+
+    // Offset change rebuilds cues and updates visible captions immediately.
+    subs.setOffset(1);
+    now = 10.5;
+    subs.paint();
+    assert.equal(subs.bottomCues.textContent(), '');
+    now = 11.5;
+    subs.paint();
+    assert.equal(subs.bottomCues.textContent(), 'Appended 1');
+
+    // Native fullscreen toggles track mode between hidden and showing.
+    subs.nativeFullscreen(true);
+    assert.equal(track.mode, 'showing');
+    subs.nativeFullscreen(false);
+    assert.equal(track.mode, 'hidden');
+
+    // Native video path uses track.activeCues and still skips identical updates.
+    ubuPlayer = false;
+    const activeCue = rawCues[0];
+    track.activeCues = [activeCue];
+    const bottomBeforeNative = subs.bottomCues.replaceCalls;
+    subs.paint();
+    assert.equal(subs.bottomCues.textContent(), 'Shared & long');
+    assert.equal(subs.bottomCues.replaceCalls, bottomBeforeNative + 1);
+    subs.paint();
+    assert.equal(subs.bottomCues.replaceCalls, bottomBeforeNative + 1);
+
+    // Reset clears caption boxes once and disables the track.
+    subs.reset();
+    assert.equal(track.mode, 'disabled');
+    assert.equal(subs.topCues.textContent(), '');
+    assert.equal(subs.bottomCues.textContent(), '');
+    const bottomAfterReset = subs.bottomCues.replaceCalls;
+    subs.paint();
+    assert.equal(subs.bottomCues.replaceCalls, bottomAfterReset);
+
+    subs.destroy();
+  } finally {
+    global.VTTCue = originalVttCue;
+    global.document = originalDocument;
+    global.ResizeObserver = originalResizeObserver;
+  }
+});
