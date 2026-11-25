@@ -876,7 +876,9 @@ function watchOperations({
     } else {
       // With no server and no location named, the front page lists every provider's libraries.
       if (browseHome)
-        data = await watch.providers.libraries(auth.actor, (actor, serverId) => hub.mediaFor(actor, serverId));
+        data = query.q?.trim()
+          ? await watch.providers.search(auth.actor, query, (actor, serverId) => hub.mediaFor(actor, serverId))
+          : await watch.providers.libraries(auth.actor, (actor, serverId) => hub.mediaFor(actor, serverId));
       else {
         data = provider.configured
           ? await provider.browse(query)

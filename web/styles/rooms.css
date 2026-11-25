@@ -260,7 +260,7 @@
   .room-settings-panels {
     overflow: auto;
     min-width: 0;
-    padding: 0 var(--space-8) var(--space-16) 0;
+    padding: 0 var(--space-10) var(--space-24) 0;
   }
   .room-settings-panels h3 {
     margin-top: 0;
@@ -302,8 +302,15 @@
     border-collapse: collapse;
     margin: 0;
   }
+  .room-permission-table th[scope='col']:not(:first-child) {
+    text-align: center;
+    width: var(--space-72);
+  }
   .room-permission-table td {
     position: relative;
+  }
+  .room-permission-table td:nth-child(2) {
+    background: color-mix(in srgb, var(--elevated) 38%, transparent);
   }
   .room-permission-table .permission-group {
     font-weight: 700;

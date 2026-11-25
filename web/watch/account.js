@@ -1,4 +1,5 @@
 import * as uburoomDialogs from '../watch-dialogs.js';
+import * as uburoomControls from '../watch-controls.js';
 import * as uburoomIcons from '../icons.js';
 import * as uburoomPopover from '../watch-popover.js';
 import * as uburoomServerSettings from '../server-settings.js';
@@ -421,6 +422,7 @@ export function mount(host, deps) {
       accountValue = value.account;
       $('account-display-name').value =
         accountNameDraft?.id === value.account.id ? accountNameDraft.name : value.account.name;
+      syncAccountNameSave();
       $('account-content').hidden = false;
     } catch (error) {
       if (load === accountLoad && $('account-dialog').open) {
@@ -431,11 +433,26 @@ export function mount(host, deps) {
       if (load === accountLoad) $('account-loading').hidden = true;
     }
   }
+  let savingAccountName = false;
+  function syncAccountNameSave() {
+    const button = $('account-name-save');
+    if (!button || savingAccountName) return;
+    const current = ($('account-display-name')?.value || '').trim();
+    const saved = (accountValue?.name || '').trim();
+    button.disabled = !accountValue || !current || current === saved;
+  }
+  $('account-display-name')?.addEventListener('input', () => {
+    if (accountValue) accountNameDraft = { id: accountValue.id, name: $('account-display-name').value };
+    syncAccountNameSave();
+  });
+  syncAccountNameSave();
   $('account-name-save').addEventListener('click', async () => {
+    if (savingAccountName) return;
     const release = accountPopups.hold(accountDialog);
     const submittedName = $('account-display-name').value;
     const button = $('account-name-save');
-    button.disabled = true;
+    savingAccountName = true;
+    uburoomControls.busy(button, true, { label: 'Saving name…' });
     accountError();
     try {
       await deps.call('profile.rename', { args: { name: submittedName } });
@@ -451,7 +468,9 @@ export function mount(host, deps) {
       accountError(error.message);
       uburoomPopover.show(button, { text: error.message, state: 'error' });
     } finally {
-      button.disabled = false;
+      savingAccountName = false;
+      uburoomControls.busy(button, false);
+      syncAccountNameSave();
       release();
     }
   });

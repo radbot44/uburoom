@@ -106,7 +106,11 @@
   .outside-room .playback-buttons,
   .outside-room .volume-control,
   .outside-room .captions-toggle,
-  .outside-room .tracks-open {
+  .outside-room .tracks-open,
+  .outside-room .pip,
+  .outside-room .theater,
+  .outside-room .fullscreen,
+  .outside-room .room-activity-btn {
     display: none;
   }
   .outside-room .title-bar {
@@ -158,6 +162,20 @@
   }
   :is(.primary, .solid-button):disabled {
     background: var(--primary);
+  }
+  .danger-button:disabled {
+    background: var(--danger);
+  }
+  .button-group .group-button[aria-pressed='true']:disabled {
+    color: var(--muted);
+  }
+  button.is-busy:disabled {
+    opacity: 0.78;
+    cursor: progress;
+  }
+  .quiet.is-busy:disabled,
+  .icon-button.is-busy:disabled {
+    background: var(--elevated);
   }
   .server-settings-error {
     color: var(--error);

@@ -1,7 +1,8 @@
 /* Room sharing and explicit server publication; no playback ownership. */
+import * as uburoomControls from './watch-controls.js';
 import * as uburoomDialogs from './watch-dialogs.js';
 
-function mount({ request, share, openLink }) {
+function mount({ request, share, openLink, canNativeShare = false }) {
   const $ = id => document.getElementById(id),
     dialog = $('room-share-dialog'),
     dialogs = uburoomDialogs;
@@ -16,6 +17,8 @@ function mount({ request, share, openLink }) {
   const urlInput = $('room-share-url-input');
   const copyBtn = $('room-share-copy');
   const personalBtn = $('room-share-personal');
+  const hintEl = $('room-share-hint');
+  if (personalBtn) personalBtn.hidden = !canNativeShare;
 
   const pubSection = $('room-share-publication');
   const destinationEl = $('room-share-destination');
@@ -46,6 +49,16 @@ function mount({ request, share, openLink }) {
     const rawUrl = value?.invite?.url || '';
     urlInput.value = rawUrl.replace(/^https?:\/\//i, '');
     copyBtn.disabled = personalBtn.disabled = busy || !value;
+    if (personalBtn) personalBtn.hidden = !canNativeShare;
+    if (hintEl) {
+      hintEl.textContent = !value?.invite
+        ? ''
+        : value.invite.guestsAllowed
+          ? value.invite.signInRequired
+            ? 'Guests can join with this link after signing in with Discord or Plex.'
+            : 'Anyone with this link can join, including guests.'
+          : 'Members of this server can join with this link.';
+    }
 
     errorEl.textContent = value?.error || '';
 
@@ -120,6 +133,7 @@ function mount({ request, share, openLink }) {
     target = id;
     value = undefined;
     errorEl.textContent = '';
+    if (hintEl) hintEl.textContent = '';
     pubSection.hidden = true;
     urlInput.value = 'Loading…';
     copyBtn.disabled = personalBtn.disabled = true;
@@ -134,6 +148,8 @@ function mount({ request, share, openLink }) {
   async function change(action) {
     if (busy || !value) return;
     busy = true;
+    const busyBtn = action === 'room.publish' ? publishBtn : removePostBtn;
+    uburoomControls.busy(busyBtn, true);
     const ticket = generation;
     render();
     errorEl.textContent = '';
@@ -150,6 +166,7 @@ function mount({ request, share, openLink }) {
       }
     } finally {
       busy = false;
+      uburoomControls.busy(busyBtn, false);
       if (ticket === generation && dialog.open) {
         render();
         scheduleRefresh(ticket);

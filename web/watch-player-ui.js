@@ -1,3 +1,4 @@
+import * as uburoomControls from './watch-controls.js';
 import * as uburoomDialogs from './watch-dialogs.js';
 import * as uburoomIcons from './icons.js';
 import * as uburoomPlayback from './playback-policy.js';
@@ -206,6 +207,9 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
   sectionNav.addEventListener('click', event => {
     const button = event.target.closest('button');
     if (button) selectSettingsPage(button.getAttribute('aria-controls'));
+  });
+  uburoomControls.tabs(sectionNav, {
+    onSelect: button => selectSettingsPage(button.getAttribute('aria-controls')),
   });
   function openDialog(focusId) {
     closeSettings();
@@ -679,7 +683,7 @@ function mount({ getState, execute, fail, beforeSettings, afterSettings, changeT
   notify.id = 'player-extras-notifications';
   notify.className = 'watch-switch';
   notify.setAttribute('role', 'switch');
-  notifyLabel.append(notify, document.createTextNode('Notifications'));
+  notifyLabel.append(notify, document.createTextNode('Room notifications'));
   const pipEntry = document.createElement('button');
   pipEntry.type = 'button';
   pipEntry.id = 'player-extras-pip';

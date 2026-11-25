@@ -306,20 +306,35 @@
                     </form>
                   </section>
                 </div>
-                <button id="empty-browse" class="empty-browse primary" type="button" hidden>
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    aria-hidden="true"
-                    data-tabler-icon="video"
-                  >
-                    <use href="#icon-video"></use></svg
-                  >Browse media
-                </button>
+                <div id="empty-actions" class="empty-actions">
+                  <button id="empty-browse" class="empty-browse primary" type="button" hidden>
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      data-tabler-icon="video"
+                    >
+                      <use href="#icon-video"></use></svg
+                    >Browse media</button
+                  ><button id="empty-share" class="empty-share quiet" type="button" hidden>
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      data-tabler-icon="share"
+                    >
+                      <use href="#icon-share"></use></svg
+                    >Invite
+                  </button>
+                </div>
                 <div id="room-lobby" class="room-lobby" hidden>
                   <div class="lobby-room-bar room-bar" id="lobby-room-bar">
                     <button id="lobby-reopen" class="lobby-reopen quiet" hidden>
@@ -867,7 +882,8 @@
                           />Use UbuPlayer</label
                         >
                         <p id="ubuplayer-hint" class="hint">
-                          Client container playback, surround audio decode, and HDR tone mapping in this browser.
+                          Plays additional video formats, surround sound, and HDR directly in your browser. Required for
+                          local files.
                         </p>
                       </div>
                       <div class="settings-field" id="playback-source-field">
@@ -1061,6 +1077,15 @@
                     </section>
                     <section class="settings-panel settings-group">
                       <h3>Appearance</h3>
+                      <div
+                        id="subtitle-preview"
+                        class="subtitle-preview"
+                        data-subtitle-bg="shadow"
+                        data-subtitle-size="medium"
+                        aria-hidden="true"
+                      >
+                        <span class="subtitle-preview-cue"><span>Sample subtitle text</span></span>
+                      </div>
                       <div class="settings-field">
                         <label for="subtitle-color-preset">Text color</label>
                         <div class="subtitle-color-row">
@@ -1178,10 +1203,10 @@
                         <div>
                           <h3>Source</h3>
                           <p id="media-information" class="hint"></p>
+                          <p id="delivery-information" class="hint"></p>
                         </div>
                         <details>
                           <summary>Technical details</summary>
-                          <p id="delivery-information" class="hint"></p>
                           <p class="diagnostic-report">
                             <button id="copy-diagnostics" type="button" class="copy-diagnostics quiet">
                               Copy diagnostic report</button
@@ -1947,14 +1972,17 @@
           <label for="room-create-visibility">Visibility</label
           ><select id="room-create-visibility" hidden>
             <option value="public">Public</option>
-            <option value="private">Private · Hosts only</option>
+            <option value="private">Private · Invite only</option>
           </select>
           <div id="room-create-visibility-group" class="button-group" role="group" aria-label="Visibility">
             <button type="button" class="group-button" data-value="public" aria-pressed="true">Public</button
             ><button type="button" class="group-button" data-value="private" aria-pressed="false">
-              Private · Hosts only
+              Private · Invite only
             </button>
           </div>
+          <p id="room-create-visibility-hint" class="hint room-create-hint">
+            Listed in Active rooms for signed-in members.
+          </p>
           <div id="room-create-policy">
             <label for="room-create-preset">Permissions</label
             ><select id="room-create-preset" hidden>
@@ -1969,6 +1997,9 @@
                 <span>Play/<wbr />Pause</span></button
               ><button type="button" class="group-button" data-value="queue" aria-pressed="false">Queue</button>
             </div>
+            <p id="room-create-preset-hint" class="hint room-create-hint">
+              Hosts control playback and the queue. Viewers can suggest media.
+            </p>
           </div>
         </section>
         <section id="room-join"><div id="room-choices" aria-label="Active rooms"></div></section>
@@ -1984,12 +2015,11 @@
         <form method="dialog" id="room-dialog-footer" class="room-dialog-footer dialog-footer" hidden>
           <button id="room-create-cancel" class="quiet" type="button" value="cancel">Cancel</button>
           <div id="room-create-actions" class="room-create-actions">
-            <button id="room-create" class="primary" type="button">Create room</button
-            ><button
+            <button
               id="room-create-settings"
-              class="room-create-settings icon-button"
+              class="room-create-settings quiet"
               type="button"
-              aria-label="Room settings"
+              aria-label="More options"
               title="Configure this room before creating it"
             >
               <svg
@@ -2002,9 +2032,9 @@
                 aria-hidden="true"
                 data-tabler-icon="settings"
               >
-                <use href="#icon-settings"></use>
-              </svg>
-            </button>
+                <use href="#icon-settings"></use></svg
+              ><span>More options</span></button
+            ><button id="room-create" class="primary" type="button">Create room</button>
           </div>
         </form>
       </dialog>
@@ -2042,7 +2072,7 @@
                   title="Click to copy invite link"
                 /><button
                   id="room-share-copy"
-                  class="icon-button room-share-dock-btn"
+                  class="quiet room-share-dock-btn"
                   type="button"
                   aria-label="Copy invite link"
                   title="Copy invite link"
@@ -2057,8 +2087,8 @@
                     aria-hidden="true"
                     data-tabler-icon="copy"
                   >
-                    <use href="#icon-copy"></use>
-                  </svg>
+                    <use href="#icon-copy"></use></svg
+                  ><span>Copy</span>
                 </button>
               </div>
               <button
@@ -2067,6 +2097,7 @@
                 type="button"
                 aria-label="Share invite…"
                 title="Share invite…"
+                hidden
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -2082,6 +2113,7 @@
                 </svg>
               </button>
             </div>
+            <p id="room-share-hint" class="hint room-share-hint"></p>
           </div>
           <section id="room-share-publication" hidden>
             <div class="room-share-heading-row">

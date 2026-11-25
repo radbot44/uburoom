@@ -203,10 +203,13 @@ export function mount(host, deps) {
       $('viewers').textContent = '';
       $('close-room').hidden = true;
       $('empty-browse').hidden = true;
+      if ($('empty-share')) $('empty-share').hidden = true;
       $('title').textContent = 'Watch together';
       $('details').textContent = '';
       $('empty-title').textContent = 'Join or create a room';
-      $('empty-hint').textContent = 'Choose an active room or create your own.';
+      $('empty-hint').textContent = rooms.length
+        ? 'Choose an active room or create your own.'
+        : 'No active rooms right now. Create a room or reopen a saved one.';
       const opened =
         store.lobby.waitingRoom && rooms.find(room => room.id === store.lobby.waitingRoom.id && !room.locked);
       if (opened) {
@@ -465,7 +468,7 @@ export function mount(host, deps) {
   async function createRoom(advanced = deps.roomUI.draftOptions()) {
     if (store.lobby.creating) return;
     store.lobby.creating = true;
-    $('room-create').disabled = true;
+    uburoomControls.busy($('room-create'), true, { label: 'Creating room…' });
     try {
       const customTyped = $('room-name').value.trim();
       const created = await deps.call('rooms.create', {
@@ -502,7 +505,7 @@ export function mount(host, deps) {
       if (advanced && Object.keys(advanced).length) throw error;
     } finally {
       store.lobby.creating = false;
-      $('room-create').disabled = false;
+      uburoomControls.busy($('room-create'), false);
     }
   }
   for (const id of ['create', 'lobby-create']) $(id).addEventListener('click', () => void chooseRoom(undefined, 'new'));
@@ -513,7 +516,29 @@ export function mount(host, deps) {
     else roomChooserSection('active');
   });
   $('room-create').addEventListener('click', () => void createRoom().catch(error => deps.fail(error.message)));
-  $('room-create-settings').replaceChildren(uburoomIcons.icon(document, 'settings'));
+  const VISIBILITY_HINTS = {
+    public: 'Listed in Active rooms for signed-in members.',
+    private: 'Hidden from Active rooms; joinable by invite link or host invite.',
+  };
+  const PRESET_HINTS = {
+    'host-control': 'Hosts control playback and the queue. Viewers can suggest media.',
+    'play-pause': 'Everyone can play or pause. Hosts control seeking and the queue.',
+    queue: 'Everyone can play, pause, and add to the queue.',
+  };
+  function syncCreateFormHints() {
+    const visHint = $('room-create-visibility-hint');
+    if (visHint) visHint.textContent = VISIBILITY_HINTS[$('room-create-visibility').value] || VISIBILITY_HINTS.public;
+    const presetHint = $('room-create-preset-hint');
+    if (presetHint)
+      presetHint.textContent =
+        PRESET_HINTS[$('room-create-preset').value] || 'Custom permissions configured for this room.';
+  }
+  uburoomControls.content($('room-create-settings'), {
+    icon: 'settings',
+    label: 'More options',
+    responsive: false,
+  });
+  $('room-create-settings').title = 'Configure this room before creating it';
   $('room-create-settings').addEventListener('click', () =>
     deps.roomUI.openDraft({
       name: $('room-name').value,
@@ -521,9 +546,18 @@ export function mount(host, deps) {
       permissionPreset: $('room-create-preset').value,
     }),
   );
+  $('room-create-visibility').addEventListener('change', () => {
+    store.lobby.roomVisibilityDraft = $('room-create-visibility').value;
+    syncCreateFormHints();
+  });
   $('room-create-preset').addEventListener('change', () => {
     store.lobby.roomPresetDraft = $('room-create-preset').value;
     deps.roomUI.updateDraftPreset(store.lobby.roomPresetDraft);
+    syncCreateFormHints();
+  });
+  syncCreateFormHints();
+  uburoomControls.tabs($('room-chooser-nav'), {
+    selector: '#room-show-active, #room-show-saved',
   });
   $('room-chooser-new').addEventListener('click', () => {
     roomChooserSection('new');
@@ -726,6 +760,7 @@ export function mount(host, deps) {
     browseMedia,
     chooseRoom,
     createRoom,
+    syncCreateFormHints,
     guestRoomClosed,
     inviteCode,
     inviteEntry,

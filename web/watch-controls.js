@@ -2,8 +2,10 @@
 import * as uburoomIcons from './icons.js';
 
 const groups = new WeakMap();
+const tablists = new WeakMap();
+const busyStates = new WeakMap();
 function content(control, { label, icon, iconOnly = false, responsive }) {
-  const doc = control.ownerDocument;
+  const doc = typeof control.ownerDocument?.createElementNS === 'function' ? control.ownerDocument : document;
   const isResponsive = responsive !== undefined ? responsive : !!icon && !iconOnly;
   const prevIcon = control.dataset.watchControlIcon || '';
   const prevIconOnly = control.dataset.watchControlIconOnly === 'true';
@@ -231,4 +233,113 @@ function bindSelect(select, group) {
   select.addEventListener('change', refresh);
   refresh();
 }
-export { button, content, switchPill, permissionButton, segmented, bindSelect };
+function busy(control, active, { label } = {}) {
+  if (!control) return control;
+  const isBusy = Boolean(active);
+  const doc = typeof control.ownerDocument?.createElementNS === 'function' ? control.ownerDocument : document;
+  if (isBusy) {
+    if (!busyStates.has(control)) {
+      busyStates.set(control, {
+        disabled: Boolean(control.disabled),
+        ariaLabel: control.getAttribute?.('aria-label') ?? null,
+        title: control.title || '',
+      });
+    }
+    if (!control.classList?.contains?.('is-busy') && typeof doc.createElement === 'function') {
+      const nodes = Array.isArray(control.childNodes)
+        ? [...control.childNodes]
+        : typeof control.childNodes?.[Symbol.iterator] === 'function'
+          ? [...control.childNodes]
+          : Array.isArray(control.children)
+            ? [...control.children]
+            : [];
+      if (nodes.length && typeof control.replaceChildren === 'function') {
+        const wrap = doc.createElement('span');
+        wrap.className = 'watch-busy-content';
+        wrap.append(...nodes);
+        const spin = doc.createElement('span');
+        spin.className = 'watch-busy-spinner';
+        spin.setAttribute('aria-hidden', 'true');
+        spin.append(uburoomIcons.icon(doc, 'loader-4'));
+        control.replaceChildren(wrap, spin);
+      }
+    }
+    control.disabled = true;
+    control.classList?.add?.('is-busy');
+    control.setAttribute?.('aria-busy', 'true');
+    if (label) {
+      control.setAttribute?.('aria-label', label);
+      control.title = label;
+    }
+  } else {
+    const saved = busyStates.get(control);
+    busyStates.delete(control);
+    const wrap =
+      typeof control.querySelector === 'function' ? control.querySelector(':scope > .watch-busy-content') : null;
+    if (wrap && typeof wrap.childNodes?.[Symbol.iterator] === 'function') {
+      control.replaceChildren(...wrap.childNodes);
+    } else if (typeof control.querySelector === 'function') {
+      control.querySelector(':scope > .watch-busy-spinner')?.remove?.();
+    }
+    control.classList?.remove?.('is-busy');
+    control.removeAttribute?.('aria-busy');
+    if (saved) {
+      control.disabled = saved.disabled;
+      if (saved.ariaLabel !== null) control.setAttribute?.('aria-label', saved.ariaLabel);
+      else control.removeAttribute?.('aria-label');
+      control.title = saved.title;
+    }
+  }
+  return control;
+}
+function tabs(tablist, { onSelect, selector = 'button' } = {}) {
+  if (!tablist) return;
+  if (tablists.has(tablist)) {
+    tablists.get(tablist)();
+    return;
+  }
+  tablist.classList?.add?.('watch-tabs');
+  const doc = typeof tablist.ownerDocument?.createElement === 'function' ? tablist.ownerDocument : document;
+  const items = () =>
+    [...(tablist.querySelectorAll?.(selector) || [])].filter(control => !control.disabled && !control.hidden);
+  const isSelected = control =>
+    control.getAttribute?.('aria-selected') === 'true' ||
+    control.getAttribute?.('aria-current') === 'true' ||
+    control.getAttribute?.('aria-current') === 'page';
+  function refresh() {
+    const choices = items();
+    const entry = choices.includes(doc.activeElement) ? doc.activeElement : choices.find(isSelected) || choices[0];
+    for (const control of tablist.querySelectorAll?.(selector) || []) {
+      control.tabIndex = control === entry ? 0 : -1;
+    }
+  }
+  tablist.addEventListener?.('focusin', refresh);
+  tablist.addEventListener?.('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    const choices = items(),
+      index = choices.indexOf(event.target);
+    if (index < 0 || !choices.length) return;
+    event.preventDefault();
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? choices.length - 1
+          : (index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + choices.length) % choices.length;
+    const target = choices[next];
+    target.focus();
+    if (onSelect) onSelect(target);
+    else target.click();
+  });
+  if (typeof MutationObserver === 'function') {
+    new MutationObserver(refresh).observe(tablist, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['disabled', 'hidden', 'aria-selected', 'aria-current'],
+    });
+  }
+  tablists.set(tablist, refresh);
+  refresh();
+}
+export { button, content, switchPill, permissionButton, segmented, bindSelect, busy, tabs };

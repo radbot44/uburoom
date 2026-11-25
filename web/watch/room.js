@@ -37,6 +37,9 @@ export function mount(host, deps) {
           ? store.identity.pageBootstrap.targetRoom.name
           : 'Room';
     $('room-share').hidden = !store.room.state?.invite;
+    if ($('empty-share'))
+      $('empty-share').hidden =
+        !inRoom || !document.body.classList.contains('idle-player') || !store.room.state?.invite;
     deps.renderScheduleButton();
     if (store.room.state) {
       if (!$('room-share').firstChild)
@@ -212,6 +215,7 @@ export function mount(host, deps) {
     }
   }
   $('room-share').addEventListener('click', () => void deps.roomShare.open(store.room.selected));
+  $('empty-share')?.addEventListener('click', () => void deps.roomShare.open(store.room.selected));
   $('room-schedule').addEventListener('click', () => {
     void deps.roomEvents.open({
       roomId: store.room.selected,
@@ -824,6 +828,7 @@ export function mount(host, deps) {
     $('empty-title').textContent = 'Choose something to watch…';
     $('empty-hint').textContent = "...or he'll be watching you.";
     $('empty-browse').hidden = !isIdle || !next.canBrowse;
+    if ($('empty-share')) $('empty-share').hidden = !isIdle || !next.invite;
     $('close-room').hidden = !!store.identity.config?.singleRoom;
     $('timeline').max = next.durationUnknown ? 100 : next.state.duration || 60;
     $('duration').textContent = next.durationUnknown ? '--:--' : deps.clock(next.state.duration);

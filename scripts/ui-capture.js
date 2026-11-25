@@ -239,6 +239,8 @@ async function captureBrowser(name, out, only) {
     // Leave no feedback popover from the queue additions in view.
     await run(host, 'window.dispatchEvent(new Event("scroll"));true');
     await until(host, count('.watch-popover') + '===0', 'Popovers gone');
+    await run(host, 'toasts.clear();true');
+    await until(host, count('.watch-toast') + '===0', 'Toasts cleared');
 
     await capture(host, 'room-media-queue', {});
     await capture(host, 'room-scrolled', {
@@ -319,27 +321,38 @@ async function captureBrowser(name, out, only) {
         },
       });
 
-    // Last room surface, since it advances the queue: playing the next item moves the first video into history.
-    await capture(host, 'room-queue-history', {
-      open: async () => {
-        await run(host, pressId('next'));
-        await until(host, count('#queue-history-list .queue-history-entry') + '>=1', 'History entry');
-        await until(host, attr('#player-play', 'aria-label') + '==="Pause"', 'Next item plays');
-        await run(host, pressId('player-play'));
-        await until(host, attr('#player-play', 'aria-label') + '==="Play"', 'Next item paused');
-        await run(host, choose('timeline', '17'));
-        await until(host, text('#time') + '.startsWith("0:17")', 'Paused at 0:17');
-        await run(host, 'window.dispatchEvent(new Event("scroll"));true');
-        await until(host, count('.watch-popover') + '===0', 'Popovers gone');
-      },
-    });
+    // Last room surface, since it advances the queue: advance once before the theme loop so dark and light
+    // show identical history and queue items, and select the Queue tab at phone width.
+    if (!only || only.includes('room-queue-history')) {
+      await browser.viewport(host, 1360, 900);
+      await run(host, pressId('next'));
+      await until(host, count('#queue-history-list .queue-history-entry') + '>=1', 'History entry');
+      await until(host, attr('#player-play', 'aria-label') + '==="Pause"', 'Next item plays');
+      await run(host, pressId('player-play'));
+      await until(host, attr('#player-play', 'aria-label') + '==="Play"', 'Next item paused');
+      await run(host, choose('timeline', '17'));
+      await until(host, text('#time') + '.startsWith("0:17")', 'Paused at 0:17');
+      await run(host, 'window.dispatchEvent(new Event("scroll"));toasts.clear();true');
+      await until(host, count('.watch-popover') + '===0 && ' + count('.watch-toast') + '===0', 'Overlays gone');
+      await capture(host, 'room-queue-history', {
+        each: async () => {
+          if (await run(host, shown('#section-tab-queue'))) {
+            await run(host, pressId('section-tab-queue'));
+            await until(host, attr('#section-tab-queue', 'aria-selected') + '==="true"', 'Phone queue tab');
+          }
+        },
+      });
+    }
 
     // The development gallery, full height, in its own tab after the room surfaces (the theme is shared).
     if (!only || only.includes('gallery')) {
       const gallery = await openPage(browser, config.publicUrl + '/__dev/gallery');
       await freeze(gallery);
       await until(gallery, 'document.body.dataset.galleryReady==="true"', 'Gallery');
-      await capture(gallery, 'gallery', { fullPage: true });
+      await capture(gallery, 'gallery', {
+        fullPage: true,
+        each: () => run(gallery, 'document.querySelector(".gallery-section button.primary")?.focus();true'),
+      });
     }
     return files;
   } finally {

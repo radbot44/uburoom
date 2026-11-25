@@ -280,6 +280,97 @@ class MediaProviders {
     return { items, total: items.length, offset: 0, nextOffset: null };
   }
   /**
+   * Searches every configured provider's libraries that this person may use, stamping each matching
+   * item with its server and library name. Providers that cannot answer leave their results out
+   * unless none can answer.
+   */
+  async search(actor, query = {}, scopeFor = (person, serverId) => this.for(person, serverId)) {
+    const q = String(query.q || '').trim();
+    if (!q) return { items: [], total: 0, offset: 0, nextOffset: null };
+    const configured = this.list.filter(provider => provider.root?.configured);
+    const providerResults = await Promise.all(
+      configured.map(async provider => {
+        try {
+          const serverId = await this.identityOf(provider);
+          const scope = await scopeFor(actor, serverId);
+          const name = provider.label || provider.serverName;
+          const sections = (await scope.browse({})).items || [];
+          const sectionResults = await Promise.all(
+            sections
+              .filter(section => section?.id)
+              .map(async section => {
+                try {
+                  const page = await scope.browse({
+                    section: section.id,
+                    q,
+                    sort: query.sort || 'title',
+                    order: query.order || 'asc',
+                  });
+                  return (page.items || [])
+                    .filter(item => item?.id)
+                    .map(item => ({
+                      ...item,
+                      serverId,
+                      ...(name ? { serverName: name } : {}),
+                      ...(section.title ? { sectionTitle: section.title } : {}),
+                    }));
+                } catch {
+                  // Skip an individual library section that does not support text search.
+                  return [];
+                }
+              }),
+          );
+          return { ok: true, items: sectionResults.flat() };
+        } catch (error) {
+          return { ok: false, error };
+        }
+      }),
+    );
+    const matched = [];
+    const seen = new Set();
+    let unanswered;
+    let answeredAny = false;
+    for (const result of providerResults) {
+      if (!result.ok) {
+        unanswered ||= result.error;
+        continue;
+      }
+      answeredAny = true;
+      for (const item of result.items) {
+        const key = item.serverId + ':' + item.id;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        matched.push(item);
+      }
+    }
+    if (unanswered && !answeredAny) throw unanswered;
+    const sort = query.sort || 'title';
+    const dir = query.order === 'desc' ? -1 : 1;
+    if (sort === 'random') {
+      let seed = 0;
+      const seedStr = String(query.seed || q);
+      for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) | 0;
+      const hash = value => {
+        let h = seed;
+        for (let i = 0; i < value.length; i++) h = Math.imul(h ^ value.charCodeAt(i), 16777619);
+        return h >>> 0;
+      };
+      matched.sort((a, b) => hash(a.serverId + ':' + a.id) - hash(b.serverId + ':' + b.id));
+    } else {
+      matched.sort((a, b) => {
+        if (sort === 'added') return ((a.addedAt || 0) - (b.addedAt || 0)) * dir;
+        if (sort === 'year') return ((a.year || 0) - (b.year || 0)) * dir;
+        if (sort === 'runtime') return ((a.duration || 0) - (b.duration || 0)) * dir;
+        return String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base' }) * dir;
+      });
+    }
+    const offset = Math.max(0, Number.parseInt(String(query.offset || '0'), 10) || 0);
+    const pageSize = 48;
+    const items = matched.slice(offset, offset + pageSize);
+    const nextOffset = offset + items.length < matched.length ? offset + items.length : null;
+    return { items, total: matched.length, offset, nextOffset };
+  }
+  /**
    * The Media Home rows for one viewer: Continue watching from providers that know this viewer's own progress,
    * and Recently added from every provider that lists it, newest first. Each item names its server.
    */

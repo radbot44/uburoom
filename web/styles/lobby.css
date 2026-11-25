@@ -139,17 +139,36 @@
       padding: var(--space-8) var(--space-10);
     }
   }
+  .watch-dialog form.room-dialog-footer {
+    justify-content: space-between;
+  }
   .room-create-actions {
     display: flex;
     align-items: center;
     gap: var(--space-8);
+    margin-inline-start: auto;
+  }
+  @media (max-width: 620px) {
+    .watch-dialog form.room-dialog-footer {
+      gap: var(--space-6);
+      flex-wrap: nowrap;
+    }
+    .watch-dialog form.room-dialog-footer button {
+      padding: var(--space-10) var(--space-12);
+      font-size: var(--font-size-12);
+      white-space: nowrap;
+    }
   }
   .room-create-actions[hidden] {
     display: none;
   }
+  .room-create-hint {
+    margin: calc(var(--space-6) * -1) 0 var(--space-12);
+  }
   .room-create-settings {
-    display: grid;
-    place-items: center;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-6);
   }
   .welcome h2 {
     display: none;

@@ -24,11 +24,20 @@ function badgeDetails(command, state = {}) {
       label = action === 'media.volume.set' ? 'Volume' : action === 'media.mute' ? 'Mute' : 'Unmute';
       if (action === 'media.volume.set') value = (state.volume ?? args.percent) + '%';
       break;
-    case 'media.seek.relative':
-      symbol = args.seconds < 0 ? 'back' : 'forward';
+    case 'media.seek.relative': {
+      const amount = Math.abs(Number(args.seconds));
+      symbol =
+        Math.round(amount) === 15
+          ? args.seconds < 0
+            ? 'back'
+            : 'forward'
+          : args.seconds < 0
+            ? 'player-track-prev'
+            : 'player-track-next';
       label = args.seconds < 0 ? 'Seek back' : 'Seek forward';
-      if (![15, 30, 60].includes(Math.abs(Number(args.seconds)))) value = Math.abs(Number(args.seconds)) + 's';
+      if (Math.round(amount) !== 15) value = amount + 's';
       break;
+    }
     case 'media.seek.absolute': {
       const seconds = Math.floor(state.position ?? args.seconds ?? 0);
       symbol = 'end';
@@ -108,7 +117,17 @@ function journalToastDetails(entry) {
       if (!actorName) return;
       const to = Number.isFinite(data.to) ? formatClock(data.to) : '';
       const delta = Number.isFinite(data.from) && Number.isFinite(data.to) ? data.to - data.from : 0;
-      const symbol = delta < 0 ? 'back' : delta > 0 ? 'forward' : 'end';
+      const is15 = Math.round(Math.abs(delta)) === 15;
+      const symbol =
+        delta < 0
+          ? is15
+            ? 'back'
+            : 'player-track-prev'
+          : delta > 0
+            ? is15
+              ? 'forward'
+              : 'player-track-next'
+            : 'end';
       return {
         symbol,
         title: to ? `Seek ${to}` : 'Seek',

@@ -1,3 +1,4 @@
+import * as uburoomControls from '../watch-controls.js';
 import * as uburoomIcons from '../icons.js';
 import { $ } from './page.js';
 import { PHONE_LAYOUT } from './breakpoints.js';
@@ -95,23 +96,8 @@ export function mount(host, deps) {
       }
     }
   }
-  sectionTabs.addEventListener('keydown', event => {
-    const tabs = [...sectionTabs.querySelectorAll('button:not(:disabled)')];
-    const index = tabs.indexOf(document.activeElement);
-    const next =
-      event.key === 'ArrowRight'
-        ? (index + 1) % tabs.length
-        : event.key === 'ArrowLeft'
-          ? (index + tabs.length - 1) % tabs.length
-          : event.key === 'Home'
-            ? 0
-            : event.key === 'End'
-              ? tabs.length - 1
-              : -1;
-    if (next >= 0) {
-      event.preventDefault();
-      selectSection(tabs[next].dataset.section, true);
-    }
+  uburoomControls.tabs(sectionTabs, {
+    onSelect: tab => selectSection(tab.dataset.section, true),
   });
   const drawer = document.createElement('aside');
   drawer.id = 'drawer';

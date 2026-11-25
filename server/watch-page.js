@@ -195,6 +195,13 @@ function watchPage(source, initial, scrollbarStyleNonce) {
         .set('id', 'watch-body', { class: 'outside-room idle-player' })
         .set('id', 'auth-overlay', { hidden: true })
         .set('id', 'room-lobby', { hidden: false })
+        .content(
+          'id',
+          'empty-hint',
+          initial.rooms.value.rooms.length
+            ? 'Choose an active room or create your own.'
+            : 'No active rooms right now. Create a room or reopen a saved one.',
+        )
         .content('id', 'lobby-rooms', rows);
     } else if (initial.targetRoom?.name) {
       const roomName = escapeText(initial.targetRoom.name);

@@ -575,9 +575,13 @@
     position: relative;
     aspect-ratio: 2/3;
     border-radius: var(--radius-12);
-    background: var(--card);
+    background: var(--elevated);
+    box-sizing: border-box;
     min-width: 0;
     isolation: isolate;
+  }
+  .library-art:not(.loaded) {
+    border: var(--space-1) solid var(--border);
   }
   /* A wide picture (an episode scene, or Continue watching) keeps the picture's own 16:9. */
   .library-art.landscape {
@@ -651,9 +655,9 @@
     overflow-wrap: anywhere;
   }
   .library-content .library-art-fallback svg {
-    width: 40px;
-    height: 40px;
-    color: var(--border);
+    width: var(--space-40);
+    height: var(--space-40);
+    color: var(--muted);
   }
   .library-art.loaded .library-art-fallback {
     visibility: hidden;

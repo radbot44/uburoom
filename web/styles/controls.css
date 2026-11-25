@@ -188,16 +188,41 @@
   .solid-button:hover {
     background: var(--primary-hover);
   }
-  .solid-button.private {
-    background: var(--elevated);
-    color: var(--text);
+  button.is-busy {
+    position: relative;
   }
-  .solid-button.private:hover {
-    background: var(--hover);
+  .watch-busy-content {
+    display: inline-flex;
+    align-items: center;
+    justify-content: inherit;
+    gap: inherit;
+    visibility: hidden;
   }
-  .solid-button:disabled {
-    opacity: 1;
-    cursor: default;
+  .watch-busy-spinner {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+  }
+  .watch-busy-spinner svg {
+    width: var(--space-18);
+    height: var(--space-18);
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    animation: spin 0.75s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .watch-busy-spinner svg {
+      animation: none;
+    }
+  }
+  .watch-tabs button[aria-selected='true'],
+  .watch-tabs button[aria-current='true'] {
+    font-weight: 600;
   }
   .solid-button svg {
     width: 20px;

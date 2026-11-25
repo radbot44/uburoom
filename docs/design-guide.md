@@ -50,9 +50,9 @@ Shared modal dialogs have a semantic header containing a heading, and follow one
   - Room and Player settings use a lightly tinted, outlined panel for related controls. Separate rows with fine dividers and keep each hint beside its setting. Lists and permission matrices keep their own structure.
   - Player settings has Playback, Subtitles and Media information sections. Pair Video with Audio and Track and timing with Appearance on wide screens. Stack the panels on narrow screens.
   - The account dialog keeps Log out in a divided footer below the scrolling body.
-  - The rooms dialog shows its footer (Cancel; Create room and Settings) only in New room mode.
+  - The rooms dialog shows its footer (Cancel on the left; More options and Create room on the right) only in New room mode.
   - Room settings uses section tabs that wrap onto a second row at phone width so every tab stays visible.
-- **Share:** a small-width workspace covering the invite and the Discord room post only (scheduling has its own dialog). The invite bar has a read-only link without the scheme (clicking copies the full link), Copy and native Share. The Discord preview shows the channel, the post card and its status; unpublished rooms offer Publish now, published rooms View Discord post and Remove post.
+- **Share:** a small-width workspace covering the invite and the Discord room post only (scheduling has its own dialog). The invite bar has a read-only link without the scheme (clicking copies the full link), a labelled Copy action, native Share when supported by the browser or Activity, and a one-line access hint stating whether guests or server members can join. The Discord preview shows the channel, the post card and its status; unpublished rooms offer Publish now, published rooms View Discord post and Remove post.
 
 ### Watch nights
 
@@ -62,7 +62,7 @@ See [approved screen behavior](ui-behavior.md#watch-nights) for this feature's a
 
 - **Section headings:** each panel heading has a solid primary-accent badge with dark artwork (Room `armchair-2`, Queue `player-track-next`, Media `video`), with the minimize chevron right after the title. When the room name and the header actions do not fit on one line, the actions wrap below and the name keeps the first line, truncating only beyond it.
 - **Room panel:** header actions, the viewer list and the room buttons; no permission controls (those are in Room settings → Permissions only). An action the person cannot use is shown disabled with its reason as tooltip; actions the server does not offer at all stay hidden.
-- **Queue header:** the first row holds the title and Queue settings (in a room only); panel header actions share the grey `watch-header-control` style. The second row holds the Auto-play and Auto-queue switch pills, then Center Now Playing. Pill labels are never dropped: pills wrap, and Center Now Playing drops to its icon when the queue is narrow.
+- **Queue header:** the first row holds the title and Queue settings (in a room only); panel header actions share the grey `watch-header-control` style. The second row holds the Auto-play and Auto-queue switch pills, then Jump to Now Playing. Pill labels are never dropped: pills wrap, and Jump to Now Playing drops to its icon when the queue is narrow.
 - **Room URLs:** rooms use path slugs (`/room/<slug>`). The default name "Room <word>" gives a one-word slug; custom names give hyphenated slugs with numeric suffixes for collisions. Single-room mode and the lobby live at the root, and `/watch` redirects there or to the active room. An authorized room link renders straight into the room with no lobby flash; signed-out visits show sign-in and keep the destination; closed event rooms show Waiting for host.
 
 ## 5. States and playback
@@ -144,8 +144,8 @@ Loading and catch-up show a delayed spinner over the subtitle button, without a 
 
 ### Video check and diagnostics
 
-- **Delivery line:** Media information names how the stream reaches the viewer: "Original file", "Original picture, converted sound" (the picture copied and only the audio converted, by the media server or by uburoom), "Media server conversion", or "uburoom conversion".
-- **Video check:** hosts get it in Player settings under Media information, listing file checks, and Plex checks for a video Plex serves, most serious first with an icon each and Check again. A problem or warning gives one action toast per video with View. Viewers never see it.
+- **Delivery line:** Media information shows both the source stream summary and how the stream reaches the viewer directly under Source ("Original file", "Original picture, converted sound", "Media server conversion", or "uburoom conversion"), while keeping the diagnostic report under Technical details.
+- **Video check:** hosts get it in Player settings under Media information, listing file checks and media-server checks most serious first (or a passed status row when clean) with an icon each and Check again. A problem or warning gives one action toast per video with View. Viewers never see it.
 - **Diagnostic report:** "Copy diagnostic report" in Technical details copies a recent report and confirms with a popover, downloading a file if the clipboard is blocked. When the server keeps diagnostics, the hint states for how long.
 
 ## 7. Review and maintenance

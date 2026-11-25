@@ -365,7 +365,7 @@ function mount(
     if (screen.library !== filterSection) void fetchFacets(screen.library);
   });
   function goHome() {
-    if (!catalog || screen.kind === 'home') return;
+    if (!catalog || (screen.kind === 'home' && !screen.q)) return;
     prepareNavigation();
     screen = homeContext();
     trail = [];
@@ -421,7 +421,7 @@ function mount(
         entries.some(x => x.isIntersecting) &&
         catalog &&
         screen?.kind !== 'details' &&
-        screen?.kind !== 'home' &&
+        (screen?.kind !== 'home' || !!screen?.q) &&
         screen?.nextOffset != null &&
         !screen.loading &&
         !screen.pageError
@@ -432,7 +432,8 @@ function mount(
   );
   function watchNextPage() {
     pageObserver.unobserve(sentinel);
-    sentinel.hidden = !screen || ['details', 'home'].includes(screen.kind) || screen.nextOffset == null;
+    sentinel.hidden =
+      !screen || screen.kind === 'details' || (screen.kind === 'home' && !screen.q) || screen.nextOffset == null;
     if (!sentinel.hidden && !screen.loading && !screen.pageError) pageObserver.observe(sentinel);
   }
   // Catalog reads use the account; the server applies a guest's room grant automatically.
@@ -470,6 +471,11 @@ function mount(
           ? runtime(item.duration)
           : '',
       item.edition,
+      !screen?.section && item.sectionTitle
+        ? item.serverName && new Set(sections.map(s => s.serverId)).size > 1
+          ? item.sectionTitle + ' (' + item.serverName + ')'
+          : item.sectionTitle
+        : '',
     ]
       .filter(Boolean)
       .join(' · ');
@@ -759,6 +765,7 @@ function mount(
     const open = () => void openItem(item, shape ? { outside: true } : undefined);
     const card = node('article', parent, undefined, 'library-tile' + (episode ? ' episode' : ''));
     card.dataset.item = item.id;
+    if (item.serverId) card.dataset.server = item.serverId;
     card.classList.toggle('unavailable', item.available === false);
     if (item.hasLogo || item.hasBackdrop) {
       // Resting a mouse pointer (or keyboard focus) on a title starts its details pictures, so they are often
@@ -972,13 +979,15 @@ function mount(
     });
     previous.disabled = visitIndex === 0;
     next.disabled = visitIndex >= visits.length - 1;
-    home.disabled = screen.kind === 'home';
+    home.disabled = screen.kind === 'home' && !screen.q;
     previous.title = previous.disabled ? 'No earlier Media page.' : 'Back';
     next.title = next.disabled ? 'No later Media page.' : 'Forward';
     home.title = home.disabled ? 'Already at Libraries home.' : 'Libraries home';
     choices.render(sections, screen.library, screen.kind !== 'home');
     const details = screen.kind === 'details',
       atHome = screen.kind === 'home',
+      homeSearching = atHome && Boolean(screen.q),
+      showHomeBar = atHome && sections.length > 0,
       collectionIndex = screen.kind === 'library' && screen.tab === 'collections';
     const section = screen.library;
     const isLinkSection = !details && !atHome && (section?.source === 'link' || screen.source === 'link');
@@ -1001,12 +1010,13 @@ function mount(
           section.title,
         );
     }
-    tools.hidden = details || atHome;
+    tools.hidden = details || (atHome && !showHomeBar && !homeSearching);
     if (toolsScreen !== screen) {
       toolsScreen = screen;
       scroll.tuck(false);
     }
-    row.hidden = details || atHome;
+    row.hidden = details || (atHome && !showHomeBar && !homeSearching);
+    toolControls.hidden = atHome && !homeSearching;
     linkBar.hidden = !isLinkSection;
     sortWrap.hidden = isLinkSection;
     direction.hidden = isLinkSection;
@@ -1028,13 +1038,16 @@ function mount(
       filterButton.classList.remove('filter-active');
     }
     if (search.value !== screen.q) search.value = screen.q || '';
-    search.placeholder = isLinkSection
-      ? 'Filter cached videos'
-      : screen.kind === 'season' || screen.onlySeason
-        ? 'Search episodes'
-        : collectionIndex
-          ? 'Search collections'
-          : 'Search this library';
+    search.placeholder = atHome
+      ? 'Search all libraries'
+      : isLinkSection
+        ? 'Filter cached videos'
+        : screen.kind === 'season' || screen.onlySeason
+          ? 'Search episodes'
+          : collectionIndex
+            ? 'Search collections'
+            : 'Search this library';
+    search.setAttribute('aria-label', search.placeholder);
     const hasDefaultSort = !!(screen.parent || screen.collection);
     const hasRuntimeSort = !collectionIndex && (screen.kind !== 'show' || !!screen.onlySeason);
     const sortSig = JSON.stringify([hasDefaultSort, collectionIndex, hasRuntimeSort, screen.sort, screen.order]);
@@ -1097,7 +1110,7 @@ function mount(
     }
     host.dataset.view = view;
     viewButtons.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
-    count.hidden = details || atHome;
+    count.hidden = details || (atHome && !homeSearching);
     count.textContent = screen.loading
       ? 'Loading…'
       : screen.total == null
@@ -1106,9 +1119,9 @@ function mount(
           ? screen.items.length + ' of ' + screen.total + ' items'
           : screen.total + (screen.total === 1 ? ' item' : ' items');
     results.classList.toggle('episodes', screen.kind === 'season' || !!screen.onlySeason);
-    results.hidden = details || atHome;
-    landing.hidden = !atHome;
-    footer.hidden = atHome;
+    results.hidden = details || (atHome && !homeSearching);
+    landing.hidden = !atHome || homeSearching;
+    footer.hidden = atHome && !homeSearching;
     // Navigation can wrap differently after rendering. Publish its height before
     // restoring the visible item so the sticky toolbar uses the final offset.
     measureHeader();
@@ -1164,13 +1177,13 @@ function mount(
     if (reuseImages) pictures.reuse(host.querySelectorAll('.library-art img, .library-detail-backdrop img'));
     renderTools();
     clearResults();
-    if (screen.kind === 'home') renderLanding();
+    if (screen.kind === 'home' && !screen.q) renderLanding();
     // Away from Home its rows hold no tiles: hidden copies would linger behind the page being browsed.
     else {
       shelves.clear();
       landing.replaceChildren();
     }
-    if (screen.kind !== 'home' && screen.kind !== 'details') {
+    if ((screen.kind !== 'home' || !!screen.q) && screen.kind !== 'details') {
       screen.items.forEach(item => tile(item));
       if (!screen.items.length && screen.loading)
         for (let i = 0; i < 3; i++) {
@@ -1213,33 +1226,48 @@ function mount(
       b.dataset.unavailable = String(missing);
   }
   async function checkAvailability(items, current) {
-    const ids = [...new Set(items.filter(item => ['movie', 'episode'].includes(item.type)).map(item => item.id))];
-    if (!ids.length) return;
+    const groups = new Map();
+    for (const item of items) {
+      if (!['movie', 'episode'].includes(item.type) || !item.id) continue;
+      const server = item.serverId || current?.server || '';
+      if (!groups.has(server)) groups.set(server, new Set());
+      groups.get(server).add(item.id);
+    }
+    if (!groups.size) return;
     const read = new AbortController(),
       version = generation;
     availabilityReads.add(read);
     try {
-      // Keep batches within the room connection's message limit, including 20-digit IDs.
-      for (let offset = 0; offset < ids.length; offset += 32) {
-        const data = await request(
-          'library.availability',
-          scoped({ items: ids.slice(offset, offset + 32).join(',') }),
-          read.signal,
-        );
-        if (version !== generation || screen !== current || read.signal.aborted) return;
-        const statuses = new Map(data.items.map(item => [item.id, item.available]));
-        const cards = new Map([...results.children].map(card => [card.dataset.item, card]));
-        for (const item of current.items)
-          if (statuses.has(item.id)) {
-            item.available = statuses.get(item.id);
-            const card = cards.get(item.id);
-            if (card) updateAvailability(card, item);
+      for (const [server, idSet] of groups) {
+        const ids = [...idSet];
+        // Keep batches within the room connection's message limit, including 20-digit IDs.
+        for (let offset = 0; offset < ids.length; offset += 32) {
+          const data = await request(
+            'library.availability',
+            { ...(server ? { server } : {}), items: ids.slice(offset, offset + 32).join(',') },
+            read.signal,
+          );
+          if (version !== generation || screen !== current || read.signal.aborted) return;
+          const statuses = new Map(data.items.map(item => [item.id, item.available]));
+          const cards = new Map(
+            [...results.children].map(card => [(card.dataset.server || server) + ':' + card.dataset.item, card]),
+          );
+          for (const item of current.items)
+            if ((item.serverId || current?.server || '') === server && statuses.has(item.id)) {
+              item.available = statuses.get(item.id);
+              const card = cards.get(server + ':' + item.id);
+              if (card) updateAvailability(card, item);
+            }
+          if (
+            current.detail &&
+            (current.detail.serverId || current?.server || '') === server &&
+            statuses.has(current.detail.id)
+          ) {
+            current.detail.available = statuses.get(current.detail.id);
+            updateAvailability(overview, current.detail);
           }
-        if (current.detail && statuses.has(current.detail.id)) {
-          current.detail.available = statuses.get(current.detail.id);
-          updateAvailability(overview, current.detail);
+          setBusy(busy);
         }
-        setBusy(busy);
       }
     } catch (error) {
       if (version === generation && current === screen && error.name !== 'AbortError')
@@ -1252,7 +1280,7 @@ function mount(
     }
   }
   async function loadPage(append = false) {
-    if (!catalog || !screen || ['details', 'home'].includes(screen.kind)) return;
+    if (!catalog || !screen || screen.kind === 'details' || (screen.kind === 'home' && !screen.q)) return;
     if (append && (screen.loading || screen.nextOffset == null)) return;
     if (append && screen.dirty) {
       await query();
@@ -1284,7 +1312,7 @@ function mount(
       if (current.parent) query.parent = current.parent;
       if (current.collection) query.collection = current.collection;
       let data;
-      if (!current.section && !current.parent && !current.collection)
+      if (!current.section && !current.parent && !current.collection && !sections.length)
         data = {
           items: [demoItem].filter(x => x.title.toLowerCase().includes(current.q.toLowerCase())),
           total: 1,
@@ -1311,10 +1339,12 @@ function mount(
         data = await request('library.browse', scoped({ ...query, parent: current.parent }), controller.signal);
       }
       if (version !== requestVersion || catalogVersion !== generation || current !== screen) return;
-      const seen = new Set(append ? current.items.map(x => x.id) : []),
+      const itemKey = x => (x.serverId || '') + ':' + x.id;
+      const seen = new Set(append ? current.items.map(itemKey) : []),
         added = data.items.filter(x => {
-          if (seen.has(x.id)) return false;
-          seen.add(x.id);
+          const k = itemKey(x);
+          if (seen.has(k)) return false;
+          seen.add(k);
           return true;
         });
       current.items = append ? [...current.items, ...added] : added;
@@ -1543,6 +1573,16 @@ function mount(
     screen.q = search.value.trim();
     screen.dirty = true;
     clearTimeout(timer);
+    if (screen.kind === 'home' && !screen.q) {
+      screen.dirty = false;
+      screen.items = [];
+      screen.total = null;
+      screen.nextOffset = null;
+      screen.loading = false;
+      controller?.abort();
+      renderResults();
+      return;
+    }
     timer = setTimeout(() => void query(), 220);
   };
   sort.onchange = () => {

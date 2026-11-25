@@ -1,3 +1,4 @@
+import * as uburoomControls from '../watch-controls.js';
 import * as uburoomIcons from '../icons.js';
 import * as uburoomPlayback from '../playback-policy.js';
 import * as uburoomPlayerUI from '../watch-player-ui.js';
@@ -58,7 +59,15 @@ export function mount(host, deps) {
     if (!report) return;
     const list = $('video-check-items');
     list.replaceChildren();
-    for (const item of report.items) {
+    const items = report.items.length
+      ? report.items
+      : [
+          {
+            level: report.checking ? 'info' : 'ok',
+            title: report.checking ? 'Checking video…' : 'No file or delivery issues found',
+          },
+        ];
+    for (const item of items) {
       const row = document.createElement('li');
       row.dataset.level = item.level;
       const icon = uburoomIcons.icon(document, VIDEO_CHECK_ICONS[item.level] || 'info-circle');
@@ -77,7 +86,7 @@ export function mount(host, deps) {
       row.append(icon, text);
       list.append(row);
     }
-    $('video-check-refresh').disabled = !!report.checking;
+    uburoomControls.busy($('video-check-refresh'), !!report.checking, { label: 'Checking video…' });
   }
   $('video-check-refresh').prepend(uburoomIcons.icon(document, 'refresh'));
   $('video-check-refresh').addEventListener('click', () => {
@@ -595,16 +604,19 @@ export function mount(host, deps) {
     renderRichPresence();
     renderLocalSourceControls();
     const isEmbed = store.room.state?.format === 'youtube-embed';
+    const audioModeDisabled = isEmbed || !available || !audioAvailable;
     const audioModeSelect = $('audio-mode');
     if (audioModeSelect) {
-      audioModeSelect.disabled = isEmbed;
+      audioModeSelect.disabled = audioModeDisabled;
       const group = $('audio-mode-group');
       if (group) {
-        for (const btn of group.querySelectorAll('button')) btn.disabled = isEmbed;
+        for (const btn of group.querySelectorAll('button')) btn.disabled = audioModeDisabled;
       }
       const hint = $('audio-mode-hint');
       if (hint) {
         if (isEmbed) hint.textContent = 'Audio mode is unavailable for YouTube embeds.';
+        else if (!store.room.state?.mediaId) hint.textContent = 'Choose a video to adjust audio mode.';
+        else if (!audioAvailable) hint.textContent = 'No audio track available for this video.';
         else {
           const mode = store.preferences.playerPreferences?.audioMode || 'normal';
           hint.textContent =

@@ -105,6 +105,47 @@ test('Media Home rows merge every server, newest additions first, each item nami
   assert.deepEqual(rows.continueWatching, [{ id: 'p9', serverId: 'plex-a' }], 'only providers that know your progress');
 });
 
+test('Media Home cross-library search fans out across configured providers and stamps server and library', async () => {
+  const makeProvider = (serverId, serverName, sections, fails = false) => ({
+    kind: 'plex',
+    serverName,
+    root: { configured: true },
+    identity: async () => serverId,
+    scopeFor: async () => {
+      if (fails) throw new Error('offline');
+      return {
+        browse: async query => {
+          if (!query.section) return { items: sections.map(s => ({ id: s.id, title: s.title })) };
+          const sec = sections.find(s => s.id === query.section);
+          const q = String(query.q || '').toLowerCase();
+          const items = (sec?.items || []).filter(item => item.title.toLowerCase().includes(q));
+          return { items, total: items.length, offset: 0, nextOffset: null };
+        },
+      };
+    },
+  });
+  const providers = new MediaProviders([
+    makeProvider('plex-main', 'VIGRID', [
+      { id: '1', title: 'Movies', items: [{ id: '10', title: 'Stalker', year: 1979 }] },
+      { id: '2', title: 'Anime', items: [{ id: '20', title: 'Paprika', year: 2006 }] },
+    ]),
+    makeProvider('local-files', 'Local folders', [
+      { id: 'film', title: 'Archive', items: [{ id: '10', title: 'Solaris', year: 1972 }] },
+    ]),
+    makeProvider('plex-down', 'DOWN', [], true),
+  ]);
+  const res = await providers.search({ userId: 'viewer' }, { q: 's', sort: 'title', order: 'asc' });
+  assert.deepEqual(
+    res.items.map(item => [item.title, item.serverId, item.sectionTitle, item.serverName]),
+    [
+      ['Solaris', 'local-files', 'Archive', 'Local folders'],
+      ['Stalker', 'plex-main', 'Movies', 'VIGRID'],
+    ],
+  );
+  assert.equal(res.total, 2);
+  assert.equal(res.nextOffset, null);
+});
+
 test('the Plex catalog reads On Deck and recent additions twenty at a time, keeping progress', async t => {
   const requests = [];
   const episode = {

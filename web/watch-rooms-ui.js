@@ -1537,10 +1537,11 @@ function mount({
       if (button.disabled !== bufferingDisabled) button.disabled = bufferingDisabled;
     }
     document.dispatchEvent(new CustomEvent('room-playback-settings'));
+    if ($('room-settings-refresh')) $('room-settings-refresh').hidden = !!value.draft;
     const launch = $('room-settings-primary');
     launch.hidden = !(value.draft || !value.active || (openedFromSaved && getState()?.id !== value.id));
-    launch.textContent = value.draft ? 'Create room' : 'Reopen room';
-    launch.disabled = busy;
+    if (!busy) launch.textContent = value.draft ? 'Create room' : 'Reopen room';
+    controls.busy(launch, busy);
     ensurePermissionTable();
     permissionControls.get('allHosts')?.update({
       checked: !!value.permissions.allHosts,
@@ -1829,19 +1830,8 @@ function mount({
     const control = button($('room-settings-nav'), label, () => selectSection(key));
     control.dataset.section = key;
   }
-  $('room-settings-nav').addEventListener('keydown', event => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-    event.preventDefault();
-    const buttons = [...$('room-settings-nav').children],
-      index = buttons.indexOf(document.activeElement);
-    const next =
-      event.key === 'Home'
-        ? 0
-        : event.key === 'End'
-          ? buttons.length - 1
-          : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
-    buttons[next].focus();
-    buttons[next].click();
+  controls.tabs($('room-settings-nav'), {
+    onSelect: control => selectSection(control.dataset.section),
   });
   controls.content($('room-settings-share'), { icon: 'share', label: 'Share invite' });
   $('room-settings-share').addEventListener('click', () => {

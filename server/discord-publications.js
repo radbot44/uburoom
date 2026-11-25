@@ -232,7 +232,12 @@ class DiscordPublications {
     const publication = this.records.get(id),
       canManage = this.hub.authorize(actor, record, 'room.host').ok;
     const value = {
-      invite: { code: record.inviteCode, url: this.config.publicUrl + '/join/' + record.inviteCode },
+      invite: {
+        code: record.inviteCode,
+        url: this.config.publicUrl + '/join/' + record.inviteCode,
+        guestsAllowed: Boolean(this.hub.guestsEnabled?.() && record.allowGuests),
+        signInRequired: Boolean(this.config.guests?.requireSignIn),
+      },
       preview: this.preview(record),
       canManage,
       configured: !!this.config.shareChannelId || !!publication,

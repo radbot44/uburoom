@@ -171,7 +171,7 @@ export function mount(host, deps) {
       hint.textContent = !browserSupported
         ? 'Unavailable in this browser (requires WebCodecs, AudioWorklet, and OffscreenCanvas).'
         : toggle.checked
-          ? 'Client container playback, surround audio decode, and HDR tone mapping in this browser.'
+          ? 'Plays additional video formats, surround sound, and HDR directly in your browser. Required for local files.'
           : 'Off in this browser; uburoom converts unsupported formats on the server instead.';
     }
   }
@@ -316,6 +316,13 @@ export function mount(host, deps) {
       if ($(id).value !== value) $(id).value = value;
     if (brightnessInput && document.activeElement !== brightnessInput) brightnessInput.value = brightness;
     if (brightnessValue) brightnessValue.textContent = brightness + '%';
+    const preview = $('subtitle-preview');
+    if (preview) {
+      preview.style.setProperty('--subtitle-color', color);
+      preview.style.setProperty('--subtitle-brightness', (brightness / 100).toFixed(2));
+      preview.dataset.subtitleBg = bg;
+      preview.dataset.subtitleSize = store.preferences.playerPreferences.subtitleSize || 'medium';
+    }
   }
   applySubtitleAppearance();
   let audioContext, audioSourceNode, speechFilterNode, compressorNode, makeupGainNode;

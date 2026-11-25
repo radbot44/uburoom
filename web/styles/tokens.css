@@ -165,6 +165,12 @@
     --watch-switch-small-width: 28px;
     --watch-switch-small-height: 16px;
     --watch-switch-small-knob: 12px;
+    --identity-phone-max: 200px;
+    --queue-min-height: 260px;
+    --queue-max-height: 540px;
+    --queue-viewport-offset: 400px;
+    --tracks-dialog-max-height: 620px;
+    --subtitle-preview-height: 64px;
   }
   :root[data-theme='light'] {
     --background: #f8f6f2;

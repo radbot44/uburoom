@@ -33,9 +33,6 @@ import * as uburoomToasts from '/watch-toasts.js';
     grid.append(box);
     return box;
   }
-  function missing(grid, label) {
-    return cell(grid, label, element('p', { className: 'hint', text: 'No shared implementation.' }));
-  }
   function textButton(className, label, { icon, disabled = false, ariaDisabled, title } = {}) {
     const button = element('button', { className, attrs: { type: 'button' } });
     if (icon) button.append(icons.icon(document, icon));
@@ -70,10 +67,18 @@ import * as uburoomToasts from '/watch-toasts.js';
   );
   cell(buttons, 'Danger · default', textButton('danger-button', 'Remove post'));
   cell(buttons, 'Danger · disabled', textButton('danger-button', 'Remove post', { disabled: true }));
-  cell(buttons, 'Solid (player title bar) · default', textButton('solid-button', 'Join', { icon: 'login' }));
-  cell(buttons, 'Solid · private', textButton('solid-button private', 'Private', { icon: 'lock' }));
-  cell(buttons, 'Solid · disabled', textButton('solid-button', 'Join', { icon: 'login', disabled: true }));
-  missing(buttons, 'Busy / loading button');
+  cell(buttons, 'Solid (player title bar) · default', textButton('solid-button', 'Menu', { icon: 'drawer' }));
+  cell(
+    buttons,
+    'Solid (player title bar) · disabled',
+    textButton('solid-button', 'Menu', { icon: 'drawer', disabled: true }),
+  );
+  const busyPrimary = textButton('primary', 'Create room');
+  controls.busy(busyPrimary, true, { label: 'Creating room…' });
+  cell(buttons, 'Primary · busy (controls.busy)', busyPrimary);
+  const busyQuiet = controls.button(document, { label: 'Check again', icon: 'refresh' });
+  controls.busy(busyQuiet, true, { label: 'Checking video…' });
+  cell(buttons, 'Quiet · busy (controls.busy)', busyQuiet);
 
   // Icon buttons.
   const iconButtons = section(
@@ -231,8 +236,38 @@ import * as uburoomToasts from '/watch-toasts.js';
   disabledSelect.disabled = true;
   cell(native, 'Dropdown · disabled', disabledSelect);
 
-  // Tabs have no shared implementation: each surface builds its own.
-  missing(section('Tabs', 'Each surface builds its own tabs.'), 'Tabs');
+  // Shared roving-tabindex tabs that activate on arrow keys.
+  const tabsGrid = section('Tabs', 'Roving-tabindex tablists wired by uburoomControls.tabs().', { wide: true });
+  const sampleTabs = element('nav', {
+    className: 'player-settings-nav',
+    attrs: { role: 'tablist', 'aria-label': 'Sample settings tabs' },
+  });
+  for (const [key, label, active] of [
+    ['playback', 'Playback', true],
+    ['subtitles', 'Subtitles', false],
+    ['media', 'Media information', false],
+  ]) {
+    const tab = element('button', {
+      text: label,
+      attrs: {
+        type: 'button',
+        role: 'tab',
+        'data-section': key,
+        'aria-selected': String(active),
+        'aria-current': String(active),
+      },
+    });
+    tab.addEventListener('click', () => {
+      for (const item of sampleTabs.querySelectorAll('button')) {
+        const selected = String(item === tab);
+        item.setAttribute('aria-selected', selected);
+        item.setAttribute('aria-current', selected);
+      }
+    });
+    sampleTabs.append(tab);
+  }
+  controls.tabs(sampleTabs);
+  cell(tabsGrid, 'Horizontal tablist (controls.tabs)', sampleTabs);
 
   // Permissions.
   const permissions = section(
@@ -277,11 +312,21 @@ import * as uburoomToasts from '/watch-toasts.js';
       const cellBox = anchor.getBoundingClientRect(),
         triggerBox = trigger.getBoundingClientRect(),
         box = copy.getBoundingClientRect();
-      copy.style.left = Math.round(triggerBox.left - cellBox.left + triggerBox.width / 2 - box.width / 2) + 'px';
+      if (!box.width) return;
+      const idealLeft = triggerBox.left - cellBox.left + triggerBox.width / 2 - box.width / 2;
+      const minLeft = 8 - cellBox.left;
+      const maxLeft = document.documentElement.clientWidth - 8 - cellBox.left - box.width;
+      const clampedLeft = Math.max(minLeft, Math.min(maxLeft, idealLeft));
+      const arrowX = Math.max(
+        12,
+        Math.min(box.width - 12, triggerBox.left - cellBox.left + triggerBox.width / 2 - clampedLeft),
+      );
+      copy.style.left = Math.round(clampedLeft) + 'px';
       copy.style.top = Math.round(triggerBox.top - cellBox.top - box.height - 8) + 'px';
-      copy.style.setProperty('--arrow-x', Math.round(box.width / 2) + 'px');
+      copy.style.setProperty('--arrow-x', Math.round(arrowX) + 'px');
     };
     requestAnimationFrame(place);
+    window.addEventListener('resize', () => requestAnimationFrame(place));
   }
 
   // Toasts: each from uburoomToasts.create(), without a stage so nothing positions them over a player.

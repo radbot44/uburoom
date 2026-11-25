@@ -132,6 +132,7 @@
   .media-heading {
     min-width: 0;
     pointer-events: none;
+    text-shadow: 0 var(--space-1) var(--space-4) var(--black-a80);
   }
   .media-heading h1 {
     font-size: var(--font-size-20);
@@ -200,8 +201,8 @@
       max-height: calc(100% - 160px);
       overflow: auto;
     }
-    body:not(.immersive) .empty-symbol,
-    body:not(.immersive) .empty-stage h1 {
+    body.outside-room:not(.immersive) .empty-symbol,
+    body.outside-room:not(.immersive) .empty-stage h1 {
       display: none;
     }
     body:not(.immersive) .empty-hint {
@@ -275,17 +276,30 @@
       margin: 0 0 var(--space-4);
     }
   }
-  .empty-browse {
+  .empty-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-10);
+  }
+  .empty-actions:not(:has(> :not([hidden]))) {
+    display: none;
+  }
+  .empty-browse,
+  .empty-share {
     display: inline-flex;
     align-items: center;
     gap: var(--space-8);
   }
-  .empty-browse[hidden] {
+  .empty-browse[hidden],
+  .empty-share[hidden] {
     display: none;
   }
-  .empty-browse svg {
-    width: 24px;
-    height: 24px;
+  .empty-browse svg,
+  .empty-share svg {
+    width: var(--watch-icon-size);
+    height: var(--watch-icon-size);
     fill: none;
     stroke: currentColor;
     stroke-width: 1.9;
@@ -322,8 +336,24 @@
     body.idle-player .empty-stage h1 {
       font-size: var(--font-size-16);
     }
-    body.idle-player .empty-symbol {
+    body.outside-room .empty-symbol {
       display: none;
+    }
+    body.idle-player:not(.outside-room) .empty-symbol {
+      margin-bottom: var(--space-6);
+    }
+    body.idle-player:not(.outside-room) .empty-oomark {
+      width: var(--space-34);
+    }
+    body.idle-player:not(.outside-room) .empty-stage h1 {
+      margin-bottom: var(--space-2);
+    }
+    body.idle-player:not(.outside-room) .empty-hint {
+      margin: 0 0 var(--space-8);
+    }
+    body.idle-player:not(.outside-room) .empty-actions button {
+      min-height: var(--watch-control-height);
+      padding: var(--space-8) var(--space-12);
     }
     body.idle-player .empty-hint {
       font-size: var(--font-size-12);
@@ -358,6 +388,10 @@
   }
   body[data-layout='phone'] .empty-stage {
     max-height: calc(100% - 136px);
+  }
+  body[data-layout='phone'].idle-player:not(.outside-room) .empty-stage {
+    max-height: calc(100% - 44px);
+    padding: var(--space-4) var(--space-8);
   }
   .pip-placeholder {
     position: relative;

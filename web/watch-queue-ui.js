@@ -113,7 +113,7 @@ function mount(
   autoOpen.classList.add('queue-auto-open', 'watch-header-control');
   const body = node('div', host);
   body.id = 'queue-body';
-  // Second header row: the continuation switches, then Center Now Playing.
+  // Second header row: the continuation switches, then Jump to Now Playing.
   const toolbar = node('div', header, undefined, 'queue-toolbar watch-toolbar');
   const continuation = node('div', toolbar, undefined, 'queue-continuation queue-quick-controls watch-control-group');
   const autoplayPill = uburoomControls.switchPill(doc, { label: 'Auto-play' });
@@ -126,8 +126,8 @@ function mount(
   autoToggle.id = 'queue-auto-toggle';
   autoToggle.classList.add('queue-auto-toggle');
   continuation.append(autoplayLabel, autoLabel);
-  const centerButton = button(toolbar, 'Center Now Playing', 'center', () => centerCurrent(true));
-  uburoomControls.content(centerButton, { label: 'Center Now Playing', icon: 'center' });
+  const centerButton = button(toolbar, 'Jump to Now Playing', 'center', () => centerCurrent(true));
+  uburoomControls.content(centerButton, { label: 'Jump to Now Playing', icon: 'center' });
   centerButton.id = 'queue-center';
   centerButton.classList.add('queue-center');
   const timeline = node('div', body, undefined, 'queue-timeline');
@@ -720,18 +720,41 @@ function mount(
     return matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth';
   }
 
+  function nowPlayingScrollOffset() {
+    return Math.max(
+      0,
+      Math.round(layout.scrollTop + nowPlayingBox.getBoundingClientRect().top - layout.getBoundingClientRect().top),
+    );
+  }
+
+  function syncQueueViewportHeight() {
+    hadHistory = Boolean(layout.querySelector('.queue-history-entry'));
+    layout.style.paddingBlock = '';
+    if (!hadHistory) {
+      layout.style.height = '';
+      return 0;
+    }
+    const prevScroll = layout.scrollTop;
+    layout.style.height = '';
+    layout.scrollTop = 0;
+    const historyOffset = nowPlayingScrollOffset();
+    const naturalTotal = layout.scrollHeight;
+    const visibleTail = Math.max(nowPlayingBox.offsetHeight || 120, naturalTotal - historyOffset);
+    const styles = getComputedStyle(layout);
+    const maxBoxHeight = parseFloat(styles.maxHeight) || 540;
+    const minBoxHeight = parseFloat(styles.getPropertyValue('--queue-min-height')) || 260;
+    layout.style.height = Math.min(maxBoxHeight, naturalTotal, Math.max(minBoxHeight, visibleTail)) + 'px';
+    layout.scrollTop = prevScroll;
+    return historyOffset;
+  }
+
   function centerCurrent(smooth = false) {
     if (!layout.clientWidth) return;
-    // Without history there is nothing to scroll back to: Now Playing and the upcoming rows start at the top
-    // with no centering space.
-    hadHistory = Boolean(layout.querySelector('.queue-history-entry'));
-    layout.style.paddingBlock = hadHistory
-      ? Math.max(0, (layout.clientHeight - nowPlayingBox.offsetHeight) / 2) + 'px'
-      : '';
-    const r = nowPlayingBox.getBoundingClientRect(),
-      bounds = layout.getBoundingClientRect();
+    // Park Now Playing at the top of the timeline: upcoming rows stay visible immediately below,
+    // while playback history remains scrollable above Now Playing without wasting vertical space.
+    const historyOffset = syncQueueViewportHeight();
     layout.scrollTo({
-      top: layout.scrollTop + r.top - bounds.top - (layout.clientHeight - r.height) / 2,
+      top: hadHistory ? historyOffset : 0,
       behavior: smooth ? motion() : 'instant',
     });
     centerPending = false;
@@ -745,12 +768,11 @@ function mount(
   }
   function nearestEntry() {
     const bounds = layout.getBoundingClientRect();
-    const center = bounds.top + layout.clientHeight / 2;
     let closest,
       distance = Infinity;
     for (const row of entries()) {
       const rect = row.getBoundingClientRect();
-      const delta = Math.abs(rect.top + rect.height / 2 - center);
+      const delta = Math.abs(rect.top - bounds.top);
       if (delta < distance) {
         closest = row;
         distance = delta;
@@ -763,7 +785,7 @@ function mount(
     const rect = target.getBoundingClientRect(),
       bounds = layout.getBoundingClientRect();
     layout.scrollTo({
-      top: layout.scrollTop + rect.top - bounds.top - (layout.clientHeight - rect.height) / 2,
+      top: Math.max(0, layout.scrollTop + rect.top - bounds.top),
       behavior: smooth ? motion() : 'instant',
     });
     updateNavigation();
@@ -780,8 +802,10 @@ function mount(
   }
   function updateNavigation() {
     if (!layout.clientWidth) return;
-    previousButton.disabled = !directionTarget(-1);
-    nextButton.disabled = !directionTarget(1);
+    const atTop = layout.scrollTop <= 2;
+    const atBottom = layout.scrollTop >= layout.scrollHeight - layout.clientHeight - 2;
+    previousButton.disabled = atTop || !directionTarget(-1);
+    nextButton.disabled = atBottom || !directionTarget(1);
   }
   let navFrame;
   function scheduleNavigation() {

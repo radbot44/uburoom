@@ -27,7 +27,7 @@ export function mount() {
   // scrolling semantics. OverlayScrollbars cancels in that case.
   if (!pageScrollbar || pageScrollbar.state().destroyed) return;
 
-  const finePointer = matchMedia('(pointer: fine)');
+  const finePointer = matchMedia('(any-pointer: fine)');
   const forcedColors = matchMedia('(forced-colors: active)');
   const safeInnerViewport = OverlayScrollbars.env().scrollbarsHiding;
   const innerScrollbars = new Map();
@@ -68,7 +68,7 @@ export function mount() {
     const settingsContent = document.getElementById('room-settings-content');
     toggleInner(
       document.getElementById('room-settings-panels'),
-      useCustom && !!settings?.open && !!settingsContent && !settingsContent.hidden,
+      useDialogScrollbars && !!settings?.open && !!settingsContent && !settingsContent.hidden,
     );
 
     const emptyStage = document.getElementById('empty-stage');
@@ -82,7 +82,11 @@ export function mount() {
 
     const serverSettings = document.getElementById('server-settings-dialog');
     const serverSettingsContent = serverSettings?.querySelector('.server-settings-content');
-    toggleInner(serverSettingsContent, useCustom && !!serverSettings?.open);
+    toggleInner(serverSettingsContent, useDialogScrollbars && !!serverSettings?.open);
+
+    const tracksDialog = document.getElementById('tracks-dialog');
+    const tracksBody = tracksDialog?.querySelector('.player-settings-body');
+    toggleInner(tracksBody, useDialogScrollbars && !!tracksDialog?.open);
 
     const activity = document.getElementById('activity-panel');
     const activityScroll = document.getElementById('activity-scroll');
@@ -93,7 +97,12 @@ export function mount() {
     }
 
     for (const dialog of document.querySelectorAll('dialog.watch-dialog')) {
-      if (dialog.id === 'room-settings-dialog' || dialog.id === 'server-settings-dialog') continue;
+      if (
+        dialog.id === 'room-settings-dialog' ||
+        dialog.id === 'server-settings-dialog' ||
+        dialog.id === 'tracks-dialog'
+      )
+        continue;
       toggleInner(dialog, useDialogScrollbars && dialog.open);
     }
   }

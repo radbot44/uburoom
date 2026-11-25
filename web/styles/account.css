@@ -6,7 +6,7 @@
     }
     .identity,
     .account .identity {
-      max-width: 90px;
+      max-width: min(var(--identity-phone-max), calc(100vw - 140px));
       font-size: var(--font-size-12);
     }
   }
@@ -18,14 +18,15 @@
   }
   .identity {
     max-width: 220px;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     background: none;
     color: inherit;
     min-height: var(--space-32);
-    display: inline-flex;
-    align-items: center;
+    display: block;
+    line-height: var(--space-20);
     padding: var(--space-6) 0;
   }
   .identity:hover:not(:disabled) {

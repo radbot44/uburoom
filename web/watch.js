@@ -240,7 +240,7 @@ deps.stageCards = stageCards;
 deps.activityHub = activityHub;
 roomJournal.subscribe(change => {
   if (change.full || !change.added.length) return;
-  const myId = store.identity.me?.userId;
+  const myId = store.room.state?.actorId || store.identity.me?.account?.id || store.identity.me?.userId;
   const now = time.serverNow();
   if (now === undefined) return;
   for (const entry of change.added) {
@@ -252,7 +252,7 @@ roomJournal.subscribe(change => {
 function renderNotifications() {
   const button = $('notifications-toggle');
   button.setAttribute('aria-pressed', String(toasts.enabled));
-  button.title = toasts.enabled ? 'Hide notifications' : 'Show notifications';
+  button.title = toasts.enabled ? 'Hide room notifications' : 'Show room notifications';
   button.replaceChildren(uburoomIcons.icon(document, toasts.enabled ? 'bell' : 'bell-off'));
 }
 $('notifications-toggle').onclick = () => {
@@ -289,6 +289,7 @@ function renderScheduleButton() {
 const roomShare = uburoomShare.mount({
   request: (...args) => deps.call(...args),
   share: (...args) => deps.shareInvite(...args),
+  canNativeShare: Boolean(activity || typeof navigator?.share === 'function'),
   openLink: async url => {
     if (activity && store.connection.sdk) {
       const result = await store.connection.sdk.commands.openExternalLink({ url });
@@ -322,6 +323,7 @@ const roomUI = uburoomRoomUI.mount({
     $('room-create-visibility').value = store.lobby.roomVisibilityDraft = options.visibility;
     const preset = uburoomRoomUI.presetName(options.permissions);
     $('room-create-preset').value = store.lobby.roomPresetDraft = preset === 'custom' ? '' : preset;
+    deps.syncCreateFormHints?.();
   },
 });
 deps.roomUI = roomUI;
