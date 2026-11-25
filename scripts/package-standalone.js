@@ -723,21 +723,21 @@ async function packageStandalone({
     const ffmpegExeSrc = path.join(ffRoot, 'bin', 'ffmpeg.exe');
     const ffprobeExeSrc = path.join(ffRoot, 'bin', 'ffprobe.exe');
     const ffLicenseSrc = path.join(ffRoot, 'LICENSE.txt');
-    if (!fs.existsSync(ffmpegExeSrc) || !fs.existsSync(ffprobeExeSrc)) {
-      throw new Error('Extracted FFmpeg archive missing bin/ffmpeg.exe or bin/ffprobe.exe');
+    if (!fs.existsSync(ffmpegExeSrc) || !fs.existsSync(ffprobeExeSrc) || !fs.existsSync(ffLicenseSrc)) {
+      throw new Error('Extracted FFmpeg archive missing bin/ffmpeg.exe, bin/ffprobe.exe, or LICENSE.txt');
     }
     const ffmpegExeDest = path.join(ffmpegRuntimeDir, 'ffmpeg.exe');
     const ffprobeExeDest = path.join(ffmpegRuntimeDir, 'ffprobe.exe');
     const ffLicenseDest = path.join(ffmpegRuntimeDir, 'LICENSE.txt');
     fs.copyFileSync(ffmpegExeSrc, ffmpegExeDest);
     fs.copyFileSync(ffprobeExeSrc, ffprobeExeDest);
-    if (fs.existsSync(ffLicenseSrc)) fs.copyFileSync(ffLicenseSrc, ffLicenseDest);
+    fs.copyFileSync(ffLicenseSrc, ffLicenseDest);
 
     // Run mandatory FFmpeg capability & licensing gate
     const ffmpegVerification = await verifyFfmpeg({
       ffmpegPath: ffmpegExeDest,
       ffprobePath: ffprobeExeDest,
-      licenseFile: fs.existsSync(ffLicenseDest) ? ffLicenseDest : undefined,
+      licenseFile: ffLicenseDest,
       expectedVersion: manifest.ffmpeg.version,
       requireNvenc,
       requireQsv,

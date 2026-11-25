@@ -249,6 +249,23 @@ test('createApp() unsupervised hides Restart now (canRestart === false) and guar
     assert.equal(conflict.body.activeViewers, 1);
     assert.equal(restartCalls, 0);
 
+    // Unpaused room with active media (even at 0 connected sockets during reconnect grace) still requires confirmActive
+    room.viewers.clear();
+    room.media = {
+      roomServerId: 'test-src',
+      id: 'm-1',
+      type: 'movie',
+      title: 'Test Movie',
+      duration: 120000,
+    };
+    room.state = { ...(room.state || {}), paused: false };
+    const playingConflict = await browser.post('/api/operator/restart', {}, { 'x-csrf-token': csrf });
+    assert.equal(playingConflict.status, 409);
+    assert.equal(playingConflict.body.code, 'ACTIVE_ROOMS');
+    assert.equal(playingConflict.body.openRooms, 1);
+    assert.equal(playingConflict.body.activeViewers, 0);
+    assert.equal(restartCalls, 0);
+
     const confirmed = await browser.post('/api/operator/restart', { confirmActive: true }, { 'x-csrf-token': csrf });
     assert.equal(confirmed.status, 202);
     assert.equal(confirmed.body.restarting, true);

@@ -104,7 +104,7 @@ function operatorHttp({
         if (room.closed) continue;
         openRooms++;
         activeViewers += room.viewers?.size || 0;
-        if (room.playing) anyPlaying = true;
+        if (room.playing || (room.media && !room.state?.paused)) anyPlaying = true;
       }
       if ((activeViewers > 0 || anyPlaying) && data.confirmActive !== true) {
         reply(409, {
