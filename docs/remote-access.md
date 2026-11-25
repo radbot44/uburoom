@@ -83,7 +83,7 @@ Before you start: uburoom runs, `npm run doctor` passes, and your media source w
    curl https://watch.example.com/health
    ```
 
-   `/health` should answer `{"ok":true,...}` with no certificate warning. Then open `https://watch.example.com/watch` on a phone using mobile data (not your home Wi-Fi), sign in, create a room and play something. If it fails, read `docker compose logs uburoom`.
+   `/health` should answer `{"ok":true,...}` with no certificate warning. Reaching `https://watch.example.com` from the setup computer only confirms proxy handoff—actual external WAN reachability still requires opening `https://watch.example.com/watch` from outside your home network (for example, on a phone using mobile data with Wi-Fi off), signing in, creating a room, and playing something. If it fails, read `docker compose logs uburoom`.
 
 Without Docker: run `cloudflared` on the same machine, point the public hostname at `http://localhost:5756`, and use `host: '127.0.0.1'` and `trusted_proxies: ['127.0.0.1', '::1']`.
 

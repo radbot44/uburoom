@@ -9,6 +9,156 @@ const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
 const crypto = require('node:crypto');
+const { execFile, spawnSync } = require('node:child_process');
+const { promisify } = require('node:util');
+const execute = promisify(execFile);
+
+const WIN_ACL_FILE =
+  "$owner=[System.Security.Principal.WindowsIdentity]::GetCurrent().User;$acl=[System.IO.File]::GetAccessControl($env:UBUROOM_PRIVATE_FILE);$acl.SetAccessRuleProtection($true,$false);foreach($r in @($acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]))){[void]$acl.RemoveAccessRuleSpecific($r)};foreach($sid in @($owner,[System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))){[void]$acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl','Allow'))};[System.IO.File]::SetAccessControl($env:UBUROOM_PRIVATE_FILE,$acl)";
+const WIN_ACL_DIRS =
+  "$targets=$env:UBUROOM_PRIVATE_DIRS | ConvertFrom-Json;$owner=[System.Security.Principal.WindowsIdentity]::GetCurrent().User;foreach($dir in $targets){$acl=[System.IO.Directory]::GetAccessControl($dir);$acl.SetAccessRuleProtection($true,$false);foreach($r in @($acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]))){[void]$acl.RemoveAccessRuleSpecific($r)};foreach($sid in @($owner,[System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))){[void]$acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow'))};[System.IO.Directory]::SetAccessControl($dir,$acl)}";
+
+/**
+ * Runs a PowerShell snippet with environment parameters (no shell-quoting interpolation).
+ * @param {string} script
+ * @param {Record<string, string>} environment
+ */
+async function powershell(script, environment) {
+  const result = await execute(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      Buffer.from("$ErrorActionPreference='Stop'; " + script, 'utf16le').toString('base64'),
+    ],
+    {
+      env: { ...process.env, ...environment },
+      windowsHide: true,
+      timeout: 15000,
+      maxBuffer: 65536,
+    },
+  );
+  return result.stdout.trim();
+}
+
+/**
+ * Synchronously runs a PowerShell snippet for private ACL enforcement.
+ * @param {string} script
+ * @param {Record<string, string>} environment
+ * @param {string} errorMessage
+ */
+function powershellSync(script, environment, errorMessage) {
+  const result = spawnSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      Buffer.from("$ErrorActionPreference='Stop'; " + script, 'utf16le').toString('base64'),
+    ],
+    { env: { ...process.env, ...environment }, windowsHide: true, timeout: 15000 },
+  );
+  if (result.status !== 0) throw new Error(errorMessage);
+}
+
+/**
+ * Makes an existing file readable and writable only by the current user (and SYSTEM on Windows).
+ * @param {string} file
+ */
+function privateFile(file) {
+  if (process.platform !== 'win32') {
+    fs.chmodSync(file, 0o600);
+    return;
+  }
+  powershellSync(WIN_ACL_FILE, { UBUROOM_PRIVATE_FILE: file }, 'Cannot protect uburoom private files');
+}
+
+/**
+ * Makes an existing directory accessible only by the current user (and SYSTEM on Windows).
+ * @param {string} directory
+ */
+function privateDirectory(directory) {
+  if (process.platform !== 'win32') {
+    fs.chmodSync(directory, 0o700);
+    return;
+  }
+  powershellSync(
+    WIN_ACL_DIRS,
+    { UBUROOM_PRIVATE_DIRS: JSON.stringify([path.resolve(directory)]) },
+    'Cannot protect uburoom private directory',
+  );
+}
+
+/**
+ * Ensures `directory` exists, applying private directory permissions to any newly created directories.
+ * @param {string} directory
+ * @returns {boolean} True when at least one directory was newly created.
+ */
+function ensurePrivateDirectorySync(directory) {
+  const target = path.resolve(directory);
+  const missing = [];
+  let current = target;
+  while (!fs.existsSync(current)) {
+    missing.push(current);
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  if (!missing.length) return false;
+  fs.mkdirSync(target, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') {
+    for (const created of missing.reverse()) fs.chmodSync(created, 0o700);
+  } else {
+    powershellSync(
+      WIN_ACL_DIRS,
+      { UBUROOM_PRIVATE_DIRS: JSON.stringify(missing.reverse()) },
+      'Cannot protect uburoom private directory',
+    );
+  }
+  return true;
+}
+
+/**
+ * Atomically creates a new private file (`wx`), locks its permissions/DACLs before writing secret bytes,
+ * and removes the file if locking or writing fails.
+ * @param {string} file
+ * @param {string | Buffer} [content]
+ */
+function writePrivateFileSync(file, content) {
+  const fd = fs.openSync(file, 'wx', 0o600);
+  try {
+    privateFile(file);
+    if (content !== undefined && content.length > 0) fs.writeFileSync(fd, content);
+  } catch (error) {
+    try {
+      fs.closeSync(fd);
+    } catch {}
+    try {
+      fs.unlinkSync(file);
+    } catch {}
+    throw error;
+  }
+  fs.closeSync(fd);
+}
+
+/**
+ * Async version: makes a directory accessible only by this user (and SYSTEM on Windows).
+ * @param {string} directory
+ */
+async function protectDirectory(directory) {
+  if (process.platform !== 'win32') return fs.promises.chmod(directory, 0o700);
+  await powershell(WIN_ACL_DIRS, { UBUROOM_PRIVATE_DIRS: JSON.stringify([path.resolve(directory)]) });
+}
+
+/**
+ * Async version: makes a file readable and writable only by this user (and SYSTEM on Windows).
+ * @param {string} file
+ */
+async function protectFile(file) {
+  if (process.platform !== 'win32') return fs.promises.chmod(file, 0o600);
+  await powershell(WIN_ACL_FILE, { UBUROOM_PRIVATE_FILE: file });
+}
 
 function derLength(len) {
   if (len < 128) return Buffer.from([len]);
@@ -176,11 +326,22 @@ function writeCertificate({
       throw new Error('A certificate already exists. Keep it, or move those files aside before generating another.');
   }
   const { certPem, keyPem } = createCertificate(names);
-  fs.mkdirSync(directory, { recursive: true });
+  ensurePrivateDirectorySync(directory);
   for (const file of [keyFile, certFile]) fs.rmSync(file, { force: true });
-  fs.writeFileSync(keyFile, keyPem, { mode: 0o600, flag: 'wx' });
+  writePrivateFileSync(keyFile, keyPem);
   fs.writeFileSync(certFile, certPem, { mode: 0o644, flag: 'wx' });
   return { created: true, keyFile, certFile, certPem, keyPem };
 }
 
-module.exports = { createCertificate, certificateCovers, writeCertificate };
+module.exports = {
+  createCertificate,
+  certificateCovers,
+  writeCertificate,
+  powershell,
+  privateFile,
+  privateDirectory,
+  ensurePrivateDirectorySync,
+  writePrivateFileSync,
+  protectDirectory,
+  protectFile,
+};

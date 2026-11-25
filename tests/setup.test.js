@@ -96,7 +96,7 @@ function client(base, { host, secure = base.startsWith('https:') } = {}) {
 }
 
 /** Setup mode on a free port in an empty folder, with fake Plex, Jellyfin and Discord. */
-async function setupFixture(t, { host, args = [] } = {}) {
+async function setupFixture(t, { host, args = [], youtubeRunner } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-setup-'));
   fs.mkdirSync(path.join(directory, 'Films'));
   const configFile = path.join(directory, 'config', 'config.yaml');
@@ -116,8 +116,13 @@ async function setupFixture(t, { host, args = [] } = {}) {
       jellyfinFetch: jellyfin.jellyfinFetch,
       jellyfinDiscover: jellyfin.jellyfinDiscover,
       discordFetch: discord.discordFetch,
+      ...(youtubeRunner ? { youtubeRunner } : {}),
     },
-    appOptions: { plexFetch: plex.plexFetch, jellyfinFetch: jellyfin.jellyfinFetch },
+    appOptions: {
+      plexFetch: plex.plexFetch,
+      jellyfinFetch: jellyfin.jellyfinFetch,
+      ...(youtubeRunner ? { youtubeRunner } : {}),
+    },
   });
   t.after(async () => {
     await setup.close();
@@ -555,4 +560,126 @@ test('setup wizard supports internet remote-access routes and direct HTTPS with 
     directCheck.body.checks.every(row => row.status === 'pass'),
     JSON.stringify(directCheck.body.checks),
   );
+});
+
+test('VD-04: setup Step 3 adds and edits a YouTube source in embed and auto modes and finishes cleanly', async t => {
+  const youtubeRunner = async (_bin, args) => {
+    if (args.includes('--version')) return { code: 0, stdout: '2026.11.01\n', stderr: '' };
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  const f = await setupFixture(t, { youtubeRunner });
+  const stubYtDlp = path.join(f.directory, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+  fs.writeFileSync(stubYtDlp, process.platform === 'win32' ? 'MZ' : '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  await signIn(f);
+  await f.browser.post('/setup/api/account/create', { username: 'alex', password: 'setup password 1' });
+
+  // Embed mode without yt-dlp works out of the box
+  const { flow } = (await f.browser.post('/setup/api/sources/setup', { type: 'youtube' })).body;
+  const probe = await step(f, flow, 'probe', {});
+  assert.equal(probe.status, 200);
+  const configured = await step(f, flow, 'configure', { delivery: 'embed' });
+  assert.equal(configured.status, 200);
+  assert.equal(configured.body.delivery, 'embed');
+  const added = await f.browser.post('/setup/api/sources', { action: 'add', flow, name: 'YouTube Embed' });
+  assert.equal(added.status, 200);
+  assert.equal(added.body.sources.length, 1);
+  assert.equal(added.body.sources[0].type, 'youtube');
+  assert.equal(added.body.sources[0].delivery, 'embed');
+
+  // Update YouTube source to auto mode with stubbed yt-dlp + youtubeRunner
+  const updated = await f.browser.post('/setup/api/sources', {
+    action: 'update',
+    id: added.body.sources[0].id,
+    name: 'YouTube Auto',
+    settings: { delivery: 'auto', maxCacheGb: 10, ytDlp: stubYtDlp },
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.sources[0].delivery, 'auto');
+  assert.equal(updated.body.sources[0].maxCacheGb, 10);
+
+  await f.browser.post('/setup/api/access', {
+    sourceMembers: [],
+    password: null,
+    accounts: true,
+    guests: true,
+    discord: false,
+  });
+  await f.browser.post('/setup/api/network', { where: 'computer', port: f.port });
+  const finished = await f.browser.post('/setup/api/finish', {});
+  assert.equal(finished.status, 200, finished.text);
+  await f.started;
+  const config = loadConfig(f.configFile, []);
+  assert.equal(config.sources[0].type, 'youtube');
+  assert.equal(config.sources[0].delivery, 'auto');
+  assert.equal(config.sources[0].maxCacheGb, 10);
+});
+
+test('VD-03 / D4: internet https + allowLan returns localUrl handoff, and http-proxy sets /health CORS while keeping guardProxy strict', async t => {
+  // 1. Direct HTTPS + allowLan returns both publicUrl and localUrl, and localUrl redeems the handoff ticket
+  const f1 = await setupFixture(t);
+  await signIn(f1);
+  await f1.browser.post('/setup/api/account/create', { username: 'alex', password: 'setup password 1' });
+  const flow1 = (await f1.browser.post('/setup/api/sources/setup', { type: 'folders' })).body.flow;
+  await step(f1, flow1, 'choose', { path: path.join(f1.directory, 'Films'), type: 'movies' });
+  await f1.browser.post('/setup/api/sources', { action: 'add', flow: flow1 });
+  await f1.browser.post('/setup/api/access', {
+    sourceMembers: [],
+    password: null,
+    accounts: true,
+    guests: false,
+    discord: false,
+  });
+  await f1.browser.post('/setup/api/network', {
+    where: 'internet',
+    port: f1.port,
+    route: 'https',
+    publicUrl: 'https://watch.example.com',
+    allowLan: true,
+  });
+  const fin1 = await f1.browser.post('/setup/api/finish', {});
+  assert.equal(fin1.status, 200, fin1.text);
+  assert.equal(new URL(fin1.body.url).origin, 'https://watch.example.com');
+  assert.equal(new URL(fin1.body.localUrl).origin, `https://localhost:${f1.port}`);
+  await f1.started;
+  const localTicket = new URLSearchParams(new URL(fin1.body.localUrl).hash.slice(1)).get('ticket');
+  const localClient = client(`https://localhost:${f1.port}`);
+  assert.equal((await localClient.post('/api/setup-handoff', { ticket: localTicket })).status, 200);
+
+  // 2. Cloudflare http-proxy mode returns proxy metadata on /setup/api/check and /health permits browser CORS probe
+  const f2 = await setupFixture(t);
+  await signIn(f2);
+  await f2.browser.post('/setup/api/account/create', { username: 'alex', password: 'setup password 1' });
+  const flow2 = (await f2.browser.post('/setup/api/sources/setup', { type: 'folders' })).body.flow;
+  await step(f2, flow2, 'choose', { path: path.join(f2.directory, 'Films'), type: 'movies' });
+  await f2.browser.post('/setup/api/sources', { action: 'add', flow: flow2 });
+  await f2.browser.post('/setup/api/access', {
+    sourceMembers: [],
+    password: null,
+    accounts: true,
+    guests: false,
+    discord: false,
+  });
+  await f2.browser.post('/setup/api/network', {
+    where: 'internet',
+    port: f2.port,
+    route: 'cloudflare',
+    publicUrl: 'https://watch.example.com',
+    trustedProxies: '127.0.0.1, ::1',
+  });
+  const check2 = await f2.browser.post('/setup/api/check', {});
+  assert.equal(check2.status, 200);
+  assert.equal(check2.body.httpProxy.port, f2.port);
+  assert.equal(check2.body.httpProxy.publicUrl, 'https://watch.example.com');
+  const fin2 = await f2.browser.post('/setup/api/finish', {});
+  assert.equal(fin2.status, 200, fin2.text);
+  assert.equal(fin2.body.listen, 'http-proxy');
+  await f2.started;
+
+  // Direct plain HTTP /health works with CORS header, while non-/health without X-Forwarded-Proto: https still gets 421
+  const proxyClient = client(`http://127.0.0.1:${f2.port}`, { secure: false });
+  const health = await proxyClient.request('/health');
+  assert.equal(health.status, 200);
+  assert.equal(health.headers['access-control-allow-origin'], '*');
+  const missingProto = await proxyClient.request('/api/account');
+  assert.equal(missingProto.status, 421);
 });

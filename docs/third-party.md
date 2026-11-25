@@ -20,7 +20,16 @@ First-party source code is **GPL-3.0-only** (Copyright © 2026 radbot44); preser
 
 `@discord/embedded-app-sdk` also embeds `eventemitter3`, `zod`, `big-integer`, `uuid`, `decimal.js-light`, `lodash.transform` and `tslib`. [Player vendor notices](../web/vendor/THIRD_PARTY_NOTICES.txt) preserve embedded-source comments, `hls.js` Dailymotion/Brightcove attribution, `OverlayScrollbars` and `Tabler Icons`; [Apache-2.0](../web/vendor/licenses/Apache-2.0.txt) is retained in full.
 
-FFmpeg and FFprobe are operator-supplied external system binaries, not bundled or distributed by uburoom. Docker configurations (`Dockerfile`, `docker-compose.yml`) are distributed as source build definitions.
+In source-only checkouts, FFmpeg and FFprobe are operator-supplied external system binaries, not bundled or distributed by uburoom. Docker configurations (`Dockerfile`, `docker-compose.yml`) are distributed as source build definitions.
+
+## Windows x64 standalone bundle provenance and Corresponding Source
+
+For local Windows x64 standalone builds produced by `scripts/package-standalone.js` (not publicly published without owner approval), `scripts/standalone-dependencies.json` pins exact, SHA-256-verified upstream runtimes coupled inside `versions/<slot>/runtime/`:
+
+- **Node.js `v22.23.5` (win-x64):** Official MIT-licensed Node.js 22 LTS binary (`node-v22.23.5-win-x64.zip`, SHA-256 `4a191082e9706866830379d577d2cc8a50c776fcd9436a8d061b063ed0d9a0e3`), bundled with its `LICENSE`.
+- **FFmpeg `n8.1.3-41-ga8029b6528` (`win64-gpl-8.1`):** Static GPLv3 build (`--enable-gpl --enable-version3`, no `--enable-nonfree`) from `FFmpeg-Builds/FFmpeg-Builds` release `autobuild-2026-11-25-12-41` (`ffmpeg-n8.1.3-41-ga8029b6528-win64-gpl-8.1.zip`, SHA-256 `a1ef44f882e103d297156be744bf138eb5de1054e864218d43a65d1801570917`), verified by `scripts/verify-ffmpeg.js` and bundled with `LICENSE.txt` and `THIRD_PARTY_NOTICES.txt`.
+
+Because upstream `FFmpeg-Builds` `autobuild-*` releases are pruned on a rolling schedule, `scripts/package-standalone.js` caches verified binary archives in `releases/vendor-archive/binaries/` and archives complete GPL-3.0 Corresponding Source (`FFmpeg` commit `a8029b6528`, `FFmpeg-Builds` tag `autobuild-2026-11-25-12-41` build recipes/patches and statically linked library source snapshots, `Node.js v22.23.5` source tarball provenance, and tracked `uburoom` source) locally in `releases/vendor-archive/sources/` and `releases/uburoom-corresponding-source-*.zip`.
 
 ## Subtitle bundles, WASM provenance and fallback font
 

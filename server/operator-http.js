@@ -9,6 +9,9 @@ function operatorHttp({
   registry,
   editor,
   discordServers,
+  watch,
+  onRestart,
+  canRestart = Boolean(process.send),
   user,
   protectedPost,
   validIdentity,
@@ -18,6 +21,7 @@ function operatorHttp({
   body,
   json,
 }) {
+  let restarting = false;
   // The settings this process is running with. Flush before the final checks, rather than deferring
   // the response: logout, account changes or operator removal during persistence must win.
   async function running(req, res, reply, value) {
@@ -36,11 +40,118 @@ function operatorHttp({
   }
   async function route(req, res, url, reply) {
     if (req.method === 'GET' && url.pathname === '/api/operator/settings') {
-      await running(req, res, reply, () => runningSettings(config));
+      await running(req, res, reply, () => runningSettings(config, { canRestart }));
       return true;
     }
     if (req.method === 'GET' && url.pathname === '/api/operator/discord/servers') {
       await running(req, res, reply, () => ({ servers: discordServers?.() ?? null }));
+      return true;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/operator/restart') {
+      const login = await user(req);
+      const current = () =>
+        !!login &&
+        logins.get(hash(cookies(req)[COOKIES.session] || '')) === login &&
+        validIdentity(login) &&
+        (login.expires === null || login.expires > Date.now());
+      const operator = () => current() && isServerOperator(registry, config, login.userId);
+      if (!current()) {
+        json(res, 401, { error: 'Sign in to restart uburoom' });
+        return true;
+      }
+      if (!operator()) {
+        json(res, 403, { error: 'Server operator required' });
+        return true;
+      }
+      if ((await protectedPost(req)) !== login) {
+        json(res, 403, { error: 'Valid origin and CSRF proof required' });
+        return true;
+      }
+      let data = {};
+      if (req.headers['content-type'] || Number(req.headers['content-length']) > 0) {
+        try {
+          data = await body(req);
+        } catch (error) {
+          json(res, error?.status || 400, { error: error?.message || 'Invalid JSON request body' });
+          return true;
+        }
+      }
+      if (
+        Object.keys(data).some(key => key !== 'confirmActive') ||
+        (data.confirmActive !== undefined && typeof data.confirmActive !== 'boolean')
+      ) {
+        json(res, 400, { error: 'Use only confirmActive boolean' });
+        return true;
+      }
+      await registry.flush();
+      if (
+        !operator() ||
+        !isAllowedBrowserOrigin(config, req.headers.origin, req) ||
+        req.headers['x-csrf-token'] !== login.csrf ||
+        (login.oauth && login.oauth.expires <= Date.now())
+      ) {
+        reply(current() ? 403 : 401, { error: 'Operator authorization changed' });
+        return true;
+      }
+      if (!onRestart) {
+        reply(503, { error: 'Restart is unavailable in this server instance' });
+        return true;
+      }
+      let openRooms = 0;
+      let activeViewers = 0;
+      let anyPlaying = false;
+      for (const room of watch?.rooms?.values?.() || []) {
+        if (room.closed) continue;
+        openRooms++;
+        activeViewers += room.viewers?.size || 0;
+        if (room.playing || (room.media && !room.state?.paused)) anyPlaying = true;
+      }
+      if ((activeViewers > 0 || anyPlaying) && data.confirmActive !== true) {
+        reply(409, {
+          code: 'ACTIVE_ROOMS',
+          openRooms,
+          activeViewers,
+          error: 'Viewers are currently active in a room; confirm restart to interrupt playback.',
+        });
+        return true;
+      }
+      if (restarting) {
+        reply(202, { ok: true, restarting: true, supervised: Boolean(process.send) });
+        return true;
+      }
+      restarting = true;
+      try {
+        registry.audit(login.userId, 'operator-restart', {
+          confirmActive: data.confirmActive === true,
+          openRooms,
+          activeViewers,
+        });
+        await registry.flush();
+      } catch (error) {
+        restarting = false;
+        reply(503, { error: 'Could not record restart audit event' });
+        return true;
+      }
+      if (
+        !operator() ||
+        !isAllowedBrowserOrigin(config, req.headers.origin, req) ||
+        req.headers['x-csrf-token'] !== login.csrf ||
+        (login.oauth && login.oauth.expires <= Date.now())
+      ) {
+        restarting = false;
+        reply(current() ? 403 : 401, { error: 'Operator authorization changed' });
+        return true;
+      }
+      let triggered = false;
+      const trigger = () => {
+        if (triggered) return;
+        triggered = true;
+        onRestart();
+      };
+      res.once('finish', trigger);
+      const fallback = setTimeout(trigger, 150);
+      fallback.unref();
+      reply(202, { ok: true, restarting: true, supervised: Boolean(process.send) });
       return true;
     }
     if (url.pathname !== '/api/operator/settings/saved' || !['GET', 'POST'].includes(req.method)) return false;

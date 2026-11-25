@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
 const doctor = require('../../scripts/doctor');
-const { certificateCovers, writeCertificate } = require('../local-tls');
+const { certificateCovers, writeCertificate, ensurePrivateDirectorySync } = require('../local-tls');
 const { sourceType } = require('../sources');
 const { summarize } = require('../source-flows');
 
@@ -116,7 +116,7 @@ function storage(config, { newAccount = false } = {}) {
         title,
         detail: 'This folder already has uburoom data. Move its data folder aside, or sign in with Plex in step 2.',
       };
-    fs.mkdirSync(path.dirname(config.accountFile), { recursive: true, mode: 0o700 });
+    ensurePrivateDirectorySync(path.dirname(config.accountFile));
     fs.accessSync(folder, fs.constants.W_OK);
     fs.accessSync(path.dirname(config.accountFile), fs.constants.W_OK);
   } catch {

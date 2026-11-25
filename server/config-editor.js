@@ -3,13 +3,11 @@ const fs = require('node:fs/promises');
 const { constants } = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { execFile } = require('node:child_process');
-const { promisify } = require('node:util');
 const YAML = require('yaml');
 const { configPath, parseConfig, normalizeConfig } = require('./config');
 const { runningSettings } = require('./operator-settings');
 const { sourceType } = require('./sources');
-const execute = promisify(execFile);
+const { powershell, protectDirectory, protectFile } = require('./local-tls');
 
 // Explicit YAML paths allowed in the saved operator settings dialog.
 const EDITABLE = new Set([
@@ -158,56 +156,10 @@ function serialize(action) {
   return result;
 }
 
-async function powershell(script, environment) {
-  const result = await execute(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-EncodedCommand',
-      Buffer.from("$ErrorActionPreference='Stop'; " + script, 'utf16le').toString('base64'),
-    ],
-    {
-      env: { ...process.env, ...environment },
-      windowsHide: true,
-      timeout: 15000,
-      maxBuffer: 65536,
-    },
-  );
-  return result.stdout.trim();
-}
 async function security(file) {
   if (process.platform !== 'win32') return '';
   return powershell(
     '[System.IO.File]::GetAccessControl($env:UBUROOM_EDIT_FILE).GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Group)',
-    { UBUROOM_EDIT_FILE: file },
-  );
-}
-async function protectDirectory(directory) {
-  if (process.platform !== 'win32') return fs.chmod(directory, 0o700);
-  await powershell(
-    `$acl=[System.Security.AccessControl.DirectorySecurity]::new();
-    $owner=[System.Security.Principal.WindowsIdentity]::GetCurrent().User;
-    $acl.SetOwner($owner); $acl.SetAccessRuleProtection($true,$false);
-    foreach($sid in @($owner,[System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))){
-      $rule=[System.Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow');
-      [void]$acl.AddAccessRule($rule)
-    }; [System.IO.Directory]::SetAccessControl($env:UBUROOM_EDIT_DIRECTORY,$acl)`,
-    { UBUROOM_EDIT_DIRECTORY: directory },
-  );
-}
-
-/** Makes a file readable and writable only by this user (and SYSTEM on Windows), whatever its folder allows. */
-async function protectFile(file) {
-  if (process.platform !== 'win32') return fs.chmod(file, 0o600);
-  await powershell(
-    `$acl=[System.Security.AccessControl.FileSecurity]::new();
-    $owner=[System.Security.Principal.WindowsIdentity]::GetCurrent().User;
-    $acl.SetOwner($owner); $acl.SetAccessRuleProtection($true,$false);
-    foreach($sid in @($owner,[System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))){
-      $rule=[System.Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl','Allow');
-      [void]$acl.AddAccessRule($rule)
-    }; [System.IO.File]::SetAccessControl($env:UBUROOM_EDIT_FILE,$acl)`,
     { UBUROOM_EDIT_FILE: file },
   );
 }

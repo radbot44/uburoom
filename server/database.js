@@ -5,6 +5,7 @@ const os = require('node:os');
 const { DatabaseSync } = require('node:sqlite');
 const { randomUUID } = require('node:crypto');
 const { SCHEMA_VERSION } = require('./storage');
+const { ensurePrivateDirectorySync } = require('./local-tls');
 
 // Baseline 11 is the first supported layout. Add only published forward steps;
 // private pre-release transfers never belong here. No migrations are needed yet.
@@ -136,7 +137,7 @@ function runMigrations(db) {
 // One direct connection; statements and short transactions commit before return.
 // WAL/NORMAL survives process crashes; sudden power loss can lose recent commits.
 function openDatabase(file, initializeSchema, authenticate = () => {}) {
-  if (file) fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (file && file !== ':memory:') ensurePrivateDirectorySync(path.dirname(file));
   const release = file && file !== ':memory:' ? lockFile(file) : () => {};
   let db;
   try {

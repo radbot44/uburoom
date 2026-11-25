@@ -280,6 +280,7 @@ function renderSources(list) {
     ),
   );
   closePanel();
+  updateAddButtons(list);
   // How many libraries each server has, for "3 of 4 libraries".
   for (const source of list)
     if (source.selectLibraries && !totals.has(source.id))
@@ -307,6 +308,10 @@ async function add(data) {
   const answer = await api('/setup/api/sources', { action: 'add', flow, ...data });
   renderSources(answer.sources);
   card('sources').querySelector('[data-add]').focus();
+}
+function updateAddButtons(list) {
+  const ytButton = card('sources').querySelector('[data-add="youtube"]');
+  if (ytButton) ytButton.disabled = list.some(source => source.type === 'youtube');
 }
 for (const panel of card('sources').querySelectorAll('[data-cancel]')) panel.addEventListener('click', closePanel);
 
@@ -582,6 +587,198 @@ $('folder-form').addEventListener('submit', event => {
   });
 });
 
+// Add YouTube & shared YouTube fields (also used by Edit).
+function renderYouTubeFields(container, draft, { editing = false, source = null } = {}) {
+  const mode = draft.delivery || 'auto';
+  const usesCache = mode === 'auto' || mode === 'ytdlp';
+  const field = (label, type, id, value, placeholder, onInput, extraHint, autocomplete = 'off') =>
+    el(
+      'div',
+      { class: 'setup-field' },
+      el('label', { for: id }, label),
+      el('input', {
+        id,
+        class: 'setup-text-input',
+        type,
+        autocomplete,
+        value: value ?? '',
+        placeholder,
+        oninput: event => onInput(event.target.value),
+      }),
+      extraHint ? el('span', { class: 'hint' }, extraHint) : undefined,
+    );
+  const deliveryFieldset = el(
+    'fieldset',
+    { class: 'setup-servers setup-gap' },
+    el('legend', {}, 'Delivery mode'),
+    ...[
+      [
+        'auto',
+        'Auto — yt-dlp cache with IFrame fallback (recommended)',
+        'Uses built-in yt-dlp cache when available, and falls back to YouTube’s IFrame player otherwise.',
+      ],
+      [
+        'ytdlp',
+        'Built-in yt-dlp cache only',
+        'Always downloads to disk on this server. Keeps YouTube scripts and iframes blocked by CSP.',
+      ],
+      [
+        'embed',
+        'IFrame embed only',
+        'Streams directly from YouTube in each viewer’s browser with zero server downloads or disk cache.',
+      ],
+    ].map(([value, title, hint]) =>
+      el(
+        'label',
+        { class: 'setup-server' },
+        el('input', {
+          type: 'radio',
+          name: editing ? 'edit-yt-delivery' : 'add-yt-delivery',
+          value,
+          checked: mode === value,
+          onchange: () => {
+            draft.delivery = value;
+            renderYouTubeFields(container, draft, { editing, source });
+          },
+        }),
+        el('div', {}, el('strong', {}, title), el('span', { class: 'hint' }, hint)),
+      ),
+    ),
+  );
+  const nodes = [deliveryFieldset];
+  if (usesCache) {
+    const cacheLimit = field(
+      'Cache limit (GB)',
+      'number',
+      editing ? 'edit-yt-max-cache-gb' : 'yt-max-cache-gb',
+      draft.maxCacheGb ?? '20',
+      '20',
+      v => (draft.maxCacheGb = v),
+      'Oldest downloaded videos are evicted automatically above this disk limit.',
+    );
+    const input = cacheLimit.querySelector('input');
+    input.min = '0.1';
+    input.max = '2000';
+    input.step = '0.5';
+    nodes.push(cacheLimit);
+  }
+  nodes.push(
+    field(
+      'YouTube Data API v3 key (optional)',
+      'password',
+      editing ? 'edit-yt-api-key' : 'yt-api-key',
+      draft.apiKey || '',
+      editing && source?.hasApiKey ? 'Saved — leave blank to keep existing' : 'AIza...',
+      v => (draft.apiKey = v),
+      mode === 'embed'
+        ? 'Optional: enables playlists and upfront duration/embeddable checks. Without a key, single videos use oEmbed.'
+        : 'Optional: fast metadata & playlist lookup without spawning yt-dlp.',
+      'new-password',
+    ),
+  );
+  if (editing && source?.hasApiKey) {
+    nodes.push(
+      el(
+        'label',
+        { class: 'form-checkbox setup-gap' },
+        el('input', {
+          type: 'checkbox',
+          checked: !!draft.clearApiKey,
+          onchange: event => (draft.clearApiKey = event.target.checked),
+        }),
+        el('span', {}, 'Remove saved API key'),
+      ),
+    );
+  }
+  if (usesCache) {
+    const advanced = el(
+      'details',
+      {
+        class: 'setup-manual',
+        open: !!draft.advancedOpen,
+        ontoggle: event => (draft.advancedOpen = event.target.open),
+      },
+      el('summary', {}, 'Advanced options'),
+      field(
+        'yt-dlp executable (optional)',
+        'text',
+        editing ? 'edit-yt-ytdlp' : 'yt-ytdlp',
+        draft.ytDlp || '',
+        'Searches PATH when blank',
+        v => (draft.ytDlp = v),
+      ),
+      field(
+        'Cache directory (optional)',
+        'text',
+        editing ? 'edit-yt-cache-dir' : 'yt-cache-dir',
+        draft.cacheDirectory || '',
+        'Defaults to data/youtube-cache',
+        v => (draft.cacheDirectory = v),
+      ),
+      field(
+        'Cookies file (optional)',
+        'text',
+        editing ? 'edit-yt-cookies-file' : 'yt-cookies-file',
+        draft.cookiesFile || '',
+        'Path to Netscape cookies.txt',
+        v => (draft.cookiesFile = v),
+      ),
+      field(
+        'PO token provider URL (optional)',
+        'url',
+        editing ? 'edit-yt-po-token-url' : 'yt-po-token-url',
+        draft.poTokenUrl || '',
+        'http://127.0.0.1:4416',
+        v => (draft.poTokenUrl = v),
+      ),
+    );
+    nodes.push(advanced);
+  }
+  container.replaceChildren(...nodes);
+}
+
+let ytDraft;
+async function addYouTube() {
+  parts('sources', 'add-youtube');
+  ytDraft = {
+    delivery: 'auto',
+    maxCacheGb: '20',
+    ytDlp: '',
+    cacheDirectory: '',
+    cookiesFile: '',
+    poTokenUrl: '',
+    apiKey: '',
+    advancedOpen: false,
+  };
+  $('yt-name').value = 'YouTube';
+  $('yt-probe-status').hidden = true;
+  renderYouTubeFields($('yt-fields'), ytDraft);
+  await start('youtube');
+  const probe = await step('probe').catch(() => null);
+  if (probe) {
+    $('yt-probe-status').textContent = probe.ok
+      ? `Detected yt-dlp ${probe.ytdlp}` +
+        (probe.ffmpeg ? ' · FFmpeg ready.' : ' · FFmpeg not found (single-stream fallback).')
+      : 'yt-dlp was not found on PATH — Auto mode will use IFrame embed playback until yt-dlp is installed.';
+    $('yt-probe-status').hidden = false;
+  }
+}
+$('yt-form').addEventListener('submit', event => {
+  event.preventDefault();
+  void run('sources', $('yt-add'), async () => {
+    await step('configure', {
+      delivery: ytDraft.delivery || 'auto',
+      maxCacheGb: ytDraft.maxCacheGb === '' ? 20 : Number(ytDraft.maxCacheGb),
+      ytDlp: ytDraft.ytDlp || '',
+      cacheDirectory: ytDraft.cacheDirectory || '',
+      cookiesFile: ytDraft.cookiesFile || '',
+      poTokenUrl: ytDraft.poTokenUrl || '',
+      apiKey: ytDraft.apiKey || '',
+    });
+    await add({ name: $('yt-name').value.trim() || 'YouTube' });
+  });
+});
+
 for (const button of card('sources').querySelectorAll('[data-add]'))
   button.addEventListener('click', () => {
     const type = button.dataset.add;
@@ -592,7 +789,9 @@ for (const button of card('sources').querySelectorAll('[data-add]'))
           ? addJellyfin()
           : type === 'folders'
             ? addFolder()
-            : Promise.reject(new Error('Unsupported source type'))
+            : type === 'youtube'
+              ? addYouTube()
+              : Promise.reject(new Error('Unsupported source type'))
       ).catch(error => {
         closePanel();
         throw error;
@@ -602,7 +801,8 @@ for (const button of card('sources').querySelectorAll('[data-add]'))
 
 // Edit: rename, and switch libraries on or off (a folder: Movies or Shows).
 let editing,
-  editKind = 'movies';
+  editKind = 'movies',
+  editYoutubeDraft;
 function editSource(source) {
   editing = source;
   parts('sources', 'edit');
@@ -616,6 +816,25 @@ function editSource(source) {
   if (single) {
     editKind = single.type || 'movies';
     segmented($('edit-kind-group'), editKind);
+  }
+  const isYoutube = source.type === 'youtube';
+  $('edit-youtube').hidden = !isYoutube;
+  if (isYoutube) {
+    editYoutubeDraft = {
+      delivery: source.delivery || 'auto',
+      maxCacheGb: String(source.maxCacheGb ?? 20),
+      ytDlp: source.ytDlp || '',
+      cacheDirectory: source.cacheDirectory || '',
+      cookiesFile: source.cookiesFile || '',
+      poTokenUrl: source.poTokenUrl || '',
+      apiKey: '',
+      clearApiKey: false,
+      advancedOpen: false,
+    };
+    renderYouTubeFields($('edit-youtube'), editYoutubeDraft, { editing: true, source });
+  } else {
+    editYoutubeDraft = undefined;
+    $('edit-youtube').replaceChildren();
   }
   $('edit-libraries').hidden = true;
   $('edit-loading').hidden = !source.selectLibraries;
@@ -654,6 +873,17 @@ $('edit-form').addEventListener('submit', event => {
             paths: single.paths,
           },
         ],
+      };
+    if (source.type === 'youtube' && editYoutubeDraft)
+      data.settings = {
+        delivery: editYoutubeDraft.delivery || 'auto',
+        maxCacheGb: editYoutubeDraft.maxCacheGb === '' ? 20 : Number(editYoutubeDraft.maxCacheGb),
+        ytDlp: editYoutubeDraft.ytDlp || '',
+        cacheDirectory: editYoutubeDraft.cacheDirectory || '',
+        cookiesFile: editYoutubeDraft.cookiesFile || '',
+        poTokenUrl: editYoutubeDraft.poTokenUrl || '',
+        ...(editYoutubeDraft.apiKey ? { apiKey: editYoutubeDraft.apiKey } : {}),
+        ...(editYoutubeDraft.clearApiKey ? { clearApiKey: true } : {}),
       };
     const answer = await api('/setup/api/sources', data);
     renderSources(answer.sources);
@@ -904,13 +1134,21 @@ async function runChecks() {
   $('check-finish').disabled = true;
   $('check-again').hidden = true;
   $('check-discord').hidden = true;
+  $('check-proxy-note').hidden = true;
   await run('check', $('check-again'), async () => {
     try {
-      const { checks, discordRedirect } = await api('/setup/api/check', {});
+      const { checks, discordRedirect, httpProxy } = await api('/setup/api/check', {});
       renderChecks(checks);
       if (discordRedirect) {
         $('check-discord').querySelector('strong').textContent = discordRedirect;
         $('check-discord').hidden = false;
+      }
+      if (httpProxy) {
+        $('check-proxy-note').textContent =
+          `uburoom will switch to proxy-only HTTP on ${httpProxy.host}:${httpProxy.port} after Finish. ` +
+          `Your Cloudflare Tunnel, Tailscale, or Caddy proxy must forward HTTPS traffic (with X-Forwarded-Proto: https) ` +
+          `to port ${httpProxy.port} before ${httpProxy.publicUrl} opens.`;
+        $('check-proxy-note').hidden = false;
       }
     } catch (error) {
       $('check-running').hidden = true;
@@ -919,6 +1157,31 @@ async function runChecks() {
     }
   });
 }
+let lastReadyResult;
+async function probeReadyProxy() {
+  const info = lastReadyResult;
+  if (!info || info.listen !== 'http-proxy') return;
+  const button = $('ready-retry');
+  button.disabled = true;
+  $('ready-proxy-status').textContent = `Checking whether your browser can reach ${info.publicUrl}…`;
+  try {
+    const res = await fetch(info.publicUrl + '/health', { mode: 'cors', signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    $('ready-proxy-status').textContent = `Proxy handoff succeeded: your browser reached ${info.publicUrl}.`;
+    $('ready-proxy-guide').hidden = true;
+    $('ready-open').textContent = 'Open uburoom';
+  } catch {
+    $('ready-proxy-status').textContent = `${info.publicUrl} is not reachable from this browser yet.`;
+    $('ready-proxy-guide').textContent =
+      `uburoom is running and waiting for your Cloudflare Tunnel, Tailscale, or Caddy proxy on port ${info.port}. ` +
+      `Start your tunnel now, then click Retry connection—or open ${info.publicUrl} and sign in normally once your tunnel is live.`;
+    $('ready-proxy-guide').hidden = false;
+    $('ready-open').textContent = 'Open ' + info.publicUrl;
+  } finally {
+    button.disabled = false;
+  }
+}
+$('ready-retry').addEventListener('click', () => void probeReadyProxy());
 $('check-again').addEventListener('click', () => void runChecks());
 $('check-finish').addEventListener('click', () => {
   const button = $('check-finish');
@@ -926,9 +1189,16 @@ $('check-finish').addEventListener('click', () => {
   button.textContent = 'Finishing…';
   void run('check', button, async () => {
     try {
-      const { url } = await api('/setup/api/finish', {});
-      $('ready-open').href = url;
+      const result = await api('/setup/api/finish', {});
+      lastReadyResult = result;
+      $('ready-open').href = result.url;
+      $('ready-open').textContent = 'Open uburoom';
+      $('ready-local').hidden = !result.localUrl;
+      if (result.localUrl) $('ready-local').href = result.localUrl;
+      $('ready-wan-note').hidden = result.where !== 'internet';
+      $('ready-proxy-box').hidden = result.listen !== 'http-proxy';
       show('ready');
+      if (result.listen === 'http-proxy') void probeReadyProxy();
     } catch (error) {
       if (error.body?.checks) renderChecks(error.body.checks);
       throw error;

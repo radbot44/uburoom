@@ -178,4 +178,6 @@ Where the build differs from the text above, or decides something it left open. 
 - **Existing data:** a uburoom account from setup needs a data folder without a database; with existing data, step 6 asks to move it aside or sign in with Plex.
 - **Remote access guide:** named as `docs/remote-access.md` in the uburoom folder; there is no published address to link to.
 - **The setup code** is 26 characters (seven groups); the field's text shrinks to fit narrow screens.
+- **YouTube in step 3 (2026-11-25):** Step 3 also offers **Add YouTube** (and Edit YouTube), matching Server settings and defaulting to `auto` (with IFrame embed fallback when `yt-dlp` is not installed).
+- **Internet handoff in steps 6–7 (2026-11-25):** In `http-proxy` mode (`Cloudflare Tunnel`, `Tailscale`, `Caddy / proxy`), Step 6 notes the proxy prerequisite and Step 7 (`Ready`) probes `GET <public_url>/health` from the browser (`Access-Control-Allow-Origin: *` on `/health` only) with a **Retry connection** control so the operator is never stranded if their tunnel is not started yet. When `listen: 'https'` and `lan_url: 'auto'` are chosen, Step 7 also provides a secondary local/LAN handoff link. When `scripts/launcher.js` starts setup on loopback HTTP, setup emits `{ type: 'uburoom:setup-ready', url }` over Node IPC to open the setup URL once without writing the code fragment to disk.
 

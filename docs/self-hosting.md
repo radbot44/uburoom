@@ -14,6 +14,17 @@ Run uburoom alongside your Plex Media Server to host watch parties in a browser 
 
 ## Install
 
+### Windows x64 portable standalone bundle
+
+A packaged Windows x64 standalone folder (`uburoom/`) ships its own verified **Node.js** (`runtime/node/`) and **FFmpeg/FFprobe** (`runtime/ffmpeg/`) inside each versioned slot (`versions/<slot>/`), alongside `start-uburoom.bat`, `doctor.bat`, and `current.txt`:
+
+- Double-click `start-uburoom.bat` to run uburoom in a visible console window (`scripts/launcher.js` resolves `current.txt`, prepends the slot's `runtime/ffmpeg` and `runtime/node` to `PATH`, passes `--config config\config.yaml`, opens first-run setup automatically in the browser, and enables **Restart now** in **Server settings**).
+- To start uburoom automatically at Windows sign-in, place a standard Windows shortcut (`.lnk`) to `start-uburoom.bat` in `shell:startup` (or the Start Menu).
+- Run `doctor.bat` to check configuration, certificates, media tools, and sources against `config\config.yaml`.
+- State (`config/config.yaml` and `config/data/`) stays inside the portable folder, while `storage.credential_key_file` remains at `%LOCALAPPDATA%\uburoom\credentials.key` by default so zipping or sharing the portable folder never exposes the encryption key. When moving the portable folder to another PC, copy `%LOCALAPPDATA%\uburoom\credentials.key` together with `config/`. To run two independent portable copies under one Windows user account, set `storage.credential_key_file: '../secrets/credentials.key'` in the second copy's `config/config.yaml`.
+
+### From a source checkout
+
 From the project directory:
 
 ```sh

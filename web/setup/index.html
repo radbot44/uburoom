@@ -127,6 +127,9 @@
             <button class="quiet setup-type" type="button" data-add="folders">
               <span data-icon="folder"></span>Add a folder
             </button>
+            <button class="quiet setup-type" type="button" data-add="youtube">
+              <span data-icon="brand-youtube"></span>Add YouTube
+            </button>
           </div>
 
           <!-- Add Plex -->
@@ -234,9 +237,28 @@
             </div>
             <p class="hint" id="edit-loading" role="status" hidden>Reading libraries…</p>
             <fieldset class="setup-libraries" id="edit-libraries" hidden></fieldset>
+            <div id="edit-youtube" hidden></div>
             <div class="setup-inline-actions">
               <button class="quiet" type="button" data-cancel>Cancel</button>
               <button class="primary" type="submit">Save</button>
+            </div>
+          </form>
+
+          <!-- Add YouTube -->
+          <form class="setup-panel" data-part="add-youtube" id="yt-form" hidden>
+            <h2>Add YouTube</h2>
+            <p class="hint setup-lead">
+              Play pasted YouTube links with synced room playback and Web Audio using uburoom’s built-in yt-dlp cache.
+            </p>
+            <p class="hint" id="yt-probe-status" role="status" hidden></p>
+            <div class="setup-field">
+              <label for="yt-name">Name</label>
+              <input id="yt-name" class="setup-text-input" maxlength="60" placeholder="YouTube" />
+            </div>
+            <div id="yt-fields"></div>
+            <div class="setup-inline-actions">
+              <button class="quiet" type="button" data-cancel>Cancel</button>
+              <button id="yt-add" class="primary" type="submit">Add YouTube</button>
             </div>
           </form>
 
@@ -452,6 +474,7 @@
             In the Discord Developer Portal, make sure OAuth2 Redirects includes <strong></strong>. If you added a
             different address earlier, replace it with this one.
           </p>
+          <p class="hint setup-gap" id="check-proxy-note" hidden></p>
           <p class="setup-error" role="alert" hidden><span data-icon="alert-triangle"></span><span></span></p>
         </div>
         <footer class="setup-footer">
@@ -464,8 +487,22 @@
       <!-- 7. Ready -->
       <section class="card setup-card setup-ready" data-screen="ready" aria-labelledby="h-ready" hidden>
         <h1 id="h-ready" tabindex="-1">uburoom is ready</h1>
-        <p>You're signed in. Create your first room and invite people.</p>
+        <p id="ready-subtitle">You're signed in. Create your first room and invite people.</p>
+        <div class="setup-panel setup-gap" id="ready-proxy-box" hidden>
+          <p class="setup-flush" id="ready-proxy-status" role="status"></p>
+          <p class="hint setup-gap" id="ready-proxy-guide"></p>
+          <div class="setup-inline-actions">
+            <button id="ready-retry" class="quiet" type="button">Retry connection</button>
+          </div>
+        </div>
         <a class="primary" id="ready-open" href="/">Open uburoom</a>
+        <div class="setup-gap">
+          <a class="quiet" id="ready-local" href="/" hidden>Open locally instead</a>
+        </div>
+        <p class="hint setup-gap" id="ready-wan-note" hidden>
+          Reaching this address from this computer only confirms proxy handoff; test from outside your home network (for
+          example, mobile data with Wi-Fi off) to confirm external reachability.
+        </p>
       </section>
     </main>
     <script type="module" src="/setup/setup.js"></script>

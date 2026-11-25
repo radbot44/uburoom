@@ -7,7 +7,48 @@ const crypto = require('node:crypto');
 const cp = require('node:child_process');
 const { configPath, parseConfig, normalizeConfig } = require('../server/config');
 const { credentialVault, authenticateDatabaseEnvelopes } = require('../server/accounts');
-const { findOnPath } = require('../server/media-tools');
+const { findOnPath, findBundledTool, findSiblingTool } = require('../server/media-tools');
+
+function readBuildIdentity() {
+  const pkgVersion = require('../package.json').version;
+  const candidates = [path.resolve(__dirname, '../../BUILD_INFO.json'), path.resolve(__dirname, '../BUILD_INFO.json')];
+  for (const file of candidates) {
+    try {
+      const info = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const shortCommit = info?.uburoom?.shortCommit;
+      if (shortCommit) {
+        const suffix = info.uburoom.dirty ? '-dirty' : '';
+        return { version: pkgVersion, buildLabel: `v${pkgVersion} (g${shortCommit}${suffix})`, buildInfo: info };
+      }
+    } catch {}
+  }
+  const repoRoot = path.resolve(__dirname, '..');
+  if (fs.existsSync(path.join(repoRoot, '.git'))) {
+    try {
+      const shortCommit = cp
+        .execFileSync('git', ['-C', repoRoot, 'rev-parse', '--short=7', 'HEAD'], {
+          timeout: 1500,
+          encoding: 'utf8',
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+        .trim();
+      if (shortCommit) {
+        const dirty =
+          cp
+            .execFileSync('git', ['-C', repoRoot, 'status', '--porcelain'], {
+              timeout: 1500,
+              encoding: 'utf8',
+              windowsHide: true,
+              stdio: ['ignore', 'pipe', 'ignore'],
+            })
+            .trim().length > 0;
+        return { version: pkgVersion, buildLabel: `v${pkgVersion} (g${shortCommit}${dirty ? '-dirty' : ''})` };
+      }
+    } catch {}
+  }
+  return { version: pkgVersion, buildLabel: `v${pkgVersion}` };
+}
 
 /**
  * @typedef {{
@@ -766,8 +807,9 @@ function checkMediaTools(config) {
       message: 'Disabled by operator policy (transcoding.ubuplayer: false); unsupported formats convert on the server.',
     });
   }
-  const ffmpeg = config.ffmpegPath || findOnPath('ffmpeg');
-  const ffprobe = config.ffprobePath || findOnPath('ffprobe');
+  const ffmpeg = config.ffmpegPath || findBundledTool('ffmpeg') || findOnPath('ffmpeg');
+  const ffprobe =
+    config.ffprobePath || findBundledTool('ffprobe') || findOnPath('ffprobe') || findSiblingTool(ffmpeg, 'ffprobe');
 
   // FFmpeg check
   if (!ffmpeg) {
@@ -895,6 +937,52 @@ function checkMediaTools(config) {
           }
         } catch {}
       }
+      try {
+        const filtersOutput = cp.execFileSync(ffmpeg, ['-hide_banner', '-filters'], {
+          timeout: 4000,
+          encoding: 'utf8',
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        const hasFilter = name => new RegExp('^\\s*\\S+\\s+' + name + '\\s', 'm').test(filtersOutput);
+        const hasZscale = hasFilter('zscale');
+        const hasLibplacebo = hasFilter('libplacebo');
+        let hasLibplaceboDovi = false;
+        if (hasLibplacebo) {
+          try {
+            const placeboHelp = cp.execFileSync(ffmpeg, ['-hide_banner', '-h', 'filter=libplacebo'], {
+              timeout: 4000,
+              encoding: 'utf8',
+              windowsHide: true,
+              stdio: ['ignore', 'pipe', 'ignore'],
+            });
+            hasLibplaceboDovi =
+              /apply_dolbyvision/.test(placeboHelp) &&
+              /tonemapping/.test(placeboHelp) &&
+              /peak_detect/.test(placeboHelp);
+          } catch {}
+        }
+        const missingHdr = [];
+        if (!hasLibplacebo) missingHdr.push('libplacebo (Dolby Vision Profile 5 server conversion)');
+        else if (!hasLibplaceboDovi)
+          missingHdr.push('libplacebo apply_dolbyvision support (Dolby Vision Profile 5 server conversion)');
+        if (!hasZscale) missingHdr.push('zscale (CPU HDR tonemapping & local HDR thumbnails)');
+        checks.push({
+          category: 'Media Tools',
+          name: 'HDR & Dolby Vision filters',
+          status: missingHdr.length === 0 ? 'pass' : 'warn',
+          message:
+            missingHdr.length === 0
+              ? 'libplacebo (apply_dolbyvision, tonemapping, peak_detect) and zscale available.'
+              : `Missing FFmpeg HDR filter support: ${missingHdr.join('; ')}.`,
+          ...(missingHdr.length
+            ? {
+                remediation:
+                  'Use an FFmpeg 8.1+ GPL build with libplacebo (shaderc/glslang) and zimg (zscale) enabled.',
+              }
+            : {}),
+        });
+      } catch {}
     } catch (err) {
       checks.push({
         category: 'Media Tools',
@@ -1083,10 +1171,10 @@ async function checkSources(config) {
       },
     ];
   const { checkSources: check } = require('../server/sources');
-  const tools = {
-    ffmpeg: config.ffmpegPath || findOnPath('ffmpeg'),
-    ffprobe: config.ffprobePath || findOnPath('ffprobe'),
-  };
+  const ffmpeg = config.ffmpegPath || findBundledTool('ffmpeg') || findOnPath('ffmpeg');
+  const ffprobe =
+    config.ffprobePath || findBundledTool('ffprobe') || findOnPath('ffprobe') || findSiblingTool(ffmpeg, 'ffprobe');
+  const tools = { ffmpeg, ffprobe };
   checks.push(...(await check(sources, tools)));
   return checks;
 }
@@ -1122,9 +1210,13 @@ async function runDoctor(options = {}) {
   const warnCount = allChecks.filter(c => c.status === 'warn').length;
   const failCount = allChecks.filter(c => c.status === 'fail').length;
 
+  const { version, buildLabel } = readBuildIdentity();
+
   if (jsonMode) {
     const summary = {
       timestamp: new Date().toISOString(),
+      version,
+      build: buildLabel,
       ok: failCount === 0,
       passed: passCount,
       warnings: warnCount,
@@ -1137,7 +1229,7 @@ async function runDoctor(options = {}) {
   }
 
   // Terminal human-readable output
-  console.log(color.bold(`\nuburoom doctor v0.5.3 — Installation Diagnostics`));
+  console.log(color.bold(`\nuburoom doctor ${buildLabel} — Installation Diagnostics`));
   console.log(color.dim(`Target configuration: ${selectedFile}\n`));
 
   let currentCategory = '';
@@ -1181,6 +1273,7 @@ if (require.main === module) {
 
 module.exports = {
   runDoctor,
+  readBuildIdentity,
   checkRuntime,
   checkConfiguration,
   checkPortAvailability,

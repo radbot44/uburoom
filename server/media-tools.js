@@ -20,25 +20,46 @@ function isValidWebm(bytes) {
   );
 }
 
+const DEFAULT_ROOT = path.resolve(__dirname, '..');
+
+function executableName(name, platform = process.platform) {
+  return platform === 'win32' ? name + '.exe' : name;
+}
+
+function isExecutableFile(candidate, platform = process.platform) {
+  try {
+    if (!fs.statSync(candidate).isFile()) return false;
+    fs.accessSync(candidate, platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findBundledTool(name, root = DEFAULT_ROOT, platform = process.platform) {
+  const candidate = path.resolve(root, '../runtime/ffmpeg', executableName(name, platform));
+  return isExecutableFile(candidate, platform) ? candidate : undefined;
+}
+
+function findSiblingTool(siblingOf, name, platform = process.platform) {
+  if (!siblingOf) return undefined;
+  const candidate = path.join(path.dirname(siblingOf), executableName(name, platform));
+  return isExecutableFile(candidate, platform) ? candidate : undefined;
+}
+
 // Startup-only discovery. Resolve an absolute executable so subprocesses do not
 // depend on their working directory, shell aliases, or later PATH changes.
 function findOnPath(name, environment = process.env, platform = process.platform) {
   const pathKey = Object.keys(environment).find(key =>
     platform === 'win32' ? key.toUpperCase() === 'PATH' : key === 'PATH',
   );
-  const executable = platform === 'win32' ? name + '.exe' : name;
+  const executable = executableName(name, platform);
   for (let directory of (environment[pathKey] || '').split(platform === 'win32' ? ';' : ':')) {
     directory = directory.trim().replace(/^"(.*)"$/, '$1');
     // Empty/relative entries can resolve tools from a caller's working folder.
     if (!path.isAbsolute(directory)) continue;
     const candidate = path.join(directory, executable);
-    try {
-      if (!fs.statSync(candidate).isFile()) continue;
-      fs.accessSync(candidate, platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
-      return candidate;
-    } catch {
-      /* Continue to the next PATH directory; missing tools stay optional. */
-    }
+    if (isExecutableFile(candidate, platform)) return candidate;
   }
 }
 
@@ -723,4 +744,17 @@ function cpuTonemap(hdrInfo) {
     : [];
 }
 
-module.exports = { findOnPath, run, segments, stream, watchMemory, codecMatches, fileIndex, classifyHdr, cpuTonemap };
+module.exports = {
+  isValidWebm,
+  findOnPath,
+  findBundledTool,
+  findSiblingTool,
+  run,
+  segments,
+  stream,
+  watchMemory,
+  codecMatches,
+  fileIndex,
+  classifyHdr,
+  cpuTonemap,
+};

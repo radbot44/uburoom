@@ -5,7 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const YAML = require('yaml');
 const Policy = require('./room-policy');
-const { findOnPath } = require('./media-tools');
+const { findOnPath, findBundledTool, findSiblingTool } = require('./media-tools');
 const { validateSources, ownerAccountSources, memberIdentities } = require('./sources');
 const ROOT = path.resolve(__dirname, '..');
 
@@ -115,7 +115,7 @@ function parseConfig(source) {
 
 function normalizeConfig(
   value,
-  { base = ROOT, environment = process.env, platform = process.platform, discoverTools = true } = {},
+  { base = ROOT, root = ROOT, environment = process.env, platform = process.platform, discoverTools = true } = {},
 ) {
   const object = (v, label) => {
     if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(label + ' must be a mapping');
@@ -230,6 +230,20 @@ function normalizeConfig(
   const relative = path.relative(ROOT, credentialKeyFile);
   if (!relative.startsWith('..' + path.sep) && !path.isAbsolute(relative))
     throw new Error('storage.credential_key_file must be outside the project folder');
+  const explicitFfmpeg = get('tools.ffmpeg');
+  const explicitFfprobe = get('tools.ffprobe');
+  const ffmpegPath = explicitFfmpeg
+    ? resolveFile('tools.ffmpeg')
+    : discoverTools
+      ? findBundledTool('ffmpeg', root, platform) || findOnPath('ffmpeg', environment, platform)
+      : undefined;
+  const ffprobePath = explicitFfprobe
+    ? resolveFile('tools.ffprobe')
+    : discoverTools
+      ? (!explicitFfmpeg ? findBundledTool('ffprobe', root, platform) : undefined) ||
+        findOnPath('ffprobe', environment, platform) ||
+        findSiblingTool(ffmpegPath, 'ffprobe', platform)
+      : undefined;
   const config = {
     host: get('server.host', '127.0.0.1'),
     port,
@@ -247,16 +261,8 @@ function normalizeConfig(
     channels: list('discord.command_channel_ids') || [],
     shareChannelId: get('discord.share_channel_id'),
     discordRichPresence: boolean('discord.rich_presence', true),
-    ffmpegPath: get('tools.ffmpeg')
-      ? resolveFile('tools.ffmpeg')
-      : discoverTools
-        ? findOnPath('ffmpeg', environment)
-        : undefined,
-    ffprobePath: get('tools.ffprobe')
-      ? resolveFile('tools.ffprobe')
-      : discoverTools
-        ? findOnPath('ffprobe', environment)
-        : undefined,
+    ffmpegPath,
+    ffprobePath,
   };
   config.sources = validateSources(value.sources, {
     base,
