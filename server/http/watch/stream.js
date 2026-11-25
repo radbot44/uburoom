@@ -68,6 +68,7 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
       const scope = bindGrantAbort(res, grant);
       try {
         const media = currentMedia();
+        const subtitleStore = watch.pipeline?.subtitleResources || SubtitleResources;
         const windowed =
           ['pgs', 'cues'].includes(media?.selection?.subtitle?.delivery) && !media?.selection?.subtitle?.external;
         if (!match[2] && windowed) {
@@ -88,11 +89,12 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
           const atMs = url?.searchParams?.has('atMs') ? Number(url.searchParams.get('atMs')) : 0;
           const beforeMs = url?.searchParams?.has('beforeMs') ? Number(url.searchParams.get('beforeMs')) : 15000;
           const afterMs = url?.searchParams?.has('afterMs') ? Number(url.searchParams.get('afterMs')) : 60000;
-          const win = await SubtitleResources.window(watch.pipeline.av1, media, {
+          const win = await subtitleStore.window(watch.pipeline.av1, media, {
             atMs,
             beforeMs,
             afterMs,
             signal: scope.signal,
+            revoked: () => Boolean(grant.abort?.signal.aborted),
           });
           if (scope.signal.aborted || !(await validCaptionGrant(grant, match[1])))
             return json(res, 403, { error: 'Subtitle access expired or selection changed.' });
@@ -115,10 +117,10 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
             return json(res, 403, { error: 'Subtitle access expired or selection changed.' });
           req.setTimeout?.(0);
           res.setTimeout?.(0);
-          await SubtitleResources.pipe(watch.pipeline.av1, media, req, res, scope.signal);
+          await subtitleStore.pipe(watch.pipeline.av1, media, req, res, scope.signal);
           return;
         }
-        const result = await SubtitleResources.load(watch.pipeline.av1, media, scope.signal);
+        const result = await subtitleStore.load(watch.pipeline.av1, media, scope.signal);
         if (scope.signal.aborted || !(await validCaptionGrant(grant, match[1])))
           return json(res, 403, { error: 'Subtitle access expired or selection changed.' });
         res.setHeader('Cache-Control', 'no-store');
@@ -157,7 +159,9 @@ function mediaStream({ config, watch, json, grants, validCaptionGrant, validGran
       const scope = bindGrantAbort(res, grant);
       try {
         const media = grant.room.viewers.get(grant.viewerId)?.media;
-        const cues = await Subtitles.load(media, scope.signal);
+        const cues = watch.pipeline?.subtitleResources?.loadTextCues
+          ? await watch.pipeline.subtitleResources.loadTextCues(media, scope.signal)
+          : await Subtitles.load(media, scope.signal);
         if (scope.signal.aborted || !(await validCaptionGrant(grant, match[1])))
           return json(res, 403, { error: 'Subtitle access expired or selection changed.' });
         json(res, 200, { cues });

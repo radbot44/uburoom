@@ -909,6 +909,7 @@ test('media grants reject stale playlists, subtitles and revoked viewers during 
   await command('media.tracks.set', { subtitleId: 'off' });
   assert.equal((await request(first.subtitleUrl)).status, 403);
   await command('media.tracks.set', { subtitleId: '21' });
+  app.watch.pipeline.subtitleResources.cuesCache.clear();
   const current = await snapshot();
   const pending = new Promise(resolve => (waitCaption = resolve)),
     fetching = request(current.subtitleUrl);
@@ -1688,4 +1689,182 @@ test('MediaChecks report distinguishes not-applicable media from a completed cle
       ['warning', 'provider'],
     ],
   );
+});
+
+test('Direct Plex rooms execute zero ffprobe/bridge bytes on load, preload, and auto check, and start checks lazily on fallback or refresh', async () => {
+  const { plexProvider } = require('../server/sources/plex/provider');
+  const { MediaProviders } = require('../server/media-providers');
+  const { watchOperations } = require('../server/watch-operations');
+
+  let bridgeReads = 0;
+  let ffprobeSpawns = 0;
+
+  const customFetch = async (input, options = {}) => {
+    const url = new URL(input);
+    const json = value =>
+      new Response(JSON.stringify({ MediaContainer: value }), { headers: { 'Content-Type': 'application/json' } });
+    if (url.pathname === '/') return json({ machineIdentifier: 'direct-plex-id', friendlyName: 'DirectPlex' });
+    if (url.pathname === '/library/metadata/1') {
+      return json({
+        Metadata: [
+          {
+            ratingKey: '1',
+            type: 'movie',
+            title: 'Direct Movie',
+            duration: 120000,
+            Media: [
+              {
+                id: 99,
+                videoCodec: 'hevc',
+                height: 2160,
+                bitrate: 45000,
+                Part: [
+                  {
+                    id: 5,
+                    key: '/library/parts/5/file',
+                    size: 5000000,
+                    Stream: [
+                      {
+                        id: 10,
+                        index: 0,
+                        streamType: 1,
+                        codec: 'hevc',
+                        colorTransfer: 'smpte2084',
+                        colorPrimaries: 'bt2020',
+                      },
+                      { id: 11, index: 1, streamType: 2, codec: 'ac3', languageCode: 'eng', selected: true },
+                      { id: 23, index: 2, streamType: 3, codec: 'pgs', languageCode: 'eng' },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+    }
+    if (url.pathname === '/library/parts/5/file') {
+      bridgeReads++;
+      return new Response(Buffer.alloc(1024), { status: 200 });
+    }
+    return json({});
+  };
+
+  const plex = new Plex({ url: 'https://plex.example', token: 'owner-token' }, customFetch);
+  plex.pipeline.av1.ffprobe = 'fixture-ffprobe';
+  plex.pipeline.av1.run = async () => {
+    ffprobeSpawns++;
+    return Buffer.from('{"streams":[],"format":{"duration":"120","start_time":"0"}}');
+  };
+
+  const directProvider = plexProvider({
+    plex,
+    source: {
+      url: 'https://plex.example',
+      token: 'owner-token',
+      delivery: { mode: 'auto', clientUrl: 'https://direct.plex.example:32400', token: 'direct-tok' },
+    },
+    plexAuth: {
+      dedicated: async () => plex,
+      machine: async () => ({}),
+    },
+  });
+  directProvider.direct.file = async () => 'https://direct.plex.example:32400/library/parts/5/file?X-Plex-Token=direct';
+
+  const hub = new Hub({ ownerId: 'host' }, []);
+  hub.access = { isMember: () => true, refresh: async () => true, options: () => ({ available: true }) };
+  const { watch, actor, open } = liveWatch(hub, plex);
+  watch.providers = new MediaProviders([directProvider], plex.pipeline);
+  const host = actor('host');
+  const room = await open(host);
+  const operations = watchOperations({
+    config: {},
+    hub,
+    watch,
+    authorized: async () => ({ actor: host }),
+    throttle: () => true,
+  });
+
+  try {
+    const viewers = [randomUUID(), randomUUID(), randomUUID()];
+    watch.join(room, host, viewers[0]);
+    watch.join(room, actor('v1'), viewers[1]);
+    watch.join(room, actor('v2'), viewers[2]);
+
+    const loadRes = await hub.dispatch(
+      { ...host, watchViewerId: viewers[0] },
+      { roomId: room.roomId, action: 'media.load', args: { mediaId: '1', quality: 'direct' } },
+    );
+    assert.equal(loadRes.status, 'applied');
+    await Promise.all([...room.viewers.values()].map(v => v.streamWork).filter(Boolean));
+    for (const v of room.viewers.values()) {
+      v.directFileResolved = {
+        media: v.media,
+        settled: true,
+        url: 'https://direct.plex.example:32400/library/parts/5/file?X-Plex-Token=direct',
+      };
+    }
+
+    assert.equal(watch.isStrictDirectPlexRoom(room), true);
+    assert.equal(ffprobeSpawns, 0, 'zero ffprobes during Direct Plex room load');
+    assert.equal(bridgeReads, 0, 'zero container bytes read through uburoom on Direct Plex');
+
+    // Auto host check (refresh: false) also stays at zero ffprobes / zero bridge bytes
+    const autoCheck = await operations.call({ headers: {} }, 'room.check', {
+      roomId: room.roomId,
+      args: { refresh: false },
+    });
+    assert.equal(autoCheck.status, 200);
+    assert.equal(autoCheck.value.status, 'checked');
+    assert.equal(autoCheck.value.checking, false);
+    assert.ok(
+      autoCheck.value.items.some(i => i.title === 'Direct Plex playback active — container scan skipped'),
+      'auto check reports skipped container scan',
+    );
+    assert.ok(
+      autoCheck.value.items.some(i => i.topic === 'hdr' && i.title === 'HDR10'),
+      'auto check preserves HDR metadata without probing',
+    );
+    assert.ok(
+      autoCheck.value.items.some(i => i.topic === 'subtitles'),
+      'auto check preserves image subtitle info without probing',
+    );
+    assert.equal(ffprobeSpawns, 0);
+    assert.equal(bridgeReads, 0);
+
+    // Manual Refresh (refresh: true) probes on demand and invalidates MediaFacts
+    const refreshCheck = await operations.call({ headers: {} }, 'room.check', {
+      roomId: room.roomId,
+      args: { refresh: true },
+    });
+    assert.equal(refreshCheck.status, 200);
+    await watch.mediaChecks.files.get(room.media.sourceKey)?.promise;
+    assert.equal(ffprobeSpawns, 4, 'manual Refresh probes on demand (MediaFacts + 3 bitrate samples)');
+
+    // Second manual Refresh forgets MediaFacts and re-probes
+    await operations.call({ headers: {} }, 'room.check', {
+      roomId: room.roomId,
+      args: { refresh: true },
+    });
+    await watch.mediaChecks.files.get(room.media.sourceKey)?.promise;
+    assert.equal(ffprobeSpawns, 8, 'subsequent Refresh invalidates MediaFacts and re-probes');
+
+    // Clear MediaChecks & MediaFacts to test lazy activation when one viewer falls back off Direct Plex
+    watch.mediaChecks.forget(room.media);
+    const v0 = room.viewers.get(viewers[0]);
+    v0.directDelivery = v0.media;
+    const deliveryRes = await operations.call({ headers: {} }, 'room.delivery', {
+      roomId: room.roomId,
+      args: { viewerId: viewers[0], mediaVersion: room.mediaVersion, streamVersion: v0.streamVersion },
+    });
+    assert.equal(deliveryRes.status, 200);
+    assert.equal(watch.isStrictDirectPlexRoom(room), false);
+    const lazyEntry = watch.mediaChecks.files.get(room.media.sourceKey);
+    assert.ok(lazyEntry, 'room.delivery fallback triggers lazy MediaChecks start');
+    await lazyEntry.promise;
+    assert.equal(ffprobeSpawns, 12);
+  } finally {
+    await watch.close();
+    await plex.close();
+  }
 });

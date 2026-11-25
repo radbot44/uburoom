@@ -33,11 +33,11 @@ function parse(text) {
     )
       throw new PlaybackError('Subtitle timing or content is invalid.');
     if (end <= start) continue;
-    if (value) cues.push({ start, end, text: value, settings: match[3] || '' });
+    if (value) cues.push(Object.freeze({ start, end, text: value, settings: match[3] || '' }));
   }
   if (!cues.length && !text.startsWith('WEBVTT'))
     throw new PlaybackError('The server did not return usable text subtitles.');
-  return cues;
+  return Object.freeze(cues);
 }
 async function readText(response, signal) {
   const chunks = [];
@@ -53,13 +53,10 @@ async function readText(response, signal) {
   }
   return Buffer.concat(chunks).toString('utf8');
 }
-async function load(media, signal) {
+async function fetchCues(media, signal) {
   const track = media.selection?.subtitle;
   if (!track?.available || track.delivery !== 'text')
     throw new PlaybackError(track?.reason || 'No external text subtitle is selected.');
-  const key = 'sidecar:' + track.id;
-  media.subtitleCache ||= new Map();
-  if (media.subtitleCache.has(key)) return media.subtitleCache.get(key);
   media.subtitleAbort ||= new AbortController();
   const abort = AbortSignal.any([signal, media.subtitleAbort.signal, AbortSignal.timeout(30000)].filter(Boolean));
   const resource = track.resources?.text || track.resources?.data;
@@ -69,9 +66,20 @@ async function load(media, signal) {
     abort,
   );
   if (abort.aborted) throw new PlaybackError('Subtitle loading was cancelled.');
-  const cues = parse(text);
+  return parse(text);
+}
+async function load(media, signal) {
+  const shared = media?.provider?.pipeline?.subtitleResources;
+  if (shared?.loadTextCues) return shared.loadTextCues(media, signal);
+  const track = media.selection?.subtitle;
+  if (!track?.available || track.delivery !== 'text')
+    throw new PlaybackError(track?.reason || 'No external text subtitle is selected.');
+  const key = 'sidecar:' + track.id;
+  media.subtitleCache ||= new Map();
+  if (media.subtitleCache.has(key)) return media.subtitleCache.get(key);
+  const cues = await fetchCues(media, signal);
   while (media.subtitleCache.size >= 3) media.subtitleCache.delete(media.subtitleCache.keys().next().value);
   media.subtitleCache.set(key, cues);
   return cues;
 }
-module.exports = { LIMIT, parse, load };
+module.exports = { LIMIT, parse, readText, fetchCues, load };

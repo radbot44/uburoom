@@ -30,11 +30,44 @@ module.exports = {
    */
   warmSubtitles(media, seconds) {
     if (media?.selection?.subtitle?.delivery !== 'cues' || media.unavailable) return;
-    void SubtitleResources.window(this.pipeline?.av1, media, {
-      atMs: Math.max(0, seconds || 0) * 1000,
-      beforeMs: 5000,
-      afterMs: 15000,
-    }).catch(() => {});
+    const store = this.pipeline?.subtitleResources || SubtitleResources;
+    void store
+      .window(this.pipeline?.av1, media, {
+        atMs: Math.max(0, seconds || 0) * 1000,
+        beforeMs: 5000,
+        afterMs: 15000,
+      })
+      .catch(() => {});
+  },
+  /**
+   * True when the room's current media comes from a Plex provider with Direct Delivery
+   * enabled AND no active viewer or fallback stream is pulling media bytes through uburoom.
+   */
+  isStrictDirectPlexRoom(room, media = room?.media) {
+    if (!room || !media || room.media !== media) return false;
+    const owner = this.providers.owner(media.provider);
+    if (!owner?.direct?.enabled) return false;
+    if (room.fallbackStream?.active) return false;
+    for (const viewer of room.viewers.values()) {
+      if (!viewer.media || viewer.localDelivery || viewer.media.unavailable) continue;
+      if (viewer.media.av1Lease || viewer.media.remuxLease) return false;
+      if (viewer.media.format === 'hls' && !viewer.media.directHls) return false;
+      if (viewer.directProxyVersion === room.mediaVersion) return false;
+      if (
+        viewer.directFileResolved?.media === viewer.media &&
+        viewer.directFileResolved.settled &&
+        !viewer.directFileResolved.url
+      ) {
+        return false;
+      }
+    }
+    return true;
+  },
+  maybeStartLazyMediaCheck(room) {
+    if (!room?.media) return;
+    if (this.providers.owner(room.media.provider)?.direct?.enabled && !this.isStrictDirectPlexRoom(room)) {
+      this.mediaChecks.start(room.media);
+    }
   },
   // What a viewer's stream depends on; a preload is adopted only if none of it changed.
   /** The provider that holds a room's video, as this person may use it. */
@@ -300,6 +333,7 @@ module.exports = {
         if (preparedLocal && typeof preparedLocal.provider?.stop === 'function' && preparedLocal.tracks) {
           preparedLocal.format = 'local';
           preparedLocal.deliveryReason = 'local-file';
+          preparedLocal.shareKey ||= [room.roomId, version];
           preparedLocal.subtitleAbort ||= new AbortController();
           if (previous) SubtitleResources.transfer(previous, preparedLocal);
           viewer.media = preparedLocal;
@@ -519,6 +553,7 @@ module.exports = {
         viewer.directDelivery = undefined;
         viewer.directFileResolved = undefined;
         adopted = true;
+        this.maybeStartLazyMediaCheck(room);
         if (media.unavailable) {
           const mediaServerId = fromProvider(media) ? media.roomServerId : undefined;
           const entry = this.roomState.queue.current(room.roomId);
@@ -691,6 +726,7 @@ module.exports = {
     )
       media.av1Lease.group.viewerDemandAt = performance.now();
     room.fallbackStream?.reconcile(this.position(room), !room.state.paused);
+    if (room.fallbackStream?.active) this.maybeStartLazyMediaCheck(room);
     // The fallback encoder follows the playhead once a second while it exists.
     if (room.fallbackStream && !room.fallbackTimer) {
       room.fallbackTimer = setInterval(() => {

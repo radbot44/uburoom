@@ -3,6 +3,7 @@ const { QUALITIES } = require('../shared/engine.mjs');
 const { AV1 } = require('./av1');
 const { CacheBudget } = require('./cache-budget');
 const { HLSPool } = require('./hls-pool');
+const { MediaFacts } = require('./media-facts');
 const { Remux } = require('./remux');
 const { ConversionPolicy, ProcessGate } = require('./transcoding-policy');
 const SubtitleResources = require('./subtitle-resources');
@@ -23,7 +24,12 @@ class MediaPipeline {
     this.av1 = new AV1(config, execute, logger);
     this.av1.conversionPolicy = this.conversionPolicy;
     this.av1.processGate = this.processGate;
-    this.subtitleResources = new SubtitleResources.SubtitleResourceManager();
+    this.mediaFacts = new MediaFacts({ av1: this.av1, logger });
+    this.av1.mediaFacts = this.mediaFacts;
+    this.subtitleResources = new SubtitleResources.SubtitleResourceManager({
+      mediaFacts: this.mediaFacts,
+      logger,
+    });
     this.hlsPool = new HLSPool(media => media.provider.stop(media));
     /** Copies a file's picture and converts only its sound, for providers with no transcoder. */
     this.remux = new Remux(this.av1);
@@ -98,8 +104,17 @@ class MediaPipeline {
     }
     return usable;
   }
+  stats() {
+    return {
+      mediaFacts: this.mediaFacts.stats(),
+      subtitleResources: this.subtitleResources.stats?.() || {},
+      cacheBudgetBytes: this.cacheBudget.bytes,
+    };
+  }
   close() {
     this.cacheBudget.clear();
+    this.mediaFacts.close();
+    this.subtitleResources.close?.();
     return (this.closing ||= Promise.all([this.hlsPool.close(), this.remux.close(), this.av1.close()]));
   }
 }

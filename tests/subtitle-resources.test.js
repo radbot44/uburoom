@@ -795,6 +795,7 @@ test('shared window jobs isolate caller cancellation, reject obsolete selection,
     assert.equal(runs, 1);
     for (let i = 0; i < 8; i++) {
       const asset = windowMedia();
+      asset.sourceKey = 'generated-' + i;
       asset.selection.subtitle.delivery = 'ass';
       asset.selection.subtitle.external = true;
       asset.selection.subtitle.resources = { data: '/library/streams/23.ass' };
@@ -815,7 +816,7 @@ test('shared window jobs isolate caller cancellation, reject obsolete selection,
     await new Promise(resolve => setImmediate(resolve));
     c.abort();
     await assert.rejects(cancelled);
-    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setTimeout(resolve, 1600));
     assert.equal(jobSignal.aborted, true);
     assert.equal(media.windowJobs.size, 0);
     const stale = SubtitleResources.window(plex.av1, media, { atMs: 200000 });
@@ -826,7 +827,7 @@ test('shared window jobs isolate caller cancellation, reject obsolete selection,
     plex.av1.run = async () => {
       throw new Error('demux failed');
     };
-    await assert.rejects(SubtitleResources.window(plex.av1, media), /failed/);
+    await assert.rejects(SubtitleResources.window(plex.av1, media, { atMs: 300000 }), /failed/);
     assert.equal(media.windowJobs.size, 0);
     plex.av1.run = async () =>
       Buffer.from(
@@ -835,7 +836,7 @@ test('shared window jobs isolate caller cancellation, reject obsolete selection,
           packets: [{ stream_index: 0, pts_time: '0', size: '100' }],
         }),
       );
-    assert.equal((await SubtitleResources.window(plex.av1, media)).cues, 0);
+    assert.equal((await SubtitleResources.window(plex.av1, media, { atMs: 300000 })).cues, 0);
     assert.equal(media.windowJobs.size, 0);
   } finally {
     SubtitleResources.clear(media);
@@ -1130,6 +1131,7 @@ test('retained window buffers participate in aggregate server cache eviction', a
   try {
     for (let i = 0; i < 6; i++) {
       const item = windowMedia();
+      item.sourceKey = 'generated-' + i;
       item.selection.subtitle.delivery = 'ass';
       media.push(item);
       await SubtitleResources.window(plex.av1, item);
@@ -1353,5 +1355,526 @@ test('whole-track subtitle load clears failed job after slot-wait timeout so Ret
     SubtitleResources.clear(m1);
     SubtitleResources.clear(m2);
     SubtitleResources.clear(m3);
+  }
+});
+
+test('SubtitleResourceManager enforces caption grants before/after await via mediaStream and isolates unshared principals', async () => {
+  const { EventEmitter } = require('node:events');
+  const { MediaPipeline } = require('../server/media-pipeline');
+  const { mediaStream } = require('../server/http/watch/stream');
+  const Subtitles = require('../server/subtitles');
+
+  const pipeline = new MediaPipeline({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' });
+  let assExtracts = 0;
+  let extFetches = 0;
+
+  pipeline.av1.input = async (_sourceOrFn, _signal, action) => action('http://127.0.0.1:0/src');
+  pipeline.av1.run = async (binary, args) => {
+    if (binary === 'ffprobe') {
+      return Buffer.from(
+        JSON.stringify({
+          format: { start_time: '0', duration: '60' },
+          streams: [
+            { index: 0, codec_type: 'video', codec_name: 'h264' },
+            { index: 2, codec_type: 'subtitle', codec_name: 'ass' },
+          ],
+          packets: [],
+        }),
+      );
+    }
+    assExtracts++;
+    return Buffer.from(
+      '[Script Info]\nTitle: SharedASS\n\n[Events]\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Hi\n',
+    );
+  };
+
+  const sharedSourceKey = JSON.stringify(['https://plex.example', '1', '5', '/library/parts/5/file', 100, 60, '1']);
+  const room = { viewers: new Map() };
+  const capVersion = 'aaaaaaaa-1111-2222-3333-444444444444';
+
+  const makeAssViewer = (viewerId, principal, shareKey = ['room-1', 'v1']) => ({
+    media: {
+      sourceKey: sharedSourceKey,
+      shareKey,
+      principal,
+      captionVersion: capVersion,
+      subtitleAbort: new AbortController(),
+      lifecycleAbort: new AbortController(),
+      tracks: { audio: [], subtitles: [{ id: '22', index: 2, delivery: 'ass', available: true, external: false }] },
+      selection: { subtitle: { id: '22', index: 2, delivery: 'ass', available: true, external: false } },
+    },
+    viewerId,
+  });
+
+  const vA = makeAssViewer('vA', 'alice');
+  const vB = makeAssViewer('vB', 'bob');
+  room.viewers.set('vA', vA);
+  room.viewers.set('vB', vB);
+
+  let allowGrantB = true;
+  let revokePostAwait = false;
+  const { stream } = mediaStream({
+    config: {},
+    watch: { pipeline, position: () => 0 },
+    json: (res, status, body) => {
+      res.statusCode = status;
+      res.body = body;
+      res.headersSent = true;
+      res.end(JSON.stringify(body));
+    },
+    grants: new Map(),
+    validGrant: async () => true,
+    validCaptionGrant: async (grant, ver) => {
+      if (grant.viewerId === 'vB') {
+        if (!allowGrantB) return false;
+        if (revokePostAwait && grant.checks++ > 0) return false;
+      }
+      return ver === capVersion;
+    },
+  });
+
+  const makeRes = () => {
+    const res = new EventEmitter();
+    res.headersSent = false;
+    res.destroyed = false;
+    res.writableEnded = false;
+    res.headers = {};
+    res.setHeader = (k, v) => {
+      res.headers[k] = v;
+    };
+    res.writeHead = (status, hdrs) => {
+      res.statusCode = status;
+      Object.assign(res.headers, hdrs || {});
+      res.headersSent = true;
+    };
+    res.end = chunk => {
+      if (chunk) res.rawBody = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      res.writableEnded = true;
+    };
+    res.destroy = () => {
+      res.destroyed = true;
+      res.emit('close');
+    };
+    return res;
+  };
+
+  try {
+    // Viewer A extracts ASS once
+    const resA = makeRes();
+    await stream(
+      { method: 'GET', headers: {} },
+      resA,
+      { id: 'gA', room, viewerId: 'vA', checks: 0 },
+      `subtitle-${capVersion}/data`,
+    );
+    assert.equal(resA.statusCode, 200);
+    assert.match(resA.rawBody.toString('utf8'), /SharedASS/);
+    assert.equal(assExtracts, 1);
+
+    // Viewer B hits shared SubtitleStore in O(1) without running ffmpeg
+    const resB = makeRes();
+    await stream(
+      { method: 'GET', headers: {} },
+      resB,
+      { id: 'gB', room, viewerId: 'vB', checks: 0 },
+      `subtitle-${capVersion}/data`,
+    );
+    assert.equal(resB.statusCode, 200);
+    assert.match(resB.rawBody.toString('utf8'), /SharedASS/);
+    assert.equal(assExtracts, 1);
+
+    // Revoked grant before await returns 403
+    allowGrantB = false;
+    const resRevokedBefore = makeRes();
+    await stream(
+      { method: 'GET', headers: {} },
+      resRevokedBefore,
+      { id: 'gB', room, viewerId: 'vB', checks: 0 },
+      `subtitle-${capVersion}/data`,
+    );
+    assert.equal(resRevokedBefore.statusCode, 403);
+
+    // Revoked grant AFTER await returns 403 without leaking cached bytes
+    allowGrantB = true;
+    revokePostAwait = true;
+    const resRevokedAfter = makeRes();
+    await stream(
+      { method: 'GET', headers: {} },
+      resRevokedAfter,
+      { id: 'gB', room, viewerId: 'vB', checks: 0 },
+      `subtitle-${capVersion}/data`,
+    );
+    assert.equal(resRevokedAfter.statusCode, 403);
+
+    // External sidecar cues: shared across shareKey viewers, frozen, revoked properly, isolated without shareKey
+    allowGrantB = true;
+    revokePostAwait = false;
+    const extProvider = principal => ({
+      request: async () => {
+        extFetches++;
+        return new Response(`WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nCue for ${principal}\n`, { status: 200 });
+      },
+    });
+    vA.media.provider = extProvider('alice');
+    vB.media.provider = extProvider('bob');
+    vA.media.selection = {
+      subtitle: { id: '31', delivery: 'text', available: true, external: true, resources: { text: '/sub/31.vtt' } },
+    };
+    vB.media.selection = {
+      subtitle: { id: '31', delivery: 'text', available: true, external: true, resources: { text: '/sub/31.vtt' } },
+    };
+
+    const resCuesA = makeRes();
+    await stream(
+      { method: 'GET', headers: {} },
+      resCuesA,
+      { id: 'gA', room, viewerId: 'vA', checks: 0 },
+      `captions-${capVersion}`,
+    );
+    assert.equal(resCuesA.statusCode, 200);
+    const resCuesB = makeRes();
+    await stream(
+      { method: 'GET', headers: {} },
+      resCuesB,
+      { id: 'gB', room, viewerId: 'vB', checks: 0 },
+      `captions-${capVersion}`,
+    );
+    assert.equal(resCuesB.statusCode, 200);
+    assert.equal(extFetches, 1, 'shared sidecar cues fetched once for room viewers');
+    const cuesDirect = await pipeline.subtitleResources.loadTextCues(vB.media);
+    assert.equal(Object.isFrozen(cuesDirect), true);
+    assert.equal(Object.isFrozen(cuesDirect[0]), true);
+
+    // Standalone unshared principals do not share across distinct principals
+    const unsharedA = {
+      ...vA.media,
+      shareKey: undefined,
+      principal: 'standalone-a',
+      provider: extProvider('standalone-a'),
+    };
+    const unsharedB = {
+      ...vB.media,
+      shareKey: undefined,
+      principal: 'standalone-b',
+      provider: extProvider('standalone-b'),
+    };
+    const cuesUnsharedA = await Subtitles.load({ ...unsharedA, provider: { ...unsharedA.provider, pipeline } });
+    const cuesUnsharedB = await Subtitles.load({ ...unsharedB, provider: { ...unsharedB.provider, pipeline } });
+    assert.equal(extFetches, 3, 'unshared principals remain isolated');
+    assert.equal(cuesUnsharedA[0].text, 'Cue for standalone-a');
+    assert.equal(cuesUnsharedB[0].text, 'Cue for standalone-b');
+  } finally {
+    await pipeline.close();
+  }
+});
+
+test('5-second outward window quantization coalesces nearby viewers and preserves renderer state and PGS bitmap epochs', async () => {
+  const { MediaPipeline } = require('../server/media-pipeline');
+  const { quantizeWindow } = require('../server/subtitle-resources');
+  const { uburoomSubtitleWindows, uburoomSubtitles } = require('../web/watch-subtitles');
+
+  // Verify outward quantization invariants
+  const q1 = quantizeWindow({ atMs: 10120, beforeMs: 5000, afterMs: 15000 });
+  const q2 = quantizeWindow({ atMs: 12890, beforeMs: 5000, afterMs: 15000 });
+  assert.deepEqual([q1.qStartMs, q1.qEndMs], [5000, 30000]);
+  assert.deepEqual([q2.qStartMs, q2.qEndMs], [5000, 30000]);
+
+  const qSeq = quantizeWindow({ atMs: 30000, beforeMs: 0, afterMs: 60000 });
+  assert.deepEqual([qSeq.qStartMs, qSeq.qEndMs], [30000, 90000]);
+
+  const qRetry = quantizeWindow({ atMs: 123400, beforeMs: 60000, afterMs: 60000 });
+  assert.equal(qRetry.qStartMs <= 63400, true);
+  assert.equal(qRetry.qEndMs >= 183400, true);
+  assert.ok(qRetry.qEndMs - qRetry.qStartMs <= 240000);
+
+  // Coalescing & renderer state check for cues (uburoomTextWindows) and PGS (uburoomSubtitleWindows)
+  const pipeline = new MediaPipeline({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' });
+  let windowProbeCount = 0;
+  let windowFfmpegCount = 0;
+  pipeline.av1.input = async (_s, _sig, action) => action('http://127.0.0.1:0/src');
+  pipeline.av1.run = async (binary, args, _sig, _timeout, _limit, _diag, options) => {
+    if (binary === 'ffprobe') {
+      if (args.some(a => String(a).includes('stream_tags='))) {
+        return Buffer.from(
+          JSON.stringify({
+            format: { start_time: '0', duration: '120' },
+            streams: [
+              { index: 0, codec_type: 'video', codec_name: 'h264' },
+              { index: 1, codec_type: 'subtitle', codec_name: 'subrip' },
+              { index: 2, codec_type: 'subtitle', codec_name: 'hdmv_pgs_subtitle' },
+            ],
+            packets: [],
+          }),
+        );
+      }
+      windowProbeCount++;
+      const interval = args[args.indexOf('-read_intervals') + 1];
+      if (interval === '5%30') {
+        return Buffer.from(
+          JSON.stringify({
+            streams: [
+              { index: 1, codec_name: 'subrip' },
+              { index: 2, codec_name: 'hdmv_pgs_subtitle' },
+            ],
+            packets: [
+              { stream_index: 1, pts_time: '8', size: '20' },
+              { stream_index: 1, pts_time: '29', size: '20' },
+              { stream_index: 2, pts_time: '1', size: '195' },
+              { stream_index: 2, pts_time: '5', size: '17' },
+            ],
+          }),
+        );
+      }
+      return Buffer.from(
+        JSON.stringify({
+          streams: [
+            { index: 1, codec_name: 'subrip' },
+            { index: 2, codec_name: 'hdmv_pgs_subtitle' },
+          ],
+          packets: [
+            { stream_index: 1, pts_time: '29', size: '20' },
+            { stream_index: 1, pts_time: '45', size: '20' },
+            { stream_index: 2, pts_time: '1', size: '195' },
+            { stream_index: 2, pts_time: '5', size: '17' },
+          ],
+        }),
+      );
+    }
+    windowFfmpegCount++;
+    if (args.includes('webvtt')) {
+      const to = Number(args[args.indexOf('-to') + 1]);
+      const vtt =
+        to <= 30
+          ? 'WEBVTT\n\n00:00:08.000 --> 00:00:10.000\nFirst cue\n\n00:00:29.000 --> 00:00:32.000\nBoundary cue\n\n'
+          : 'WEBVTT\n\n00:00:29.000 --> 00:00:32.000\nBoundary cue\n\n00:00:45.000 --> 00:00:48.000\nSecond cue\n\n';
+      const buf = Buffer.from(vtt);
+      options?.outputComplete?.(buf);
+      return buf;
+    }
+    const pgsBytes = Buffer.from(require('../scripts/lib/subtitle-fixtures').pgs());
+    options?.outputComplete?.(pgsBytes);
+    return pgsBytes;
+  };
+
+  const originalFetch = global.fetch;
+  const originalVttCue = global.VTTCue;
+  global.VTTCue = class VTTCue {
+    constructor(startTime, endTime, text) {
+      this.startTime = startTime;
+      this.endTime = endTime;
+      this.text = text;
+    }
+  };
+  try {
+    const cueViewerA = {
+      sourceKey: 'quant-cue-src',
+      shareKey: ['room-q', 'v1'],
+      principal: 'a',
+      captionVersion: 'cap-q',
+      subtitleAbort: new AbortController(),
+      tracks: { audio: [], subtitles: [{ id: '1', index: 1, delivery: 'cues', available: true }] },
+      selection: { subtitle: { id: '1', index: 1, delivery: 'cues', available: true } },
+    };
+    const cueViewerB = { ...cueViewerA, principal: 'b', subtitleAbort: new AbortController() };
+
+    const [wA, wB] = await Promise.all([
+      pipeline.subtitleResources.window(pipeline.av1, cueViewerA, { atMs: 10120, beforeMs: 5000, afterMs: 15000 }),
+      pipeline.subtitleResources.window(pipeline.av1, cueViewerB, { atMs: 12890, beforeMs: 5000, afterMs: 15000 }),
+    ]);
+    assert.equal(wA.startMs, 5000);
+    assert.equal(wA.endMs, 30000);
+    assert.equal(wB.data, wA.data);
+    assert.equal(windowProbeCount, 1);
+    assert.equal(windowFfmpegCount, 1);
+
+    // Verify uburoomSubtitles (uburoomTextWindows) merges [5000, 30000] and sequential [30000, 90000] with zero duplicate cues
+    global.fetch = async url => {
+      if (url.endsWith('/manifest')) {
+        return new Response(
+          JSON.stringify({
+            format: 'cues',
+            data: 'http://fixture/manifest/data',
+            window: 'http://fixture/manifest/window',
+            fonts: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      const u = new URL(url, 'http://fixture');
+      const win = await pipeline.subtitleResources.window(pipeline.av1, cueViewerA, {
+        atMs: Number(u.searchParams.get('atMs')),
+        beforeMs: Number(u.searchParams.get('beforeMs')),
+        afterMs: Number(u.searchParams.get('afterMs')),
+      });
+      return new Response(win.data, {
+        status: 200,
+        headers: {
+          'X-Subtitle-Start-Ms': String(win.startMs),
+          'X-Subtitle-End-Ms': String(win.endMs),
+          'X-Subtitle-Cues': String(win.cues),
+        },
+      });
+    };
+    const mockVideo = {
+      currentTime: 10.12,
+      addTextTrack: () => ({ mode: 'disabled', addCue() {} }),
+      textTracks: { addEventListener: () => {} },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    };
+    const subs = new uburoomSubtitles(mockVideo, () => {});
+    subs.update({ subtitleUrl: 'http://fixture/manifest' });
+    await new Promise(resolve => setTimeout(resolve, 40));
+    await subs.textWindows.fetch(30000, 0, 60000);
+    assert.deepEqual(subs.textWindows.intervals, [{ startMs: 5000, endMs: 90000 }]);
+    assert.deepEqual(
+      subs.cues.map(c => c.text),
+      ['First cue', 'Boundary cue', 'Second cue'],
+      'overlapping boundary cue is deduplicated cleanly',
+    );
+    subs.destroy();
+
+    // Verify uburoomSubtitleWindows accepts quantized PGS response headers
+    const pgsViewer = {
+      sourceKey: 'quant-pgs-src',
+      shareKey: ['room-q', 'v1'],
+      principal: 'a',
+      captionVersion: 'cap-pgs',
+      subtitleAbort: new AbortController(),
+      tracks: { audio: [], subtitles: [{ id: '2', index: 2, delivery: 'pgs', available: true }] },
+      selection: { subtitle: { id: '2', index: 2, delivery: 'pgs', available: true } },
+    };
+    global.fetch = async url => {
+      const u = new URL(url, 'http://fixture');
+      const win = await pipeline.subtitleResources.window(pipeline.av1, pgsViewer, {
+        atMs: Number(u.searchParams.get('atMs')),
+        beforeMs: Number(u.searchParams.get('beforeMs')),
+        afterMs: Number(u.searchParams.get('afterMs')),
+      });
+      return new Response(win.data, {
+        status: 200,
+        headers: {
+          'X-Subtitle-Start-Ms': String(win.startMs),
+          'X-Subtitle-End-Ms': String(win.endMs),
+          'X-Subtitle-Cues': String(win.cues),
+        },
+      });
+    };
+    let synced = 0;
+    const pgsAppends = [];
+    const subWin = new uburoomSubtitleWindows(
+      { reset: async () => {}, append: async bytes => pgsAppends.push(bytes), flush: async () => {} },
+      'http://fixture/pgs',
+      () => synced++,
+    );
+    subWin.fetch(10120, false);
+    await subWin.fetching.promise;
+    assert.equal(synced, 1);
+    assert.deepEqual(subWin.intervals, [{ startMs: 0, endMs: 75000, cues: 2 }]);
+    assert.ok(pgsAppends.length > 0);
+    subWin.destroy();
+  } finally {
+    global.fetch = originalFetch;
+    global.VTTCue = originalVttCue;
+    await pipeline.close();
+  }
+});
+
+test('SubtitleResourceManager rotates upstream av1.input source on subscriber disconnect and cleans up temp font dirs on close', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { MediaPipeline } = require('../server/media-pipeline');
+
+  const pipeline = new MediaPipeline({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' });
+  pipeline.subtitleResources.idleMs = 60;
+  const started = Promise.withResolvers();
+  let releaseWin;
+
+  pipeline.av1.run = async (binary, args, signal, _t, _l, _d, options) => {
+    if (binary === 'ffprobe') {
+      if (args.some(a => String(a).includes('stream_tags='))) {
+        return Buffer.from(
+          JSON.stringify({
+            format: { start_time: '0', duration: '60' },
+            streams: [
+              { index: 0, codec_type: 'video', codec_name: 'h264' },
+              { index: 1, codec_type: 'subtitle', codec_name: 'subrip' },
+            ],
+            packets: [],
+          }),
+        );
+      }
+      started.resolve();
+      await new Promise((resolve, reject) => {
+        releaseWin = resolve;
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+      return Buffer.from(
+        JSON.stringify({
+          streams: [{ index: 1, codec_name: 'subrip' }],
+          packets: [{ stream_index: 0, pts_time: '1', size: '100' }],
+        }),
+      );
+    }
+    const buf = Buffer.from('WEBVTT\n\n');
+    options?.outputComplete?.(buf);
+    return buf;
+  };
+
+  try {
+    const mediaA = {
+      sourceKey: 'sub-rotate-key',
+      shareKey: ['room-sr', 'v1'],
+      principal: 'alice',
+      sourceStart: 'http://upstream.invalid/sub-a',
+      captionVersion: 'cap-sr',
+      lifecycleAbort: new AbortController(),
+      subtitleAbort: new AbortController(),
+      tracks: { audio: [], subtitles: [{ id: '1', index: 1, delivery: 'cues', available: true }] },
+      selection: { subtitle: { id: '1', index: 1, delivery: 'cues', available: true } },
+    };
+    const mediaB = {
+      ...mediaA,
+      principal: 'bob',
+      sourceStart: 'http://upstream.invalid/sub-b',
+      lifecycleAbort: new AbortController(),
+      subtitleAbort: new AbortController(),
+    };
+
+    const ctrlA = new AbortController();
+    const pA = pipeline.subtitleResources.window(pipeline.av1, mediaA, {
+      atMs: 10120,
+      beforeMs: 5000,
+      afterMs: 15000,
+      signal: ctrlA.signal,
+    });
+    await started.promise;
+    const pB = pipeline.subtitleResources.window(pipeline.av1, mediaB, {
+      atMs: 12890,
+      beforeMs: 5000,
+      afterMs: 15000,
+    });
+    await new Promise(resolve => setImmediate(resolve));
+
+    const bridgeEntry = [...pipeline.av1.inputs.values()].at(-1);
+    assert.equal(bridgeEntry.source().sourceStart, 'http://upstream.invalid/sub-a');
+
+    ctrlA.abort();
+    mediaA.lifecycleAbort.abort();
+    await assert.rejects(pA);
+    assert.equal(bridgeEntry.source().sourceStart, 'http://upstream.invalid/sub-b', 'rotates to Viewer B');
+
+    releaseWin();
+    const resB = await pB;
+    assert.equal(resB.cues, 0);
+
+    // Temp font directory cleanup on close
+    const leakedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-subtitles-'));
+    pipeline.subtitleResources.tempDirs.add(leakedDir);
+    await pipeline.close();
+    assert.equal(fs.existsSync(leakedDir), false, 'pipeline.close removes lingering subtitle font temp dirs');
+  } finally {
+    await pipeline.close();
   }
 });
