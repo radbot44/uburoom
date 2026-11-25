@@ -369,18 +369,19 @@ export class UbuPlayerAudioCore {
   }
 
   evaluateTruePeakAtWriteOffset(cap) {
-    const m1 = (this.limiterWriteIdx - 3 + cap) % cap;
-    const m0 = (m1 - 1 + cap) % cap;
-    const m2 = (m1 + 1) % cap;
-    const m3 = (m1 + 2) % cap;
+    const d = this.limiterDelayFrames;
+    const m3 = (this.limiterWriteIdx - 1 + cap) % cap;
+    const m2 = d >= 2 ? (m3 - 1 + cap) % cap : m3;
+    const m1 = d >= 3 ? (m2 - 1 + cap) % cap : m2;
+    const m0 = d >= 4 ? (m1 - 1 + cap) % cap : m1;
 
-    const l0 = this.limiterBufL[m0],
-      l1 = this.limiterBufL[m1],
-      l2 = this.limiterBufL[m2],
+    const l0 = d >= 4 ? this.limiterBufL[m0] : 0,
+      l1 = d >= 3 ? this.limiterBufL[m1] : 0,
+      l2 = d >= 2 ? this.limiterBufL[m2] : 0,
       l3 = this.limiterBufL[m3];
-    const r0 = this.limiterBufR[m0],
-      r1 = this.limiterBufR[m1],
-      r2 = this.limiterBufR[m2],
+    const r0 = d >= 4 ? this.limiterBufR[m0] : 0,
+      r1 = d >= 3 ? this.limiterBufR[m1] : 0,
+      r2 = d >= 2 ? this.limiterBufR[m2] : 0,
       r3 = this.limiterBufR[m3];
 
     const maxAbs = Math.max(
@@ -395,32 +396,35 @@ export class UbuPlayerAudioCore {
     );
     if (maxAbs <= 0.75) return;
 
-    let tp = Math.max(Math.abs(l1), Math.abs(r1));
-    // 4x Catmull-Rom inter-sample true peak across [0.25, 0.50, 0.75]
-    const la0 = -0.5 * l0 + 1.5 * l1 - 1.5 * l2 + 0.5 * l3;
-    const la1 = l0 - 2.5 * l1 + 2.0 * l2 - 0.5 * l3;
-    const la2 = -0.5 * l0 + 0.5 * l2;
-    const ra0 = -0.5 * r0 + 1.5 * r1 - 1.5 * r2 + 0.5 * r3;
-    const ra1 = r0 - 2.5 * r1 + 2.0 * r2 - 0.5 * r3;
-    const ra2 = -0.5 * r0 + 0.5 * r2;
+    let tp = maxAbs;
+    if (d >= 4) {
+      // 4x Catmull-Rom inter-sample true peak across [0.25, 0.50, 0.75]
+      const la0 = -0.5 * l0 + 1.5 * l1 - 1.5 * l2 + 0.5 * l3;
+      const la1 = l0 - 2.5 * l1 + 2.0 * l2 - 0.5 * l3;
+      const la2 = -0.5 * l0 + 0.5 * l2;
+      const ra0 = -0.5 * r0 + 1.5 * r1 - 1.5 * r2 + 0.5 * r3;
+      const ra1 = r0 - 2.5 * r1 + 2.0 * r2 - 0.5 * r3;
+      const ra2 = -0.5 * r0 + 0.5 * r2;
 
-    for (let phase = 1; phase <= 3; phase++) {
-      const t = phase * 0.25;
-      const lt = Math.abs(((la0 * t + la1) * t + la2) * t + l1);
-      const rt = Math.abs(((ra0 * t + ra1) * t + ra2) * t + r1);
-      if (lt > tp) tp = lt;
-      if (rt > tp) tp = rt;
+      for (let phase = 1; phase <= 3; phase++) {
+        const t = phase * 0.25;
+        const lt = Math.abs(((la0 * t + la1) * t + la2) * t + l1);
+        const rt = Math.abs(((ra0 * t + ra1) * t + ra2) * t + r1);
+        if (lt > tp) tp = lt;
+        if (rt > tp) tp = rt;
+      }
     }
 
     if (tp > this.limiterCeiling) {
       const gReq = this.limiterCeiling / tp;
-      if (gReq < this.limiterReqGain[m0]) this.limiterReqGain[m0] = gReq;
-      if (gReq < this.limiterReqGain[m1]) this.limiterReqGain[m1] = gReq;
-      if (gReq < this.limiterReqGain[m2]) this.limiterReqGain[m2] = gReq;
       if (gReq < this.limiterReqGain[m3]) this.limiterReqGain[m3] = gReq;
-      const rampMax = Math.min(this.limiterRampLen, Math.max(0, this.limiterDelayFrames - 3));
+      if (d >= 2 && gReq < this.limiterReqGain[m2]) this.limiterReqGain[m2] = gReq;
+      if (d >= 3 && gReq < this.limiterReqGain[m1]) this.limiterReqGain[m1] = gReq;
+      if (d >= 4 && gReq < this.limiterReqGain[m0]) this.limiterReqGain[m0] = gReq;
+      const rampBase = d >= 4 ? m0 : m1;
+      const rampMax = Math.min(this.limiterRampLen, Math.max(0, d - 4));
       for (let j = 1; j <= rampMax; j++) {
-        const idx = (m0 - j + cap) % cap;
+        const idx = (rampBase - j + cap) % cap;
         const w = this.limiterRamp[j - 1];
         const r = gReq + (1.0 - gReq) * w;
         if (r < this.limiterReqGain[idx]) this.limiterReqGain[idx] = r;
@@ -451,9 +455,7 @@ export class UbuPlayerAudioCore {
     this.limiterReqGain[this.limiterWriteIdx] = 1.0;
     this.limiterWriteIdx = (this.limiterWriteIdx + 1) % cap;
     this.limiterDelayFrames++;
-    if (this.limiterDelayFrames >= 4) {
-      this.evaluateTruePeakAtWriteOffset(cap);
-    }
+    this.evaluateTruePeakAtWriteOffset(cap);
     if (this.limiterDelayFrames <= this.limiterLookahead) {
       return [0, 0];
     }
@@ -467,9 +469,7 @@ export class UbuPlayerAudioCore {
     this.limiterReqGain[this.limiterWriteIdx] = 1.0;
     this.limiterWriteIdx = (this.limiterWriteIdx + 1) % cap;
     this.limiterDelayFrames++;
-    if (this.limiterDelayFrames >= 4) {
-      this.evaluateTruePeakAtWriteOffset(cap);
-    }
+    this.evaluateTruePeakAtWriteOffset(cap);
     const out = this.popLimiterFrame(cap);
     this.limiterDelayFrames--;
     return out;

@@ -125,7 +125,7 @@ test('Track 1 Regression Suite', async t => {
 
   await t.test(
     '1A (D4): Master clock eliminates 50ms clamp bias, staircases, cold-start backward snaps, and accounts for downstream latency',
-    () => {
+    async () => {
       for (const outputLatencySec of [0.02, 0.1, 0.16, 0.22]) {
         const p = Object.create(ubuMod.UbuPlayer.prototype);
         Object.assign(p, {
@@ -226,7 +226,9 @@ test('Track 1 Regression Suite', async t => {
         underrunWaiting: false,
         seekGen: 0,
         destroyed: false,
+        abort: new AbortController(),
         listeners: new Map(),
+        frameCallbacks: new Map(),
         options: {},
       });
       let wall = 1000;
@@ -268,6 +270,46 @@ test('Track 1 Regression Suite', async t => {
         }
         prevZero = cur;
       }
+
+      // Pause -> play() and finishSeekIfReady() reset workletClockValid/anchorContextTime so speaker/write heads never mismatch
+      const pResume = Object.create(ubuMod.UbuPlayer.prototype);
+      Object.assign(pResume, {
+        _paused: true,
+        _seeking: false,
+        _duration: 600,
+        _playbackRate: 1.0,
+        hasAudioTrack: true,
+        audioSwitchGen: 0,
+        workletClockValid: true,
+        anchorMediaTime: 30.0,
+        anchorContextTime: 100.0,
+        anchorPerfMs: performance.now(),
+        downstreamAudioLatencySec: 0.006,
+        _lastMonotonicMediaTime: 30.0,
+        lastUnderruns: 0,
+        underrunWaiting: false,
+        seekGen: 0,
+        destroyed: false,
+        abort: new AbortController(),
+        listeners: new Map(),
+        frameCallbacks: new Map(),
+        options: {},
+        audioContext: {
+          state: 'running',
+          sampleRate: 48000,
+          baseLatency: 0.01,
+          outputLatency: 0.15,
+          currentTime: 120.0,
+          getOutputTimestamp: () => ({ contextTime: 119.84, performanceTime: performance.now() }),
+        },
+        workletNode: { port: { postMessage() {} } },
+        worker: { postMessage() {}, terminate() {} },
+      });
+      await pResume.play();
+      assert.equal(pResume.workletClockValid, false);
+      assert.equal(pResume.anchorContextTime, null);
+      pResume.destroy();
+      await new Promise(r => setTimeout(r, 60));
     },
   );
 
@@ -460,6 +502,19 @@ test('Track 1 Regression Suite', async t => {
       }
       const thdNDb = 10 * Math.log10(Math.max(1e-16, errEnergy / sigEnergy));
       assert.ok(thdNDb < -110, `Expected THD+N < -110 dB below ceiling, got ${thdNDb.toFixed(1)} dB`);
+
+      // Verify sample-0 full-scale spike (including < 4 frame input) is clamped below limiter ceiling
+      const coreSpike = new UbuPlayerAudioCore({ sampleRate: sr });
+      coreSpike.reset(0, { seekGen: 1, audioGen: 1 });
+      coreSpike.push(new Float32Array([2.5, -2.5]), new Float32Array([2.5, -2.5]), 0);
+      coreSpike.eof = true;
+      coreSpike.playing = true;
+      const spikeOutL = new Float32Array(128);
+      const spikeOutR = new Float32Array(128);
+      coreSpike.render(spikeOutL, spikeOutR);
+      let spikeMax = 0;
+      for (let i = 0; i < 128; i++) spikeMax = Math.max(spikeMax, Math.abs(spikeOutL[i]), Math.abs(spikeOutR[i]));
+      assert.ok(spikeMax > 0.5 && spikeMax <= 0.9772, `Sample-0 spike output peak ${spikeMax} exceeded ceiling`);
     },
   );
 
@@ -648,7 +703,9 @@ test('Track 1 Regression Suite', async t => {
         underrunWaiting: false,
         seekGen: 0,
         destroyed: false,
+        abort: new AbortController(),
         listeners: new Map(),
+        frameCallbacks: new Map(),
         options: {},
         workletNode: { port: { postMessage: m => postedWorklet.push(m) } },
         worker: { postMessage: m => postedWorker.push(m) },
@@ -856,6 +913,39 @@ test('Track 1 Regression Suite', async t => {
       pHold.hold(false);
       assert.equal(pHold.held, false);
       assert.deepEqual(holdWorkerMsgs.at(-1), { type: 'hold', held: false });
+
+      // Speculative chunk promoted to demand read must not be aborted by hold(true)
+      let resolveFetch;
+      let fetchAborted = false;
+      const prevFetch = globalThis.fetch;
+      globalThis.fetch = (_url, init) =>
+        new Promise((resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            fetchAborted = true;
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          });
+          resolveFetch = () =>
+            resolve(
+              new Response(new Uint8Array([9, 8, 7, 6]), {
+                status: 206,
+                headers: { 'content-range': 'bytes 4194304-4194307/8388608' },
+              }),
+            );
+        });
+      try {
+        const promoReader = new ubuMod.HttpRangeReader('https://example.test/promo.mkv', { fileSize: 8 * 1024 * 1024 });
+        const specPromise = promoReader.getChunk(1, { speculative: true });
+        const demandPromise = promoReader.getChunk(1);
+        assert.equal(promoReader.inflightControllers.size, 0, 'Promoting speculative fetch removes abort controller');
+        promoReader.abortSpeculative();
+        assert.equal(fetchAborted, false, 'hold(true) abortSpeculative must not abort promoted demand fetch');
+        resolveFetch();
+        const [a, b] = await Promise.all([specPromise, demandPromise]);
+        assert.equal(a.byteLength, 4);
+        assert.equal(b.byteLength, 4);
+      } finally {
+        globalThis.fetch = prevFetch;
+      }
 
       // 6. D5 iPhone vs iPad policy check + dynamic layout.js PiP visibility
       assert.equal(

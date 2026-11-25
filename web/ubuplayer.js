@@ -162,14 +162,22 @@ export class HttpRangeReader {
       this.chunks.set(chunkIdx, hit);
       return hit;
     }
-    if (this.inflight.has(chunkIdx)) return this.inflight.get(chunkIdx);
+    const existing = this.inflight.get(chunkIdx);
+    if (existing) {
+      if (!speculative && existing.speculative) {
+        existing.speculative = false;
+        if (existing.controller) this.inflightControllers.delete(existing.controller);
+      }
+      return existing.promise;
+    }
     const start = chunkIdx * HTTP_CHUNK_BYTES;
     if (this.size && start >= this.size) return new Uint8Array(0);
     const endInclusive = this.size
       ? Math.min(this.size - 1, start + HTTP_CHUNK_BYTES - 1)
       : start + HTTP_CHUNK_BYTES - 1;
     const controller = speculative && typeof AbortController === 'function' ? new AbortController() : null;
-    if (controller) this.inflightControllers.add(controller);
+    const entry = { promise: null, controller, speculative: Boolean(speculative) };
+    if (controller && entry.speculative) this.inflightControllers.add(controller);
     const req = this.fetchSpan(start, endInclusive, controller?.signal)
       .then(bytes => {
         this.storeChunk(chunkIdx, bytes);
@@ -177,9 +185,10 @@ export class HttpRangeReader {
       })
       .finally(() => {
         if (controller) this.inflightControllers.delete(controller);
-        this.inflight.delete(chunkIdx);
+        if (this.inflight.get(chunkIdx) === entry) this.inflight.delete(chunkIdx);
       });
-    this.inflight.set(chunkIdx, req);
+    entry.promise = req;
+    this.inflight.set(chunkIdx, entry);
     return req;
   }
   async read(start, end) {
@@ -674,7 +683,8 @@ export class UbuPlayer {
     this.seekFrameReady = false;
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     this.anchorPerfMs = now;
-    if (this.audioContext) this.anchorContextTime = this.hardwareOutputContextTime();
+    this.anchorContextTime = null;
+    this.workletClockValid = false;
     if (!this._paused) {
       this.workletNode?.port.postMessage({ type: 'play' });
     }
@@ -1043,9 +1053,8 @@ export class UbuPlayer {
     }
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     this.anchorPerfMs = now;
-    if (this.audioContext) {
-      this.anchorContextTime = this.hardwareOutputContextTime();
-    }
+    this.anchorContextTime = null;
+    this.workletClockValid = false;
     this._paused = false;
     if (!this._seeking) {
       this.workletNode?.port.postMessage({ type: 'play' });
@@ -1120,7 +1129,8 @@ export class UbuPlayer {
     const pos = this.currentTime;
     this.anchorMediaTime = pos;
     this.anchorPerfMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    if (this.audioContext) this.anchorContextTime = this.hardwareOutputContextTime();
+    this.anchorContextTime = null;
+    this.workletClockValid = false;
     this._playbackRate = clamped;
     this.workletNode?.port.postMessage({ type: 'rate', rate: clamped });
     this.sendClockSync();
