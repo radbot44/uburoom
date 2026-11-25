@@ -6,11 +6,50 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { createApp } = require('./app');
 const { startBot } = require('./discord');
 const { Logger } = require('./logger');
 const { configPath, loadConfig } = require('./config');
 const { startSetup, setupOptions, needsSetup } = require('./setup');
+
+function buildIdentity() {
+  const pkgVersion = require('../package.json').version;
+  for (const file of [
+    path.resolve(__dirname, '../../BUILD_INFO.json'),
+    path.resolve(__dirname, '../BUILD_INFO.json'),
+  ]) {
+    try {
+      const info = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const shortCommit = info?.uburoom?.shortCommit;
+      if (shortCommit) {
+        return `v${pkgVersion} (g${shortCommit}${info.uburoom.dirty ? '-dirty' : ''})`;
+      }
+    } catch {}
+  }
+  const repoRoot = path.resolve(__dirname, '..');
+  if (fs.existsSync(path.join(repoRoot, '.git'))) {
+    try {
+      const shortCommit = execFileSync('git', ['-C', repoRoot, 'rev-parse', '--short=7', 'HEAD'], {
+        timeout: 1500,
+        encoding: 'utf8',
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+      if (shortCommit) {
+        const dirty =
+          execFileSync('git', ['-C', repoRoot, 'status', '--porcelain'], {
+            timeout: 1500,
+            encoding: 'utf8',
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'ignore'],
+          }).trim().length > 0;
+        return `v${pkgVersion} (g${shortCommit}${dirty ? '-dirty' : ''})`;
+      }
+    } catch {}
+  }
+  return `v${pkgVersion}`;
+}
 
 /** Listens, retrying briefly while the port is still being released (setup's listener just closed). */
 async function listen(server, port, host, retries) {
@@ -61,7 +100,14 @@ async function startServer(config, { logger, setupHandoff, botStarter = startBot
     config.listen === 'http-proxy'
       ? undefined
       : { cert: readTls(config.tlsCert, 'certificate'), key: readTls(config.tlsKey, 'private key') };
-  const app = createApp(config, { ...appOptions, logger, tls, setupHandoff });
+  let requestRestart;
+  const app = createApp(config, {
+    ...appOptions,
+    logger,
+    tls,
+    setupHandoff,
+    onRestart: appOptions.onRestart || (() => requestRestart?.()),
+  });
   try {
     await app.completeSetup();
     await listen(app.server, config.port, config.host, setupHandoff ? 30 : 0);
@@ -73,6 +119,7 @@ async function startServer(config, { logger, setupHandoff, botStarter = startBot
     }
     throw error;
   }
+  logger.info('Server', `uburoom ${buildIdentity()} listening`);
   logger.info('Server', `Server address: ${config.publicUrl}`);
   if (config.lanUrl === 'auto') {
     const { detectLanOrigins } = require('./origins');
@@ -93,7 +140,7 @@ async function startServer(config, { logger, setupHandoff, botStarter = startBot
   let bot,
     retry,
     stopped = false;
-  async function stop() {
+  async function stop({ exitCode: requestedExitCode = 0 } = {}) {
     if (stopped) return;
     stopped = true;
     clearTimeout(retry);
@@ -102,7 +149,7 @@ async function startServer(config, { logger, setupHandoff, botStarter = startBot
       process.exit(1);
     }, 40000);
     forceExit.unref();
-    let exitCode = 0;
+    let exitCode = Number.isInteger(requestedExitCode) ? requestedExitCode : 0;
     try {
       try {
         await bot?.destroy();
@@ -126,9 +173,13 @@ async function startServer(config, { logger, setupHandoff, botStarter = startBot
       }
     }
   }
+  requestRestart = () => {
+    logger.info('Server', 'Restart requested by server operator.');
+    void stop({ exitCode: 75 });
+  };
   if (signals) {
-    process.once('SIGINT', stop);
-    process.once('SIGTERM', stop);
+    process.once('SIGINT', () => void stop());
+    process.once('SIGTERM', () => void stop());
   }
   async function connect() {
     try {

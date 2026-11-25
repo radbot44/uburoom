@@ -54,6 +54,10 @@ function mount({ request, trigger }) {
   resolutions.id = 'server-settings-conflicts';
   resolutions.classList.add('server-settings-conflicts');
   const footer = node('footer', dialog, null, 'dialog-footer with-divider');
+  const restartButton = node('button', footer, 'Restart now', 'quiet');
+  restartButton.type = 'button';
+  restartButton.id = 'server-settings-restart';
+  restartButton.hidden = true;
   const cancel = node('button', footer, 'Cancel', 'quiet');
   cancel.type = 'button';
   cancel.id = 'server-settings-cancel';
@@ -72,6 +76,8 @@ function mount({ request, trigger }) {
     accessMeta,
     serverPasswordDraft = '',
     sourcesDirty = false,
+    canRestart = false,
+    restarting = false,
     generation = 0,
     busy = false,
     saving = false,
@@ -105,7 +111,7 @@ function mount({ request, trigger }) {
   };
   const dirty = () => !!base && Object.keys(changes()).length > 0;
   const savedControl = control => !panels.accounts.contains(control) && !panels.sources.contains(control);
-  popups.register(dialog, { dirty, busy: () => saving || sourcesWriting });
+  popups.register(dialog, { dirty, busy: () => saving || sourcesWriting || restarting });
   dialog.addEventListener('close', () => {
     if (dialog.open) return;
     generation++;
@@ -114,6 +120,8 @@ function mount({ request, trigger }) {
     accessMeta = undefined;
     serverPasswordDraft = '';
     sourcesDirty = false;
+    canRestart = false;
+    restarting = false;
     conflicts.clear();
     busy = saving = false;
     accountsPanel.reset();
@@ -121,8 +129,11 @@ function mount({ request, trigger }) {
   });
   function state() {
     updateAccessUi();
-    save.disabled = busy || sourcesWriting || sourcesDirty || !revision || !dirty() || conflicts.size > 0;
-    cancel.disabled = close.disabled = saving || sourcesWriting;
+    restartButton.hidden = !canRestart;
+    restartButton.disabled = busy || saving || sourcesWriting || restarting;
+    save.disabled = busy || sourcesWriting || sourcesDirty || !revision || !dirty() || conflicts.size > 0 || restarting;
+    cancel.disabled = close.disabled = saving || sourcesWriting || restarting;
+    footer.hidden = section === 'sources' && !canRestart;
     save.setAttribute('aria-busy', String(saving));
     // Accounts and Sources act at once and keep their own busy state; only the saved-settings fields wait for a draft.
     for (const control of content.querySelectorAll('input,select,button'))
@@ -155,7 +166,8 @@ function mount({ request, trigger }) {
     if (key === 'accounts' && section !== key && dialog.open) void accountsPanel.load();
     if (key === 'sources' && section !== key && dialog.open) void sourcesPanel.load();
     section = key;
-    footer.hidden = key === 'sources';
+    cancel.hidden = save.hidden = key === 'sources';
+    footer.hidden = key === 'sources' && !canRestart;
     // Accounts and Sources do not depend on the saved settings, so they show even before (or without) them.
     if (key === 'accounts' || key === 'sources') content.hidden = false;
     else if (!draft) content.hidden = true;
@@ -654,11 +666,13 @@ function mount({ request, trigger }) {
     message.textContent = 'Loading saved settings…';
     error.textContent = '';
     try {
-      const [value, guilds] = await Promise.all([
+      const [value, guilds, running] = await Promise.all([
         request('/api/operator/settings/saved'),
         request('/api/operator/discord/servers').catch(() => null),
+        request('/api/operator/settings').catch(() => null),
       ]);
       if (id !== generation || !dialog.open) return;
+      canRestart = !!running?.canRestart;
       joinedGuilds = guilds?.servers;
       accessMeta = value.access;
       sourcesDirty = false;
@@ -702,6 +716,71 @@ function mount({ request, trigger }) {
     }
   }
   review.addEventListener('click', () => void load(!!base));
+  async function waitForRestart(id) {
+    const deadline = Date.now() + 20000;
+    await new Promise(resolve => setTimeout(resolve, 400));
+    while (id === generation && dialog.open && Date.now() < deadline) {
+      try {
+        const res = await fetch('/health', { cache: 'no-store', signal: AbortSignal.timeout(2000) });
+        if (res.ok) {
+          location.reload();
+          return;
+        }
+      } catch {}
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
+    if (id === generation && dialog.open) {
+      restarting = false;
+      state();
+      message.textContent = 'uburoom is still restarting. Refresh the page shortly.';
+    }
+  }
+  async function triggerRestart(confirmActive) {
+    if (restarting || busy || saving || sourcesWriting) return;
+    if (dirty()) {
+      error.textContent = 'Save or discard your draft changes before restarting.';
+      return;
+    }
+    const id = generation;
+    restarting = true;
+    state();
+    error.textContent = '';
+    resolutions.replaceChildren();
+    message.textContent = 'Restarting uburoom…';
+    try {
+      await request('/api/operator/restart', { confirmActive });
+      if (id !== generation || !dialog.open) return;
+      message.textContent = 'Restarting uburoom… Waiting for the server to reconnect.';
+      void waitForRestart(id);
+    } catch (failure) {
+      if (id !== generation || !dialog.open) return;
+      restarting = false;
+      state();
+      message.textContent = '';
+      if (failure.status === 409 && failure.response?.code === 'ACTIVE_ROOMS') {
+        const box = node('div', resolutions, null, 'server-conflict');
+        node('strong', box, 'Active watch rooms');
+        const viewers = failure.response.activeViewers || 0;
+        const rooms = failure.response.openRooms || 0;
+        node(
+          'p',
+          box,
+          `${viewers} active ${viewers === 1 ? 'viewer' : 'viewers'} across ${rooms} open ${rooms === 1 ? 'room' : 'rooms'}. Restarting now will interrupt playback.`,
+          'hint',
+        );
+        const proceed = node('button', box, 'Restart anyway', 'primary');
+        proceed.type = 'button';
+        proceed.addEventListener('click', () => void triggerRestart(true));
+        const keep = node('button', box, 'Keep running', 'quiet');
+        keep.type = 'button';
+        keep.addEventListener('click', () => resolutions.replaceChildren());
+        proceed.focus();
+      } else {
+        error.textContent = failure.message;
+      }
+    }
+  }
+  restartButton.addEventListener('click', () => void triggerRestart(false));
   save.addEventListener('click', async () => {
     if (save.disabled || busy) return;
     for (const input of content.querySelectorAll('input,select'))
@@ -812,6 +891,8 @@ function mount({ request, trigger }) {
       serverPasswordInput.value = '';
       sourcesDirty = false;
       conflicts.clear();
+      canRestart = false;
+      restarting = false;
       busy = saving = false;
       resolutions.replaceChildren();
       content.hidden = true;
