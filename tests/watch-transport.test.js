@@ -42,6 +42,104 @@ class MockSocket {
 
 MockSocket.nextId = 0;
 
+test('a fresh socket rejoin takes the new video and its private stream immediately', { timeout: 3000 }, async t => {
+  const { mountModule } = require('./helpers/watch-module');
+  const connection = require('../web/watch/connection.js');
+  const resync = require('../web/watch/room-resync.js');
+  const session = require('../web/watch/session.js');
+  const { splitView } = require('../shared/wire-protocol.mjs');
+  const roomId = 'room',
+    viewerId = 'tab';
+  const item = (mediaId, volume) =>
+    splitView({ id: roomId, mediaId, mediaVersion: mediaId, mediaUrl: '/' + mediaId, state: { volume } });
+  let roomVersion = 10;
+  let lanes = item('first', 70);
+  class RoomSocket extends MockSocket {
+    viewerVersion = 0;
+    send(data) {
+      super.send(data);
+      const { type, id } = this.sent.at(-1);
+      if (type === 'join') {
+        const value = {
+          roomId,
+          viewerId,
+          room: { version: roomVersion, state: lanes.room },
+          viewer: { version: ++this.viewerVersion, state: lanes.viewer },
+        };
+        queueMicrotask(() => this.receive({ type: 'ack', id, value }));
+      }
+    }
+    pushViewer(version, state) {
+      this.viewerVersion = version;
+      this.receive({ type: 'viewer', roomId, viewerId, version, state });
+    }
+  }
+  const originalWebSocket = globalThis.WebSocket;
+  globalThis.WebSocket = RoomSocket;
+  t.after(() => {
+    globalThis.WebSocket = originalWebSocket;
+  });
+  let applied = Promise.withResolvers();
+  const mounted = mountModule(
+    {
+      mount(host, deps) {
+        Object.assign(deps, connection.mount(host, deps), resync.mount(host, deps));
+        return session.mount(host, deps);
+      },
+    },
+    {
+      viewerId,
+      selected: roomId,
+      activity: false,
+      controlProbe: null,
+      pageBootstrap: { config: { watchVersion: 19 }, me: { status: 200, value: { name: 'Guest' } } },
+      location: new URL('https://example.test/'),
+      params: new URLSearchParams(),
+      Hls: {},
+      diagnostics: { record() {} },
+      roomUI: { render() {} },
+      library: { refreshShelves() {}, refreshAdmin() {} },
+      time: { clock: { begin: () => ({ sent: 0 }), add() {}, read: () => ({}) }, observation: { update: () => 1 } },
+      applyState: next => applied.resolve(next),
+    },
+  );
+  t.after(() => {
+    mounted.view.transport?.close();
+    mounted.restore();
+  });
+  await mounted.api.start();
+  const transport = mounted.view.transport;
+  assert.equal((await applied.promise).mediaUrl, '/first');
+  transport.socket.pushViewer(8, lanes.viewer);
+  assert.equal(mounted.view.roomLanes.viewer.version, 8);
+  transport.socket.close(1006);
+  roomVersion++;
+  lanes = item('second', 30);
+  applied = Promise.withResolvers();
+  await transport.connect();
+  const next = await applied.promise;
+  assert.deepEqual(
+    [next.mediaId, next.mediaVersion, next.mediaUrl, next.state.volume],
+    ['second', 'second', '/second', 30],
+    'the fresh join must use both lanes of the new socket',
+  );
+  applied = Promise.withResolvers();
+  lanes.viewer.volume = 45;
+  transport.socket.pushViewer(2, lanes.viewer);
+  assert.equal((await applied.promise).state.volume, 45, 'the next private update applies immediately');
+
+  // A seek published while a join's projection is in flight still wins on the same socket.
+  const renewing = mounted.deps.roomLink.join(roomId);
+  transport.socket.receive({
+    type: 'room',
+    roomId,
+    viewerId,
+    version: ++roomVersion,
+    state: { ...lanes.room, state: { ...lanes.room.state, position: 125 } },
+  });
+  assert.equal((await renewing).state.position, 125);
+});
+
 test('socket diagnostics distinguish an abnormal loss from an intentional reconnect', async () => {
   const closes = [];
   const transport = new WatchTransport({

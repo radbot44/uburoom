@@ -116,6 +116,8 @@ function fixturePlex(directory, manifest, control = {}) {
     )
       throw new Error('Unexpected fixture upstream');
     if (control.down) return new Response(null, { status: 503 });
+    if (url.pathname === '/') return json({ machineIdentifier: 'synthetic-playback-server' });
+    if (url.pathname === '/transcode/sessions') return json({ TranscodeSession: [] });
     if (url.pathname === '/library/sections') return json({ Directory: [] });
     const select = /^\/library\/parts\/(\d+)$/.exec(url.pathname);
     if (select && options.method === 'PUT') {

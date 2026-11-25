@@ -13,8 +13,11 @@ async function main() {
   const args = process.argv.slice(2),
     option = (name, fallback) =>
       args.find(arg => arg.startsWith('--' + name + '='))?.slice(name.length + 3) || fallback;
-  if (args.some(arg => !/^--(media|out|browser|soak)=.+/.test(arg)))
-    throw new Error('Use --media=corpus --out=new-directory [--browser=firefox|chrome|edge --soak=5..180]');
+  const disconnectCase = args.includes('--case=viewer-disconnect');
+  if (args.some(arg => arg !== '--case=viewer-disconnect' && !/^--(media|out|browser|soak)=.+/.test(arg)))
+    throw new Error(
+      'Use --media=corpus --out=new-directory [--browser=firefox|chrome|edge --soak=5..180 --case=viewer-disconnect]',
+    );
   const root = path.resolve(__dirname, '..'),
     directory = path.resolve(option('media', path.join(EVIDENCE, 'playback-media-recovery-120')));
   const output = path.resolve(option('out', path.join(EVIDENCE, 'playback-recovery-') + Date.now()));
@@ -33,12 +36,28 @@ async function main() {
     throw new Error('Generate a track corpus at least 35 seconds longer than the soak.');
   fs.mkdirSync(output, { recursive: true });
   const control = { events: [], requests: [], expiredSessions: new Set(), blockedSessions: new Set(), blocked: false };
+  const accounts = disconnectCase ? require('./account-fixture').accountFixture() : undefined;
+  const { qualityDefinition } = require('../shared/room-protocol.mjs');
   const config = {
     cert: fs.readFileSync(path.join(root, 'certs/server-cert.pem')),
     key: fs.readFileSync(path.join(root, 'certs/server-key.pem')),
     publicUrl: 'https://localhost',
     demo: true,
-    ownerId: 'demo-host',
+    ownerId: accounts?.subjects.host || 'demo-host',
+    demoSubjects: accounts?.subjects,
+    ...(disconnectCase
+      ? {
+          transcoding: {
+            policy: 'enabled',
+            provider: true,
+            uburoom: false,
+            outputs: ['provider'],
+            formats: [],
+            maxJobs: 4,
+            qualities: ['direct', '360p2', '360p1'].map(qualityDefinition),
+          },
+        }
+      : {}),
     guildId: 'synthetic-guild',
     channels: ['synthetic-commands'],
     sources: validateSources([
@@ -46,6 +65,7 @@ async function main() {
     ]),
   };
   const app = createApp(config, {
+    plexDemo: accounts,
     plexFetch: fixturePlex(directory, manifest, control),
     oauthFetch: async () => {
       throw new Error('Live OAuth disabled.');
@@ -60,6 +80,14 @@ async function main() {
   });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   config.publicUrl = 'https://localhost:' + app.server.address().port;
+  if (disconnectCase) {
+    try {
+      await require('./lib/viewer-disconnect')({ app, url: config.publicUrl, name, output });
+    } finally {
+      await app.close();
+    }
+    return;
+  }
   const report = {
     createdAt: new Date().toISOString(),
     browser: name,
