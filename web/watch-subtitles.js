@@ -506,6 +506,9 @@ function appendCueText(parent, text) {
       );
   }
 }
+function cueDedupKey(cue) {
+  return Math.round(cue.end * 1000) + '|' + cue.text;
+}
 function sameCueList(prev, next) {
   if (prev.length !== next.length) return false;
   for (let i = 0; i < prev.length; i++) {
@@ -550,6 +553,7 @@ class uburoomSubtitles {
     this.status = status;
     this.resolveMediaTime = resolveMediaTime;
     this.cues = [];
+    this.cuesByKey = new Map();
     this.offset = 0;
     this.serverOffset = 0;
     this.generation = 0;
@@ -557,6 +561,8 @@ class uburoomSubtitles {
     this.track = this.video.addTextTrack('subtitles', 'uburoom subtitles');
     this.track.mode = 'disabled';
     this.cueSnapshot = null;
+    this.cueValidFrom = Infinity;
+    this.cueValidUntil = -Infinity;
     this.renderedTopCues = [];
     this.renderedBottomCues = [];
     this.position = 'video';
@@ -616,8 +622,18 @@ class uburoomSubtitles {
     this.streamSynced = synced;
     this.status({ message: synced ? '' : 'Loading subtitles…', error: false, loading: !synced });
   }
+  indexCues() {
+    this.cuesByKey.clear();
+    for (const cue of this.cues) {
+      if (!Number.isFinite(cue.end) || typeof cue.text !== 'string') continue;
+      const key = cueDedupKey(cue);
+      if (!this.cuesByKey.has(key)) this.cuesByKey.set(key, cue);
+    }
+  }
   invalidateCueSnapshot() {
     this.cueSnapshot = null;
+    this.cueValidFrom = Infinity;
+    this.cueValidUntil = -Infinity;
   }
   setTrackMode(mode) {
     if (this.track.mode === mode) return;
@@ -649,6 +665,7 @@ class uburoomSubtitles {
     this.localKey = '';
     this.url = undefined;
     this.cues = [];
+    this.cuesByKey.clear();
     this.attempts = 0;
     this.loading = false;
     this.loaded = false;
@@ -690,6 +707,7 @@ class uburoomSubtitles {
       if (spec.format === 'cues') {
         this.setTrackMode('hidden');
         this.cues = Array.isArray(spec.cues) ? [...spec.cues] : [];
+        this.indexCues();
         this.rebuild();
         this.loaded = true;
         this.status({ message: '', error: false, loading: false });
@@ -729,8 +747,8 @@ class uburoomSubtitles {
     let replaced = false;
     for (const cue of cues) {
       if (!Number.isFinite(cue.start) || !Number.isFinite(cue.end) || typeof cue.text !== 'string') continue;
-      const key = Math.round(cue.end * 1000) + '|' + cue.text;
-      const existing = this.cues.find(c => Math.round(c.end * 1000) + '|' + c.text === key);
+      const key = cueDedupKey(cue);
+      const existing = this.cuesByKey.get(key);
       if (existing) {
         if (cue.start < existing.start - 0.001) {
           existing.start = cue.start;
@@ -738,6 +756,7 @@ class uburoomSubtitles {
         }
       } else {
         this.cues.push(cue);
+        this.cuesByKey.set(key, cue);
         this.addCue(cue);
       }
     }
@@ -802,18 +821,38 @@ class uburoomSubtitles {
     if (!this.layer) return;
     const topList = [];
     const bottomList = [];
-    if (this.track.mode !== 'disabled') {
-      if (this.surface.isUbuPlayer()) {
-        const now = this.mediaTime();
-        const snapshot = this.getCueSnapshot();
-        for (let i = 0; i < snapshot.length; i++) {
-          const cue = snapshot[i];
-          if (now >= cue.startTime && now < cue.endTime) {
-            if (cue.uburoomTop) topList.push(cue);
-            else bottomList.push(cue);
-          }
+    if (this.track.mode !== 'disabled' && this.surface.isUbuPlayer()) {
+      const now = this.mediaTime();
+      if (this.cueSnapshot !== null && now >= this.cueValidFrom && now < this.cueValidUntil) return;
+      const snapshot = this.getCueSnapshot();
+      let from = -Infinity;
+      let until = Infinity;
+      for (let i = 0; i < snapshot.length; i++) {
+        const cue = snapshot[i];
+        const start = cue.startTime;
+        const end = cue.endTime;
+        if (now >= start && now < end) {
+          if (start > from) from = start;
+          if (end < until) until = end;
+          if (cue.uburoomTop) topList.push(cue);
+          else bottomList.push(cue);
+        } else if (end <= now) {
+          if (end > from) from = end;
+        } else if (start > now) {
+          if (start < until) until = start;
         }
+      }
+      if (Number.isFinite(now)) {
+        this.cueValidFrom = from;
+        this.cueValidUntil = until;
       } else {
+        this.cueValidFrom = Infinity;
+        this.cueValidUntil = -Infinity;
+      }
+    } else {
+      this.cueValidFrom = Infinity;
+      this.cueValidUntil = -Infinity;
+      if (this.track.mode !== 'disabled') {
         const active = this.track.activeCues;
         if (active) {
           for (let i = 0; i < active.length; i++) {
@@ -922,8 +961,8 @@ class uburoomSubtitles {
           cues => {
             let replaced = false;
             for (const cue of cues) {
-              const key = Math.round(cue.end * 1000) + '|' + cue.text;
-              const existing = this.cues.find(c => Math.round(c.end * 1000) + '|' + c.text === key);
+              const key = cueDedupKey(cue);
+              const existing = this.cuesByKey.get(key);
               if (existing) {
                 if (cue.start < existing.start - 0.001) {
                   existing.start = cue.start;
@@ -931,6 +970,7 @@ class uburoomSubtitles {
                 }
               } else {
                 this.cues.push(cue);
+                this.cuesByKey.set(key, cue);
                 this.addCue(cue);
               }
             }
@@ -943,6 +983,7 @@ class uburoomSubtitles {
                 rightCutMs = Infinity;
               const nowMs = Math.round(now * 1000);
               for (const cue of dropped) {
+                this.cuesByKey.delete(cueDedupKey(cue));
                 if (cue.start <= now) leftCutMs = Math.max(leftCutMs, Math.min(nowMs, Math.ceil(cue.end * 1000)));
                 else rightCutMs = Math.min(rightCutMs, Math.max(nowMs, Math.floor(cue.start * 1000)));
               }
@@ -1142,6 +1183,7 @@ class uburoomSubtitles {
         )
           throw new Error('Invalid subtitle response.');
         this.cues = value.cues;
+        this.indexCues();
         this.rebuild();
       }
       this.loaded = true;

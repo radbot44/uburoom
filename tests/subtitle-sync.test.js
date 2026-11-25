@@ -288,6 +288,7 @@ test('uburoomSubtitles refetches pruned text windows and restores dropped cues o
     subs.textWindows.check(2500);
     await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(subs.cues.length, 2000);
+    assert.equal(subs.cuesByKey.size, 2000, 'cuesByKey index drops pruned cues');
     assert.equal(
       subs.cues.some(c => c.text === 'Cue 5'),
       false,
@@ -465,12 +466,40 @@ test('uburoomSubtitles caches UbuPlayer cue snapshot across paints and skips unc
     assert.equal(cuesReads, 1);
     assert.equal(subs.bottomCues.textContent(), 'Appended 1');
 
-    // Offset change rebuilds cues and updates visible captions immediately.
-    subs.setOffset(1);
-    now = 10.5;
+    // Duplicate (end, text) with earlier start merges in place via cuesByKey and rebuilds.
+    subs.appendLocalCues([{ start: 9, end: 12, text: 'Appended 1', settings: '' }]);
+    assert.equal(subs.cues.filter(c => c.text === 'Appended 1').length, 1);
+    now = 9.5;
+    subs.paint();
+    assert.equal(subs.bottomCues.textContent(), 'Appended 1');
+
+    // Boundary cache handles overlapping cues, backward seeks across boundaries, and NaN without poisoning.
+    now = 1.5;
+    subs.paint();
+    assert.equal(subs.cueValidFrom, 1);
+    assert.equal(subs.cueValidUntil, 2);
+    assert.equal(subs.bottomCues.textContent(), 'Shared & long');
+    assert.equal(subs.topCues.textContent(), '');
+    now = NaN;
     subs.paint();
     assert.equal(subs.bottomCues.textContent(), '');
-    now = 11.5;
+    now = 2.5;
+    subs.paint();
+    assert.equal(subs.cueValidFrom, 2);
+    assert.equal(subs.cueValidUntil, 4);
+    assert.equal(subs.bottomCues.textContent(), 'Shared & long');
+    assert.equal(subs.topCues.textContent(), 'Top A');
+    now = 1.2;
+    subs.paint();
+    assert.equal(subs.bottomCues.textContent(), 'Shared & long');
+    assert.equal(subs.topCues.textContent(), '');
+
+    // Offset change rebuilds cues and updates visible captions immediately.
+    subs.setOffset(1);
+    now = 9.5;
+    subs.paint();
+    assert.equal(subs.bottomCues.textContent(), '');
+    now = 10.5;
     subs.paint();
     assert.equal(subs.bottomCues.textContent(), 'Appended 1');
 
