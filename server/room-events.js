@@ -381,10 +381,10 @@ class RoomEvents {
   // Brings one room's posted events in step with Discord: recovers lost create
   // receipts, finishes cancellations, follows invite rerolls and reads back edits
   // and interested counts. An event canceled or deleted in Discord ends here too.
-  async sync(id, record, guild, { finish = true } = {}) {
+  async sync(id, record, guild, { finish = true, coalesce = false } = {}) {
     const linked = this.forRoom(id).filter(event => event.discord?.guildId === guild.id);
     if (!linked.length) return;
-    const remotes = await this.discord.list(guild),
+    const remotes = await this.discord.list(guild, { coalesce }),
       invite = this.discord.location(record);
     for (const event of linked) {
       if (!event.discord.eventId) {
@@ -484,7 +484,7 @@ class RoomEvents {
               this.lane(id, async () => {
                 const record = this.room(id);
                 if (!record) return;
-                await this.syncPosted(id, record);
+                await this.syncPosted(id, record, { coalesce: true });
                 this.errors.delete(id);
               }).catch(error => this.errors.set(id, this.safeError(error))),
             )

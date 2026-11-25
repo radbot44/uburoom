@@ -2058,3 +2058,316 @@ test('withClosedLock preserves caller error without unhandledRejection and keeps
   assert.equal(next, 'recovered', 'later closed-room operations still run cleanly');
   assert.equal(roomState.closedLocks.has(roomId), false);
 });
+
+test(
+  'background Watch Night reconciliation coalesces in-flight Discord lists per guild without caching or stalling host summaries',
+  tls,
+  async t => {
+    const f = await fixture(t, false, { shareChannelId: '100000000000000050' }),
+      creator = await f.login('host');
+    const events = f.app.watch.events;
+    const creatorId = (await creator.call('/api/watch/me')).body.account.id;
+    const start = new Date(Date.now() + 2 * 86400000).toISOString(),
+      end = new Date(Date.now() + 2 * 86400000 + 7200000).toISOString();
+    const { ChannelType, GuildScheduledEventEntityType } = require('discord.js');
+
+    const makeGuild = id => {
+      const remotes = new Map();
+      const state = { id, remotes, listCalls: 0, activeLists: 0, peakActiveLists: 0, failNext: null, beforeList: null };
+      state.guild = {
+        id,
+        name: 'Guild ' + id,
+        members: {
+          me: { permissions: { has: () => true } },
+          fetchMe: async () => state.guild.members.me,
+        },
+        scheduledEvents: {
+          async fetch(options = {}) {
+            if (options.guildScheduledEvent) {
+              const found = remotes.get(options.guildScheduledEvent);
+              if (!found) throw Object.assign(new Error('Unknown event'), { code: 10070, status: 404 });
+              return found;
+            }
+            assert.equal(options.cache, false);
+            assert.equal(options.withUserCount, true);
+            state.listCalls++;
+            state.activeLists++;
+            state.peakActiveLists = Math.max(state.peakActiveLists, state.activeLists);
+            try {
+              if (state.beforeList) {
+                const custom = await state.beforeList();
+                if (custom) return custom;
+              }
+              await new Promise(resolve => setTimeout(resolve, 15));
+              if (state.failNext) {
+                const err = state.failNext;
+                state.failNext = null;
+                throw err;
+              }
+              return new Map(remotes);
+            } finally {
+              state.activeLists--;
+            }
+          },
+          async edit(eventId, payload) {
+            const existing = remotes.get(eventId);
+            if (!existing) throw Object.assign(new Error('Unknown event'), { code: 10070, status: 404 });
+            if (payload.entityMetadata) existing.entityMetadata = structuredClone(payload.entityMetadata);
+            if (payload.status !== undefined) existing.status = payload.status;
+            return { ...existing };
+          },
+        },
+      };
+      return state;
+    };
+
+    const guildA = makeGuild('guild-a'),
+      guildB = makeGuild('guild-b');
+    const guilds = new Map([
+      [guildA.id, guildA.guild],
+      [guildB.id, guildB.guild],
+    ]);
+    f.app.hub.discord.client = {
+      user: { id: 'fixture-bot' },
+      isReady: () => true,
+      channels: {
+        fetch: async () => ({ id: f.config.shareChannelId, guildId: guildA.id, type: ChannelType.GuildText }),
+      },
+      guilds: {
+        fetch: async id => {
+          const found = guilds.get(id);
+          if (!found) throw new Error('Unexpected guild ' + id);
+          return found;
+        },
+      },
+    };
+
+    const roomsA = [],
+      roomsB = [];
+    const seedRoom = async (guildState, index) => {
+      const roomId = (
+        await creator.call('/api/watch/rooms', { keepEmpty: true, name: `Room ${guildState.id}-${index}` })
+      ).body.id;
+      await f.app.watch.remove(roomId);
+      const record = f.app.watch.roomState.store.get(roomId);
+      const invite = events.discord.location(record);
+      const eventId = `${guildState.id}-ev-${index}`;
+      const title = `Watch night ${guildState.id}-${index}`;
+      const remote = {
+        id: eventId,
+        name: title,
+        description: '',
+        scheduledStartTimestamp: Date.parse(start),
+        scheduledEndTimestamp: Date.parse(end),
+        entityMetadata: { location: invite },
+        entityType: GuildScheduledEventEntityType.External,
+        status: 1,
+        userCount: 2,
+        creatorId: 'fixture-bot',
+      };
+      guildState.remotes.set(eventId, remote);
+      const localId = randomUUID();
+      await events.save({
+        id: localId,
+        roomId,
+        creatorId,
+        title,
+        description: '',
+        start,
+        end,
+        timeZone: 'UTC',
+        state: 'scheduled',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        discord: { guildId: guildState.id, eventId, status: 1, invite, interested: 2 },
+      });
+      return { roomId, localId, eventId, invite };
+    };
+
+    for (let i = 0; i < 12; i++) roomsA.push(await seedRoom(guildA, i));
+    for (let i = 0; i < 2; i++) roomsB.push(await seedRoom(guildB, i));
+
+    let saveCalls = 0;
+    const origSave = events.save.bind(events);
+    t.mock.method(events, 'save', async event => {
+      saveCalls++;
+      return origSave(event);
+    });
+
+    // 1. 12 unchanged rooms in guild A + 2 in guild B -> 1 list call per guild, zero writes.
+    await events.reconcile();
+    assert.equal(guildA.listCalls, 1);
+    assert.equal(guildA.peakActiveLists, 1);
+    assert.equal(guildB.listCalls, 1);
+    assert.equal(guildB.peakActiveLists, 1);
+    assert.equal(saveCalls, 0);
+    assert.equal(events.discord.lists.size, 0);
+
+    // 2. Next pass triggers new reads (no TTL cache).
+    await events.reconcile();
+    assert.equal(guildA.listCalls, 2);
+    assert.equal(guildB.listCalls, 2);
+    assert.equal(saveCalls, 0);
+
+    // 3. Another guild's event with the same ID must not bleed into guild A.
+    guildB.remotes.set(roomsA[0].eventId, {
+      ...guildA.remotes.get(roomsA[0].eventId),
+      name: 'Guild B spoof',
+      userCount: 99,
+    });
+    await events.reconcile();
+    assert.equal(events.get(roomsA[0].localId).title, 'Watch night guild-a-0');
+    assert.equal(saveCalls, 0);
+    guildB.remotes.delete(roomsA[0].eventId);
+
+    // 4. Failed list deletes nothing, emits no unhandledRejection, and retries cleanly on the next pass.
+    const unhandled = [];
+    const onUnhandled = reason => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    t.after(() => process.off('unhandledRejection', onUnhandled));
+    guildA.failNext = new Error('Temporary Discord outage');
+    await events.reconcile();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(unhandled, []);
+    assert.equal(events.discord.lists.size, 0);
+    for (const r of roomsA) {
+      assert.equal(events.forRoom(r.roomId).length, 1, 'failed list must not delete local events');
+      assert.ok(events.errors.has(r.roomId), 'failed list records per-room error');
+    }
+    assert.equal(events.errors.has(roomsB[0].roomId), false, 'healthy guild succeeds independently');
+    await events.reconcile();
+    assert.equal(events.errors.size, 0, 'subsequent healthy pass clears errors');
+
+    // 5. Changed count/title updates only the matching event.
+    saveCalls = 0;
+    guildA.remotes.get(roomsA[3].eventId).name = 'Updated watch night';
+    guildA.remotes.get(roomsA[3].eventId).userCount = 7;
+    await events.reconcile();
+    assert.equal(saveCalls, 1, 'only the changed room writes');
+    assert.equal(events.get(roomsA[3].localId).title, 'Updated watch night');
+    assert.equal(events.get(roomsA[3].localId).discord.interested, 7);
+
+    // 6. Missing and canceled events follow existing removal policy.
+    guildA.remotes.delete(roomsA[4].eventId);
+    guildA.remotes.get(roomsA[5].eventId).status = 4;
+    await events.reconcile();
+    assert.equal(events.forRoom(roomsA[4].roomId).length, 0);
+    assert.equal(events.forRoom(roomsA[5].roomId).length, 0);
+    assert.equal(events.forRoom(roomsA[0].roomId).length, 1);
+
+    // 7. Lost-create receipt matches only uniquely owned exact details.
+    const addUnconfirmed = async (room, title) => {
+      const id = randomUUID();
+      await origSave({
+        id,
+        roomId: room.roomId,
+        creatorId,
+        title,
+        description: '',
+        start,
+        end,
+        timeZone: 'UTC',
+        state: 'scheduled',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        discord: { guildId: guildA.id, invite: room.invite },
+      });
+      return id;
+    };
+    const uniqueLocal = await addUnconfirmed(roomsA[6], 'Unique receipt');
+    guildA.remotes.set('receipt-unique', {
+      id: 'receipt-unique',
+      name: 'Unique receipt',
+      description: '',
+      scheduledStartTimestamp: Date.parse(start),
+      scheduledEndTimestamp: Date.parse(end),
+      entityMetadata: { location: roomsA[6].invite },
+      entityType: GuildScheduledEventEntityType.External,
+      status: 1,
+      userCount: 3,
+      creatorId: 'fixture-bot',
+    });
+    const foreignLocal = await addUnconfirmed(roomsA[7], 'Foreign receipt');
+    guildA.remotes.set('receipt-foreign', {
+      id: 'receipt-foreign',
+      name: 'Foreign receipt',
+      description: '',
+      scheduledStartTimestamp: Date.parse(start),
+      scheduledEndTimestamp: Date.parse(end),
+      entityMetadata: { location: roomsA[7].invite },
+      entityType: GuildScheduledEventEntityType.External,
+      status: 1,
+      userCount: 1,
+      creatorId: 'other-bot',
+    });
+    const ambiguousLocal = await addUnconfirmed(roomsA[8], 'Ambiguous receipt');
+    for (const id of ['receipt-dup-1', 'receipt-dup-2']) {
+      guildA.remotes.set(id, {
+        id,
+        name: 'Ambiguous receipt',
+        description: '',
+        scheduledStartTimestamp: Date.parse(start),
+        scheduledEndTimestamp: Date.parse(end),
+        entityMetadata: { location: roomsA[8].invite },
+        entityType: GuildScheduledEventEntityType.External,
+        status: 1,
+        userCount: 1,
+        creatorId: 'fixture-bot',
+      });
+    }
+    await events.reconcile();
+    assert.equal(events.get(uniqueLocal).discord.eventId, 'receipt-unique');
+    assert.equal(events.get(foreignLocal).discord.eventId, undefined);
+    assert.equal(events.get(ambiguousLocal).discord.eventId, undefined);
+
+    // 8. Invite changes relocate and preserve userCount; canceling events finish cancellation.
+    const room9 = roomsA[9];
+    const room9Settings = (await creator.call('/api/watch/rooms/' + room9.roomId + '/settings')).body;
+    await creator.call('/api/watch/rooms/' + room9.roomId + '/settings', {
+      revision: room9Settings.revision,
+      change: { action: 'invite.reroll' },
+    });
+    const newInvite9 = events.discord.location(f.app.watch.roomState.store.get(room9.roomId));
+    guildA.remotes.get(room9.eventId).userCount = 5;
+    const room10Event = events.get(roomsA[10].localId);
+    await origSave({ ...room10Event, state: 'canceling' });
+    await events.reconcile();
+    assert.equal(guildA.remotes.get(room9.eventId).entityMetadata.location, newInvite9);
+    assert.equal(events.get(room9.localId).discord.interested, 5);
+    assert.equal(guildA.remotes.get(roomsA[10].eventId).status, 4);
+    assert.equal(events.forRoom(roomsA[10].roomId).length, 0);
+
+    // 9. Host summary after a mutation gets a fresh list even while a background reconcile list is in flight.
+    const bgStarted = Promise.withResolvers(),
+      bgRelease = Promise.withResolvers(),
+      laneRelease = Promise.withResolvers();
+    t.after(() => {
+      bgRelease.resolve();
+      laneRelease.resolve();
+    });
+    let intercepted = false;
+    guildA.beforeList = async () => {
+      if (intercepted) return null;
+      intercepted = true;
+      const stale = new Map([...guildA.remotes.entries()].map(([k, v]) => [k, { ...v }]));
+      bgStarted.resolve();
+      await bgRelease.promise;
+      return stale;
+    };
+    const room11 = roomsA[11];
+    const holdLane = events.lane(room11.roomId, () => laneRelease.promise);
+    const bgPass = events.reconcile();
+    await bgStarted.promise;
+    assert.equal(events.discord.lists.has(guildA.id), true, 'background list is in flight');
+    laneRelease.resolve();
+    await holdLane;
+    guildA.remotes.get(room11.eventId).name = 'Fresh after mutation';
+    guildA.remotes.get(room11.eventId).userCount = 11;
+    const hostSummary = (await creator.call('/api/watch/rooms/' + room11.roomId + '/events')).body;
+    assert.equal(hostSummary.events[0].title, 'Fresh after mutation');
+    assert.equal(hostSummary.events[0].discord.interested, 11);
+    bgRelease.resolve();
+    await bgPass;
+    assert.equal(events.discord.lists.size, 0);
+  },
+);

@@ -19,6 +19,7 @@ class DiscordEventSync {
     this.events = events;
     this.hub = events.hub;
     this.lifetime = new AbortController();
+    this.lists = new Map();
   }
   get config() {
     return this.events.config;
@@ -90,8 +91,18 @@ class DiscordEventSync {
     if (!this.owned(remote)) throw fail('This event is no longer managed by uburoom.', 409);
     return remote;
   }
-  list(guild) {
-    return this.request(() => guild.scheduledEvents.fetch({ cache: false, withUserCount: true }));
+  list(guild, { coalesce = false } = {}) {
+    const fetch = () => this.request(() => guild.scheduledEvents.fetch({ cache: false, withUserCount: true }));
+    if (!coalesce) return fetch();
+    const pending = this.lists.get(guild.id);
+    if (pending) return pending;
+    const request = fetch();
+    const clear = () => {
+      if (this.lists.get(guild.id) === request) this.lists.delete(guild.id);
+    };
+    this.lists.set(guild.id, request);
+    request.then(clear, clear);
+    return request;
   }
   // A create whose receipt was lost is identified by its exact details, never guessed.
   match(remotes, event) {
@@ -164,6 +175,7 @@ class DiscordEventSync {
   }
   close() {
     this.lifetime.abort();
+    this.lists.clear();
   }
 }
 module.exports = { DiscordEventSync };
