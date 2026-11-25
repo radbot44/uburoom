@@ -145,7 +145,7 @@ class MediaChecks {
         title: hdrInfo.label,
         detail: hasLocalTonemap
           ? ubuplayerEnabled
-            ? 'Played directly with client-side tone-mapping in UbuPlayer; converted qualities are tone-mapped by uburoom.'
+            ? 'Eligible browsers can play directly with client-side tone-mapping in UbuPlayer; converted qualities are tone-mapped by uburoom.'
             : 'Converted qualities are tone-mapped by uburoom.'
           : 'Profile 5 uses proprietary Dolby Vision color without an HDR10 fallback layer; browsers without Profile 5 support require uburoom tone-mapping.',
       };

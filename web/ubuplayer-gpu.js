@@ -1954,7 +1954,7 @@ function createWebGl2Renderer(canvas, initialTargetHdr = false) {
     setTargetHdr(wantHdr) {
       configureCanvasHdr(wantHdr);
     },
-    async renderFrame(rawFrame, colorMeta, rpuMeta, wantHdr = false) {
+    async renderFrame(rawFrame, colorMeta, rpuMeta, wantHdr = false, shouldAbort) {
       const w = rawFrame.displayWidth || rawFrame.codedWidth || 2;
       const h = rawFrame.displayHeight || rawFrame.codedHeight || 2;
       if (canvas.width !== w || canvas.height !== h) {
@@ -1973,6 +1973,7 @@ function createWebGl2Renderer(canvas, initialTargetHdr = false) {
             planeScratch = new Uint8Array(needed);
           }
           const layout = await rawFrame.copyTo(planeScratch);
+          if (shouldAbort?.()) return;
           if (layout?.length >= 3) {
             const cw = rawFrame.codedWidth || w;
             const ch = rawFrame.codedHeight || h;
@@ -2198,7 +2199,7 @@ async function createWebGpuRenderer(canvas, initialTargetHdr = false) {
         bindGroup = null;
       }
     },
-    async renderFrame(rawFrame, colorMeta, rpuMeta, wantHdr = false) {
+    async renderFrame(rawFrame, colorMeta, rpuMeta, wantHdr = false, shouldAbort) {
       const w = rawFrame.displayWidth || rawFrame.codedWidth || 2;
       const h = rawFrame.displayHeight || rawFrame.codedHeight || 2;
       if (canvas.width !== w || canvas.height !== h) {

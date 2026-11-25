@@ -1241,3 +1241,84 @@ test('Second-pass regressions: 44.1/96 kHz WSOLA, 3rd-order MMR + WebGPU 2320B U
     globalThis.Worker = prevWorker;
   }
 });
+
+test('HttpRangeReader handles 206, bounded small 200, and cancels oversized/chunked 200 responses', async () => {
+  const ubuMod = await import(pathToFileURL(path.join(__dirname, '../web/ubuplayer.js')).href);
+  const { HttpRangeReader } = ubuMod;
+  const prevFetch = globalThis.fetch;
+  try {
+    // 1. Ordinary 206 Partial Content
+    globalThis.fetch = async () =>
+      new Response(new Uint8Array([1, 2, 3, 4]), {
+        status: 206,
+        headers: { 'content-range': 'bytes 0-3/1024' },
+      });
+    const r206 = new HttpRangeReader('https://example.test/video.mkv');
+    const probed206 = await r206.probe();
+    assert.equal(probed206.fileSize, 1024);
+    assert.deepEqual([...probed206.initialBytes], [1, 2, 3, 4]);
+
+    // 2. Small 200 response (<= 4 MiB) succeeds and sets size
+    globalThis.fetch = async () =>
+      new Response(new Uint8Array([9, 8, 7]), {
+        status: 200,
+        headers: { 'content-length': '3' },
+      });
+    const rSmall200 = new HttpRangeReader('https://example.test/small.mkv');
+    const probedSmall = await rSmall200.probe();
+    assert.equal(probedSmall.fileSize, 3);
+    assert.deepEqual([...probedSmall.initialBytes], [9, 8, 7]);
+
+    // 3. Oversized 200 with Content-Length cancels immediately without reading body
+    let canceledHeader = false;
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-length': String(12 * 1024 * 1024) }),
+      body: {
+        cancel: async () => {
+          canceledHeader = true;
+        },
+      },
+      arrayBuffer: async () => {
+        throw new Error('must not materialize oversized 200 body');
+      },
+    });
+    const rBigHeader = new HttpRangeReader('https://example.test/big.mkv', { direct: true });
+    await assert.rejects(
+      () => rBigHeader.probe(),
+      err => err?.kind === 'direct-failed' && /byte-range/i.test(err.message),
+    );
+    assert.equal(canceledHeader, true);
+
+    // 4. Chunked 200 without Content-Length cancels stream once chunk ceiling is exceeded
+    let chunksDelivered = 0;
+    let canceledChunked = false;
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: {
+        getReader: () => ({
+          read: async () => {
+            chunksDelivered++;
+            return { done: false, value: new Uint8Array(1024 * 1024) };
+          },
+          cancel: async () => {
+            canceledChunked = true;
+          },
+          releaseLock() {},
+        }),
+      },
+    });
+    const rChunked = new HttpRangeReader('https://example.test/chunked.mkv', { direct: true });
+    await assert.rejects(
+      () => rChunked.probe(),
+      err => err?.kind === 'direct-failed' && /byte-range/i.test(err.message),
+    );
+    assert.equal(canceledChunked, true);
+    assert.equal(chunksDelivered, 5, 'stops immediately after exceeding 4 MiB ceiling');
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});

@@ -396,7 +396,18 @@ export function mount(host, deps) {
       !!store.room.state?.fallbackActive === !!next.fallbackActive &&
       store.room.state.tracks?.audioId === next.tracks?.audioId &&
       burned(store.room.state) === burned(next);
-    const changed = !seamless && (mediaChanged || store.stream.mediaSource !== next.mediaUrl);
+    if (mediaChanged) {
+      store.stream.ubuplayerGrantRetry = undefined;
+      store.stream.ubuplayerGrantRetried = undefined;
+    }
+    const ubuGrantRebuild = Boolean(
+      !mediaChanged &&
+      store.stream.mediaSource === next.mediaUrl &&
+      store.stream.ubuplayer?.destroyed &&
+      store.stream.ubuplayerGrantRetry === next.mediaVersion,
+    );
+    if (ubuGrantRebuild) store.stream.ubuplayerGrantRetry = undefined;
+    const changed = !seamless && (mediaChanged || store.stream.mediaSource !== next.mediaUrl || ubuGrantRebuild);
     let released = false;
     if (store.stream.heldStream) {
       const held = store.stream.heldStream.next;
@@ -736,6 +747,10 @@ export function mount(host, deps) {
                       return;
                     }
                     if (error?.kind === 'grant-expired') {
+                      if (store.stream.ubuplayerGrantRetried !== next.mediaVersion) {
+                        store.stream.ubuplayerGrantRetried = next.mediaVersion;
+                        store.stream.ubuplayerGrantRetry = next.mediaVersion;
+                      }
                       void deps.refreshState().catch(() => deps.fail(message));
                       return;
                     }

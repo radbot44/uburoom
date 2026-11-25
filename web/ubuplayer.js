@@ -35,7 +35,7 @@ class BlobRangeReader {
   abort() {}
 }
 
-class HttpRangeReader {
+export class HttpRangeReader {
   constructor(url, { direct = false, fileSize, signal } = {}) {
     this.url = url;
     this.direct = direct;
@@ -85,11 +85,52 @@ class HttpRangeReader {
       const len = Number(response.headers.get('content-length'));
       if (len > 0) this.size = len;
     }
-    if (response.status === 200 && start > 0) {
-      await response.body?.cancel().catch(() => {});
-      const error = new Error('Media server does not support HTTP byte-range requests.');
-      if (this.direct) error.kind = 'direct-failed';
-      throw error;
+    if (response.status === 200) {
+      const len = Number(response.headers.get('content-length'));
+      if (start > 0 || (Number.isFinite(len) && len > HTTP_CHUNK_BYTES)) {
+        await response.body?.cancel().catch(() => {});
+        const error = new Error('Media server does not support HTTP byte-range requests.');
+        if (this.direct) error.kind = 'direct-failed';
+        throw error;
+      }
+      if (response.body && typeof response.body.getReader === 'function') {
+        const reader = response.body.getReader();
+        const parts = [];
+        let received = 0;
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!value?.byteLength) continue;
+            received += value.byteLength;
+            if (received > HTTP_CHUNK_BYTES) {
+              await reader.cancel().catch(() => {});
+              const error = new Error('Media server does not support HTTP byte-range requests.');
+              if (this.direct) error.kind = 'direct-failed';
+              throw error;
+            }
+            parts.push(value);
+          }
+        } finally {
+          reader.releaseLock?.();
+        }
+        const bytes = new Uint8Array(received);
+        let offset = 0;
+        for (const part of parts) {
+          bytes.set(part, offset);
+          offset += part.byteLength;
+        }
+        this.size = bytes.length;
+        return bytes;
+      }
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength > HTTP_CHUNK_BYTES) {
+        const error = new Error('Media server does not support HTTP byte-range requests.');
+        if (this.direct) error.kind = 'direct-failed';
+        throw error;
+      }
+      this.size = bytes.length;
+      return bytes;
     }
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (!this.size && start === 0 && bytes.length < endInclusive - start + 1) {

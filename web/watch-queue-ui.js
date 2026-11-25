@@ -1234,8 +1234,12 @@ function mount(
       if (!wantedIds.has(id)) el.remove();
     }
     let cursor = list.firstChild;
+    const pageStale = !isPageCurrent(state);
+    const currentId = state?.queueSummary?.current?.id || '';
+    const pageSnapshot = pageTarget('upcoming');
     items.forEach((item, i) => {
       const id = String(item.id);
+      const rowStale = pageStale || (!!currentId && id === String(currentId));
       const skipLabel = i === 0 ? 'Skip to' : 'Skip ' + i + (i === 1 ? ' item to' : ' items to');
       const sig = JSON.stringify([
         item.id,
@@ -1250,6 +1254,9 @@ function mount(
         canEdit,
         canChoose,
         skipLabel,
+        rowStale,
+        pageSnapshot.roomId,
+        pageSnapshot.revision,
       ]);
       let row = existingRows.get(id);
       if (!row || row.dataset.signature !== sig) {
@@ -1263,32 +1270,46 @@ function mount(
           moves,
           'Move earlier',
           'up',
-          () => moveItem(item.id, item.rank - 1),
-          !canEdit || i === 0,
+          () => moveItem(item.id, item.rank - 1, pageSnapshot),
+          !canEdit || rowStale || i === 0,
           'queue-action-up',
         );
         action(
           moves,
           'Move later',
           'down',
-          () => moveItem(item.id, item.rank + 1),
-          !canEdit || item.rank === currentQueue.total - 1,
+          () => moveItem(item.id, item.rank + 1, pageSnapshot),
+          !canEdit || rowStale || item.rank === currentQueue.total - 1,
           'queue-action-down',
         );
-        action(moves, 'Remove from queue', 'close', () => removeItem(item.id), !canEdit, 'queue-action-remove');
+        action(
+          moves,
+          'Remove from queue',
+          'close',
+          () => removeItem(item.id, pageSnapshot),
+          !canEdit || rowStale,
+          'queue-action-remove',
+        );
         art(nextRow, item);
         const info = node('div', nextRow, undefined, 'queue-entry-info');
         title(info, item, 'queue-entry-title');
         node('span', info, formatTime(item.duration), 'queue-meta');
         const actions = node('div', nextRow, undefined, 'queue-entry-actions');
         node('span', actions, 'Queue', 'queue-entry-caption');
-        action(actions, 'Play now', 'play', () => playEntry(item.id, false), !canChoose, 'queue-action-play');
+        action(
+          actions,
+          'Play now',
+          'play',
+          () => playEntry(item.id, false, pageSnapshot),
+          !canChoose || rowStale,
+          'queue-action-play',
+        );
         action(
           actions,
           skipLabel,
           'player-track-next',
-          () => playEntry(item.id, true),
-          !canChoose,
+          () => playEntry(item.id, true, pageSnapshot),
+          !canChoose || rowStale,
           'queue-action-skip',
         );
         if (row) {
@@ -1559,8 +1580,12 @@ function mount(
       if (!wantedIds.has(id)) el.remove();
     }
     let cursor = list.firstChild;
+    const pageStale = !isPageCurrent(state);
+    const currentId = state?.queueSummary?.current?.id || '';
+    const historySnapshot = pageTarget('history');
     for (const item of reversed) {
       const id = String(item.id);
+      const rowStale = pageStale || (!!currentId && id === String(currentId));
       const outcome = item.outcome || 'interrupted';
       const sig = JSON.stringify([
         item.id,
@@ -1573,6 +1598,9 @@ function mount(
         formatSubtitle(item),
         !!state?.capabilities?.editQueue,
         canChoose,
+        rowStale,
+        historySnapshot.roomId,
+        historySnapshot.revision,
       ]);
       let row = existingRows.get(id);
       if (!row || row.dataset.signature !== sig) {
@@ -1587,8 +1615,8 @@ function mount(
           moves,
           'Remove from history',
           'close',
-          () => removeItem(item.id),
-          !state?.capabilities?.editQueue,
+          () => removeItem(item.id, historySnapshot),
+          !state?.capabilities?.editQueue || rowStale,
           'queue-action-remove',
         );
         status.title = label;
@@ -1753,13 +1781,51 @@ function mount(
     return result;
   }
 
-  async function moveItem(entryId, targetRank) {
+  function isPageCurrent(state) {
+    if (!state?.id || !state.durable) return false;
+    if (lastFetchedRoomId !== state.id || lastFetchedRevision < 0) return false;
+    const summaryRev = state.queueSummary?.queueRevision;
+    if (Number.isInteger(summaryRev) && lastFetchedRevision !== summaryRev) return false;
+    return true;
+  }
+
+  function pageTarget(role) {
+    return {
+      roomId: lastFetchedRoomId,
+      revision: lastFetchedRevision,
+      role,
+    };
+  }
+
+  function requirePageTarget(target, entryId) {
     const state = getState();
-    if (!state?.id) return;
+    if (!state?.id || !state.durable) return null;
+    if (target) {
+      if (target.roomId !== state.id || !Number.isInteger(target.revision) || target.revision < 0) return null;
+      const summaryRev = state.queueSummary?.queueRevision;
+      if (Number.isInteger(summaryRev) && target.revision !== summaryRev) return null;
+      if (lastFetchedRoomId !== state.id || lastFetchedRevision !== target.revision) return null;
+      if (
+        target.role !== 'current' &&
+        entryId != null &&
+        String(state.queueSummary?.current?.id || '') === String(entryId)
+      )
+        return null;
+      return { state, expectedRevision: target.revision, role: target.role };
+    }
+    return { state, expectedRevision: queueRevision(state), role: undefined };
+  }
+
+  async function moveItem(entryId, targetRank, target) {
+    const resolved = requirePageTarget(target, entryId);
+    if (!resolved) {
+      void fetchData(true);
+      return;
+    }
     try {
       await request('room.queue.command', {
-        roomId: state.id,
-        args: { action: 'move', entryId, targetRank, expectedRevision: queueRevision(state) },
+        roomId: resolved.state.id,
+        args: { action: 'move', entryId, targetRank, expectedRevision: resolved.expectedRevision },
       });
     } catch (err) {
       if (err?.status === 409 || /queue changed/i.test(err?.message || '')) {
@@ -1772,13 +1838,20 @@ function mount(
     await fetchData(true);
   }
 
-  async function removeItem(entryId) {
-    const state = getState();
-    if (!state?.id) return;
-    const rev = queueRevision(state);
+  async function removeItem(entryId, target) {
+    const resolved = requirePageTarget(target, entryId);
+    if (!resolved) {
+      void fetchData(true);
+      return;
+    }
     await request('room.queue.command', {
-      roomId: state.id,
-      args: { action: 'remove', entryId, expectedRevision: rev },
+      roomId: resolved.state.id,
+      args: {
+        action: 'remove',
+        entryId,
+        expectedRevision: resolved.expectedRevision,
+        ...(resolved.role ? { role: resolved.role } : {}),
+      },
     });
     await fetchData(true);
   }
@@ -1807,10 +1880,26 @@ function mount(
     await fetchData(true);
   }
 
-  async function playEntry(entryId, skipPrevious = false) {
-    const state = getState();
-    if (!state?.id) return;
-    await mutate(skipPrevious ? 'skipTo' : 'playEntry', { entryId, skipPrevious });
+  async function playEntry(entryId, skipPrevious = false, target) {
+    const resolved = requirePageTarget(target, entryId);
+    if (!resolved) {
+      void fetchData(true);
+      return;
+    }
+    await request(
+      'room.queue.command',
+      {
+        roomId: resolved.state.id,
+        args: {
+          action: skipPrevious ? 'skipTo' : 'playEntry',
+          entryId,
+          skipPrevious,
+          expectedRevision: resolved.expectedRevision,
+        },
+      },
+      { timeoutMs: 35000 },
+    );
+    await fetchData(true);
     await changed();
   }
 

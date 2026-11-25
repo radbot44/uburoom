@@ -897,7 +897,13 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     const width = frame.displayWidth || frame.codedWidth || vStream?.width || 0;
     const height = frame.displayHeight || frame.codedHeight || vStream?.height || 0;
     try {
-      await renderer.renderFrame(frame, vStream, head.rpu || latestRpu, targetHdr);
+      await renderer.renderFrame(
+        frame,
+        vStream,
+        head.rpu || latestRpu,
+        targetHdr,
+        () => closed || drawSeekGen !== seekGen,
+      );
       if (closed || drawSeekGen !== seekGen) return;
       totalVideoFrames++;
       firstFramePresented = true;

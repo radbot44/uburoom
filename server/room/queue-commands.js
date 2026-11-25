@@ -446,6 +446,8 @@ module.exports = {
     try {
       let value;
       if (action === 'queue.remove' && (args.advance || queue.current(id)?.id === args.entryId)) {
+        if (args.role && args.role !== 'current')
+          throw Object.assign(new Error('Queue item is now playing; refresh before removing'), { status: 409 });
         const removedEntry = queue.current(id);
         if (removedEntry?.id !== args.entryId)
           throw Object.assign(new Error('Current video changed; refresh before removing'), { status: 409 });

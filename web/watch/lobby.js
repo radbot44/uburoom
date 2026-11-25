@@ -112,24 +112,51 @@ export function mount(host, deps) {
     ]);
     if (host.dataset.roomList === key) return;
     host.dataset.roomList = key;
-    host.replaceChildren();
     if (!rooms.length) {
-      const empty = document.createElement('span');
-      empty.className = 'hint';
-      empty.textContent = 'No active rooms';
-      host.append(empty);
+      if (host.childElementCount !== 1 || !host.firstElementChild?.classList.contains('hint')) {
+        const empty = document.createElement('span');
+        empty.className = 'hint';
+        empty.textContent = 'No active rooms';
+        host.replaceChildren(empty);
+      }
+      return;
     }
+    const existing = new Map();
+    for (const child of [...host.children]) {
+      const id = child.dataset?.roomId;
+      if (id) existing.set(id, child);
+      else child.remove();
+    }
+    const wanted = new Set(rooms.map(room => String(room.id)));
+    for (const [id, el] of existing) {
+      if (!wanted.has(id)) el.remove();
+    }
+    let cursor = host.firstChild;
     for (const room of rooms) {
-      const button = document.createElement('button');
-      button.type = 'button';
+      const id = String(room.id);
+      const visibilityIcon = room.visibility === 'private' ? 'lock' : 'website';
+      let button = existing.get(id);
+      if (!button) {
+        button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.roomId = id;
+        button.dataset.visibilityIcon = visibilityIcon;
+        const name = document.createElement('span');
+        name.dataset.part = 'name';
+        const count = document.createElement('span');
+        count.dataset.part = 'count';
+        button.append(uburoomIcons.icon(document, visibilityIcon), name, uburoomIcons.icon(document, 'users'), count);
+        button.addEventListener('click', () => join(room.id).catch(error => deps.fail(error.message)));
+      } else if (button.dataset.visibilityIcon !== visibilityIcon) {
+        button.dataset.visibilityIcon = visibilityIcon;
+        button.firstElementChild?.replaceWith(uburoomIcons.icon(document, visibilityIcon));
+      }
       button.disabled = !!room.locked;
-      button.append(uburoomIcons.icon(document, room.visibility === 'private' ? 'lock' : 'website'));
-      const name = document.createElement('span');
-      name.textContent = room.name || room.hostName;
-      button.append(name, uburoomIcons.icon(document, 'users'));
-      const count = document.createElement('span');
-      count.textContent = room.maxMembers ? room.viewers + ' / ' + room.maxMembers : String(room.viewers);
-      button.append(count);
+      const nameEl = button.querySelector('[data-part="name"]');
+      if (nameEl) nameEl.textContent = room.name || room.hostName;
+      const countEl = button.querySelector('[data-part="count"]');
+      if (countEl)
+        countEl.textContent = room.maxMembers ? room.viewers + ' / ' + room.maxMembers : String(room.viewers);
       button.title = room.locked
         ? 'Private - No one can join'
         : room.members?.length
@@ -144,8 +171,8 @@ export function mount(host, deps) {
           ' viewers',
       );
       button.setAttribute('aria-pressed', String(room.id === store.room.selected));
-      button.addEventListener('click', () => join(room.id).catch(error => deps.fail(error.message)));
-      host.append(button);
+      if (button !== cursor) host.insertBefore(button, cursor);
+      cursor = button.nextSibling;
     }
   }
   async function refreshRooms() {

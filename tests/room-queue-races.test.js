@@ -421,3 +421,76 @@ test('a deferred checkpoint can finish after media adoption while successor gene
   f.releaseGeneration();
   assert.equal((await f.transition).status, 'applied');
 });
+
+test('upcoming-role remove is rejected once the entry becomes current, while explicit current remove succeeds', async t => {
+  const f = await roomFixture();
+  t.after(() => f.cleanup());
+  const upcoming = f.watch.roomState.queue.list(f.id).items[0];
+  assert.equal(upcoming.mediaId, '101');
+  // Advance so B (101) becomes the current playing entry.
+  assert.equal((await f.hub.dispatch(f.actor, { roomId: f.id, action: 'media.next' })).status, 'applied');
+  assert.equal(f.watch.roomState.queue.current(f.id).id, upcoming.id);
+  const currentRev = f.watch.roomState.queue.summary(f.id).queueRevision;
+
+  // A stale Upcoming-row remove targeting B with role: 'upcoming' must be rejected even with current revision.
+  const staleRes = await f.hub.dispatch(f.actor, {
+    roomId: f.id,
+    action: 'queue.remove',
+    args: {
+      entryId: upcoming.id,
+      role: 'upcoming',
+      expectedRevision: currentRev,
+    },
+  });
+  assert.equal(staleRes.status, 'failed');
+  assert.match(staleRes.message || '', /now playing/i);
+  assert.equal(f.watch.roomState.queue.current(f.id).id, upcoming.id, 'current playback stays intact');
+
+  // Explicit Now Playing removal (no upcoming role) still removes the current item.
+  const currentRes = await f.hub.dispatch(f.actor, {
+    roomId: f.id,
+    action: 'queue.remove',
+    args: {
+      entryId: upcoming.id,
+      advance: false,
+      expectedRevision: currentRev,
+    },
+  });
+  assert.equal(currentRes.status, 'applied');
+  assert.equal(f.watch.roomState.queue.current(f.id), null);
+});
+
+test('room listing bounds active-room concurrency, preserves order, and drops rooms changed mid-check', async t => {
+  const f = await roomFixture();
+  t.after(() => f.cleanup());
+  f.watch.roomState.limits.maxOpen = 10;
+  f.hub.config.roomLimits = { maxOpen: 10 };
+  const ids = [f.id];
+  for (let i = 2; i <= 6; i++) {
+    ids.push(await f.watch.roomState.create(f.actor, { name: 'Room ' + i }));
+  }
+  let inFlight = 0,
+    peak = 0;
+  const origCanView = f.watch.canView.bind(f.watch);
+  f.watch.canView = async (room, actor) => {
+    inFlight++;
+    peak = Math.max(peak, inFlight);
+    await new Promise(resolve => setTimeout(resolve, 15));
+    if (room.roomId === ids[2]) {
+      // Simulate room 2 closing while other rooms are still being checked.
+      f.watch.rooms.delete(ids[1]);
+    }
+    try {
+      return await origCanView(room, actor);
+    } finally {
+      inFlight--;
+    }
+  };
+  const listed = await f.watch.list(f.actor);
+  assert.ok(peak >= 2 && peak <= 3, `expected bounded concurrency 2..3, got ${peak}`);
+  assert.deepEqual(
+    listed.map(r => r.id),
+    ids.filter(id => id !== ids[1]),
+    'preserves active room order and omits room closed mid-list',
+  );
+});

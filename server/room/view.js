@@ -108,8 +108,28 @@ module.exports = {
   async list(actor, activity = false) {
     const rooms = [];
     // Listing rooms only reads them; the server's sweep keeps their lifecycle.
-    for (const room of this.rooms.values()) {
-      const accessible = await this.canView(room, actor);
+    const activeRooms = [...this.rooms.values()];
+    const checked = new Array(activeRooms.length);
+    const concurrency = Math.min(3, activeRooms.length);
+    let nextIndex = 0;
+    const worker = async () => {
+      while (nextIndex < activeRooms.length) {
+        const index = nextIndex++;
+        const room = activeRooms[index];
+        if (!room || this.rooms.get(room.roomId) !== room) continue;
+        const accessible = await this.canView(room, actor);
+        if (this.rooms.get(room.roomId) !== room) continue;
+        if (!accessible && !(activity && room.visibility === 'private' && sameVoice(room, actor, this.hub.access)))
+          continue;
+        checked[index] = { room, media: room.media, accessible };
+      }
+    };
+    if (concurrency > 0) await Promise.all(Array.from({ length: concurrency }, worker));
+    for (const entry of checked) {
+      if (!entry) continue;
+      const { room, media, accessible } = entry;
+      if (this.rooms.get(room.roomId) !== room || room.media !== media) continue;
+      if (accessible && !this.hub.authorize(actor, room, 'room.view').ok) continue;
       if (!accessible && !(activity && room.visibility === 'private' && sameVoice(room, actor, this.hub.access)))
         continue;
       const members = [...new Map([...room.viewers.values()].map(v => [v.userId, v.name])).values()];
