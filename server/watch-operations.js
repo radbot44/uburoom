@@ -1072,7 +1072,15 @@ function watchOperations({
       inRoom(context, roomId, async (auth, room) => {
         if (!hub.authorize(auth.actor, room, 'roomSettings').ok)
           return result(403, { error: 'Only hosts can see the video check' });
-        if (!fromProvider(room.media)) return result(200, { items: [], level: 'ok', title: room.media?.title });
+        if (!fromProvider(room.media))
+          return result(200, {
+            items: [],
+            level: 'info',
+            applicable: false,
+            status: 'not-applicable',
+            checking: false,
+            title: room.media?.title,
+          });
         if (args.refresh) {
           if (!throttle('video-check:' + auth.actor.userId, 6))
             return result(429, { error: 'Wait a moment before checking again' });

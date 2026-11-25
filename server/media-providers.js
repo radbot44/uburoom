@@ -281,94 +281,271 @@ class MediaProviders {
   }
   /**
    * Searches every configured provider's libraries that this person may use, stamping each matching
-   * item with its server and library name. Providers that cannot answer leave their results out
-   * unless none can answer.
+   * item with its server and library name. Merges paginated provider results in stable order without
+   * replaying initial pages on scroll, reports exact totals only when known, and distinguishes
+   * unsupported sections, failed sections, complete zero matches, and partial results.
    */
-  async search(actor, query = {}, scopeFor = (person, serverId) => this.for(person, serverId)) {
+  async search(actor, query = {}, scopeFor = (person, serverId) => this.for(person, serverId), options = {}) {
     const q = String(query.q || '').trim();
-    if (!q) return { items: [], total: 0, offset: 0, nextOffset: null };
-    const configured = this.list.filter(provider => provider.root?.configured);
-    const providerResults = await Promise.all(
-      configured.map(async provider => {
-        try {
-          const serverId = await this.identityOf(provider);
-          const scope = await scopeFor(actor, serverId);
-          const name = provider.label || provider.serverName;
-          const sections = (await scope.browse({})).items || [];
-          const sectionResults = await Promise.all(
-            sections
-              .filter(section => section?.id)
-              .map(async section => {
-                try {
-                  const page = await scope.browse({
-                    section: section.id,
-                    q,
-                    sort: query.sort || 'title',
-                    order: query.order || 'asc',
-                  });
-                  return (page.items || [])
-                    .filter(item => item?.id)
-                    .map(item => ({
-                      ...item,
-                      serverId,
-                      ...(name ? { serverName: name } : {}),
-                      ...(section.title ? { sectionTitle: section.title } : {}),
-                    }));
-                } catch {
-                  // Skip an individual library section that does not support text search.
-                  return [];
-                }
-              }),
-          );
-          return { ok: true, items: sectionResults.flat() };
-        } catch (error) {
-          return { ok: false, error };
+    if (!q) return { items: [], total: 0, offset: 0, nextOffset: null, partial: false };
+    const signal = options?.signal;
+    const checkAborted = () => {
+      if (signal?.aborted) {
+        if (signal.reason instanceof Error) throw signal.reason;
+        const err = new Error('Search aborted');
+        err.name = 'AbortError';
+        throw err;
+      }
+    };
+    checkAborted();
+    const pageSize = 48;
+    const maxSectionPages = 10;
+    const maxFetchesPerCall = 24;
+    const cacheTtlMs = 2 * 60 * 1000;
+    const cacheMax = 32;
+    const sort = query.sort || 'title';
+    const order = query.order === 'desc' ? 'desc' : 'asc';
+    const dir = order === 'desc' ? -1 : 1;
+    const offset = Math.max(0, Number.parseInt(String(query.offset || '0'), 10) || 0);
+    const seedStr = String(query.seed || q);
+    let seed = 0;
+    for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) | 0;
+    const hash = value => {
+      let h = seed;
+      for (let i = 0; i < value.length; i++) h = Math.imul(h ^ value.charCodeAt(i), 16777619);
+      return h >>> 0;
+    };
+    const compare = (a, b) => {
+      let cmp = 0;
+      if (sort === 'random') cmp = hash(a.serverId + ':' + a.id) - hash(b.serverId + ':' + b.id);
+      else if (sort === 'added') cmp = ((a.addedAt || 0) - (b.addedAt || 0)) * dir;
+      else if (sort === 'year') cmp = ((a.year || 0) - (b.year || 0)) * dir;
+      else if (sort === 'runtime') cmp = ((a.duration || 0) - (b.duration || 0)) * dir;
+      else cmp = String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base' }) * dir;
+      if (cmp !== 0) return cmp;
+      if (sort !== 'title' && sort !== 'random') {
+        const byTitle = String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base' });
+        if (byTitle !== 0) return byTitle;
+      }
+      const byServer = String(a.serverId || '').localeCompare(String(b.serverId || ''));
+      if (byServer !== 0) return byServer;
+      return String(a.id || '').localeCompare(String(b.id || ''));
+    };
+    const isUnsupported = error =>
+      error?.code === 'UNSUPPORTED' || error?.status === 405 || error?.status === 501;
+
+    if (!this._searchCache) this._searchCache = new Map();
+    const now = Date.now();
+    for (const [k, entry] of this._searchCache) {
+      if (now - entry.createdAt > cacheTtlMs) this._searchCache.delete(k);
+    }
+    const actorKey = String(actor?.userId || actor?.id || actor?.guestRoomId || 'anon');
+    const cacheKey = JSON.stringify([actorKey, q, sort, order, sort === 'random' ? seedStr : '']);
+    let state = offset > 0 ? this._searchCache.get(cacheKey) : undefined;
+    if (!state) {
+      state = {
+        createdAt: now,
+        initialized: false,
+        streams: [],
+        failedProviders: 0,
+        failedSections: 0,
+        answeredSections: 0,
+        unsupportedSections: 0,
+        duplicatesDropped: 0,
+        truncated: false,
+        firstError: undefined,
+        merged: [],
+        seen: new Set(),
+      };
+      this._searchCache.set(cacheKey, state);
+      if (this._searchCache.size > cacheMax) {
+        const oldest = this._searchCache.keys().next().value;
+        if (oldest !== undefined) this._searchCache.delete(oldest);
+      }
+    } else {
+      state.createdAt = now;
+    }
+
+    const scopes = new Map();
+    const resolveScope = async serverId => {
+      if (!scopes.has(serverId)) scopes.set(serverId, await scopeFor(actor, serverId));
+      return scopes.get(serverId);
+    };
+
+    if (!state.initialized) {
+      const configured = this.list.filter(provider => provider.root?.configured);
+      const discovered = await Promise.all(
+        configured.map(async provider => {
+          try {
+            const serverId = await this.identityOf(provider);
+            const scope = await resolveScope(serverId);
+            const name = provider.label || provider.serverName;
+            const sections = (await scope.browse({})).items || [];
+            return { ok: true, serverId, name, sections };
+          } catch (error) {
+            return { ok: false, error };
+          }
+        }),
+      );
+      checkAborted();
+      for (const entry of discovered) {
+        if (!entry.ok) {
+          state.failedProviders++;
+          state.firstError ||= entry.error;
+          continue;
         }
-      }),
-    );
-    const matched = [];
-    const seen = new Set();
-    let unanswered;
-    let answeredAny = false;
-    for (const result of providerResults) {
-      if (!result.ok) {
-        unanswered ||= result.error;
+        for (const section of entry.sections) {
+          if (!section?.id) continue;
+          if (section.searchable === false) {
+            state.unsupportedSections++;
+            continue;
+          }
+          state.streams.push({
+            serverId: entry.serverId,
+            serverName: entry.name,
+            sectionId: section.id,
+            sectionTitle: section.title,
+            buffer: [],
+            head: 0,
+            nextOffset: 0,
+            done: false,
+            total: null,
+            fetchedPages: 0,
+            answered: false,
+            failed: false,
+            unsupported: false,
+          });
+        }
+      }
+      state.initialized = true;
+    }
+
+    let fetchesThisCall = 0;
+    const refillStreams = async () => {
+      const needed = state.streams.filter(
+        s => !s.done && s.head >= s.buffer.length && s.fetchedPages < maxSectionPages,
+      );
+      if (!needed.length) return false;
+      const batch = needed.slice(0, Math.max(0, maxFetchesPerCall - fetchesThisCall));
+      if (!batch.length) return false;
+      fetchesThisCall += batch.length;
+      await Promise.all(
+        batch.map(async stream => {
+          const requestOffset = stream.nextOffset;
+          stream.fetchedPages++;
+          try {
+            const scope = await resolveScope(stream.serverId);
+            const page = await scope.browse({
+              section: stream.sectionId,
+              q,
+              sort,
+              order,
+              ...(sort === 'random' ? { seed: seedStr } : {}),
+              offset: requestOffset,
+            });
+            if (!stream.answered) {
+              stream.answered = true;
+              state.answeredSections++;
+            }
+            const rawItems = (page?.items || [])
+              .filter(item => item?.id)
+              .map(item => ({
+                ...item,
+                serverId: stream.serverId,
+                ...(stream.serverName ? { serverName: stream.serverName } : {}),
+                ...(stream.sectionTitle ? { sectionTitle: stream.sectionTitle } : {}),
+              }));
+            rawItems.sort(compare);
+            stream.buffer = rawItems;
+            stream.head = 0;
+            if (Number.isFinite(page?.total)) stream.total = Number(page.total);
+            const next = page?.nextOffset;
+            if (next != null && Number.isFinite(Number(next)) && Number(next) > requestOffset && rawItems.length > 0) {
+              stream.nextOffset = Number(next);
+              if (stream.fetchedPages >= maxSectionPages) {
+                stream.done = true;
+                state.truncated = true;
+              }
+            } else {
+              stream.nextOffset = null;
+              stream.done = true;
+            }
+          } catch (error) {
+            stream.done = true;
+            stream.nextOffset = null;
+            if (isUnsupported(error)) {
+              stream.unsupported = true;
+              state.unsupportedSections++;
+            } else {
+              stream.failed = true;
+              state.failedSections++;
+              state.firstError ||= error;
+            }
+          }
+        }),
+      );
+      checkAborted();
+      return true;
+    };
+
+    const targetCount = offset + pageSize;
+    while (state.merged.length < targetCount) {
+      await refillStreams();
+      let bestStream = null;
+      for (const stream of state.streams) {
+        if (stream.head >= stream.buffer.length) continue;
+        if (!bestStream || compare(stream.buffer[stream.head], bestStream.buffer[bestStream.head]) < 0) {
+          bestStream = stream;
+        }
+      }
+      if (!bestStream) break;
+      const item = bestStream.buffer[bestStream.head++];
+      const key = item.serverId + ':' + item.id;
+      if (state.seen.has(key)) {
+        state.duplicatesDropped++;
         continue;
       }
-      answeredAny = true;
-      for (const item of result.items) {
-        const key = item.serverId + ':' + item.id;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        matched.push(item);
+      state.seen.add(key);
+      state.merged.push(item);
+    }
+
+    const unavailableCount = state.failedProviders + state.failedSections;
+    if (unavailableCount > 0 && state.answeredSections === 0) {
+      this._searchCache.delete(cacheKey);
+      throw state.firstError;
+    }
+
+    const items = state.merged.slice(offset, offset + pageSize);
+    const hasBuffered = state.streams.some(s => s.head < s.buffer.length);
+    const hasUnfinished = state.streams.some(s => !s.done);
+    const hasMore = offset + items.length < state.merged.length || hasBuffered || hasUnfinished;
+    const nextOffset = hasMore && items.length > 0 ? offset + items.length : null;
+    const partial = unavailableCount > 0;
+
+    let total = null;
+    if (!partial && !state.truncated) {
+      if (!hasUnfinished) {
+        total = state.merged.length + state.streams.reduce((sum, s) => sum + (s.buffer.length - s.head), 0);
+        if (hasBuffered && state.duplicatesDropped > 0) total = null;
+      } else {
+        const activeStreams = state.streams.filter(s => !s.unsupported && !s.failed);
+        if (
+          state.duplicatesDropped === 0 &&
+          activeStreams.length > 0 &&
+          activeStreams.every(s => Number.isFinite(s.total))
+        ) {
+          total = activeStreams.reduce((sum, s) => sum + s.total, 0);
+        }
       }
     }
-    if (unanswered && !answeredAny) throw unanswered;
-    const sort = query.sort || 'title';
-    const dir = query.order === 'desc' ? -1 : 1;
-    if (sort === 'random') {
-      let seed = 0;
-      const seedStr = String(query.seed || q);
-      for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) | 0;
-      const hash = value => {
-        let h = seed;
-        for (let i = 0; i < value.length; i++) h = Math.imul(h ^ value.charCodeAt(i), 16777619);
-        return h >>> 0;
-      };
-      matched.sort((a, b) => hash(a.serverId + ':' + a.id) - hash(b.serverId + ':' + b.id));
-    } else {
-      matched.sort((a, b) => {
-        if (sort === 'added') return ((a.addedAt || 0) - (b.addedAt || 0)) * dir;
-        if (sort === 'year') return ((a.year || 0) - (b.year || 0)) * dir;
-        if (sort === 'runtime') return ((a.duration || 0) - (b.duration || 0)) * dir;
-        return String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base' }) * dir;
-      });
-    }
-    const offset = Math.max(0, Number.parseInt(String(query.offset || '0'), 10) || 0);
-    const pageSize = 48;
-    const items = matched.slice(offset, offset + pageSize);
-    const nextOffset = offset + items.length < matched.length ? offset + items.length : null;
-    return { items, total: matched.length, offset, nextOffset };
+    return {
+      items,
+      total,
+      offset,
+      nextOffset,
+      partial,
+      ...(partial ? { unavailableCount } : {}),
+    };
   }
   /**
    * The Media Home rows for one viewer: Continue watching from providers that know this viewer's own progress,

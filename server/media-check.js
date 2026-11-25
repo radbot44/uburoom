@@ -74,13 +74,18 @@ class MediaChecks {
     const entry = this.start(media);
     const live = (await media?.provider?.checks?.server?.().catch(() => [])) || [];
     const items = [...(entry?.items || []), ...live.filter(Boolean)];
-    if (entry && !entry.items) items.push({ level: 'info', topic: 'file', title: 'Checking the file…' });
+    const checking = !!entry && !entry.items;
+    const applicable = !!entry || live.length > 0;
+    const status = !applicable ? 'not-applicable' : checking ? 'checking' : 'checked';
+    if (checking) items.push({ level: 'info', topic: 'file', title: 'Checking the file…' });
     items.sort((a, b) => LEVELS.indexOf(a.level) - LEVELS.indexOf(b.level));
     return {
       title: media?.title,
-      checking: !!entry && !entry.items,
+      applicable,
+      status,
+      checking,
       checkedAt: entry?.checkedAt,
-      level: items[0]?.level || 'ok',
+      level: items[0]?.level || (applicable ? 'ok' : 'info'),
       items,
     };
   }

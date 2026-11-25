@@ -142,8 +142,150 @@ test('Media Home cross-library search fans out across configured providers and s
       ['Stalker', 'plex-main', 'Movies', 'VIGRID'],
     ],
   );
-  assert.equal(res.total, 2);
+  assert.equal(res.total, null, 'partial results do not promise an exact total');
   assert.equal(res.nextOffset, null);
+  assert.equal(res.partial, true);
+  assert.equal(res.unavailableCount, 1);
+});
+
+test('Media Home cross-library search paginates past page 1 without replaying initial work and merges providers stably', async () => {
+  const seenOffsets = [];
+  const makeItems = (prefix, count, startIdx = 0) =>
+    Array.from({ length: count }, (_, i) => ({
+      id: String(startIdx + i + 1),
+      title: `${prefix} ${String(startIdx + i + 1).padStart(3, '0')}`,
+    }));
+  const sixty = makeItems('Film', 60);
+  const singleProvider = {
+    kind: 'plex',
+    serverName: 'MAIN',
+    root: { configured: true },
+    identity: async () => 'plex-single',
+    scopeFor: async () => ({
+      browse: async query => {
+        if (!query.section) return { items: [{ id: '1', title: 'Movies' }] };
+        const offset = Number(query.offset || 0);
+        seenOffsets.push(offset);
+        const slice = sixty.slice(offset, offset + 48);
+        return {
+          items: slice,
+          total: sixty.length,
+          offset,
+          nextOffset: offset + slice.length < sixty.length ? offset + slice.length : null,
+        };
+      },
+    }),
+  };
+  const providers = new MediaProviders([singleProvider]);
+  const p1 = await providers.search({ userId: 'u1' }, { q: 'film', sort: 'title', order: 'asc', offset: 0 });
+  assert.equal(p1.items.length, 48);
+  assert.equal(p1.total, 60);
+  assert.equal(p1.nextOffset, 48);
+  assert.equal(p1.partial, false);
+  const p2 = await providers.search({ userId: 'u1' }, { q: 'film', sort: 'title', order: 'asc', offset: 48 });
+  assert.equal(p2.items.length, 12);
+  assert.equal(p2.total, 60);
+  assert.equal(p2.nextOffset, null);
+  assert.deepEqual(seenOffsets, [0, 48], 'scrolling to page 2 does not replay page 0');
+
+  // Mixed-provider merge across pages has no gaps or duplicates and keeps same item ID from two sources.
+  const provAItems = Array.from({ length: 35 }, (_, i) => ({
+    id: String(i + 1),
+    title: `Match ${String(i * 2 + 1).padStart(3, '0')}`,
+  }));
+  const provBItems = Array.from({ length: 35 }, (_, i) => ({
+    id: String(i + 1),
+    title: `Match ${String(i * 2 + 2).padStart(3, '0')}`,
+  }));
+  const makePaged = (serverId, list) => ({
+    kind: 'plex',
+    serverName: serverId,
+    root: { configured: true },
+    identity: async () => serverId,
+    scopeFor: async () => ({
+      browse: async query => {
+        if (!query.section) return { items: [{ id: 's1', title: 'Movies' }] };
+        const offset = Number(query.offset || 0);
+        const slice = list.slice(offset, offset + 20);
+        return {
+          items: slice,
+          total: list.length,
+          offset,
+          nextOffset: offset + slice.length < list.length ? offset + slice.length : null,
+        };
+      },
+    }),
+  });
+  const mixed = new MediaProviders([makePaged('srv-a', provAItems), makePaged('srv-b', provBItems)]);
+  const m1 = await mixed.search({ userId: 'u1' }, { q: 'match', sort: 'title', order: 'asc', offset: 0 });
+  const m2 = await mixed.search({ userId: 'u1' }, { q: 'match', sort: 'title', order: 'asc', offset: m1.nextOffset });
+  assert.equal(m1.items.length, 48);
+  assert.equal(m2.items.length, 22);
+  assert.equal(m2.nextOffset, null);
+  const combined = [...m1.items, ...m2.items];
+  const keys = new Set(combined.map(x => `${x.serverId}:${x.id}`));
+  assert.equal(keys.size, 70, 'all 70 items present with no gaps or duplicates');
+  assert.ok(keys.has('srv-a:1') && keys.has('srv-b:1'), 'same item ID from two sources retained');
+});
+
+test('Media Home cross-library search distinguishes failed sections, unsupported sections, partial results, and abort', async () => {
+  // All sections fail -> throws (retryable unavailable), never masquerades as 0 matches.
+  const allFail = new MediaProviders([
+    {
+      kind: 'plex',
+      serverName: 'BROKEN',
+      root: { configured: true },
+      identity: async () => 'srv-broken',
+      scopeFor: async () => ({
+        browse: async query => {
+          if (!query.section) return { items: [{ id: '1', title: 'Movies' }] };
+          throw new Error('search backend down');
+        },
+      }),
+    },
+  ]);
+  await assert.rejects(
+    () => allFail.search({ userId: 'u1' }, { q: 'test' }),
+    /search backend down/,
+  );
+
+  // Healthy + failed section -> partial: true, total: null.
+  // Unsupported section (501) -> skipped cleanly without marking partial.
+  const mix = new MediaProviders([
+    {
+      kind: 'plex',
+      serverName: 'MIX',
+      root: { configured: true },
+      identity: async () => 'srv-mix',
+      scopeFor: async () => ({
+        browse: async query => {
+          if (!query.section)
+            return {
+              items: [
+                { id: 'ok', title: 'Movies' },
+                { id: 'bad', title: 'Shows' },
+                { id: 'unsup', title: 'Photos' },
+              ],
+            };
+          if (query.section === 'bad') throw new Error('section timeout');
+          if (query.section === 'unsup') throw Object.assign(new Error('not supported'), { status: 501 });
+          return { items: [{ id: '1', title: 'Alien' }], total: 1, offset: 0, nextOffset: null };
+        },
+      }),
+    },
+  ]);
+  const partialRes = await mix.search({ userId: 'u1' }, { q: 'alien' });
+  assert.equal(partialRes.items.length, 1);
+  assert.equal(partialRes.partial, true);
+  assert.equal(partialRes.total, null, 'partial results never promise an exact total');
+
+  // Abort signal cancels search cleanly.
+  const ac = new AbortController();
+  ac.abort();
+  await assert.rejects(
+    () => mix.search({ userId: 'u1' }, { q: 'alien' }, undefined, { signal: ac.signal }),
+    err => err.name === 'AbortError',
+  );
 });
 
 test('the Plex catalog reads On Deck and recent additions twenty at a time, keeping progress', async t => {

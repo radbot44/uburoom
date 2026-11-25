@@ -384,7 +384,9 @@ export function mount(host, deps) {
     store.player.sync.transition(next);
     deps.diagnostics.state(next);
     recordSyncSpread(next.syncSpread);
+    const roomChanged = store.room.state?.id !== next.id;
     const mediaChanged = store.stream.mediaVersion !== next.mediaVersion || !next.mediaUrl;
+    const grantKey = (next.id || '') + ':' + (next.mediaVersion ?? '');
     // A new quality of the same converted stream keeps the player and buffer.
     const burned = value => (value?.tracks?.subtitleDelivery === 'burn' ? value.tracks.subtitleId : undefined);
     const seamless =
@@ -396,17 +398,25 @@ export function mount(host, deps) {
       !!store.room.state?.fallbackActive === !!next.fallbackActive &&
       store.room.state.tracks?.audioId === next.tracks?.audioId &&
       burned(store.room.state) === burned(next);
-    if (mediaChanged) {
+    if (mediaChanged || roomChanged) {
       store.stream.ubuplayerGrantRetry = undefined;
       store.stream.ubuplayerGrantRetried = undefined;
+      deps.toasts.dismiss('ubuplayer-grant-retry');
     }
     const ubuGrantRebuild = Boolean(
       !mediaChanged &&
+      !roomChanged &&
       store.stream.mediaSource === next.mediaUrl &&
       store.stream.ubuplayer?.destroyed &&
-      store.stream.ubuplayerGrantRetry === next.mediaVersion,
+      store.stream.ubuplayerGrantRetry === grantKey,
     );
-    if (ubuGrantRebuild) store.stream.ubuplayerGrantRetry = undefined;
+    if (ubuGrantRebuild || store.stream.mediaSource !== next.mediaUrl) {
+      store.stream.ubuplayerGrantRetry = undefined;
+      if (ubuGrantRebuild) {
+        store.player.playbackError = '';
+        deps.toasts.dismiss('ubuplayer-grant-retry');
+      }
+    }
     const changed = !seamless && (mediaChanged || store.stream.mediaSource !== next.mediaUrl || ubuGrantRebuild);
     let released = false;
     if (store.stream.heldStream) {
@@ -742,16 +752,75 @@ export function mount(host, deps) {
                   },
                   deps.expected,
                   (message, error) => {
+                    if (store.room.selected !== next.id || store.room.state?.mediaVersion !== next.mediaVersion) return;
                     if (error?.kind === 'direct-failed') {
                       void deps.proxyDirectFile();
                       return;
                     }
                     if (error?.kind === 'grant-expired') {
-                      if (store.stream.ubuplayerGrantRetried !== next.mediaVersion) {
-                        store.stream.ubuplayerGrantRetried = next.mediaVersion;
-                        store.stream.ubuplayerGrantRetry = next.mediaVersion;
+                      const surfaceGrantFailure = hint => {
+                        if (store.room.selected !== next.id || store.room.state?.mediaVersion !== next.mediaVersion)
+                          return;
+                        store.stream.ubuplayerGrantRetry = undefined;
+                        store.player.playbackError =
+                          hint || 'Stream access expired. Use Retry to reload playback.';
+                        deps.fail(store.player.playbackError);
+                        deps.toasts.show('ubuplayer-grant-retry', {
+                          type: 'error',
+                          symbol: 'alert-triangle',
+                          duration: 0,
+                          title: 'Playback access expired',
+                          hint: store.player.playbackError,
+                          action: {
+                            label: 'Retry',
+                            run: () => {
+                              if (
+                                store.room.selected !== next.id ||
+                                store.room.state?.mediaVersion !== next.mediaVersion
+                              )
+                                return;
+                              deps.toasts.dismiss('ubuplayer-grant-retry');
+                              store.player.playbackError = '';
+                              deps.fail('');
+                              store.stream.ubuplayerGrantRetry = grantKey;
+                              void Promise.resolve(deps.refreshState())
+                                .then(res => {
+                                  if (
+                                    store.room.selected !== next.id ||
+                                    store.room.state?.mediaVersion !== next.mediaVersion
+                                  )
+                                    return;
+                                  if (res?.reason === 'access-lost') return;
+                                  if (res?.ok === false || store.stream.ubuplayer?.destroyed) {
+                                    surfaceGrantFailure('Stream access could not be restored. Try again.');
+                                  }
+                                })
+                                .catch(() => surfaceGrantFailure('Stream access could not be restored. Try again.'));
+                            },
+                          },
+                        });
+                      };
+                      if (store.stream.ubuplayerGrantRetried !== grantKey) {
+                        store.stream.ubuplayerGrantRetried = grantKey;
+                        store.stream.ubuplayerGrantRetry = grantKey;
+                        void Promise.resolve(deps.refreshState())
+                          .then(res => {
+                            if (
+                              store.room.selected !== next.id ||
+                              store.room.state?.mediaVersion !== next.mediaVersion
+                            )
+                              return;
+                            if (res?.reason === 'access-lost') return;
+                            if (res?.ok === false || store.stream.ubuplayer?.destroyed) {
+                              surfaceGrantFailure('Stream access could not be refreshed automatically. Use Retry.');
+                            }
+                          })
+                          .catch(() =>
+                            surfaceGrantFailure('Stream access could not be refreshed automatically. Use Retry.'),
+                          );
+                      } else {
+                        surfaceGrantFailure('Automatic retry did not restore this stream. Use Retry to try again.');
                       }
-                      void deps.refreshState().catch(() => deps.fail(message));
                       return;
                     }
                     store.stream.ubuplayerFailed = next.mediaVersion;

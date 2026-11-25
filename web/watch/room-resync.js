@@ -16,12 +16,20 @@ export function mount(host, deps) {
   // Asks the server for this tab's room state again. The lanes arrive as pushes
   // before the answer, so the page shows the server's state once this resolves.
   async function refreshState() {
-    if (!store.room.selected) return;
+    if (!store.room.selected) return { ok: false, reason: 'no-room' };
     const id = store.room.selected;
     try {
       await deps.tracked('room-poll', () => deps.connected().resync());
-    } catch {
-      if (id === store.room.selected && !store.connection.transport?.ready) deps.connectionLost();
+      return { ok: true };
+    } catch (error) {
+      if (id === store.room.selected) {
+        if (error?.status === 401 || error?.status === 403 || error?.status === 404) {
+          roomUnavailable(error.message, error.status);
+          return { ok: false, reason: 'access-lost', error };
+        }
+        if (!store.connection.transport?.ready) deps.connectionLost();
+      }
+      return { ok: false, reason: 'failed', error };
     }
   }
   // Takes this tab's place in its room again on a new connection: the same viewer, joined afresh.

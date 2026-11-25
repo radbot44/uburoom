@@ -1113,11 +1113,13 @@ function mount(
     count.hidden = details || (atHome && !homeSearching);
     count.textContent = screen.loading
       ? 'Loading…'
-      : screen.total == null
-        ? screen.items.length + ' loaded'
-        : screen.items.length < screen.total
-          ? screen.items.length + ' of ' + screen.total + ' items'
-          : screen.total + (screen.total === 1 ? ' item' : ' items');
+      : screen.partial
+        ? screen.items.length + ' loaded (partial)'
+        : screen.total == null
+          ? screen.items.length + ' loaded'
+          : screen.items.length < screen.total
+            ? screen.items.length + ' of ' + screen.total + ' items'
+            : screen.total + (screen.total === 1 ? ' item' : ' items');
     results.classList.toggle('episodes', screen.kind === 'season' || !!screen.onlySeason);
     results.hidden = details || (atHome && !homeSearching);
     landing.hidden = !atHome || homeSearching;
@@ -1190,19 +1192,21 @@ function mount(
           const placeholder = node('div', results, undefined, 'library-skeleton');
           placeholder.setAttribute('aria-hidden', 'true');
         }
-      if (!screen.items.length && !screen.loading) {
+      if (!screen.items.length && !screen.loading && !screen.pageError) {
         const currentSection = screen.library;
         const isLink = currentSection?.source === 'link' || screen.source === 'link';
         node(
           'p',
           results,
-          screen.q || screen.genre || screen.year
-            ? 'No matches. Try another search or clear the filters.'
-            : isLink
-              ? 'Paste a YouTube video or playlist link above to preview or queue it.'
-              : screen.tab === 'collections'
-                ? 'No collections in this library.'
-                : 'No titles here yet.',
+          screen.partial
+            ? 'No matches in the available libraries.'
+            : screen.q || screen.genre || screen.year
+              ? 'No matches. Try another search or clear the filters.'
+              : isLink
+                ? 'Paste a YouTube video or playlist link above to preview or queue it.'
+                : screen.tab === 'collections'
+                  ? 'No collections in this library.'
+                  : 'No titles here yet.',
           'library-empty',
         );
       }
@@ -1293,6 +1297,7 @@ function mount(
       catalogVersion = generation;
     resetStatus();
     current.pageError = false;
+    if (!append) current.partial = false;
     current.loading = true;
     if (append) renderTools();
     else renderResults();
@@ -1350,6 +1355,7 @@ function mount(
       current.items = append ? [...current.items, ...added] : added;
       current.total = data.total;
       current.nextOffset = data.nextOffset;
+      current.partial = !!data.partial;
       if (data.source) current.source = data.source;
       current.loading = false;
       if (append) {
@@ -1359,12 +1365,15 @@ function mount(
         setBusy(busy);
         void refreshRoomMedia();
       } else renderResults();
+      if (current.partial)
+        signalError('Some libraries could not be searched. Showing partial results.', () => void loadPage(false));
       void checkAvailability(added, current);
     } catch (error) {
       if (version !== requestVersion || catalogVersion !== generation || error.name === 'AbortError') return;
       current.loading = false;
       current.pageError = true;
-      renderTools();
+      if (append) renderTools();
+      else renderResults();
       signalError(error.message, () => void loadPage(append));
     }
   }

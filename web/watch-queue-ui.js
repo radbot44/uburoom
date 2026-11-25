@@ -1189,6 +1189,88 @@ function mount(
     return btn;
   }
 
+  function pageAction(parent, label, icon, callback, baseDisabled, rowStale, className = '') {
+    const btn = action(parent, label, icon, callback, Boolean(baseDisabled || rowStale), className);
+    btn.dataset.baseDisabled = String(Boolean(baseDisabled));
+    return btn;
+  }
+
+  function replaceRowPreservingFocus(row, nextRow) {
+    const active = typeof document !== 'undefined' ? document.activeElement : null;
+    let focusClass = null;
+    if (active && row.contains(active)) {
+      const classes = [...(active.classList || [])];
+      focusClass = classes.find(c => c.startsWith('queue-action-') || c.startsWith('queue-item-')) || null;
+    }
+    row.replaceWith(nextRow);
+    if (focusClass) {
+      const match = nextRow.querySelector('.' + focusClass);
+      const target =
+        match && !match.disabled
+          ? match
+          : nextRow.querySelector('button:not([disabled])') || nextRow;
+      target?.focus?.();
+    }
+  }
+
+  function syncPageActionStates(state) {
+    const pageStale = !isPageCurrent(state);
+    const currentId = String(state?.queueSummary?.current?.id || '');
+    const canEdit = !!state?.capabilities?.editQueue;
+    const upcomingItems = currentQueue.items || [];
+    const historyItems = currentHistory.items || [];
+    const lists = [
+      upcomingView.querySelector(':scope > #queue-upcoming-list'),
+      historyView.querySelector(':scope > #queue-history-list'),
+    ];
+    for (const list of lists) {
+      if (!list) continue;
+      for (const row of list.querySelectorAll(':scope > .queue-entry:not(.queue-entry-auto), :scope > .queue-history-entry')) {
+        const rowStale = pageStale || (!!currentId && row.dataset.entryId === currentId);
+        row.dataset.stale = String(rowStale);
+        row.classList.toggle('queue-entry-stale', rowStale);
+        for (const btn of row.querySelectorAll('button[data-base-disabled]')) {
+          btn.disabled = btn.dataset.baseDisabled === 'true' || rowStale;
+        }
+      }
+    }
+    const shuffle = footer.querySelector('#queue-shuffle');
+    if (shuffle) shuffle.disabled = !canEdit || upcomingItems.length < 2 || pageStale;
+    const clearQ = footer.querySelector('#queue-clear-queue');
+    if (clearQ) clearQ.disabled = !canEdit || !upcomingItems.length || pageStale;
+    const clearH = footer.querySelector('#queue-clear-history');
+    if (clearH) clearH.disabled = !canEdit || !historyItems.length || pageStale;
+    const moreUpcoming = footer.querySelector('.queue-load-more-upcoming');
+    if (moreUpcoming) moreUpcoming.disabled = pageStale;
+    const olderHistory = historyView.querySelector(':scope > .queue-history-older');
+    if (olderHistory) olderHistory.disabled = pageStale;
+  }
+
+  let fetchErrorMessage = '';
+  function renderFetchStatus() {
+    let banner = footer.querySelector('.queue-sync-status');
+    if (!fetchErrorMessage) {
+      banner?.remove();
+      return;
+    }
+    if (!banner) {
+      banner = node('div', null, undefined, 'queue-sync-status');
+      banner.setAttribute('role', 'status');
+      footer.prepend(banner);
+    }
+    banner.replaceChildren();
+    node('span', banner, 'Queue could not refresh: ' + fetchErrorMessage, 'queue-sync-message');
+    const retry = button(
+      banner,
+      'Retry',
+      'refresh',
+      () => void fetchData(true),
+      false,
+      'quiet queue-sync-retry',
+    );
+    uburoomControls.content(retry, { label: 'Retry', icon: 'refresh' });
+  }
+
   function updateUpcomingTimes() {
     const state = getState();
     const duration = state?.queueSummary?.current?.duration || state?.state?.duration || 0;
@@ -1254,7 +1336,6 @@ function mount(
         canEdit,
         canChoose,
         skipLabel,
-        rowStale,
         pageSnapshot.roomId,
         pageSnapshot.revision,
       ]);
@@ -1263,31 +1344,36 @@ function mount(
         const nextRow = node('article', null, undefined, 'queue-entry');
         nextRow.dataset.entryId = id;
         nextRow.dataset.signature = sig;
+        nextRow.dataset.stale = String(rowStale);
+        nextRow.classList.toggle('queue-entry-stale', rowStale);
         const top = node('div', nextRow, undefined, 'queue-entry-top');
         node('span', top, '', 'queue-rank');
         const moves = node('div', top, undefined, 'queue-move-actions');
-        action(
+        pageAction(
           moves,
           'Move earlier',
           'up',
           () => moveItem(item.id, item.rank - 1, pageSnapshot),
-          !canEdit || rowStale || i === 0,
+          !canEdit || i === 0,
+          rowStale,
           'queue-action-up',
         );
-        action(
+        pageAction(
           moves,
           'Move later',
           'down',
           () => moveItem(item.id, item.rank + 1, pageSnapshot),
-          !canEdit || rowStale || item.rank === currentQueue.total - 1,
+          !canEdit || item.rank === currentQueue.total - 1,
+          rowStale,
           'queue-action-down',
         );
-        action(
+        pageAction(
           moves,
           'Remove from queue',
           'close',
           () => removeItem(item.id, pageSnapshot),
-          !canEdit || rowStale,
+          !canEdit,
+          rowStale,
           'queue-action-remove',
         );
         art(nextRow, item);
@@ -1296,25 +1382,27 @@ function mount(
         node('span', info, formatTime(item.duration), 'queue-meta');
         const actions = node('div', nextRow, undefined, 'queue-entry-actions');
         node('span', actions, 'Queue', 'queue-entry-caption');
-        action(
+        pageAction(
           actions,
           'Play now',
           'play',
           () => playEntry(item.id, false, pageSnapshot),
-          !canChoose || rowStale,
+          !canChoose,
+          rowStale,
           'queue-action-play',
         );
-        action(
+        pageAction(
           actions,
           skipLabel,
           'player-track-next',
           () => playEntry(item.id, true, pageSnapshot),
-          !canChoose || rowStale,
+          !canChoose,
+          rowStale,
           'queue-action-skip',
         );
         if (row) {
           if (cursor === row) cursor = nextRow;
-          row.replaceWith(nextRow);
+          replaceRowPreservingFocus(row, nextRow);
         }
         row = nextRow;
       }
@@ -1598,7 +1686,6 @@ function mount(
         formatSubtitle(item),
         !!state?.capabilities?.editQueue,
         canChoose,
-        rowStale,
         historySnapshot.roomId,
         historySnapshot.revision,
       ]);
@@ -1607,16 +1694,19 @@ function mount(
         const nextRow = node('article', null, undefined, 'queue-history-entry');
         nextRow.dataset.entryId = id;
         nextRow.dataset.signature = sig;
+        nextRow.dataset.stale = String(rowStale);
+        nextRow.classList.toggle('queue-entry-stale', rowStale);
         const label = outcome === 'completed' ? 'Completed' : outcome === 'skipped' ? 'Skipped' : 'Stopped';
         const top = node('div', nextRow, undefined, 'queue-entry-top');
         const status = node('span', top, undefined, 'queue-history-status queue-rank outcome-' + outcome);
         const moves = node('div', top, undefined, 'queue-move-actions');
-        action(
+        pageAction(
           moves,
           'Remove from history',
           'close',
           () => removeItem(item.id, historySnapshot),
-          !state?.capabilities?.editQueue || rowStale,
+          !state?.capabilities?.editQueue,
+          rowStale,
           'queue-action-remove',
         );
         status.title = label;
@@ -1634,25 +1724,27 @@ function mount(
         );
         const actions = node('div', nextRow, undefined, 'queue-entry-actions');
         node('span', actions, 'History', 'queue-entry-caption');
-        action(
+        pageAction(
           actions,
           'Restart from here',
           'player-track-prev',
-          () => replayHistory(item.id, true, true),
+          () => replayHistory(item.id, true, true, historySnapshot),
           !canChoose,
+          rowStale,
           'queue-item-go-back',
         );
-        action(
+        pageAction(
           actions,
           'Restart now',
           'rotate-clockwise',
-          () => replayHistory(item.id, false),
+          () => replayHistory(item.id, false, false, historySnapshot),
           !canChoose,
+          rowStale,
           'queue-item-restart',
         );
         if (row) {
           if (cursor === row) cursor = nextRow;
-          row.replaceWith(nextRow);
+          replaceRowPreservingFocus(row, nextRow);
         }
         row = nextRow;
       }
@@ -1667,6 +1759,8 @@ function mount(
     const anchorTop = anchorRow?.getBoundingClientRect().top;
     renderUpcoming();
     renderHistory();
+    syncPageActionStates(getState());
+    renderFetchStatus();
     updateViewsVisibility();
     for (const img of observedImages)
       if (!img.isConnected) {
@@ -1723,6 +1817,7 @@ function mount(
             continue;
           }
           // Only publish Queue and History pages that match the current room revision.
+          fetchErrorMessage = '';
           currentQueue = qRes;
           currentHistory = hRes;
           lastFetchedRevision = qRes.queueRevision;
@@ -1733,6 +1828,9 @@ function mount(
           }
           renderTab();
         } catch (error) {
+          fetchErrorMessage = error?.message || 'Unable to load queue';
+          syncPageActionStates(getState());
+          renderFetchStatus();
           fail?.(error.message);
           break;
         }
@@ -1874,9 +1972,14 @@ function mount(
 
   async function clearQueue() {
     const state = getState();
-    if (!state?.id) return;
-    const rev = queueRevision(state);
-    await request('room.queue.command', { roomId: state.id, args: { action: 'clear', expectedRevision: rev } });
+    if (!state?.id || !isPageCurrent(state)) {
+      void fetchData(true);
+      return;
+    }
+    await request('room.queue.command', {
+      roomId: state.id,
+      args: { action: 'clear', expectedRevision: lastFetchedRevision },
+    });
     await fetchData(true);
   }
 
@@ -1903,18 +2006,21 @@ function mount(
     await changed();
   }
 
-  async function replayHistory(entryId, resume, restore = false) {
-    const state = getState();
-    if (!state?.id) return;
+  async function replayHistory(entryId, resume, restore = false, target) {
+    const resolved = requirePageTarget(target, entryId);
+    if (!resolved) {
+      void fetchData(true);
+      return;
+    }
     await request(
       'room.history.command',
       {
-        roomId: state.id,
+        roomId: resolved.state.id,
         args: {
           action: restore ? 'goBack' : 'replay',
           entryId,
           resume,
-          expectedRevision: queueRevision(state),
+          expectedRevision: resolved.expectedRevision,
         },
       },
       { timeoutMs: 35000 },
@@ -1925,8 +2031,14 @@ function mount(
 
   async function clearHistory() {
     const state = getState();
-    if (!state?.id) return;
-    await request('room.history.command', { roomId: state.id, args: { action: 'clear' } });
+    if (!state?.id || !isPageCurrent(state)) {
+      void fetchData(true);
+      return;
+    }
+    await request('room.history.command', {
+      roomId: state.id,
+      args: { action: 'clear', expectedRevision: lastFetchedRevision },
+    });
     await fetchData(true);
     await changed();
   }
@@ -2101,6 +2213,7 @@ function mount(
     }
 
     if (state.id !== lastFetchedRoomId) {
+      fetchErrorMessage = '';
       currentQueue = { items: [], total: 0, queueRevision: 0 };
       currentHistory = { items: [], total: 0 };
       currentKey = '';
@@ -2125,6 +2238,7 @@ function mount(
       capabilityKey = permissions;
       renderTab();
     }
+    syncPageActionStates(state);
     renderNowPlaying(state);
     renderSuggestions();
     renderHeaderBadge(queueSummary);

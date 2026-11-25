@@ -17,7 +17,14 @@ import { store } from './store.js';
 export function mount(host, deps) {
   // The server checks each video for hosts. They read it in Player settings and get one
   // toast per video when it finds a problem or warning. Viewers never request it.
-  const videoCheck = { media: undefined, report: undefined, toasted: undefined, timer: undefined };
+  const videoCheck = {
+    media: undefined,
+    report: undefined,
+    error: undefined,
+    loading: false,
+    toasted: undefined,
+    timer: undefined,
+  };
   let richPresencePending = false;
   const VIDEO_CHECK_ICONS = { problem: 'alert-triangle', warning: 'alert-triangle', info: 'info-circle', ok: 'check' };
   async function loadVideoCheck(refresh = false) {
@@ -25,13 +32,27 @@ export function mount(host, deps) {
     const room = store.room.selected,
       media = store.room.state?.mediaVersion;
     if (!store.room.state?.canManage || !store.room.state.mediaId || !room) return renderVideoCheck();
+    videoCheck.media = media;
+    videoCheck.loading = true;
+    videoCheck.error = undefined;
+    if (refresh) {
+      videoCheck.report = undefined;
+      renderVideoCheck();
+    }
     let report;
     try {
       report = await deps.call('room.check', { roomId: room, args: { refresh } });
-    } catch {
+    } catch (error) {
+      if (store.room.selected !== room || store.room.state?.mediaVersion !== media) return;
+      videoCheck.loading = false;
+      videoCheck.report = undefined;
+      videoCheck.error = error?.message || 'Could not check video.';
+      renderVideoCheck();
       return;
     }
     if (store.room.selected !== room || store.room.state?.mediaVersion !== media) return;
+    videoCheck.loading = false;
+    videoCheck.error = undefined;
     videoCheck.report = report;
     renderVideoCheck();
     if (report.checking) videoCheck.timer = deps.time.setTimeout(() => void loadVideoCheck(), 5000);
@@ -53,20 +74,31 @@ export function mount(host, deps) {
     }
   }
   function renderVideoCheck() {
-    const report =
-      store.room.state?.canManage && store.room.state.mediaVersion === videoCheck.media ? videoCheck.report : undefined;
-    $('video-check').hidden = !report;
-    if (!report) return;
+    const active = store.room.state?.canManage && store.room.state.mediaVersion === videoCheck.media;
+    const report = active ? videoCheck.report : undefined;
+    const error = active ? videoCheck.error : undefined;
+    const loading = active && !!videoCheck.loading;
+    $('video-check').hidden = !report && !error && !loading;
+    if (!report && !error && !loading) return;
     const list = $('video-check-items');
     list.replaceChildren();
-    const items = report.items.length
-      ? report.items
-      : [
-          {
-            level: report.checking ? 'info' : 'ok',
-            title: report.checking ? 'Checking video…' : 'No file or delivery issues found',
-          },
-        ];
+    const checking = loading || !!report?.checking || report?.status === 'checking';
+    const notApplicable = report?.status === 'not-applicable' || report?.applicable === false;
+    const completed =
+      !checking &&
+      !notApplicable &&
+      (report?.status === 'checked' || report?.checkedAt != null || (report?.applicable === true && !report?.checking));
+    const items = error
+      ? [{ level: 'problem', title: 'Video check failed', detail: error }]
+      : report?.items?.length
+        ? report.items
+        : checking
+          ? [{ level: 'info', title: 'Checking video…' }]
+          : notApplicable
+            ? [{ level: 'info', title: 'Video check is not available for this media' }]
+            : completed
+              ? [{ level: 'ok', title: 'No file or delivery issues found' }]
+              : [{ level: 'info', title: 'Video has not been checked yet' }];
     for (const item of items) {
       const row = document.createElement('li');
       row.dataset.level = item.level;
@@ -86,7 +118,7 @@ export function mount(host, deps) {
       row.append(icon, text);
       list.append(row);
     }
-    uburoomControls.busy($('video-check-refresh'), !!report.checking, { label: 'Checking video…' });
+    uburoomControls.busy($('video-check-refresh'), checking, { label: 'Checking video…' });
   }
   $('video-check-refresh').prepend(uburoomIcons.icon(document, 'refresh'));
   $('video-check-refresh').addEventListener('click', () => {

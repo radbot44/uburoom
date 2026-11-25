@@ -1580,3 +1580,31 @@ test('codecMatches and trackItem handle PCM audio and embedded closed captions w
     await hdrPlex.close();
   }
 });
+
+test('MediaChecks report distinguishes not-applicable media from a completed clean check', async () => {
+  const { MediaChecks } = require('../server/media-check');
+  const checks = new MediaChecks({ pipeline: {} });
+  const uncheckable = await checks.report({ title: 'Demo clip' });
+  assert.equal(uncheckable.applicable, false);
+  assert.equal(uncheckable.status, 'not-applicable');
+  assert.equal(uncheckable.checking, false);
+  assert.equal(uncheckable.level, 'info');
+
+  const checked = new MediaChecks({
+    pipeline: {
+      av1: {
+        ffprobe: 'fixture-ffprobe',
+        input: (_source, _signal, action) => action('fixture'),
+        run: async () => Buffer.from('{"streams":[]}'),
+      },
+    },
+  });
+  const media = { sourceKey: 'clean-file', title: 'Clean Movie' };
+  await checked.start(media).promise;
+  const cleanReport = await checked.report(media);
+  assert.equal(cleanReport.applicable, true);
+  assert.equal(cleanReport.status, 'checked');
+  assert.equal(cleanReport.checking, false);
+  assert.equal(cleanReport.level, 'ok');
+  assert.ok(Number.isFinite(cleanReport.checkedAt));
+});
