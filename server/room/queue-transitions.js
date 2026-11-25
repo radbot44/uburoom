@@ -426,7 +426,8 @@ module.exports = {
       room.media = prepared;
       room.mediaVersion = randomUUID();
       room.readinessVersion = undefined;
-      this.mediaChecks.start(prepared);
+      prepared.shareKey ||= [room.roomId, room.mediaVersion];
+      if (!this.providers.owner(prepared?.provider)?.direct?.enabled) this.mediaChecks.start(prepared);
       room.position = record ? queue.current(id).position : startPosition;
       room.changedAt = this.clock.now();
       if (room.recovery) this.roomState.finishRecovery(room);

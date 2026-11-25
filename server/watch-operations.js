@@ -443,6 +443,7 @@ function watchOperations({
                       if (viewer.directFileResolved !== entry || !(await validGrant(grant))) return;
                       entry.settled = true;
                       entry.url = direct || undefined;
+                      if (!direct) watch.maybeStartLazyMediaCheck(room);
                       if (
                         direct &&
                         room.viewers.get(viewerId) === viewer &&
@@ -452,10 +453,14 @@ function watchOperations({
                         watch.changed(room);
                     })
                     .catch(() => {
-                      if (viewer.directFileResolved === entry) entry.settled = true;
+                      if (viewer.directFileResolved === entry) {
+                        entry.settled = true;
+                        watch.maybeStartLazyMediaCheck(room);
+                      }
                     });
                 } else {
                   entry.settled = true;
+                  watch.maybeStartLazyMediaCheck(room);
                 }
               }
             } else {
@@ -473,7 +478,10 @@ function watchOperations({
                 state.mediaUrl = direct;
                 state.directDelivery = true;
                 viewer.directDelivery = media;
-              } else viewer.directDelivery = undefined;
+              } else {
+                viewer.directDelivery = undefined;
+                watch.maybeStartLazyMediaCheck(room);
+              }
             }
           }
         }
@@ -1085,8 +1093,14 @@ function watchOperations({
           if (!throttle('video-check:' + auth.actor.userId, 6))
             return result(429, { error: 'Wait a moment before checking again' });
           watch.mediaChecks.forget(room.media);
+          watch.pipeline?.mediaFacts?.forget(room.media?.sourceKey);
         }
-        return result(200, await watch.mediaChecks.report(room.media));
+        return result(
+          200,
+          await watch.mediaChecks.report(room.media, {
+            allowFileProbe: Boolean(args.refresh) || !watch.isStrictDirectPlexRoom(room),
+          }),
+        );
       }),
     // A tab whose direct delivery failed asks for the other one. A per-viewer transport
     // failure never converts media or changes room playback.
@@ -1111,6 +1125,7 @@ function watchOperations({
             viewer.directProxyVersion = room.mediaVersion;
             viewer.directDelivery = undefined;
             viewer.directFileResolved = undefined;
+            watch.maybeStartLazyMediaCheck(room);
             if (viewer.media?.directHls) {
               const previous = viewer.media;
               viewer.media = undefined;

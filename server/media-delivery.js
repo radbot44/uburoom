@@ -26,6 +26,7 @@ async function prepareStream(provider, id, quality, compatible = false, source, 
   media.lifecycleAbort ||= new AbortController();
   media.subtitleAbort ||= new AbortController();
   media.quality = quality;
+  if (choices.shareKey) media.shareKey = choices.shareKey;
   const audio = media.selection.audio;
   if (audio) media.audioCodec = audio.codec;
   const burn = media.selection.subtitle?.available && media.selection.subtitle.delivery === 'burn';

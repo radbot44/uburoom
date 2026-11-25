@@ -1,6 +1,8 @@
 'use strict';
 const Subtitles = require('./subtitles');
-const { runOperation } = require('./operation');
+const { CacheBudget } = require('./cache-budget');
+const { SharedTask, currentSignal, runOperation } = require('./operation');
+const { scopeKey, pickLiveSource } = require('./media-facts');
 // Original subtitle assets only. Rendering stays in the browser; extraction never
 // re-encodes video or receives a provider credential in process arguments.
 const fs = require('node:fs/promises'),
@@ -9,59 +11,19 @@ const fs = require('node:fs/promises'),
 const { PlaybackError } = require('./errors');
 const { fileIndex } = require('./media-tools');
 const { StringDecoder } = require('node:string_decoder');
+
 const LIMIT = 64 * 1024 * 1024,
   FONTS = 16 * 1024 * 1024,
-  TOTAL = 96 * 1024 * 1024;
-const cache = new Map(),
-  windows = new Map();
-let bytes = 0,
-  active = 0;
-const slotWaiters = [];
-async function acquireSlot(signal) {
-  signal?.throwIfAborted();
-  if (active < 2 && !slotWaiters.length) {
-    active++;
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      releaseSlot();
-    };
-  }
-  if (slotWaiters.length >= 16)
-    throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
-  await new Promise((resolve, reject) => {
-    const entry = {
-      resolve: () => {
-        signal?.removeEventListener('abort', onAbort);
-        resolve();
-      },
-    };
-    const onAbort = () => {
-      const idx = slotWaiters.indexOf(entry);
-      if (idx >= 0) slotWaiters.splice(idx, 1);
-      reject(signal?.reason || new PlaybackError('Subtitle loading was cancelled.'));
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-    slotWaiters.push(entry);
-  });
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    releaseSlot();
-  };
-}
-function releaseSlot() {
-  while (slotWaiters.length) {
-    const next = slotWaiters.shift();
-    if (next) {
-      next.resolve();
-      return;
-    }
-  }
-  active = Math.max(0, active - 1);
-}
+  TOTAL = 96 * 1024 * 1024,
+  CUES_BUDGET = 8 * 1024 * 1024,
+  MAX_CUES_TRACKS = 32,
+  MAX_FULL_TRACKS = 8,
+  MAX_TRACK_WINDOWS = 16,
+  MAX_TRACK_WINDOW_BYTES = 16 * 1024 * 1024,
+  MAX_TOTAL_WINDOWS = 128,
+  QUANTUM_MS = 5000,
+  MAX_WINDOW_DURATION_MS = 240000;
+
 function classifyExtractionError(error) {
   if (/timed out/i.test(error?.message || '')) return new PlaybackError('Subtitle extraction timed out. Try burn-in.');
   if (/exceeded the.*limit|exceed/i.test(error?.message || ''))
@@ -73,94 +35,46 @@ function classifyExtractionError(error) {
   if (error instanceof PlaybackError) return error;
   return new PlaybackError('Original subtitles could not be extracted. Try burn-in.');
 }
-// Extraction reads the real file, so it uses the file's own number for the track.
-async function fileTrack(av1, media, track, url, signal) {
-  if (!av1.ffprobe || !media.tracks?.subtitles?.length) return track;
-  media.fileStreams ||=
-    JSON.parse(
-      (
-        await av1.run(
-          av1.ffprobe,
-          ['-v', 'error', '-show_entries', 'stream=index,codec_type,codec_name', '-of', 'json', url],
-          signal,
-          20000,
-          1024 * 1024,
-        )
-      ).toString(),
-    ).streams || [];
-  return { ...track, index: fileIndex(media.tracks?.subtitles, track, media.fileStreams, 'subtitle') };
-}
-function dropWindow(entry) {
-  bytes -= entry.data.length;
-  windows.delete(entry);
-  entry.media.windowCache?.delete(entry.key);
-}
-function reserve(size) {
-  while (bytes + size > TOTAL) {
-    if (windows.size) dropWindow(windows.keys().next().value);
-    else if (cache.size) clearCached(cache.keys().next().value);
-    else break;
+
+function quantizeWindow({ atMs = 0, beforeMs = 15000, afterMs = 60000 } = {}) {
+  const number = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
+  const targetMs = Math.max(0, Math.round(number(atMs, 0)));
+  const beforeClampMs = Math.min(60000, Math.max(0, Math.round(number(beforeMs, 15000))));
+  const afterClampMs = Math.min(180000, Math.max(10000, Math.round(number(afterMs, 60000))));
+  const rawStartMs = Math.max(0, targetMs - beforeClampMs);
+  const rawEndMs = targetMs + afterClampMs;
+
+  // Round start DOWN and end UP so [qStartMs, qEndMs] strictly covers [rawStartMs, rawEndMs].
+  const qStartMs = Math.floor(rawStartMs / QUANTUM_MS) * QUANTUM_MS;
+  let qEndMs = Math.max(qStartMs + QUANTUM_MS, Math.ceil(rawEndMs / QUANTUM_MS) * QUANTUM_MS);
+  if (qEndMs - qStartMs > MAX_WINDOW_DURATION_MS) {
+    qEndMs = qStartMs + MAX_WINDOW_DURATION_MS;
   }
+  const startSeconds = qStartMs / 1000;
+  const endSeconds = qEndMs / 1000;
+  const durationSeconds = endSeconds - startSeconds;
+  return { qStartMs, qEndMs, startSeconds, endSeconds, durationSeconds };
 }
-function clearCached(media) {
-  const old = cache.get(media);
-  if (old) {
-    bytes -= old.size;
-    cache.delete(media);
-  }
-  media.subtitleAssets = undefined;
-  for (const entry of media.windowCache?.values() || []) dropWindow(entry);
-  media.windowCache?.clear();
+
+function trackKey(track) {
+  return JSON.stringify([
+    track.external ? 'ext' : 'emb',
+    track.id,
+    track.index ?? null,
+    track.delivery,
+    track.codec || '',
+    track.external ? track.resources?.data || '' : '',
+    track.external && track.resources?.index ? track.resources.index : '',
+  ]);
 }
-function clear(media) {
-  if (!media) return;
-  clearCached(media);
-  for (const job of media.windowJobs?.values() || []) job.controller.abort();
+
+function buildCallerSignal(signal, media) {
+  const signals = [signal, media?.subtitleAbort?.signal, media?.lifecycleAbort?.signal, currentSignal()].filter(
+    Boolean,
+  );
+  return signals.length === 1 ? signals[0] : signals.length > 1 ? AbortSignal.any(signals) : undefined;
 }
-function transfer(from, to) {
-  if (
-    !from ||
-    !to ||
-    from === to ||
-    !from.sourceKey ||
-    from.sourceKey !== to.sourceKey ||
-    from.principal !== to.principal
-  )
-    return false;
-  const a = from.selection?.subtitle,
-    b = to.selection?.subtitle;
-  if (!a?.available || !b?.available || a.delivery === 'burn' || a.delivery !== b.delivery || a.id !== b.id)
-    return false;
-  if (from.subtitleCache) {
-    to.subtitleCache = from.subtitleCache;
-    from.subtitleCache = undefined;
-  }
-  if (from.windowCache) {
-    to.windowCache = from.windowCache;
-    from.windowCache = undefined;
-    for (const entry of to.windowCache.values()) entry.media = to;
-  }
-  if (from.windowJobs) {
-    to.windowJobs = from.windowJobs;
-    from.windowJobs = undefined;
-    for (const job of to.windowJobs.values()) job.media = to;
-  }
-  to.captionVersion = from.captionVersion;
-  to.subtitleAbort?.abort();
-  to.subtitleAbort = from.subtitleAbort || new AbortController();
-  to.subtitleAssets = from.subtitleAssets;
-  to.subtitleJob = from.subtitleJob;
-  if (to.subtitleJob) to.subtitleJob.media = to;
-  if (cache.has(from)) {
-    const entry = cache.get(from);
-    cache.delete(from);
-    cache.set(to, entry);
-  }
-  from.subtitleAbort = undefined;
-  from.subtitleAssets = undefined;
-  from.subtitleJob = undefined;
-  return true;
-}
+
 async function read(response, signal, limit = LIMIT) {
   if (!response.ok) throw new PlaybackError('The original subtitle resource is unavailable. Try burn-in.');
   const chunks = [];
@@ -178,464 +92,14 @@ async function read(response, signal, limit = LIMIT) {
   }
   return Buffer.concat(chunks, size);
 }
+
 function source(media) {
   const track = media.selection?.subtitle;
   if (!track || !['ass', 'pgs', 'vobsub', 'cues'].includes(track.delivery))
     throw new PlaybackError('No browser-rendered subtitle is selected.');
   return { track };
 }
-function startPgsJob(av1, media) {
-  const { track } = source(media),
-    version = media.captionVersion;
-  if (active >= 2 && slotWaiters.length >= 16)
-    throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
-  const controller = new AbortController();
-  media.subtitleAbort ||= new AbortController();
-  const abort = AbortSignal.any([media.subtitleAbort.signal, controller.signal, AbortSignal.timeout(300000)]);
-  const job = { media, version, controller, chunks: [], size: 0, listeners: new Set(), complete: false, error: null };
-  job.promise = runOperation(abort, async () => {
-    let release;
-    try {
-      release = await acquireSlot(abort);
-      if (!av1?.ffmpeg || !Number.isSafeInteger(track.index))
-        throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
-      await av1.input({ ...media, start: media.sourceStart }, abort, async url => {
-        const { index } = await fileTrack(av1, media, track, url, abort);
-        // Flush each packet so viewers receive cues as soon as demuxing reaches
-        // them, instead of waiting for FFmpeg's pipe buffer to fill.
-        const args = [
-          '-hide_banner',
-          '-loglevel',
-          'error',
-          '-nostdin',
-          '-y',
-          '-i',
-          url,
-          '-map',
-          '0:' + index,
-          '-c:s',
-          'copy',
-          '-map_metadata',
-          '-1',
-          '-map_chapters',
-          '-1',
-          '-flush_packets',
-          '1',
-          '-f',
-          'sup',
-          'pipe:1',
-        ];
-        await av1.stream(
-          av1.ffmpeg,
-          args,
-          abort,
-          chunk => {
-            job.chunks.push(chunk);
-            job.size += chunk.length;
-            for (const listener of job.listeners)
-              try {
-                listener(chunk, null);
-              } catch {}
-          },
-          { idleTimeout: 300000, maxOutput: LIMIT },
-        );
-      });
-      job.complete = true;
-      const fullData = Buffer.concat(job.chunks, job.size);
-      job.output = fullData;
-      job.chunks = [];
-      const result = { format: 'pgs', assets: new Map([['data', fullData]]), version, size: job.size };
-      const target = job.media;
-      clearCached(target);
-      abort.throwIfAborted();
-      if (target.captionVersion !== version) throw new PlaybackError('Subtitle selection changed.');
-      while (cache.size && cache.size >= 8) clearCached(cache.keys().next().value);
-      reserve(result.size);
-      cache.set(target, result);
-      bytes += result.size;
-      target.subtitleAssets = result.assets;
-      for (const listener of job.listeners)
-        try {
-          listener(null, null);
-        } catch {}
-      return result;
-    } catch (error) {
-      job.error = classifyExtractionError(error);
-      for (const listener of job.listeners)
-        try {
-          listener(null, job.error);
-        } catch {}
-      throw job.error;
-    } finally {
-      release?.();
-      job.listeners.clear();
-      if (job.media.subtitleJob === job) job.media.subtitleJob = undefined;
-    }
-  });
-  job.promise.catch(() => {});
-  media.subtitleJob = job;
-  return job;
-}
-async function pipe(av1, media, req, res, signal) {
-  const version = media.captionVersion,
-    previous = cache.get(media);
-  if (previous?.version === version && previous.assets?.has('data')) {
-    const data = previous.assets.get('data');
-    res.writeHead(200, {
-      'Content-Type': 'application/octet-stream',
-      'Content-Length': data.length,
-      'Cache-Control': 'no-store',
-    });
-    res.end(req?.method === 'HEAD' ? undefined : data);
-    return;
-  }
-  if (req?.method === 'HEAD') {
-    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' });
-    res.end();
-    return;
-  }
-  let job = media.subtitleJob;
-  if (!job || job.version !== version) job = startPgsJob(av1, media);
-  let wake,
-    closed = false,
-    sent = 0,
-    index = 0,
-    headers = false;
-  const notify = () => {
-    wake?.();
-    wake = undefined;
-  };
-  const cancel = () => {
-    closed = true;
-    if (!res.writableEnded && !res.destroyed) res.destroy();
-    notify();
-  };
-  const close = () => {
-    closed = true;
-    notify();
-  };
-  const wait = () =>
-    new Promise(resolve => {
-      wake = resolve;
-    });
-  job.listeners.add(notify);
-  res.on('close', close);
-  signal?.addEventListener('abort', cancel, { once: true });
-  try {
-    if (signal?.aborted || res.destroyed) cancel();
-    while (!closed) {
-      if (job.error) throw job.error;
-      const chunk = job.complete ? job.output?.subarray(sent, sent + 65536) : job.chunks[index];
-      if (chunk?.length) {
-        if (!headers) {
-          res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' });
-          headers = true;
-        }
-        sent += chunk.length;
-        index++;
-        if (res.write(chunk) === false) {
-          // Each subscriber drains independently; slow readers cannot grow an
-          // unbounded response queue or hold another viewer's video connection.
-          await new Promise(resolve => {
-            const done = () => {
-              res.off('drain', done);
-              res.off('close', done);
-              signal?.removeEventListener('abort', done);
-              resolve();
-            };
-            res.on('drain', done);
-            res.on('close', done);
-            signal?.addEventListener('abort', done, { once: true });
-            if (closed || signal?.aborted || res.destroyed) done();
-          });
-        }
-      } else if (job.complete) {
-        if (!headers) res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' });
-        res.end();
-        return;
-      } else await wait();
-    }
-  } catch (error) {
-    if (!res.headersSent) throw error;
-    res.destroy();
-  } finally {
-    job.listeners.delete(notify);
-    res.off('close', close);
-    signal?.removeEventListener('abort', cancel);
-    if (!job.complete && (!job.listeners || job.listeners.size === 0)) job.controller?.abort();
-  }
-}
-function awaitJob(promise, signal) {
-  if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(signal.reason || new PlaybackError('Subtitle loading was cancelled.'));
-  return new Promise((resolve, reject) => {
-    const cancel = () => reject(signal.reason || new PlaybackError('Subtitle loading was cancelled.'));
-    signal.addEventListener('abort', cancel, { once: true });
-    promise.then(
-      val => {
-        signal.removeEventListener('abort', cancel);
-        resolve(val);
-      },
-      err => {
-        signal.removeEventListener('abort', cancel);
-        reject(err);
-      },
-    );
-  });
-}
-async function extract(av1, media, track, signal) {
-  if (!av1?.ffmpeg || !Number.isSafeInteger(track.index))
-    throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
-  let directory;
-  try {
-    return await av1.input({ ...media, start: media.sourceStart }, signal, async url => {
-      const { index } = await fileTrack(av1, media, track, url, signal);
-      const fonts = [];
-      if (track.delivery === 'ass') {
-        const info = JSON.parse(
-          (
-            await av1.run(
-              av1.ffprobe,
-              [
-                '-v',
-                'error',
-                '-show_entries',
-                'stream=index,codec_type:stream_tags=mimetype,filename',
-                '-of',
-                'json',
-                url,
-              ],
-              signal,
-              20000,
-              1024 * 1024,
-            )
-          ).toString(),
-        );
-        for (const stream of info.streams || [])
-          if (
-            stream.codec_type === 'attachment' &&
-            Number.isSafeInteger(stream.index) &&
-            (!stream.tags?.mimetype || /(?:font|opentype|truetype)/i.test(stream.tags.mimetype)) &&
-            /\.(?:ttf|ttc|otf|woff2?)$/i.test(stream.tags?.filename || '')
-          ) {
-            if (fonts.length >= 32) throw new PlaybackError('Subtitle font attachments exceed the supported count.');
-            fonts.push(stream.index);
-          }
-      }
-      if (fonts.length) directory = await fs.mkdtemp(path.join(os.tmpdir(), 'uburoom-subtitles-'));
-      const files = fonts.map((_, i) => path.join(directory, String(i) + '.font'));
-      const budget = new AbortController(),
-        cancel = () => budget.abort();
-      signal.addEventListener('abort', cancel, { once: true });
-      let checking = false,
-        oversize = false;
-      const timer = files.length
-        ? setInterval(async () => {
-            if (checking) return;
-            checking = true;
-            try {
-              const sizes = await Promise.all(
-                files.map(file =>
-                  fs.stat(file).then(
-                    s => s.size,
-                    () => 0,
-                  ),
-                ),
-              );
-              if (sizes.reduce((a, b) => a + b, 0) > FONTS) {
-                oversize = true;
-                budget.abort();
-              }
-            } finally {
-              checking = false;
-            }
-          }, 100)
-        : undefined;
-      try {
-        const args = [
-          '-hide_banner',
-          '-loglevel',
-          'error',
-          '-nostdin',
-          '-y',
-          ...fonts.flatMap((index, i) => ['-dump_attachment:' + index, files[i]]),
-          '-i',
-          url,
-          '-map',
-          '0:' + index,
-          '-c:s',
-          'copy',
-          '-map_metadata',
-          '-1',
-          '-map_chapters',
-          '-1',
-          '-f',
-          track.delivery === 'ass' ? 'ass' : track.delivery === 'pgs' ? 'sup' : 'matroska',
-          'pipe:1',
-        ];
-        const data = await av1.run(
-          av1.ffmpeg,
-          args,
-          AbortSignal.any([signal, budget.signal]),
-          60000,
-          track.delivery === 'ass' ? 4 * 1024 * 1024 : LIMIT,
-        );
-        const assets = new Map([['data', data]]);
-        let fontSize = 0;
-        for (let i = 0; i < files.length; i++) {
-          const stat = await fs.stat(files[i]);
-          fontSize += stat.size;
-          if (fontSize > FONTS) throw new PlaybackError('Subtitle fonts exceed the supported size.');
-          assets.set('font-' + i, await fs.readFile(files[i]));
-        }
-        if (!data.length || oversize) throw new PlaybackError('Subtitle extraction produced no usable data.');
-        return { format: track.delivery, fileName: track.delivery === 'vobsub' ? 'track.mks' : undefined, assets };
-      } finally {
-        clearInterval(timer);
-        signal.removeEventListener('abort', cancel);
-      }
-    });
-  } catch (error) {
-    if (signal.aborted) throw error;
-    throw classifyExtractionError(error);
-  } finally {
-    if (directory) {
-      const resolved = path.resolve(directory);
-      if (
-        path.dirname(resolved) !== path.resolve(os.tmpdir()) ||
-        !path.basename(resolved).startsWith('uburoom-subtitles-')
-      )
-        throw new Error('Invalid subtitle temporary directory');
-      await fs.rm(resolved, { recursive: true, force: true, maxRetries: 5 });
-    }
-  }
-}
-async function load(av1, media, signal) {
-  const { track } = source(media),
-    version = media.captionVersion;
-  const previous = cache.get(media);
-  if (previous?.version === version) {
-    cache.delete(media);
-    cache.set(media, previous);
-    return previous;
-  }
-  if (media.subtitleJob?.version === version) return awaitJob(media.subtitleJob.promise, signal);
-  if (active >= 2 && slotWaiters.length >= 16)
-    throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
-  media.subtitleAbort ||= new AbortController();
-  const abort = AbortSignal.any([media.subtitleAbort.signal, AbortSignal.timeout(85000)]);
-  const job = { media, version };
-  job.promise = runOperation(abort, async () => {
-    let release;
-    try {
-      release = await acquireSlot(abort);
-      let result;
-      if (track.external) {
-        const { data: file, index } = track.resources || {};
-        if (!file || (track.delivery === 'vobsub' && !index)) throw new PlaybackError('Invalid subtitle resource.');
-        const data = await read(
-          await media.provider.request(file, { signal: abort, headers: { Accept: '*/*' } }),
-          abort,
-          track.delivery === 'ass' ? 4 * 1024 * 1024 : LIMIT,
-        );
-        result = { format: track.delivery, assets: new Map([['data', data]]) };
-        if (track.delivery === 'vobsub')
-          result.assets.set(
-            'index',
-            await read(
-              await media.provider.request(index, { signal: abort, headers: { Accept: '*/*' } }),
-              abort,
-              1024 * 1024,
-            ),
-          );
-      } else result = await extract(av1, media, track, abort);
-      const target = job.media;
-      abort.throwIfAborted();
-      if (target.captionVersion !== version) throw new PlaybackError('Subtitle selection changed.');
-      result.version = version;
-      result.size = [...result.assets.values()].reduce((sum, value) => sum + value.length, 0);
-      if (result.size > TOTAL) throw new PlaybackError('Subtitle resources exceed the cache limit.');
-      clearCached(target);
-      while (cache.size && cache.size >= 8) clearCached(cache.keys().next().value);
-      reserve(result.size);
-      cache.set(target, result);
-      bytes += result.size;
-      target.subtitleAssets = result.assets;
-      return result;
-    } finally {
-      release?.();
-      if (job.media.subtitleJob === job) job.media.subtitleJob = undefined;
-    }
-  });
-  job.promise.catch(() => {});
-  media.subtitleJob = job;
-  return awaitJob(job.promise, signal);
-}
-// Inspect all packet timestamps first: filtering ffprobe to a sparse subtitle
-// stream makes even its interval reader wait for the next selected packet, and
-// FFmpeg's output -to likewise demuxes every stream until the subtitle stream's
-// next packet after the window, which on a high-bitrate source is hundreds of MB.
-// Reading every stream, the interval ends at the window end. Callers then stop
-// FFmpeg once the known packets arrive, preserving original source PTS.
-async function inspectWindow(av1, media, url, index, codec, startSeconds, endSeconds, signal) {
-  const probe = av1.ffprobe;
-  if (!probe) throw new PlaybackError('Subtitle window extraction needs configured FFprobe. Try burn-in.');
-  const verify = info => {
-    if (!info.streams?.some(stream => stream.index === index && (!codec || stream.codec_name === codec)))
-      throw new PlaybackError('The selected subtitle stream could not be verified. Try burn-in.');
-  };
-  const inspect = async (interval, timeout, limit, entries) =>
-    JSON.parse(
-      (
-        await av1.run(
-          probe,
-          [
-            '-v',
-            'error',
-            '-analyzeduration',
-            '1000000',
-            '-probesize',
-            '1048576',
-            '-read_intervals',
-            interval,
-            '-show_packets',
-            '-show_entries',
-            entries,
-            '-of',
-            'json',
-            url,
-          ],
-          signal,
-          timeout,
-          limit,
-        )
-      ).toString(),
-    );
-  let origin = media.subtitleOrigin;
-  if (!Number.isFinite(origin)) {
-    const info = await inspect(
-      '%+0.1',
-      10000,
-      1024 * 1024,
-      'format=start_time:stream=index,codec_name:packet=pts_time',
-    );
-    verify(info);
-    origin = Number(info.format?.start_time ?? info.packets?.[0]?.pts_time);
-    if (!Number.isFinite(origin)) throw new PlaybackError('The source timeline could not be determined. Try burn-in.');
-    signal.throwIfAborted();
-    media.subtitleOrigin = origin;
-  }
-  const metadata = await inspect(
-    String(origin + startSeconds) + '%' + String(origin + endSeconds),
-    25000,
-    16 * 1024 * 1024,
-    'packet=stream_index,pts_time,size:stream=index,codec_name',
-  );
-  verify(metadata);
-  if (!Array.isArray(metadata.packets) || !metadata.packets.length)
-    throw new PlaybackError('No media packets could be verified for the subtitle window. Try burn-in.');
-  return { origin, packets: metadata.packets.filter(packet => packet.stream_index === index) };
-}
+
 // Text cue start times FFmpeg has written so far, in milliseconds of source time.
 function cueStarts(text) {
   const starts = [];
@@ -645,6 +109,7 @@ function cueStarts(text) {
   }
   return starts;
 }
+
 function alignPgs(data, origin, endSeconds) {
   const output = [];
   let cues = 0;
@@ -665,109 +130,1032 @@ function alignPgs(data, origin, endSeconds) {
   }
   return { data: Buffer.concat(output), cues };
 }
-function waitWindow(job, signal) {
-  return new Promise((resolve, reject) => {
-    job.users++;
-    let settled = false;
-    const finish = (error, value) => {
-      if (settled) return;
-      settled = true;
-      signal?.removeEventListener('abort', cancel);
-      if (--job.users === 0 && !job.complete) job.controller.abort();
-      error ? reject(error) : resolve(value);
+
+class SubtitleResourceManager {
+  constructor({ mediaFacts, logger, idleMs = 1500, totalBytes = TOTAL } = {}) {
+    this.mediaFacts = mediaFacts;
+    this.logger = logger;
+    this.idleMs = idleMs;
+    this.totalBytes = totalBytes;
+    this.fullTracks = new Map();
+    this.trackWindows = new Map();
+    this.windowLru = new Set();
+    this.loadJobs = new Map();
+    this.windowJobs = new Map();
+    this.pipeJobs = new Map();
+    this.cuesCache = new Map();
+    this.cueJobs = new Map();
+    this.cuesBudget = new CacheBudget(CUES_BUDGET);
+    this.tempDirs = new Set();
+    this.mediaIds = new WeakMap();
+    this.nextMediaId = 1;
+    this.bytes = 0;
+    this.active = 0;
+    this.slotWaiters = [];
+    this.closed = false;
+    this.counters = {
+      fullHits: 0,
+      fullMisses: 0,
+      windowHits: 0,
+      windowMisses: 0,
+      cuesHits: 0,
+      cuesMisses: 0,
     };
-    const cancel = () => finish(signal.reason || new PlaybackError('Subtitle loading was cancelled.'));
-    signal?.addEventListener('abort', cancel, { once: true });
-    if (signal?.aborted) cancel();
-    job.promise.then(
-      value => finish(null, value),
-      error => finish(error),
-    );
-  });
-}
-async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000, signal } = {}) {
-  const { track } = source(media),
-    version = media.captionVersion;
-  signal?.throwIfAborted();
-  media.subtitleAbort?.signal.throwIfAborted();
-  const number = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
-  const at = Math.max(0, number(atMs, 0)) / 1000;
-  const before = Math.min(60, Math.max(0, number(beforeMs, 15000)) / 1000);
-  const after = Math.min(180, Math.max(10, number(afterMs, 60000) / 1000));
-  const startSeconds = Math.max(0, at - before),
-    endSeconds = at + after,
-    durationSeconds = endSeconds - startSeconds;
-  const startMs = Math.round(startSeconds * 1000),
-    endMs = Math.round(endSeconds * 1000);
-  media.windowCache ||= new Map();
-  media.windowJobs ||= new Map();
-  const cacheKey =
-    `${track.id}:${startMs}-${endMs}:` + JSON.stringify([version, track.id, track.delivery, startMs, endMs]);
-  for (const item of media.windowCache.values()) {
-    if (
-      item.version === version &&
-      (!item.trackId || item.trackId === track.id) &&
-      item.startMs <= startMs &&
-      item.endMs >= endMs
-    ) {
-      windows.delete(item);
-      windows.set(item, media);
-      return { format: track.delivery, startMs: item.startMs, endMs: item.endMs, data: item.data, cues: item.cues };
+  }
+
+  mediaScope(media) {
+    const shared = scopeKey(media);
+    if (shared) return shared;
+    let id = this.mediaIds.get(media);
+    if (!id) {
+      id = 'media:' + this.nextMediaId++;
+      this.mediaIds.set(media, id);
+    }
+    return id;
+  }
+
+  async acquireSlot(signal) {
+    signal?.throwIfAborted();
+    if (this.closed) throw new PlaybackError('Server is shutting down.');
+    if (this.active < 2 && !this.slotWaiters.length) {
+      this.active++;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        this.releaseSlot();
+      };
+    }
+    if (this.slotWaiters.length >= 16)
+      throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
+    await new Promise((resolve, reject) => {
+      const entry = {
+        resolve: () => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        },
+        reject: err => {
+          signal?.removeEventListener('abort', onAbort);
+          reject(err);
+        },
+      };
+      const onAbort = () => {
+        const idx = this.slotWaiters.indexOf(entry);
+        if (idx >= 0) this.slotWaiters.splice(idx, 1);
+        reject(signal?.reason || new PlaybackError('Subtitle loading was cancelled.'));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.slotWaiters.push(entry);
+    });
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.releaseSlot();
+    };
+  }
+
+  releaseSlot() {
+    while (this.slotWaiters.length) {
+      const next = this.slotWaiters.shift();
+      if (next) {
+        next.resolve();
+        return;
+      }
+    }
+    this.active = Math.max(0, this.active - 1);
+  }
+
+  dropWindow(entry) {
+    if (!entry || !this.windowLru.has(entry)) return;
+    this.bytes -= entry.size;
+    this.windowLru.delete(entry);
+    const map = this.trackWindows.get(entry.trackScopeKey);
+    if (map) {
+      map.delete(entry.key);
+      if (!map.size) this.trackWindows.delete(entry.trackScopeKey);
+    }
+    for (const owner of entry.owners) owner.windowCache?.delete(entry.key);
+    entry.owners.clear();
+  }
+
+  dropFullTrack(fullKey) {
+    const entry = this.fullTracks.get(fullKey);
+    if (!entry) return;
+    this.bytes -= entry.size;
+    this.fullTracks.delete(fullKey);
+    for (const owner of entry.owners) {
+      if (owner.subtitleAssets === entry.assets) owner.subtitleAssets = undefined;
+    }
+    entry.owners.clear();
+  }
+
+  reserve(size) {
+    while (this.bytes + size > this.totalBytes) {
+      if (this.windowLru.size) this.dropWindow(this.windowLru.values().next().value);
+      else if (this.fullTracks.size) this.dropFullTrack(this.fullTracks.keys().next().value);
+      else break;
     }
   }
-  let job = media.windowJobs.get(cacheKey);
-  if (job?.controller.signal.aborted) job = undefined;
-  if (job) return waitWindow(job, signal);
-  if (active >= 2 && slotWaiters.length >= 16)
-    throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
-  if (!av1?.ffmpeg || !Number.isSafeInteger(track.index))
-    throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
-  const controller = new AbortController();
-  const abort = AbortSignal.any(
-    [controller.signal, media.subtitleAbort?.signal, AbortSignal.timeout(30000)].filter(Boolean),
-  );
-  job = { media, controller, users: 0, complete: false };
-  job.promise = Promise.resolve().then(() =>
-    runOperation(abort, async () => {
+
+  attachFullTrackToMedia(media, entry) {
+    entry.owners.add(media);
+    media.subtitleAssets = entry.assets;
+  }
+
+  attachWindowToMedia(media, entry) {
+    entry.owners.add(media);
+    media.windowCache ||= new Map();
+    media.windowCache.set(entry.key, entry);
+  }
+
+  // Extraction reads the real file, so it uses the file's own number for the track.
+  async fileTrack(av1, media, track, url, signal, facts) {
+    if (!av1?.ffprobe || !media?.tracks?.subtitles?.length) return track;
+    if (facts?.streams) {
+      media.fileStreams ||= facts.streams;
+      return { ...track, index: fileIndex(media.tracks?.subtitles, track, facts.streams, 'subtitle') };
+    }
+    media.fileStreams ||=
+      JSON.parse(
+        (
+          await av1.run(
+            av1.ffprobe,
+            ['-v', 'error', '-show_entries', 'stream=index,codec_type,codec_name', '-of', 'json', url],
+            signal,
+            20000,
+            1024 * 1024,
+          )
+        ).toString(),
+      ).streams || [];
+    return { ...track, index: fileIndex(media.tracks?.subtitles, track, media.fileStreams, 'subtitle') };
+  }
+
+  async inspectWindow(av1, media, url, index, codec, startSeconds, endSeconds, signal, facts) {
+    const probe = av1.ffprobe;
+    if (!probe) throw new PlaybackError('Subtitle window extraction needs configured FFprobe. Try burn-in.');
+    const verify = info => {
+      if (!info.streams?.some(stream => stream.index === index && (!codec || stream.codec_name === codec)))
+        throw new PlaybackError('The selected subtitle stream could not be verified. Try burn-in.');
+    };
+    const inspect = async (interval, timeout, limit, entries) =>
+      JSON.parse(
+        (
+          await av1.run(
+            probe,
+            [
+              '-v',
+              'error',
+              '-analyzeduration',
+              '1000000',
+              '-probesize',
+              '1048576',
+              '-read_intervals',
+              interval,
+              '-show_packets',
+              '-show_entries',
+              entries,
+              '-of',
+              'json',
+              url,
+            ],
+            signal,
+            timeout,
+            limit,
+          )
+        ).toString(),
+      );
+    let origin = Number.isFinite(facts?.originSeconds) ? facts.originSeconds : media.subtitleOrigin;
+    if (!Number.isFinite(origin)) {
+      const info = await inspect(
+        '%+0.1',
+        10000,
+        1024 * 1024,
+        'format=start_time:stream=index,codec_name:packet=pts_time',
+      );
+      verify(info);
+      origin = Number(info.format?.start_time ?? info.packets?.[0]?.pts_time);
+      if (!Number.isFinite(origin))
+        throw new PlaybackError('The source timeline could not be determined. Try burn-in.');
+      signal.throwIfAborted();
+      media.subtitleOrigin = origin;
+    } else if (facts?.streams?.length) {
+      verify(facts);
+    }
+    const metadata = await inspect(
+      String(origin + startSeconds) + '%' + String(origin + endSeconds),
+      25000,
+      16 * 1024 * 1024,
+      'packet=stream_index,pts_time,size:stream=index,codec_name',
+    );
+    verify(metadata);
+    if (!Array.isArray(metadata.packets) || !metadata.packets.length)
+      throw new PlaybackError('No media packets could be verified for the subtitle window. Try burn-in.');
+    return { origin, packets: metadata.packets.filter(packet => packet.stream_index === index) };
+  }
+
+  async extract(av1, activeSources, fallbackMedia, track, signal, facts) {
+    if (!av1?.ffmpeg || !Number.isSafeInteger(track.index))
+      throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
+    let directory;
+    const sourceResolver = () => pickLiveSource(activeSources, fallbackMedia, { requireSubtitleAbort: true });
+    try {
+      return await av1.input(sourceResolver, signal, async url => {
+        const liveMedia = pickLiveSource(activeSources, fallbackMedia, { requireSubtitleAbort: true }) || fallbackMedia;
+        const { index } = await this.fileTrack(av1, liveMedia, track, url, signal, facts);
+        let fonts = [];
+        if (track.delivery === 'ass') {
+          if (facts) {
+            if (facts.fontAttachmentOverflow)
+              throw new PlaybackError('Subtitle font attachments exceed the supported count.');
+            fonts = [...facts.fontAttachments];
+          } else {
+            const info = JSON.parse(
+              (
+                await av1.run(
+                  av1.ffprobe,
+                  [
+                    '-v',
+                    'error',
+                    '-show_entries',
+                    'stream=index,codec_type:stream_tags=mimetype,filename',
+                    '-of',
+                    'json',
+                    url,
+                  ],
+                  signal,
+                  20000,
+                  1024 * 1024,
+                )
+              ).toString(),
+            );
+            for (const stream of info.streams || [])
+              if (
+                stream.codec_type === 'attachment' &&
+                Number.isSafeInteger(stream.index) &&
+                (!stream.tags?.mimetype || /(?:font|opentype|truetype)/i.test(stream.tags.mimetype)) &&
+                /\.(?:ttf|ttc|otf|woff2?)$/i.test(stream.tags?.filename || '')
+              ) {
+                if (fonts.length >= 32)
+                  throw new PlaybackError('Subtitle font attachments exceed the supported count.');
+                fonts.push(stream.index);
+              }
+          }
+        }
+        if (fonts.length) {
+          directory = await fs.mkdtemp(path.join(os.tmpdir(), 'uburoom-subtitles-'));
+          this.tempDirs.add(directory);
+        }
+        const files = fonts.map((_, i) => path.join(directory, String(i) + '.font'));
+        const budget = new AbortController(),
+          cancel = () => budget.abort();
+        signal.addEventListener('abort', cancel, { once: true });
+        let checking = false,
+          oversize = false;
+        const timer = files.length
+          ? setInterval(async () => {
+              if (checking) return;
+              checking = true;
+              try {
+                const sizes = await Promise.all(
+                  files.map(file =>
+                    fs.stat(file).then(
+                      s => s.size,
+                      () => 0,
+                    ),
+                  ),
+                );
+                if (sizes.reduce((a, b) => a + b, 0) > FONTS) {
+                  oversize = true;
+                  budget.abort();
+                }
+              } finally {
+                checking = false;
+              }
+            }, 100)
+          : undefined;
+        timer?.unref?.();
+        try {
+          const args = [
+            '-hide_banner',
+            '-loglevel',
+            'error',
+            '-nostdin',
+            '-y',
+            ...fonts.flatMap((fontIndex, i) => ['-dump_attachment:' + fontIndex, files[i]]),
+            '-i',
+            url,
+            '-map',
+            '0:' + index,
+            '-c:s',
+            'copy',
+            '-map_metadata',
+            '-1',
+            '-map_chapters',
+            '-1',
+            '-f',
+            track.delivery === 'ass' ? 'ass' : track.delivery === 'pgs' ? 'sup' : 'matroska',
+            'pipe:1',
+          ];
+          const data = await av1.run(
+            av1.ffmpeg,
+            args,
+            AbortSignal.any([signal, budget.signal]),
+            60000,
+            track.delivery === 'ass' ? 4 * 1024 * 1024 : LIMIT,
+          );
+          const assets = new Map([['data', data]]);
+          let fontSize = 0;
+          for (let i = 0; i < files.length; i++) {
+            const stat = await fs.stat(files[i]);
+            fontSize += stat.size;
+            if (fontSize > FONTS) throw new PlaybackError('Subtitle fonts exceed the supported size.');
+            assets.set('font-' + i, await fs.readFile(files[i]));
+          }
+          if (!data.length || oversize) throw new PlaybackError('Subtitle extraction produced no usable data.');
+          return { format: track.delivery, fileName: track.delivery === 'vobsub' ? 'track.mks' : undefined, assets };
+        } finally {
+          clearInterval(timer);
+          signal.removeEventListener('abort', cancel);
+        }
+      });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      throw classifyExtractionError(error);
+    } finally {
+      if (directory) {
+        const resolved = path.resolve(directory);
+        this.tempDirs.delete(directory);
+        if (
+          path.dirname(resolved) !== path.resolve(os.tmpdir()) ||
+          !path.basename(resolved).startsWith('uburoom-subtitles-')
+        )
+          throw new Error('Invalid subtitle temporary directory');
+        await fs.rm(resolved, { recursive: true, force: true, maxRetries: 5 });
+      }
+    }
+  }
+
+  commitFullTrack(fullKey, trackScopeKey, result) {
+    const size = [...result.assets.values()].reduce((sum, value) => sum + value.length, 0);
+    if (size > this.totalBytes) throw new PlaybackError('Subtitle resources exceed the cache limit.');
+    const old = this.fullTracks.get(fullKey);
+    if (old) this.dropFullTrack(fullKey);
+    while (this.fullTracks.size && this.fullTracks.size >= MAX_FULL_TRACKS)
+      this.dropFullTrack(this.fullTracks.keys().next().value);
+    this.reserve(size);
+    const entry = {
+      key: fullKey,
+      trackScopeKey,
+      format: result.format,
+      fileName: result.fileName,
+      assets: result.assets,
+      size,
+      owners: new Set(),
+    };
+    this.fullTracks.set(fullKey, entry);
+    this.bytes += size;
+    return entry;
+  }
+
+  findCachedFullTrack(fullKey, media) {
+    const entry = this.fullTracks.get(fullKey);
+    if (!entry) return null;
+    this.counters.fullHits++;
+    this.fullTracks.delete(fullKey);
+    this.fullTracks.set(fullKey, entry);
+    this.attachFullTrackToMedia(media, entry);
+    return entry;
+  }
+
+  findCachedWindow(trackScopeKey, delivery, qStartMs, qEndMs, media) {
+    const trackWinMap = this.trackWindows.get(trackScopeKey);
+    if (!trackWinMap) return null;
+    for (const item of trackWinMap.values()) {
+      if (
+        item.delivery === delivery &&
+        item.startMs <= qStartMs &&
+        item.endMs >= qEndMs &&
+        item.endMs - item.startMs <= MAX_WINDOW_DURATION_MS
+      ) {
+        this.counters.windowHits++;
+        this.windowLru.delete(item);
+        this.windowLru.add(item);
+        this.attachWindowToMedia(media, item);
+        return { format: delivery, startMs: item.startMs, endMs: item.endMs, data: item.data, cues: item.cues };
+      }
+    }
+    return null;
+  }
+
+  async load(av1, media, signal) {
+    if (this.closed) throw new PlaybackError('Server is shutting down.');
+    const { track } = source(media),
+      version = media.captionVersion;
+    const callerSignal = buildCallerSignal(signal, media);
+    callerSignal?.throwIfAborted();
+
+    const scope = this.mediaScope(media);
+    const tKey = trackKey(track);
+    const trackScopeKey = `${scope}|${tKey}`;
+    const fullKey = `${scope}|track|${tKey}`;
+
+    const previous = this.findCachedFullTrack(fullKey, media);
+    if (previous) {
+      return {
+        format: previous.format,
+        fileName: previous.fileName,
+        assets: previous.assets,
+        size: previous.size,
+      };
+    }
+
+    const factsService = this.mediaFacts || av1?.mediaFacts;
+    let facts;
+    if (!track.external && factsService && av1?.ffprobe) {
+      facts = await factsService.inspect(media, { signal: callerSignal });
+      if (media.captionVersion !== version || media.selection?.subtitle?.id !== track.id)
+        throw new PlaybackError('Subtitle selection changed.');
+      const postFacts = this.findCachedFullTrack(fullKey, media);
+      if (postFacts) {
+        return {
+          format: postFacts.format,
+          fileName: postFacts.fileName,
+          assets: postFacts.assets,
+          size: postFacts.size,
+        };
+      }
+    }
+
+    let flight = this.loadJobs.get(fullKey);
+    if (flight && !flight.task.settled && !flight.task.signal.aborted) {
+      // Join existing shared job
+    } else {
+      if (this.active >= 2 && this.slotWaiters.length >= 16)
+        throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
+      this.counters.fullMisses++;
+      const activeSources = new Set();
+      const task = new SharedTask(
+        async taskSignal => {
+          let release;
+          try {
+            release = await this.acquireSlot(taskSignal);
+            let result;
+            if (track.external) {
+              const { data: file, index } = track.resources || {};
+              if (!file || (track.delivery === 'vobsub' && !index))
+                throw new PlaybackError('Invalid subtitle resource.');
+              const live = pickLiveSource(activeSources, media, { requireSubtitleAbort: true }) || media;
+              const data = await read(
+                await live.provider.request(file, { signal: taskSignal, headers: { Accept: '*/*' } }),
+                taskSignal,
+                track.delivery === 'ass' ? 4 * 1024 * 1024 : LIMIT,
+              );
+              result = { format: track.delivery, assets: new Map([['data', data]]) };
+              if (track.delivery === 'vobsub') {
+                const liveIdx = pickLiveSource(activeSources, media, { requireSubtitleAbort: true }) || media;
+                result.assets.set(
+                  'index',
+                  await read(
+                    await liveIdx.provider.request(index, { signal: taskSignal, headers: { Accept: '*/*' } }),
+                    taskSignal,
+                    1024 * 1024,
+                  ),
+                );
+              }
+            } else {
+              result = await this.extract(av1, activeSources, media, track, taskSignal, facts);
+            }
+            taskSignal.throwIfAborted();
+            if (this.closed) throw new PlaybackError('Server is shutting down.');
+            return this.commitFullTrack(fullKey, trackScopeKey, result);
+          } finally {
+            release?.();
+          }
+        },
+        { timeoutMs: 85000, idleMs: 0 },
+      );
+      flight = { task, activeSources, trackScopeKey };
+      this.loadJobs.set(fullKey, flight);
+      task.promise
+        .finally(() => {
+          if (this.loadJobs.get(fullKey) === flight) this.loadJobs.delete(fullKey);
+        })
+        .catch(() => {});
+    }
+
+    const sub = { media, signal: callerSignal };
+    flight.activeSources.add(sub);
+    media.subtitleJob = flight.task;
+    try {
+      const entry = await flight.task.join(callerSignal);
+      if (media.captionVersion !== version || media.selection?.subtitle?.id !== track.id)
+        throw new PlaybackError('Subtitle selection changed.');
+      this.attachFullTrackToMedia(media, entry);
+      return {
+        format: entry.format,
+        fileName: entry.fileName,
+        assets: entry.assets,
+        size: entry.size,
+      };
+    } finally {
+      flight.activeSources.delete(sub);
+      if (media.subtitleJob === flight.task) media.subtitleJob = undefined;
+    }
+  }
+
+  startPgsJob(av1, media, track, fullKey, trackScopeKey, pipeKey, facts) {
+    if (this.active >= 2 && this.slotWaiters.length >= 16)
+      throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
+    const controller = new AbortController();
+    const abort = AbortSignal.any([controller.signal, AbortSignal.timeout(300000)]);
+    const activeSources = new Set();
+    const job = {
+      controller,
+      activeSources,
+      chunks: [],
+      size: 0,
+      listeners: new Set(),
+      complete: false,
+      error: null,
+      output: null,
+      graceTimer: undefined,
+      trackScopeKey,
+    };
+    job.promise = runOperation(abort, async () => {
       let release;
       try {
-        release = await acquireSlot(abort);
-        const format =
-          track.delivery === 'ass'
-            ? 'ass'
-            : track.delivery === 'vobsub'
-              ? 'matroska'
-              : track.delivery === 'cues'
-                ? 'webvtt'
-                : 'sup';
-        let pgs;
-        let data = await av1.input(
-          {
-            ...media,
-            start: media.sourceStart,
-            subtitleWindow: ['pgs', 'cues'].includes(track.delivery),
-          },
-          abort,
-          async url => {
-            const { index } = await fileTrack(av1, job.media, track, url, abort);
-            if (track.delivery === 'pgs') {
-              const { origin, packets } = await inspectWindow(
-                av1,
-                job.media,
-                url,
-                index,
-                'hdmv_pgs_subtitle',
-                startSeconds,
-                endSeconds,
-                abort,
-              );
-              const count = packets.length;
-              const expected = packets.reduce((sum, packet) => sum + Number(packet.size), 0);
-              if (!Number.isSafeInteger(expected) || expected < 0 || expected > 16 * 1024 * 1024)
-                throw new PlaybackError('PGS window exceeded the supported limit. Try burn-in.');
-              if (!count) {
-                pgs = { data: Buffer.alloc(0), cues: 0 };
+        release = await this.acquireSlot(abort);
+        if (!av1?.ffmpeg || !Number.isSafeInteger(track.index))
+          throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
+        const sourceResolver = () => pickLiveSource(activeSources, media, { requireSubtitleAbort: true });
+        await av1.input(sourceResolver, abort, async url => {
+          const liveMedia = pickLiveSource(activeSources, media, { requireSubtitleAbort: true }) || media;
+          const { index } = await this.fileTrack(av1, liveMedia, track, url, abort, facts);
+          const args = [
+            '-hide_banner',
+            '-loglevel',
+            'error',
+            '-nostdin',
+            '-y',
+            '-i',
+            url,
+            '-map',
+            '0:' + index,
+            '-c:s',
+            'copy',
+            '-map_metadata',
+            '-1',
+            '-map_chapters',
+            '-1',
+            '-flush_packets',
+            '1',
+            '-f',
+            'sup',
+            'pipe:1',
+          ];
+          await av1.stream(
+            av1.ffmpeg,
+            args,
+            abort,
+            chunk => {
+              job.chunks.push(chunk);
+              job.size += chunk.length;
+              for (const listener of job.listeners)
+                try {
+                  listener(chunk, null);
+                } catch {}
+            },
+            { idleTimeout: 300000, maxOutput: LIMIT },
+          );
+        });
+        job.complete = true;
+        const fullData = Buffer.concat(job.chunks, job.size);
+        job.output = fullData;
+        job.chunks = [];
+        abort.throwIfAborted();
+        if (this.closed) throw new PlaybackError('Server is shutting down.');
+        const entry = this.commitFullTrack(fullKey, trackScopeKey, {
+          format: 'pgs',
+          assets: new Map([['data', fullData]]),
+        });
+        for (const sub of activeSources) {
+          this.attachFullTrackToMedia(sub.media, entry);
+        }
+        for (const listener of job.listeners)
+          try {
+            listener(null, null);
+          } catch {}
+        return entry;
+      } catch (error) {
+        job.error = classifyExtractionError(error);
+        for (const listener of job.listeners)
+          try {
+            listener(null, job.error);
+          } catch {}
+        throw job.error;
+      } finally {
+        clearTimeout(job.graceTimer);
+        release?.();
+        job.listeners.clear();
+        if (this.pipeJobs.get(pipeKey) === job) this.pipeJobs.delete(pipeKey);
+        for (const sub of activeSources) {
+          if (sub.media.subtitleJob === job) sub.media.subtitleJob = undefined;
+        }
+      }
+    });
+    job.promise.catch(() => {});
+    this.pipeJobs.set(pipeKey, job);
+    return job;
+  }
+
+  async pipe(av1, media, req, res, signal) {
+    if (this.closed) throw new PlaybackError('Server is shutting down.');
+    const { track } = source(media);
+    const version = media.captionVersion;
+    const callerSignal = buildCallerSignal(signal, media);
+    const scope = this.mediaScope(media);
+    const tKey = trackKey(track);
+    const trackScopeKey = `${scope}|${tKey}`;
+    const fullKey = `${scope}|track|${tKey}`;
+    const pipeKey = `${scope}|pipe|${tKey}`;
+
+    const serveCachedPipe = entry => {
+      const data = entry.assets.get('data');
+      res.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': data.length,
+        'Cache-Control': 'no-store',
+      });
+      res.end(req?.method === 'HEAD' ? undefined : data);
+    };
+
+    const previous = this.fullTracks.get(fullKey)?.assets?.has('data')
+      ? this.findCachedFullTrack(fullKey, media)
+      : null;
+    if (previous) {
+      serveCachedPipe(previous);
+      return;
+    }
+    if (req?.method === 'HEAD') {
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
+
+    const factsService = this.mediaFacts || av1?.mediaFacts;
+    let facts;
+    if (!track.external && factsService && av1?.ffprobe) {
+      facts = await factsService.inspect(media, { signal: callerSignal });
+      if (media.captionVersion !== version || media.selection?.subtitle?.id !== track.id)
+        throw new PlaybackError('Subtitle selection changed.');
+      const postFacts = this.fullTracks.get(fullKey)?.assets?.has('data')
+        ? this.findCachedFullTrack(fullKey, media)
+        : null;
+      if (postFacts) {
+        serveCachedPipe(postFacts);
+        return;
+      }
+    }
+
+    let job = this.pipeJobs.get(pipeKey);
+    if (!job || job.controller.signal.aborted) {
+      this.counters.fullMisses++;
+      job = this.startPgsJob(av1, media, track, fullKey, trackScopeKey, pipeKey, facts);
+    }
+
+    clearTimeout(job.graceTimer);
+    job.graceTimer = undefined;
+    const sub = { media, signal: callerSignal };
+    job.activeSources.add(sub);
+    media.subtitleJob = job;
+
+    let wake,
+      closed = false,
+      sent = 0,
+      index = 0,
+      headers = false;
+    const notify = () => {
+      wake?.();
+      wake = undefined;
+    };
+    const cancel = () => {
+      closed = true;
+      if (!res.writableEnded && !res.destroyed) res.destroy();
+      notify();
+    };
+    const close = () => {
+      closed = true;
+      notify();
+    };
+    const wait = () =>
+      new Promise(resolve => {
+        wake = resolve;
+      });
+    job.listeners.add(notify);
+    res.on('close', close);
+    callerSignal?.addEventListener('abort', cancel, { once: true });
+    try {
+      if (callerSignal?.aborted || res.destroyed) cancel();
+      while (!closed) {
+        if (media.captionVersion !== version || media.selection?.subtitle?.id !== track.id)
+          throw new PlaybackError('Subtitle selection changed.');
+        if (job.error) throw job.error;
+        const chunk = job.complete ? job.output?.subarray(sent, sent + 65536) : job.chunks[index];
+        if (chunk?.length) {
+          if (!headers) {
+            res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' });
+            headers = true;
+          }
+          sent += chunk.length;
+          index++;
+          if (res.write(chunk) === false) {
+            await new Promise(resolve => {
+              const done = () => {
+                res.off('drain', done);
+                res.off('close', done);
+                callerSignal?.removeEventListener('abort', done);
+                resolve();
+              };
+              res.on('drain', done);
+              res.on('close', done);
+              callerSignal?.addEventListener('abort', done, { once: true });
+              if (closed || callerSignal?.aborted || res.destroyed) done();
+            });
+          }
+        } else if (job.complete) {
+          if (!headers) res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' });
+          res.end();
+          return;
+        } else await wait();
+      }
+    } catch (error) {
+      if (!res.headersSent) throw error;
+      res.destroy();
+    } finally {
+      job.listeners.delete(notify);
+      job.activeSources.delete(sub);
+      if (media.subtitleJob === job) media.subtitleJob = undefined;
+      res.off('close', close);
+      callerSignal?.removeEventListener('abort', cancel);
+      if (!job.complete && job.listeners.size === 0) {
+        if (!this.idleMs) {
+          job.controller?.abort();
+        } else {
+          job.graceTimer = setTimeout(() => {
+            if (!job.complete && job.listeners.size === 0) job.controller?.abort();
+          }, this.idleMs);
+          job.graceTimer.unref?.();
+        }
+      }
+    }
+  }
+
+  async window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000, signal, revoked } = {}) {
+    if (this.closed) throw new PlaybackError('Server is shutting down.');
+    const { track } = source(media),
+      version = media.captionVersion;
+    const subAbortSignal = media?.subtitleAbort?.signal;
+    const lifeAbortSignal = media?.lifecycleAbort?.signal;
+    signal?.throwIfAborted();
+    subAbortSignal?.throwIfAborted();
+    lifeAbortSignal?.throwIfAborted();
+    const callerSignal = buildCallerSignal(signal, media);
+
+    const { qStartMs, qEndMs, startSeconds, endSeconds, durationSeconds } = quantizeWindow({
+      atMs,
+      beforeMs,
+      afterMs,
+    });
+    media.windowCache ||= new Map();
+    media.windowJobs ||= new Map();
+    const scope = this.mediaScope(media);
+    const tKey = trackKey(track);
+    const trackScopeKey = `${scope}|${tKey}`;
+    const winKey = `${scope}|win|${tKey}|${qStartMs}-${qEndMs}`;
+
+    const cachedWin = this.findCachedWindow(trackScopeKey, track.delivery, qStartMs, qEndMs, media);
+    if (cachedWin) return cachedWin;
+
+    if (!av1?.ffmpeg || !Number.isSafeInteger(track.index))
+      throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
+
+    const factsService = this.mediaFacts || av1?.mediaFacts;
+    let facts;
+    if (!track.external && factsService && av1?.ffprobe) {
+      facts = await factsService.inspect(media, { signal: callerSignal });
+      if (media.captionVersion !== version || media.selection?.subtitle?.id !== track.id)
+        throw new PlaybackError('Subtitle selection changed.');
+      const postFactsWin = this.findCachedWindow(trackScopeKey, track.delivery, qStartMs, qEndMs, media);
+      if (postFactsWin) return postFactsWin;
+    }
+
+    let flight = this.windowJobs.get(winKey);
+    if (flight && !flight.task.settled && !flight.task.signal.aborted) {
+      // Join existing shared window extraction
+    } else {
+      if (this.active >= 2 && this.slotWaiters.length >= 16)
+        throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
+      this.counters.windowMisses++;
+      const activeSources = new Set();
+      const task = new SharedTask(
+        async taskSignal => {
+          let release;
+          try {
+            release = await this.acquireSlot(taskSignal);
+            const format =
+              track.delivery === 'ass'
+                ? 'ass'
+                : track.delivery === 'vobsub'
+                  ? 'matroska'
+                  : track.delivery === 'cues'
+                    ? 'webvtt'
+                    : 'sup';
+            let pgs;
+            let extractedOrigin = 0;
+            const sourceResolver = () =>
+              pickLiveSource(activeSources, media, {
+                requireSubtitleAbort: true,
+                extra: { subtitleWindow: ['pgs', 'cues'].includes(track.delivery) },
+              });
+            let data = await av1.input(sourceResolver, taskSignal, async url => {
+              const liveMedia = pickLiveSource(activeSources, media, { requireSubtitleAbort: true }) || media;
+              const { index } = await this.fileTrack(av1, liveMedia, track, url, taskSignal, facts);
+              if (track.delivery === 'pgs') {
+                const { origin, packets } = await this.inspectWindow(
+                  av1,
+                  liveMedia,
+                  url,
+                  index,
+                  'hdmv_pgs_subtitle',
+                  startSeconds,
+                  endSeconds,
+                  taskSignal,
+                  facts,
+                );
+                extractedOrigin = origin;
+                const count = packets.length;
+                const expected = packets.reduce((sum, packet) => sum + Number(packet.size), 0);
+                if (!Number.isSafeInteger(expected) || expected < 0 || expected > 16 * 1024 * 1024)
+                  throw new PlaybackError('PGS window exceeded the supported limit. Try burn-in.');
+                if (!count) {
+                  pgs = { data: Buffer.alloc(0), cues: 0 };
+                  return pgs.data;
+                }
+                const args = [
+                  '-hide_banner',
+                  '-loglevel',
+                  'error',
+                  '-nostdin',
+                  '-y',
+                  '-ss',
+                  String(startSeconds),
+                  '-copyts',
+                  '-analyzeduration',
+                  '1000000',
+                  '-probesize',
+                  '1048576',
+                  '-i',
+                  url,
+                  '-map',
+                  '0:' + index,
+                  '-c:s',
+                  'copy',
+                  '-frames:s',
+                  String(count),
+                  '-flush_packets',
+                  '1',
+                  '-map_metadata',
+                  '-1',
+                  '-map_chapters',
+                  '-1',
+                  '-f',
+                  'sup',
+                  'pipe:1',
+                ];
+                let pending = Buffer.alloc(0),
+                  rawBytes = 0;
+                const expectedTimes = new Map(),
+                  receivedTimes = new Map();
+                for (const packet of packets) {
+                  const pts = Math.round(Number(packet.pts_time) * 90000);
+                  if (!Number.isSafeInteger(pts) || pts < 0 || pts > 0xffffffff)
+                    throw new PlaybackError(
+                      'PGS source timestamps are unavailable or exceed the supported range. Try burn-in.',
+                    );
+                  expectedTimes.set(pts, (expectedTimes.get(pts) || 0) + Number(packet.size));
+                }
+                const outputComplete = chunk => {
+                  pending = Buffer.concat([pending, chunk]);
+                  let offset = 0;
+                  while (offset + 13 <= pending.length) {
+                    if (pending[offset] !== 0x50 || pending[offset + 1] !== 0x47)
+                      throw new PlaybackError('Invalid PGS extraction. Try burn-in.');
+                    const length = pending.readUInt16BE(offset + 11);
+                    if (offset + 13 + length > pending.length) break;
+                    const pts = pending.readUInt32BE(offset + 2);
+                    receivedTimes.set(pts, (receivedTimes.get(pts) || 0) + 3 + length);
+                    rawBytes += 3 + length;
+                    offset += 13 + length;
+                  }
+                  pending = Buffer.from(pending.subarray(offset));
+                  return rawBytes >= expected;
+                };
+                const rawPgs = await av1.run(av1.ffmpeg, args, taskSignal, 25000, 16 * 1024 * 1024, undefined, {
+                  outputComplete,
+                });
+                if (
+                  rawBytes !== expected ||
+                  pending.length ||
+                  expectedTimes.size !== receivedTimes.size ||
+                  [...expectedTimes].some(([pts, size]) => receivedTimes.get(pts) !== size)
+                )
+                  throw new PlaybackError('PGS extraction did not match the requested packets. Try burn-in.');
+                pgs = alignPgs(rawPgs, origin, endSeconds);
+                if (!pgs.data.length)
+                  throw new PlaybackError('Subtitle extraction produced no usable data. Try burn-in.');
                 return pgs.data;
+              }
+              if (track.delivery === 'cues') {
+                const { origin, packets } = await this.inspectWindow(
+                  av1,
+                  liveMedia,
+                  url,
+                  index,
+                  undefined,
+                  startSeconds,
+                  endSeconds,
+                  taskSignal,
+                  facts,
+                );
+                extractedOrigin = origin;
+                const first = Math.round((origin + startSeconds) * 1000),
+                  last = Math.round((origin + endSeconds) * 1000),
+                  wanted = [];
+                for (const packet of packets) {
+                  const at = Math.round(Number(packet.pts_time) * 1000);
+                  if (!Number.isSafeInteger(at))
+                    throw new PlaybackError('Subtitle source timestamps are unavailable. Try burn-in.');
+                  if (at >= first && at < last) wanted.push(at);
+                }
+                if (!wanted.length) return Buffer.alloc(0);
+                wanted.sort((a, b) => a - b);
+                const decoder = new StringDecoder('utf8');
+                let text = '';
+                const missing = () => {
+                  const seen = cueStarts(text).sort((a, b) => a - b);
+                  let i = 0;
+                  for (const at of wanted) {
+                    while (i < seen.length && seen[i] < at - 1) i++;
+                    if (i >= seen.length || seen[i] > at + 1) return true;
+                    i++;
+                  }
+                  return false;
+                };
+                const vttBytes = await av1.run(
+                  av1.ffmpeg,
+                  [
+                    '-hide_banner',
+                    '-loglevel',
+                    'error',
+                    '-nostdin',
+                    '-y',
+                    '-ss',
+                    String(startSeconds),
+                    '-copyts',
+                    '-i',
+                    url,
+                    '-to',
+                    String(origin + endSeconds),
+                    '-map',
+                    '0:' + index,
+                    '-c:s',
+                    'webvtt',
+                    '-flush_packets',
+                    '1',
+                    '-map_metadata',
+                    '-1',
+                    '-map_chapters',
+                    '-1',
+                    '-f',
+                    'webvtt',
+                    'pipe:1',
+                  ],
+                  taskSignal,
+                  25000,
+                  4 * 1024 * 1024,
+                  undefined,
+                  {
+                    outputComplete: chunk => {
+                      text += decoder.write(chunk);
+                      return !missing();
+                    },
+                  },
+                );
+                text = vttBytes.toString('utf8');
+                if (missing())
+                  throw new PlaybackError('Subtitle extraction did not match the inspected cues. Try burn-in.');
+                return vttBytes;
               }
               const args = [
                 '-hide_banner',
@@ -777,261 +1165,332 @@ async function window(av1, media, { atMs = 0, beforeMs = 15000, afterMs = 60000,
                 '-y',
                 '-ss',
                 String(startSeconds),
+                '-t',
+                String(durationSeconds),
                 '-copyts',
-                '-analyzeduration',
-                '1000000',
-                '-probesize',
-                '1048576',
                 '-i',
                 url,
                 '-map',
                 '0:' + index,
                 '-c:s',
                 'copy',
-                '-frames:s',
-                String(count),
-                '-flush_packets',
-                '1',
                 '-map_metadata',
                 '-1',
                 '-map_chapters',
                 '-1',
                 '-f',
-                'sup',
+                format,
                 'pipe:1',
               ];
-              let pending = Buffer.alloc(0),
-                rawBytes = 0;
-              const expectedTimes = new Map(),
-                receivedTimes = new Map();
-              for (const packet of packets) {
-                const pts = Math.round(Number(packet.pts_time) * 90000);
-                if (!Number.isSafeInteger(pts) || pts < 0 || pts > 0xffffffff)
-                  throw new PlaybackError(
-                    'PGS source timestamps are unavailable or exceed the supported range. Try burn-in.',
-                  );
-                expectedTimes.set(pts, (expectedTimes.get(pts) || 0) + Number(packet.size));
-              }
-              const outputComplete = chunk => {
-                pending = Buffer.concat([pending, chunk]);
-                let offset = 0;
-                while (offset + 13 <= pending.length) {
-                  if (pending[offset] !== 0x50 || pending[offset + 1] !== 0x47)
-                    throw new PlaybackError('Invalid PGS extraction. Try burn-in.');
-                  const length = pending.readUInt16BE(offset + 11);
-                  if (offset + 13 + length > pending.length) break;
-                  const pts = pending.readUInt32BE(offset + 2);
-                  receivedTimes.set(pts, (receivedTimes.get(pts) || 0) + 3 + length);
-                  rawBytes += 3 + length;
-                  offset += 13 + length;
-                }
-                pending = Buffer.from(pending.subarray(offset));
-                return rawBytes >= expected;
-              };
-              const data = await av1.run(av1.ffmpeg, args, abort, 25000, 16 * 1024 * 1024, undefined, {
-                outputComplete,
-              });
-              if (
-                rawBytes !== expected ||
-                pending.length ||
-                expectedTimes.size !== receivedTimes.size ||
-                [...expectedTimes].some(([pts, size]) => receivedTimes.get(pts) !== size)
-              )
-                throw new PlaybackError('PGS extraction did not match the requested packets. Try burn-in.');
-              pgs = alignPgs(data, origin, endSeconds);
-              if (!pgs.data.length)
-                throw new PlaybackError('Subtitle extraction produced no usable data. Try burn-in.');
-              return pgs.data;
-            }
-            // Without -copyts cue times are relative to the keyframe the seek landed on, so they
-            // shift between windows. With it, only an output -to ends the window at the right place.
+              return av1.run(av1.ffmpeg, args, taskSignal, 25000, 16 * 1024 * 1024);
+            });
+            taskSignal.throwIfAborted();
+            if (this.closed) throw new PlaybackError('Server is shutting down.');
+            data ||= Buffer.alloc(0);
+            let cues = 0;
             if (track.delivery === 'cues') {
-              const { origin, packets } = await inspectWindow(
-                av1,
-                job.media,
-                url,
-                index,
-                undefined,
-                startSeconds,
-                endSeconds,
-                abort,
-              );
-              const first = Math.round((origin + startSeconds) * 1000),
-                last = Math.round((origin + endSeconds) * 1000),
-                wanted = [];
-              for (const packet of packets) {
-                const at = Math.round(Number(packet.pts_time) * 1000);
-                if (!Number.isSafeInteger(at))
-                  throw new PlaybackError('Subtitle source timestamps are unavailable. Try burn-in.');
-                if (at >= first && at < last) wanted.push(at);
-              }
-              // Inspected media with no caption packets is verified quiet coverage.
-              if (!wanted.length) return Buffer.alloc(0);
-              wanted.sort((a, b) => a - b);
-              const decoder = new StringDecoder('utf8');
-              let text = '';
-              // Every inspected packet needs its own cue; allow 1ms of timebase rounding.
-              const missing = () => {
-                const seen = cueStarts(text).sort((a, b) => a - b);
-                let i = 0;
-                for (const at of wanted) {
-                  while (i < seen.length && seen[i] < at - 1) i++;
-                  if (i >= seen.length || seen[i] > at + 1) return true;
-                  i++;
-                }
-                return false;
-              };
-              const data = await av1.run(
-                av1.ffmpeg,
-                [
-                  '-hide_banner',
-                  '-loglevel',
-                  'error',
-                  '-nostdin',
-                  '-y',
-                  '-ss',
-                  String(startSeconds),
-                  '-copyts',
-                  '-i',
-                  url,
-                  '-to',
-                  String(origin + endSeconds),
-                  '-map',
-                  '0:' + index,
-                  '-c:s',
-                  'webvtt',
-                  '-flush_packets',
-                  '1',
-                  '-map_metadata',
-                  '-1',
-                  '-map_chapters',
-                  '-1',
-                  '-f',
-                  'webvtt',
-                  'pipe:1',
-                ],
-                abort,
-                25000,
-                4 * 1024 * 1024,
-                undefined,
-                {
-                  outputComplete: chunk => {
-                    text += decoder.write(chunk);
-                    return !missing();
-                  },
-                },
-              );
-              text = data.toString('utf8');
-              if (missing())
-                throw new PlaybackError('Subtitle extraction did not match the inspected cues. Try burn-in.');
-              return data;
-            }
-            const args = [
-              '-hide_banner',
-              '-loglevel',
-              'error',
-              '-nostdin',
-              '-y',
-              '-ss',
-              String(startSeconds),
-              '-t',
-              String(durationSeconds),
-              '-copyts',
-              '-i',
-              url,
-              '-map',
-              '0:' + index,
-              '-c:s',
-              'copy',
-              '-map_metadata',
-              '-1',
-              '-map_chapters',
-              '-1',
-              '-f',
-              format,
-              'pipe:1',
-            ];
-            return av1.run(av1.ffmpeg, args, abort, 25000, 16 * 1024 * 1024);
-          },
-        );
-        abort.throwIfAborted();
-        const target = job.media;
-        if (target.captionVersion !== version || target.selection?.subtitle?.id !== track.id)
-          throw new PlaybackError('Subtitle selection changed.');
-        data ||= Buffer.alloc(0);
-        let cues = 0;
-        if (track.delivery === 'cues') {
-          const origin = Number(target.subtitleOrigin) || 0;
-          const rawList = data.length ? Subtitles.parse(data.toString('utf8')) : [];
-          const list = origin
-            ? rawList
-                .map(c => ({ ...c, start: Math.max(0, c.start - origin), end: Math.max(0, c.end - origin) }))
-                .filter(c => c.end > c.start)
-            : rawList;
-          cues = list.length;
-          data = Buffer.from(JSON.stringify(list));
-        } else if (track.delivery === 'pgs') cues = pgs.cues;
-        else if (track.delivery === 'ass') cues = (data.toString('utf8').match(/^Dialogue:/gm) || []).length;
-        else cues = data.length > 500 ? 1 : 0;
-        const entry = { media: target, key: cacheKey, version, trackId: track.id, startMs, endMs, data, cues };
-        target.windowCache ||= new Map();
-        let trackBytes = [...target.windowCache.values()].reduce((n, item) => n + item.data.length, 0);
-        while (target.windowCache.size >= 16 || trackBytes + data.length > 16 * 1024 * 1024) {
-          const oldest = target.windowCache.values().next().value;
-          if (!oldest) break;
-          trackBytes -= oldest.data.length;
-          dropWindow(oldest);
-        }
-        while (windows.size && windows.size >= 128) dropWindow(windows.keys().next().value);
-        reserve(data.length);
-        target.windowCache.set(cacheKey, entry);
-        windows.set(entry, target);
-        bytes += data.length;
-        return { format: track.delivery, startMs, endMs, data, cues };
-      } catch (error) {
-        if (abort.aborted) throw error;
-        throw classifyExtractionError(error);
-      } finally {
-        release?.();
-        job.complete = true;
-        if (job.media.windowJobs?.get(cacheKey) === job) job.media.windowJobs.delete(cacheKey);
-      }
-    }),
-  );
-  job.promise.catch(() => {});
-  media.windowJobs.set(cacheKey, job);
-  return waitWindow(job, signal);
-}
+              const origin = Number(extractedOrigin) || 0;
+              const rawList = data.length ? Subtitles.parse(data.toString('utf8')) : [];
+              const list = origin
+                ? rawList
+                    .map(c => ({ ...c, start: Math.max(0, c.start - origin), end: Math.max(0, c.end - origin) }))
+                    .filter(c => c.end > c.start)
+                : rawList;
+              cues = list.length;
+              data = Buffer.from(JSON.stringify(list));
+            } else if (track.delivery === 'pgs') cues = pgs.cues;
+            else if (track.delivery === 'ass') cues = (data.toString('utf8').match(/^Dialogue:/gm) || []).length;
+            else cues = data.length > 500 ? 1 : 0;
 
-class SubtitleResourceManager {
-  load(av1, media, signal) {
-    return load(av1, media, signal);
+            if (data.length > this.totalBytes) throw new PlaybackError('Subtitle resources exceed the cache limit.');
+
+            let map = this.trackWindows.get(trackScopeKey);
+            if (!map) {
+              map = new Map();
+              this.trackWindows.set(trackScopeKey, map);
+            }
+            let trackBytes = [...map.values()].reduce((n, item) => n + item.size, 0);
+            while (map.size >= MAX_TRACK_WINDOWS || trackBytes + data.length > MAX_TRACK_WINDOW_BYTES) {
+              const oldest = map.values().next().value;
+              if (!oldest) break;
+              trackBytes -= oldest.size;
+              this.dropWindow(oldest);
+            }
+            while (this.windowLru.size && this.windowLru.size >= MAX_TOTAL_WINDOWS)
+              this.dropWindow(this.windowLru.values().next().value);
+            this.reserve(data.length);
+
+            const entry = {
+              key: winKey,
+              trackScopeKey,
+              delivery: track.delivery,
+              trackId: track.id,
+              startMs: qStartMs,
+              endMs: qEndMs,
+              data,
+              size: data.length,
+              cues,
+              owners: new Set(),
+            };
+            if (!this.trackWindows.has(trackScopeKey)) this.trackWindows.set(trackScopeKey, map);
+            map.set(winKey, entry);
+            this.windowLru.add(entry);
+            this.bytes += entry.size;
+            return entry;
+          } catch (error) {
+            if (taskSignal.aborted) throw error;
+            throw classifyExtractionError(error);
+          } finally {
+            release?.();
+          }
+        },
+        { timeoutMs: 30000, idleMs: this.idleMs },
+      );
+      flight = { task, activeSources, trackScopeKey };
+      this.windowJobs.set(winKey, flight);
+      task.promise
+        .finally(() => {
+          if (this.windowJobs.get(winKey) === flight) this.windowJobs.delete(winKey);
+        })
+        .catch(() => {});
+    }
+
+    const sub = { media, signal: callerSignal };
+    flight.activeSources.add(sub);
+    media.windowJobs ||= new Map();
+    media.windowJobs.set(winKey, flight.task);
+    try {
+      const entry = await flight.task.join(callerSignal);
+      if (media.captionVersion !== version || media.selection?.subtitle?.id !== track.id)
+        throw new PlaybackError('Subtitle selection changed.');
+      this.attachWindowToMedia(media, entry);
+      return {
+        format: track.delivery,
+        startMs: entry.startMs,
+        endMs: entry.endMs,
+        data: entry.data,
+        cues: entry.cues,
+      };
+    } finally {
+      flight.activeSources.delete(sub);
+      if (media.windowJobs?.get(winKey) === flight.task) media.windowJobs.delete(winKey);
+      if (
+        !flight.task.settled &&
+        flight.task.users === 0 &&
+        (revoked?.() || subAbortSignal?.aborted || lifeAbortSignal?.aborted)
+      ) {
+        flight.task.abort();
+      }
+    }
   }
+
+  async loadTextCues(media, signal) {
+    if (this.closed) throw new PlaybackError('Server is shutting down.');
+    const track = media?.selection?.subtitle;
+    if (!track?.available || track.delivery !== 'text')
+      throw new PlaybackError(track?.reason || 'No external text subtitle is selected.');
+    const resource = track.resources?.text || track.resources?.data;
+    if (!resource) throw new PlaybackError('Subtitle selection no longer belongs to this file.');
+    const version = media.captionVersion;
+    const callerSignal = buildCallerSignal(signal, media);
+    callerSignal?.throwIfAborted();
+
+    const scope = this.mediaScope(media);
+    const cueKey = `${scope}|cues|${track.id}|${resource}`;
+
+    const cached = this.cuesCache.get(cueKey);
+    if (cached) {
+      this.counters.cuesHits++;
+      this.cuesCache.delete(cueKey);
+      this.cuesCache.set(cueKey, cached);
+      this.cuesBudget.touch(cached);
+      return cached.cues;
+    }
+
+    let flight = this.cueJobs.get(cueKey);
+    if (!flight || flight.task.settled || flight.task.signal.aborted) {
+      this.counters.cuesMisses++;
+      const activeSources = new Set();
+      const task = new SharedTask(
+        async taskSignal => {
+          const liveMedia = pickLiveSource(activeSources, media, { requireSubtitleAbort: true }) || media;
+          const cues = await Subtitles.fetchCues(liveMedia, taskSignal);
+          taskSignal.throwIfAborted();
+          if (this.closed) throw new PlaybackError('Server is shutting down.');
+          const entry = { key: cueKey, cues };
+          this.cuesCache.delete(cueKey);
+          this.cuesCache.set(cueKey, entry);
+          while (this.cuesCache.size > MAX_CUES_TRACKS) {
+            const oldestKey = this.cuesCache.keys().next().value;
+            const oldest = this.cuesCache.get(oldestKey);
+            this.cuesCache.delete(oldestKey);
+            if (oldest) this.cuesBudget.delete(oldest);
+          }
+          this.cuesBudget.retain(this.cuesCache, cueKey, entry, cues);
+          return cues;
+        },
+        { timeoutMs: 30000, idleMs: this.idleMs },
+      );
+      flight = { task, activeSources };
+      this.cueJobs.set(cueKey, flight);
+      task.promise
+        .finally(() => {
+          if (this.cueJobs.get(cueKey) === flight) this.cueJobs.delete(cueKey);
+        })
+        .catch(() => {});
+    }
+
+    const sub = { media, signal: callerSignal };
+    flight.activeSources.add(sub);
+    try {
+      const cues = await flight.task.join(callerSignal);
+      if (version !== undefined && media.captionVersion !== version)
+        throw new PlaybackError('Subtitle selection changed.');
+      if (media.selection?.subtitle?.id !== track.id) throw new PlaybackError('Subtitle selection changed.');
+      return cues;
+    } finally {
+      flight.activeSources.delete(sub);
+    }
+  }
+
   clear(media) {
-    return clear(media);
+    if (!media) return;
+    for (const entry of media.windowCache?.values() || []) {
+      entry.owners.delete(media);
+      if (!media.shareKey) this.dropWindow(entry);
+    }
+    media.windowCache?.clear();
+    for (const job of media.windowJobs?.values() || []) {
+      if (!media.shareKey) job.abort?.();
+    }
+    media.windowJobs?.clear();
+    if (media.subtitleAssets) {
+      for (const [fullKey, entry] of this.fullTracks) {
+        if (entry.assets === media.subtitleAssets) {
+          entry.owners.delete(media);
+          if (!media.shareKey) this.dropFullTrack(fullKey);
+        }
+      }
+      media.subtitleAssets = undefined;
+    }
+    if (media.subtitleJob) {
+      if (!media.shareKey) {
+        if (typeof media.subtitleJob.abort === 'function') media.subtitleJob.abort();
+        else media.subtitleJob.controller?.abort();
+      }
+      media.subtitleJob = undefined;
+    }
   }
+
   transfer(from, to) {
-    return transfer(from, to);
+    if (
+      !from ||
+      !to ||
+      from === to ||
+      !from.sourceKey ||
+      from.sourceKey !== to.sourceKey ||
+      from.principal !== to.principal
+    )
+      return false;
+    const a = from.selection?.subtitle,
+      b = to.selection?.subtitle;
+    if (!a?.available || !b?.available || a.delivery === 'burn' || a.delivery !== b.delivery || a.id !== b.id)
+      return false;
+    if (from.subtitleCache) {
+      to.subtitleCache = from.subtitleCache;
+      from.subtitleCache = undefined;
+    }
+    if (from.windowCache) {
+      to.windowCache = from.windowCache;
+      from.windowCache = undefined;
+      for (const entry of to.windowCache.values()) {
+        entry.owners?.delete(from);
+        entry.owners?.add(to);
+      }
+    }
+    if (from.windowJobs) {
+      to.windowJobs = from.windowJobs;
+      from.windowJobs = undefined;
+    }
+    to.captionVersion = from.captionVersion;
+    to.subtitleAbort?.abort();
+    to.subtitleAbort = from.subtitleAbort || new AbortController();
+    to.subtitleAssets = from.subtitleAssets;
+    if (to.subtitleAssets) {
+      for (const entry of this.fullTracks.values()) {
+        if (entry.assets === to.subtitleAssets) {
+          entry.owners.delete(from);
+          entry.owners.add(to);
+        }
+      }
+    }
+    to.subtitleJob = from.subtitleJob;
+    from.subtitleAbort = undefined;
+    from.subtitleAssets = undefined;
+    from.subtitleJob = undefined;
+    return true;
   }
+
   read(response, signal, limit) {
     return read(response, signal, limit);
   }
-  pipe(av1, media, req, res, signal) {
-    return pipe(av1, media, req, res, signal);
+
+  stats() {
+    return {
+      bytes: this.bytes,
+      fullTracks: this.fullTracks.size,
+      windows: this.windowLru.size,
+      cuesTracks: this.cuesCache.size,
+      cuesBytes: this.cuesBudget.bytes,
+      activeSlots: this.active,
+      slotWaiters: this.slotWaiters.length,
+      ...this.counters,
+    };
   }
-  window(av1, media, options) {
-    return window(av1, media, options);
+
+  close() {
+    this.closed = true;
+    for (const flight of this.loadJobs.values()) flight.task.abort();
+    this.loadJobs.clear();
+    for (const flight of this.windowJobs.values()) flight.task.abort();
+    this.windowJobs.clear();
+    for (const job of this.pipeJobs.values()) {
+      clearTimeout(job.graceTimer);
+      job.controller.abort();
+    }
+    this.pipeJobs.clear();
+    for (const flight of this.cueJobs.values()) flight.task.abort();
+    this.cueJobs.clear();
+    while (this.slotWaiters.length) {
+      const waiter = this.slotWaiters.shift();
+      waiter?.reject(new PlaybackError('Server is shutting down.'));
+    }
+    this.fullTracks.clear();
+    this.trackWindows.clear();
+    this.windowLru.clear();
+    this.cuesCache.clear();
+    this.cuesBudget.clear();
+    this.bytes = 0;
+    for (const dir of [...this.tempDirs]) {
+      this.tempDirs.delete(dir);
+      void fs.rm(path.resolve(dir), { recursive: true, force: true }).catch(() => {});
+    }
   }
 }
 
+const defaultManager = new SubtitleResourceManager();
+
 module.exports = {
   SubtitleResourceManager,
-  load,
-  clear,
-  transfer,
-  read,
-  pipe,
-  window,
+  quantizeWindow,
+  trackKey,
+  load: (av1, media, signal) => defaultManager.load(av1, media, signal),
+  clear: media => defaultManager.clear(media),
+  transfer: (from, to) => defaultManager.transfer(from, to),
+  read: (response, signal, limit) => defaultManager.read(response, signal, limit),
+  pipe: (av1, media, req, res, signal) => defaultManager.pipe(av1, media, req, res, signal),
+  window: (av1, media, options) => defaultManager.window(av1, media, options),
+  loadTextCues: (media, signal) => defaultManager.loadTextCues(media, signal),
   classifyExtractionError,
   LIMIT,
 };

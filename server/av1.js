@@ -13,6 +13,7 @@ const { QUALITIES, qualityDefinition, qualityId } = require('../shared/room-prot
 const Playback = require('../shared/playback-policy.mjs');
 const { PlaybackError } = require('./errors');
 const { run, segments, stream, fileIndex, classifyHdr, cpuTonemap } = require('./media-tools');
+const { frameGrids, FRAME_GRID } = require('./media-facts');
 const SubtitleResources = require('./subtitle-resources');
 const CHUNK = Playback.BUFFER.chunkSeconds;
 // Audio starts this early so Opus has settled before the chunk's first sample, and the
@@ -480,7 +481,6 @@ function noteResponse(state, asked) {
 // the cluster's first packet, ahead of a gap to the first major sync. That frame is dropped,
 // and so is anything else before the first frame at the start or on the grid. Vorbis and Opus
 // keep their own timestamps.
-const FRAME_GRID = { aac: 1024, ac3: 1536, eac3: 256, mp3: 576, mp2: 1152, dts: '256*max(1,floor(SR/48000))' };
 function snap(stream) {
   const syncs = stream?.major_sync_units,
     grid = syncs
@@ -508,43 +508,6 @@ function snap(stream) {
 // AC-3's decoder dithers with a generator seeded when it opens, so a process that seeks hears
 // other noise than one from the start; seeded from each frame, they decode alike.
 const decoderArgs = stream => (['ac3', 'eac3'].includes(stream?.codec_name) ? ['-cons_noisegen', '1'] : []);
-// From a probe's first packets: where each audio stream's grid starts (from zero when its sound
-// starts later than they reach), and the grids that depend on the source. TrueHD's needs a
-// constant major sync interval after the first, with one access unit per packet, FLAC's and
-// PCM's packets of one size; otherwise the stream is not snapped.
-function frameGrids(info) {
-  const packets = info.packets || [];
-  delete info.packets;
-  for (const stream of info.streams || []) {
-    if (stream.codec_type !== 'audio') continue;
-    const own = packets.filter(p => p.stream_index === stream.index && Number.isFinite(Number(p.pts_time))),
-      times = own.map(p => Number(p.pts_time)),
-      rate = Number(stream.sample_rate);
-    // Whether packets `from` to `to` are `step` samples apart, within the millisecond rounding.
-    const even = (from, to, step) => {
-      for (let i = from; i <= to; i++)
-        if (Math.abs(times[i] - times[from] - ((i - from) * step) / rate) > 0.0015) return false;
-      return true;
-    };
-    if (stream.codec_name === 'truehd' && rate) {
-      const unit = 40 * Math.max(1, Math.round(rate / 44100)),
-        syncs = own.flatMap((p, i) => (p.flags?.startsWith('K') ? [i] : [])),
-        steady = syncs.slice(2).map((at, i) => at - syncs[i + 1]);
-      if (steady.length >= 2 && steady.every(gap => gap === steady[0]) && even(syncs[0], syncs.at(-1), unit)) {
-        stream.first_pts = times[syncs[0]];
-        stream.grid_from = stream.first_pts + ((syncs[1] - syncs[0]) * unit) / rate;
-        stream.major_sync_units = steady[0];
-      }
-    } else if ((stream.codec_name === 'flac' || /^pcm_/.test(stream.codec_name)) && rate && own.length >= 5) {
-      const block = ((times.at(-1) - times[0]) / (times.length - 1)) * rate;
-      if (block >= rate / 200 && even(0, times.length - 1, block)) {
-        stream.first_pts = times[0];
-        stream.even_packets = true;
-      }
-    } else if (own.length && FRAME_GRID[stream.codec_name]) stream.first_pts = times[0];
-  }
-  return info;
-}
 // The sound at 48 kHz from sample `first` on: trimmed, or padded with silence where the source
 // has none yet. Unlike adelay it keeps the channel layout, which the stereo downmix needs.
 const PAD = first => `aresample=48000,aresample=async=1:first_pts=${first}`;
@@ -2059,6 +2022,12 @@ class AV1 {
   }
   async sourceInfo(group, source, signal) {
     if (group.info) return group.info;
+    if (this.mediaFacts && source?.sourceKey) {
+      const facts = await this.mediaFacts.inspect(source, { signal });
+      group.probed ||= facts.probeStats;
+      group.info = facts.frameGridInfo;
+      return group.info;
+    }
     if (!group.infoTask || group.infoTask.signal.aborted) {
       const task = new SharedTask(signal =>
         this.input(source, signal, async (url, state) => {

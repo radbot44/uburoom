@@ -219,7 +219,8 @@ module.exports = {
         return;
       }
       source.roomServerId = await this.providers.identify(source);
-      this.mediaChecks.start(source);
+      source.shareKey ||= [room.roomId, 'next', preload.countdown];
+      if (!this.providers.owner(source?.provider)?.direct?.enabled) this.mediaChecks.start(source);
       preload.media = source;
       const settings = this.hub.config.transcoding;
       if (settings?.fallback?.enabled && settings.uburoom && source.tracks) {

@@ -67,11 +67,68 @@ class MediaChecks {
   }
   /** Drop a file's results so the next report checks it again. */
   forget(media) {
-    this.files.delete(this.key(media));
+    const key = this.key(media);
+    this.files.delete(key);
+    this.pipeline?.mediaFacts?.forget(key);
+  }
+  /** Build a synthetic video descriptor from Plex/source HDR metadata when container probing is skipped. */
+  hdrVideoFromMetadata(media) {
+    const kind = media?.sourceHdrKind || media?.hdrKind;
+    if (!kind || kind === 'sdr') return null;
+    if (kind === 'dovi-p5') {
+      return {
+        codec_type: 'video',
+        side_data_list: [{ side_data_type: 'DOVI configuration record', dv_profile: 5, bl_signal_compatibility_id: 0 }],
+      };
+    }
+    if (kind === 'dovi-hdr10') {
+      return {
+        codec_type: 'video',
+        color_transfer: 'smpte2084',
+        side_data_list: [
+          {
+            side_data_type: 'DOVI configuration record',
+            dv_profile: media?.doviProfile ?? 8,
+            bl_signal_compatibility_id: 1,
+          },
+        ],
+      };
+    }
+    if (kind === 'dovi-hlg') {
+      return {
+        codec_type: 'video',
+        color_transfer: 'arib-std-b67',
+        side_data_list: [
+          {
+            side_data_type: 'DOVI configuration record',
+            dv_profile: media?.doviProfile ?? 8,
+            bl_signal_compatibility_id: 4,
+          },
+        ],
+      };
+    }
+    if (kind === 'dovi-sdr') {
+      return {
+        codec_type: 'video',
+        side_data_list: [
+          {
+            side_data_type: 'DOVI configuration record',
+            dv_profile: media?.doviProfile ?? 8,
+            bl_signal_compatibility_id: 2,
+          },
+        ],
+      };
+    }
+    if (kind === 'hdr10') return { codec_type: 'video', color_transfer: 'smpte2084' };
+    if (kind === 'hlg') return { codec_type: 'video', color_transfer: 'arib-std-b67' };
+    return null;
   }
   /** The full report for a room's current video. */
-  async report(media) {
-    const entry = this.start(media);
+  async report(media, { allowFileProbe = true } = {}) {
+    const key = this.key(media);
+    const existing = key ? this.files.get(key) : undefined;
+    const canStartProbe = allowFileProbe || Boolean(existing?.items);
+    const entry = canStartProbe ? this.start(media) : undefined;
     const serverCheck = media?.provider?.checks?.server;
     const hasServerCheck = typeof serverCheck === 'function';
     let live = [];
@@ -89,9 +146,46 @@ class MediaChecks {
         ];
       }
     }
-    const items = [...(entry?.items || []), ...live.filter(Boolean)];
+    let skippedItems = [];
+    let hasSkippedDirectCheck = false;
+    if (!canStartProbe && media && fromProvider(media)) {
+      hasSkippedDirectCheck = true;
+      const fileChecks =
+        (await Promise.resolve()
+          .then(() => media.provider?.checks?.file?.(media))
+          .catch(() => [])) || [];
+      skippedItems.push(...fileChecks);
+      const hdrVideo = this.hdrVideoFromMetadata(media);
+      if (hdrVideo) {
+        const usable =
+          typeof this.pipeline?.usableOutputs === 'function'
+            ? await this.pipeline.usableOutputs(media?.provider, ['av1', 'vp9', 'vp8']).catch(() => [])
+            : [];
+        const hdr = this.hdrItem(hdrVideo, {
+          hasLocalTonemap: usable.some(o => o !== 'provider'),
+          ubuplayerEnabled: this.pipeline?.ubuplayer !== false,
+        });
+        if (hdr) skippedItems.push(hdr);
+      }
+      const images = (media.tracks?.subtitles || []).filter(track => IMAGE_SUBTITLES.has(track.codec));
+      if (images.length) {
+        skippedItems.push({
+          level: 'info',
+          topic: 'subtitles',
+          title: images.length + (images.length === 1 ? ' subtitle track is' : ' subtitle tracks are') + ' images',
+          detail: 'They show on the page, but need Burn-in in iPhone fullscreen.',
+        });
+      }
+      skippedItems.push({
+        level: 'info',
+        topic: 'file',
+        title: 'Direct Plex playback active — container scan skipped',
+        detail: 'Use Refresh to inspect the file through uburoom.',
+      });
+    }
+    const items = [...(entry?.items || []), ...skippedItems, ...live.filter(Boolean)];
     const checking = !!entry && !entry.items;
-    const applicable = !!entry || hasServerCheck;
+    const applicable = !!entry || hasSkippedDirectCheck || hasServerCheck;
     const status = !applicable ? 'not-applicable' : checking ? 'checking' : 'checked';
     if (checking) items.push({ level: 'info', topic: 'file', title: 'Checking the file…' });
     items.sort((a, b) => LEVELS.indexOf(a.level) - LEVELS.indexOf(b.level));
@@ -121,15 +215,25 @@ class MediaChecks {
     return execute().finally(() => clearTimeout(timer));
   }
   async fileItems(media) {
-    const raw = await this.probe(media, [
-      '-show_entries',
-      'stream=index,codec_type,codec_name,color_transfer:stream_side_data=side_data_type,dv_profile,bl_signal_compatibility_id:format=duration,bit_rate',
-      '-of',
-      'json',
-    ]);
-    const info = JSON.parse(raw.toString()),
-      streams = info.streams || [],
-      items = [];
+    let streams, duration, average;
+    if (this.pipeline?.mediaFacts) {
+      const facts = await this.pipeline.mediaFacts.inspect(media, { signal: media?.lifecycleAbort?.signal });
+      streams = facts.streams || [];
+      duration = Number(facts.format?.duration);
+      average = Number(facts.format?.bitRate) / 1e6;
+    } else {
+      const raw = await this.probe(media, [
+        '-show_entries',
+        'stream=index,codec_type,codec_name,color_transfer:stream_side_data=side_data_type,dv_profile,bl_signal_compatibility_id:format=duration,bit_rate',
+        '-of',
+        'json',
+      ]);
+      const info = JSON.parse(raw.toString());
+      streams = info.streams || [];
+      duration = Number(info.format?.duration);
+      average = Number(info.format?.bit_rate) / 1e6;
+    }
+    const items = [];
     items.push(this.trackItem(media, streams));
     items.push(...((await media.provider?.checks?.file?.(media)) || []));
     const video = streams.find(stream => stream.codec_type === 'video');
@@ -151,8 +255,6 @@ class MediaChecks {
         detail: 'They show on the page, but need Burn-in in iPhone fullscreen.',
       });
     if (streams.some(stream => stream.codec_type === 'audio')) items.push(await this.audioStartItem(media));
-    const duration = Number(info.format?.duration),
-      average = Number(info.format?.bit_rate) / 1e6;
     if (duration > 60) items.push(await this.bitrateItem(media, duration, average));
     return items.filter(Boolean);
   }
