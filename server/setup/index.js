@@ -34,7 +34,7 @@ const PAGES = {
   '/setup/signed-in': 'setup/signed-in.html',
 };
 const CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
+  "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self' https:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
 /**
  * The setup options on the command line: `--setup-host <address>` to be reachable beyond this
@@ -236,7 +236,26 @@ async function startSetup({
         log.error('uburoom could not start: ' + error.message);
         return json(res, 500, { error: 'uburoom couldn’t start: ' + String(error.message).slice(0, 300) });
       }
-      json(res, 200, { url: config.publicUrl + '/auth/setup#ticket=' + ticket });
+      const suffix = config.port === 443 ? '' : ':' + config.port;
+      const setupHostname = new URL(setupOrigin).hostname;
+      const setupHostBare = setupHostname.replace(/^\[|\]$/g, '');
+      const localOrigin =
+        config.listen === 'https' && config.lanUrl === 'auto'
+          ? 'https://' +
+            (setupHostname === 'localhost' || net.isIP(setupHostBare) ? setupHostname : 'localhost') +
+            suffix
+          : undefined;
+      const localUrl =
+        localOrigin && localOrigin !== config.publicUrl ? localOrigin + '/auth/setup#ticket=' + ticket : undefined;
+      json(res, 200, {
+        url: config.publicUrl + '/auth/setup#ticket=' + ticket,
+        ...(localUrl ? { localUrl } : {}),
+        listen: config.listen || 'https',
+        where: answers.draft.network.where,
+        route: answers.draft.network.route,
+        port: config.port,
+        publicUrl: config.publicUrl,
+      });
     } finally {
       if (!finished) finishing = false;
       else
@@ -273,7 +292,19 @@ async function startSetup({
     'POST /setup/api/network': data => wizard.network.set(data),
     'POST /setup/api/check': async () => {
       const { checks, config, answers } = await check();
-      return { checks, discordRedirect: answers.rules.discord ? config.publicUrl + '/auth/callback' : undefined };
+      return {
+        checks,
+        discordRedirect: answers.rules.discord ? config.publicUrl + '/auth/callback' : undefined,
+        httpProxy:
+          config.listen === 'http-proxy'
+            ? {
+                host: config.host,
+                port: config.port,
+                publicUrl: config.publicUrl,
+                route: answers.draft.network.route,
+              }
+            : undefined,
+      };
     },
   };
 
@@ -384,6 +415,11 @@ async function startSetup({
           log.info(`From another device, open https://<this computer's address>:${address().port}/setup`);
       }
       log.info(`Setup code: ${code}`);
+      if (!secure && !published && typeof process.send === 'function') {
+        try {
+          process.send({ type: 'uburoom:setup-ready', url: `${shown}/setup#code=${code}` });
+        } catch {}
+      }
     },
   });
   const sweep = setInterval(() => wizard.sweep(), 10000);

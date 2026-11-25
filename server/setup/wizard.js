@@ -182,6 +182,7 @@ function createWizard({
         const update = sourceType(current.type).setup.update;
         if (!update) throw fail('This source has no other settings to change');
         const transform = await update(data.settings, {
+          ...tools,
           base,
           platform,
           current,

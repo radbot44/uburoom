@@ -103,6 +103,7 @@ function createHttpServer({ config, logger, tls, json, route: dispatch }) {
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Referrer-Policy', 'no-referrer');
       res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+      if (isHealth(req)) res.setHeader('Access-Control-Allow-Origin', '*');
       // Enforce HTTPS via Strict-Transport-Security to defend against SSL/TLS stripping attacks.
       res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
       res.setHeader(
