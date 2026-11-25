@@ -272,12 +272,12 @@ function joinChunks(list) {
   return out;
 }
 
-function packetPtsSeconds(libav, pkt, tbNum, tbDen) {
+function packetPtsSeconds(libav, pkt, tbNum, tbDen, originSec = 0) {
   if (pkt.pts !== undefined && pkt.ptshi !== -0x80000000) {
-    return (libav.i64tof64(pkt.pts, pkt.ptshi || 0) * tbNum) / tbDen;
+    return (libav.i64tof64(pkt.pts, pkt.ptshi || 0) * tbNum) / tbDen - originSec;
   }
   if (pkt.dts !== undefined && pkt.dtshi !== -0x80000000) {
-    return (libav.i64tof64(pkt.dts, pkt.dtshi || 0) * tbNum) / tbDen;
+    return (libav.i64tof64(pkt.dts, pkt.dtshi || 0) * tbNum) / tbDen - originSec;
   }
   return undefined;
 }
@@ -290,8 +290,10 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
 
   let libav;
   let closed = false;
+  let held = false;
   let fileSize = 0;
   let duration = 0;
+  let formatOriginSec = 0;
   let nextReadId = 1;
   const pendingReads = new Map();
   const blockCache = new Map();
@@ -309,6 +311,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
   let audioStreams = [];
   let subtitleStreams = [];
   let fontAttachments = [];
+  let fontsTruncated = false;
   let chapters = [];
 
   let activeAudioStream = null;
@@ -329,9 +332,14 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
   let audioNextSample = null;
   let audioTrimBeforeSample = null;
   let waitingForAudioSync = false;
+  let pendingAudioDiscontinuitySec = null;
   let audioPort = null;
   let workletBufferedSeconds = 0;
   let outSampleRate = OUT_SAMPLE_RATE;
+
+  // Byte-position tracking for sparse-subtitle bounded demuxing
+  let maxVideoBytePos = 0;
+  let lastSubBytePos = 0;
 
   // Video decode & OffscreenCanvas GPU presentation state
   let offscreenCanvas = null;
@@ -456,11 +464,27 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     blockReadHandlers.set(devName, async (name, pos, len) => {
       try {
         const bytes = await readBytes(pos, len);
+        if (devName === vDevName) {
+          maxVideoBytePos = Math.max(maxVideoBytePos, pos + bytes.length);
+        } else if (devName === sDevName) {
+          lastSubBytePos = pos + bytes.length;
+        }
         await libav.ff_block_reader_dev_send(name, pos, bytes);
       } catch (err) {
         await libav.ff_block_reader_dev_send(name, pos, null, { error: err });
       }
     });
+  }
+
+  async function closeDemuxDevice(ctx, devName) {
+    blockReadHandlers.delete(devName);
+    if (ctx && libav) {
+      await libav.avformat_close_input_js(ctx).catch(() => {});
+    }
+    if (libav && devName) {
+      await libav.unlink(devName).catch(() => {});
+      if (libav.blockReadBuffers) delete libav.blockReadBuffers[devName];
+    }
   }
 
   async function configureStreamDiscards(fmtCtx, activeIndices) {
@@ -522,12 +546,23 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     audioNextSample = null;
     audioTrimBeforeSample = null;
     waitingForAudioSync = false;
+    pendingAudioDiscontinuitySec = null;
   }
 
   async function initAudioDecoder(streamInfo) {
     await freeAudioDecoder();
     activeAudioStream = streamInfo;
-    if (!streamInfo) return;
+    if (!streamInfo) {
+      if (aReadPkt) {
+        await libav.av_packet_free_js(aReadPkt);
+        aReadPkt = 0;
+      }
+      if (aFmtCtx) {
+        await closeDemuxDevice(aFmtCtx, aDevName);
+        aFmtCtx = 0;
+      }
+      return;
+    }
     if (!aFmtCtx) {
       registerDeviceReader(aDevName);
       await libav.mkblockreaderdev(aDevName, fileSize);
@@ -550,7 +585,9 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     const fFmt = await libav.AVFrame_format(f0);
     const fCh = (await libav.AVFrame_ch_layout_nb_channels(f0)) || 2;
     const fMask = (await libav.AVFrame_channel_layoutmask(f0)) || defaultMaskForChannels(fCh);
-    const sig = `${fRate}:${fFmt}:${fMask}:${audioMode}:${outSampleRate}`;
+    const srcTbNum = activeAudioStream?.tbNum > 0 ? activeAudioStream.tbNum : 1;
+    const srcTbDen = activeAudioStream?.tbDen > 0 ? activeAudioStream.tbDen : fRate;
+    const sig = `${fRate}:${fFmt}:${fMask}:${srcTbNum}/${srcTbDen}:${audioMode}:${outSampleRate}`;
     if (filterGraph && filterSig === sig) return;
     if (filterGraph) {
       await libav.avfilter_graph_free_js(filterGraph);
@@ -570,7 +607,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
         sample_rate: fRate,
         sample_fmt: fFmt,
         channel_layout: fMask,
-        time_base: [1, fRate],
+        time_base: [srcTbNum, srcTbDen],
       },
       {
         sample_rate: outSampleRate,
@@ -591,13 +628,14 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     // of the file over HTTP Range requests. Always seek via the indexed video stream when present.
     const seekStream = vStream || streamInfo;
     if (!seekStream) return;
-    const clamped = Math.max(0, seconds);
+    const clamped = Math.max(0, seconds) + formatOriginSec;
     const ts = Math.round((clamped * seekStream.tbDen) / seekStream.tbNum);
     const [tsLo, tsHi] = libav.f64toi64(ts);
     const ret = await libav.avformat_seek_file_max(ctx, seekStream.index, tsLo, tsHi);
     if (ret < 0) {
       await libav.avformat_seek_file_approx(ctx, seekStream.index, tsLo, tsHi);
     }
+    if (ctx === sFmtCtx) lastSubBytePos = 0;
   }
 
   function isTrueHdCodec(streamInfo) {
@@ -628,6 +666,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     audioNextSample = null;
     audioTrimBeforeSample = clamped > 0 ? Math.round(clamped * outSampleRate) : null;
     waitingForAudioSync = clamped > 0 && isTrueHdCodec(streamInfo);
+    pendingAudioDiscontinuitySec = null;
   }
 
   function clearDecodedFrames() {
@@ -966,7 +1005,23 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     await libav.mkblockreaderdev(vDevName, fileSize);
     const [ctx, streams] = await libav.ff_init_demuxer_file(vDevName);
     vFmtCtx = ctx;
+    maxVideoBytePos = 0;
     totalStreamCount = streams.length;
+
+    formatOriginSec = 0;
+    if (typeof libav.AVFormatContext_start_time === 'function') {
+      const stLo = await libav.AVFormatContext_start_time(vFmtCtx);
+      const stHi =
+        typeof libav.AVFormatContext_start_timehi === 'function'
+          ? await libav.AVFormatContext_start_timehi(vFmtCtx)
+          : 0;
+      if (stHi !== -0x80000000 || stLo !== 0) {
+        const rawStart = libav.i64tof64(stLo, stHi);
+        if (Number.isFinite(rawStart) && rawStart > 0) {
+          formatOriginSec = rawStart / (libav.AV_TIME_BASE || 1e6);
+        }
+      }
+    }
 
     const fmtDurLo = await libav.AVFormatContext_duration(vFmtCtx);
     const fmtDurHi = await libav.AVFormatContext_durationhi(vFmtCtx);
@@ -999,6 +1054,9 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     audioStreams = [];
     subtitleStreams = [];
     fontAttachments = [];
+    fontsTruncated = false;
+    let totalFontBytes = 0;
+    const MAX_TOTAL_FONT_BYTES = 16 * 1024 * 1024;
     vStream = null;
 
     for (let i = 0; i < streams.length; i++) {
@@ -1137,7 +1195,14 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
         const mimetype = String(meta.mimetype || meta.MIMETYPE || '').toLowerCase();
         if (/\.(ttf|otf|ttc|woff2?)$/i.test(filename) || /font|truetype|opentype/.test(mimetype)) {
           const bytes = await copyExtradata(s.codecpar);
-          if (bytes.length > 0 && bytes.length <= 16 * 1024 * 1024) fontAttachments.push(bytes);
+          if (bytes.length > 0) {
+            if (totalFontBytes + bytes.length <= MAX_TOTAL_FONT_BYTES) {
+              fontAttachments.push(bytes);
+              totalFontBytes += bytes.length;
+            } else {
+              fontsTruncated = true;
+            }
+          }
         }
       }
     }
@@ -1267,6 +1332,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     audioEof = false;
     subEof = false;
     firstFramePresented = false;
+    maxVideoBytePos = 0;
 
     clearVideoPackets();
     clearDecodedFrames();
@@ -1296,7 +1362,9 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
       });
     }
     if (sFmtCtx && activeSubStream) {
+      seenAssEvents.clear();
       await seekFormatContext(sFmtCtx, activeSubStream, clamped);
+      postMessageFn({ type: 'subtitleReset', subGen, seekGen: gen });
     }
   }
 
@@ -1344,7 +1412,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
           }
         }
       }
-      const ptsSec = packetPtsSeconds(libav, p, vStream.tbNum, vStream.tbDen) ?? videoDemuxUntil;
+      const ptsSec = packetPtsSeconds(libav, p, vStream.tbNum, vStream.tbDen, formatOriginSec) ?? videoDemuxUntil;
       const durSec = p.duration > 0 ? (p.duration * vStream.tbNum) / vStream.tbDen : 1 / 24;
       const isKey = (p.flags & libav.AV_PKT_FLAG_KEY) !== 0;
       if (ptsSec + durSec > videoDemuxUntil) videoDemuxUntil = ptsSec + durSec;
@@ -1387,6 +1455,17 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     return !videoEof && videoDemuxUntil < targetUntil && videoPacketBytes < MAX_VIDEO_PACKET_BYTES;
   }
 
+  function joinFloatParts(parts, totalSamples) {
+    if (parts.length === 1) return parts[0];
+    const out = new Float32Array(totalSamples);
+    let off = 0;
+    for (let i = 0; i < parts.length; i++) {
+      out.set(parts[i], off);
+      off += parts[i].length;
+    }
+    return out;
+  }
+
   async function pumpAudioStep() {
     if (closed || !aFmtCtx || !activeAudioStream || !decCtx || audioEof) return false;
     const mediaNow = currentMediaTime();
@@ -1412,12 +1491,6 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
       }
     }
 
-    if (aPkts.length && audioNextSample === null) {
-      const firstSec =
-        packetPtsSeconds(libav, aPkts[0], activeAudioStream.tbNum, activeAudioStream.tbDen) ?? bufferedStart;
-      audioNextSample = Math.max(0, Math.round(firstSec * outSampleRate));
-    }
-
     let emittedAudioBatch = false;
     if (aPkts.length || isEof) {
       const decodedFrames = await libav.ff_decode_multi(decCtx, decPkt, decFrame, aPkts, {
@@ -1431,92 +1504,148 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
           fin: isEof,
           copyoutFrame: 'ptr',
         });
-        const leftParts = [];
-        const rightParts = [];
-        let totalSamples = 0;
-        const batchStartSample = audioNextSample ?? Math.round(audioDemuxUntil * outSampleRate);
 
+        const framesData = [];
         for (const fPtr of filtered) {
           const nbSamples = await libav.AVFrame_nb_samples(fPtr);
           if (nbSamples > 0) {
+            let ptsSec;
+            const ptsLo = await libav.AVFrame_pts(fPtr);
+            const ptsHi = await libav.AVFrame_ptshi(fPtr);
+            if (ptsHi !== -0x80000000 || ptsLo !== 0) {
+              const tbNum = (await libav.AVFrame_time_base_num(fPtr)) || 1;
+              const tbDen = (await libav.AVFrame_time_base_den(fPtr)) || outSampleRate;
+              ptsSec = (libav.i64tof64(ptsLo, ptsHi) * tbNum) / tbDen - formatOriginSec;
+            }
             const ptrL = await libav.AVFrame_data_a(fPtr, 0);
             const ptrR = await libav.AVFrame_data_a(fPtr, 1);
             const l = new Float32Array(await libav.copyout_f32(ptrL, nbSamples));
             const r = ptrR ? new Float32Array(await libav.copyout_f32(ptrR, nbSamples)) : new Float32Array(l);
-            leftParts.push(l);
-            rightParts.push(r);
-            totalSamples += nbSamples;
+            framesData.push({ l, r, nbSamples, ptsSec });
           }
           await libav.av_frame_free_js(fPtr);
         }
 
-        if (totalSamples > 0) {
-          audioNextSample = batchStartSample + totalSamples;
-          let leftOut;
-          let rightOut;
-          if (leftParts.length === 1) {
-            leftOut = leftParts[0];
-            rightOut = rightParts[0];
-          } else {
-            leftOut = new Float32Array(totalSamples);
-            rightOut = new Float32Array(totalSamples);
-            let off = 0;
-            for (let i = 0; i < leftParts.length; i++) {
-              leftOut.set(leftParts[i], off);
-              rightOut.set(rightParts[i], off);
-              off += leftParts[i].length;
+        if (framesData.length > 0) {
+          if (audioNextSample === null) {
+            const f0 = framesData[0];
+            if (f0.ptsSec !== undefined) {
+              if (bufferedStart === 0 && f0.ptsSec < 0 && f0.ptsSec >= -0.25) {
+                const f1 = framesData[1];
+                if (f1 && f1.ptsSec !== undefined && Math.abs(f1.ptsSec - f0.nbSamples / outSampleRate) <= 0.0025) {
+                  audioNextSample = 0;
+                } else {
+                  audioNextSample = Math.round(f0.ptsSec * outSampleRate);
+                  if (audioTrimBeforeSample === null) audioTrimBeforeSample = 0;
+                }
+              } else {
+                audioNextSample =
+                  audioTrimBeforeSample !== null
+                    ? Math.round(f0.ptsSec * outSampleRate)
+                    : Math.max(0, Math.round(f0.ptsSec * outSampleRate));
+              }
+            } else {
+              audioNextSample = Math.round(bufferedStart * outSampleRate);
             }
           }
 
-          let outStartSample = batchStartSample;
-          let outSamples = totalSamples;
-          if (audioTrimBeforeSample !== null) {
-            if (batchStartSample < audioTrimBeforeSample) {
-              const trim = Math.min(totalSamples, audioTrimBeforeSample - batchStartSample);
-              outStartSample = batchStartSample + trim;
-              outSamples = totalSamples - trim;
-              if (outSamples > 0 && trim > 0) {
-                leftOut = leftOut.slice(trim);
-                rightOut = rightOut.slice(trim);
+          const chunks = [];
+          let curChunk = { startSample: audioNextSample, leftParts: [], rightParts: [], totalSamples: 0 };
+          for (let i = 0; i < framesData.length; i++) {
+            let { l, r, nbSamples, ptsSec } = framesData[i];
+            if (i === 0 && audioNextSample === 0 && ptsSec !== undefined && ptsSec < 0 && ptsSec >= -0.25) {
+              ptsSec = 0;
+            }
+            if (ptsSec !== undefined) {
+              const expectedSec = audioNextSample / outSampleRate;
+              const diffSec = ptsSec - expectedSec;
+              if (Math.abs(diffSec) > 5.0) {
+                if (pendingAudioDiscontinuitySec !== null && Math.abs(ptsSec - pendingAudioDiscontinuitySec) <= 0.25) {
+                  if (curChunk.totalSamples > 0) chunks.push(curChunk);
+                  audioNextSample = Math.round(ptsSec * outSampleRate);
+                  curChunk = { startSample: audioNextSample, leftParts: [], rightParts: [], totalSamples: 0 };
+                  pendingAudioDiscontinuitySec = null;
+                } else {
+                  pendingAudioDiscontinuitySec = ptsSec;
+                }
+              } else {
+                pendingAudioDiscontinuitySec = null;
+                if (diffSec > 0.0025) {
+                  if (curChunk.totalSamples > 0) chunks.push(curChunk);
+                  audioNextSample = Math.round(ptsSec * outSampleRate);
+                  curChunk = { startSample: audioNextSample, leftParts: [], rightParts: [], totalSamples: 0 };
+                } else if (diffSec < -0.0025) {
+                  const overlap = Math.min(nbSamples, Math.round(-diffSec * outSampleRate));
+                  if (overlap >= nbSamples) continue;
+                  l = l.subarray(overlap);
+                  r = r.subarray(overlap);
+                  nbSamples = l.length;
+                }
               }
             }
-            if (batchStartSample + totalSamples >= audioTrimBeforeSample) {
-              audioTrimBeforeSample = null;
-            }
+            curChunk.leftParts.push(l);
+            curChunk.rightParts.push(r);
+            curChunk.totalSamples += nbSamples;
+            audioNextSample += nbSamples;
           }
+          if (curChunk.totalSamples > 0) chunks.push(curChunk);
 
-          if (outSamples > 0) {
-            emittedAudioBatch = true;
-            audioDemuxUntil = Math.max(audioDemuxUntil, (outStartSample + outSamples) / outSampleRate);
-            if (audioPort) {
-              audioPort.postMessage(
-                {
-                  type: 'pcm',
-                  seekGen: curSeekGen,
-                  audioGen: curAudioGen,
-                  startSample: outStartSample,
-                  left: leftOut,
-                  right: rightOut,
-                  eof: isEof,
-                },
-                [leftOut.buffer, rightOut.buffer],
-              );
-            } else {
-              postMessageFn(
-                {
-                  type: 'audioPcm',
-                  seekGen: curSeekGen,
-                  audioGen: curAudioGen,
-                  startSample: outStartSample,
-                  sampleRate: outSampleRate,
-                  samples: outSamples,
-                  left: leftOut,
-                  right: rightOut,
-                  bufferedUntil: audioDemuxUntil,
-                  eof: isEof,
-                },
-                [leftOut.buffer, rightOut.buffer],
-              );
+          for (let ci = 0; ci < chunks.length; ci++) {
+            const chunk = chunks[ci];
+            let leftOut = joinFloatParts(chunk.leftParts, chunk.totalSamples);
+            let rightOut = joinFloatParts(chunk.rightParts, chunk.totalSamples);
+            let outStartSample = chunk.startSample;
+            let outSamples = chunk.totalSamples;
+
+            if (audioTrimBeforeSample !== null) {
+              if (chunk.startSample < audioTrimBeforeSample) {
+                const trim = Math.min(chunk.totalSamples, audioTrimBeforeSample - chunk.startSample);
+                outStartSample = chunk.startSample + trim;
+                outSamples = chunk.totalSamples - trim;
+                if (outSamples > 0 && trim > 0) {
+                  leftOut = leftOut.slice(trim);
+                  rightOut = rightOut.slice(trim);
+                }
+              }
+              if (chunk.startSample + chunk.totalSamples >= audioTrimBeforeSample) {
+                audioTrimBeforeSample = null;
+              }
+            }
+
+            if (outSamples > 0) {
+              emittedAudioBatch = true;
+              const chunkEof = isEof && ci === chunks.length - 1;
+              audioDemuxUntil = Math.max(audioDemuxUntil, (outStartSample + outSamples) / outSampleRate);
+              if (audioPort) {
+                audioPort.postMessage(
+                  {
+                    type: 'pcm',
+                    seekGen: curSeekGen,
+                    audioGen: curAudioGen,
+                    startSample: outStartSample,
+                    left: leftOut,
+                    right: rightOut,
+                    eof: chunkEof,
+                  },
+                  [leftOut.buffer, rightOut.buffer],
+                );
+              } else {
+                postMessageFn(
+                  {
+                    type: 'audioPcm',
+                    seekGen: curSeekGen,
+                    audioGen: curAudioGen,
+                    startSample: outStartSample,
+                    sampleRate: outSampleRate,
+                    samples: outSamples,
+                    left: leftOut,
+                    right: rightOut,
+                    bufferedUntil: audioDemuxUntil,
+                    eof: chunkEof,
+                  },
+                  [leftOut.buffer, rightOut.buffer],
+                );
+              }
             }
           }
         }
@@ -1552,6 +1681,10 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
 
   async function pumpSubtitleStep() {
     if (closed || !sFmtCtx || !activeSubStream || subEof || subDemuxUntil >= targetUntil + 5) return false;
+    if (!videoEof && maxVideoBytePos > 0 && lastSubBytePos >= maxVideoBytePos) {
+      subDemuxUntil = Math.max(subDemuxUntil, videoDemuxUntil);
+      return false;
+    }
     const curSeekGen = seekGen;
     const curSubGen = subGen;
     const [readRes, packetsByStream] = await libav.ff_read_frame_multi(sFmtCtx, sReadPkt, { limit: 262144 });
@@ -1563,7 +1696,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
       if (activeSubStream.delivery === 'cues') {
         const cues = [];
         for (const sp of sPkts) {
-          const start = packetPtsSeconds(libav, sp, activeSubStream.tbNum, activeSubStream.tbDen);
+          const start = packetPtsSeconds(libav, sp, activeSubStream.tbNum, activeSubStream.tbDen, formatOriginSec);
           if (start === undefined || !sp.data?.length) continue;
           const dur = sp.duration > 0 ? (sp.duration * activeSubStream.tbNum) / activeSubStream.tbDen : 3.5;
           subDemuxUntil = Math.max(subDemuxUntil, start + dur);
@@ -1579,13 +1712,13 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
       } else if (activeSubStream.delivery === 'ass') {
         let lines = '';
         for (const sp of sPkts) {
-          const start = packetPtsSeconds(libav, sp, activeSubStream.tbNum, activeSubStream.tbDen);
+          const start = packetPtsSeconds(libav, sp, activeSubStream.tbNum, activeSubStream.tbDen, formatOriginSec);
           if (start === undefined || !sp.data?.length) continue;
           const dur = sp.duration > 0 ? (sp.duration * activeSubStream.tbNum) / activeSubStream.tbDen : 3.5;
           subDemuxUntil = Math.max(subDemuxUntil, start + dur);
           const line = matroskaAssToDialogue(textDecoder.decode(sp.data), start, start + Math.max(0.05, dur));
           if (line && !seenAssEvents.has(line)) {
-            if (seenAssEvents.size > 20000) seenAssEvents.clear();
+            if (seenAssEvents.size >= 20000) seenAssEvents.delete(seenAssEvents.keys().next().value);
             seenAssEvents.add(line);
             lines += line;
           }
@@ -1597,7 +1730,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
       } else if (activeSubStream.delivery === 'pgs') {
         const parts = [];
         for (const sp of sPkts) {
-          const start = packetPtsSeconds(libav, sp, activeSubStream.tbNum, activeSubStream.tbDen) ?? 0;
+          const start = packetPtsSeconds(libav, sp, activeSubStream.tbNum, activeSubStream.tbDen, formatOriginSec) ?? 0;
           subDemuxUntil = Math.max(subDemuxUntil, start);
           const sup = wrapPgsPacketToSup(sp.data, start);
           if (sup?.length) parts.push(sup);
@@ -1607,6 +1740,9 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
           postMessageFn({ type: 'subtitleData', subGen: curSubGen, format: 'pgs', data: chunk }, [chunk.buffer]);
         }
       }
+    } else if (!isEof && !videoEof && maxVideoBytePos > 0 && lastSubBytePos >= maxVideoBytePos) {
+      subDemuxUntil = Math.max(subDemuxUntil, videoDemuxUntil);
+      return false;
     }
 
     if (isEof) subEof = true;
@@ -1614,7 +1750,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
   }
 
   function pumpLoop() {
-    if (closed) return;
+    if (closed || held) return;
     if (pumping) {
       pumpRequested = true;
       return;
@@ -1623,7 +1759,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     pumpRequested = false;
     void enqueue(async () => {
       try {
-        while (!closed) {
+        while (!closed && !held) {
           const moreVideo = await pumpVideoStep();
           const moreAudio = await pumpAudioStep();
           const moreSub = await pumpSubtitleStep();
@@ -1641,7 +1777,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
         }
       } finally {
         pumping = false;
-        if (pumpRequested && !closed) {
+        if (pumpRequested && !closed && !held) {
           pumpLoop();
         }
       }
@@ -1687,8 +1823,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
         [aFmtCtx, aDevName],
         [sFmtCtx, sDevName],
       ]) {
-        if (ctx) await libav.avformat_close_input_js(ctx);
-        await libav.unlink(dev).catch(() => {});
+        await closeDemuxDevice(ctx, dev);
       }
       vFmtCtx = aFmtCtx = sFmtCtx = 0;
     } catch {}
@@ -1728,6 +1863,11 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     }
     if (msg.type === 'close') {
       void cleanup();
+      return;
+    }
+    if (msg.type === 'hold') {
+      held = Boolean(msg.held);
+      if (!held) pumpLoop();
       return;
     }
     if (msg.type === 'clockSync') {
@@ -1871,7 +2011,17 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
         seenAssEvents.clear();
         const nextSub = subtitleStreams.find(s => s.id === msg.subtitleId) || null;
         activeSubStream = nextSub;
-        if (!nextSub) return;
+        if (!nextSub) {
+          if (sReadPkt) {
+            await libav.av_packet_free_js(sReadPkt);
+            sReadPkt = 0;
+          }
+          if (sFmtCtx) {
+            await closeDemuxDevice(sFmtCtx, sDevName);
+            sFmtCtx = 0;
+          }
+          return;
+        }
         if (!sFmtCtx) {
           registerDeviceReader(sDevName);
           await libav.mkblockreaderdev(sDevName, fileSize);
@@ -1880,16 +2030,22 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
           sReadPkt = await libav.av_packet_alloc();
         }
         await configureStreamDiscards(sFmtCtx, [nextSub.index]);
-        const fonts = nextSub.delivery === 'ass' ? fontAttachments.map(f => new Uint8Array(f)) : [];
-        const header = nextSub.extradata?.length ? new Uint8Array(nextSub.extradata) : undefined;
-        postMessageFn({
-          type: 'subtitleInit',
-          subGen: msg.subGen,
-          subtitleId: nextSub.id,
-          format: nextSub.delivery,
-          header,
-          fonts,
-        });
+        const fonts = nextSub.delivery === 'ass' ? fontAttachments.map(f => f.slice()) : [];
+        const header = nextSub.extradata?.length ? nextSub.extradata.slice() : undefined;
+        const transfers = fonts.map(f => f.buffer);
+        if (header) transfers.push(header.buffer);
+        postMessageFn(
+          {
+            type: 'subtitleInit',
+            subGen: msg.subGen,
+            subtitleId: nextSub.id,
+            format: nextSub.delivery,
+            header,
+            fonts,
+            fontsTruncated,
+          },
+          transfers,
+        );
         const subStart = Number.isFinite(msg.time) ? Math.max(0, msg.time) : 0;
         subDemuxUntil = subStart;
         subEof = false;

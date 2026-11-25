@@ -384,6 +384,11 @@ function supportsGpuTonemap(options = {}) {
   return supported;
 }
 
+function isIPhone(nav = globalThis.navigator) {
+  const ua = String(nav?.userAgent || '');
+  return /\biPhone\b|\biPod\b/i.test(ua);
+}
+
 function supportsUbuPlayer({
   videoDecoder = typeof globalThis.VideoDecoder === 'function',
   audioWorklet = typeof globalThis.AudioWorkletNode === 'function',
@@ -391,8 +396,11 @@ function supportsUbuPlayer({
   wasm = typeof globalThis.WebAssembly === 'object',
   worker = typeof globalThis.Worker === 'function',
   ubuplayerEnabled = true,
+  navigator: nav = globalThis.navigator,
+  localFile = false,
 } = {}) {
   if (ubuplayerEnabled === false) return false;
+  if (!localFile && isIPhone(nav)) return false;
   return Boolean(wasm && worker && videoDecoder && audioWorklet && offscreenCanvas);
 }
 
@@ -904,6 +912,7 @@ export {
   timeline,
   supportsHdrDisplay,
   supportsGpuTonemap,
+  isIPhone,
   supportsUbuPlayer,
   supportsClientRemux,
   needsVideoConversion,

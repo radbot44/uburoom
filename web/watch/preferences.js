@@ -146,11 +146,11 @@ export function mount(host, deps) {
   function operatorAllowsUbuPlayer() {
     return store.identity.config?.ubuplayer !== false;
   }
-  function canUseUbuPlayer() {
+  function canUseUbuPlayer(options = {}) {
     return (
       operatorAllowsUbuPlayer() &&
       store.preferences.playerPreferences.useUbuPlayer !== false &&
-      uburoomPlayback.supportsUbuPlayer()
+      uburoomPlayback.supportsUbuPlayer(options)
     );
   }
   function canGpuTonemap() {
@@ -379,7 +379,8 @@ export function mount(host, deps) {
   function ensureAudioProcessingInput() {
     if (!ensureAudioChainNodes()) return undefined;
     applyAudioChainParameters(store.preferences.playerPreferences.audioMode || 'normal');
-    return { audioContext, destination: speechFilterNode };
+    // DynamicsCompressorNode in WebAudio introduces a fixed 6.0 ms lookahead delay when connected.
+    return { audioContext, destination: speechFilterNode, downstreamAudioLatencySec: 0.006 };
   }
   function resumeAudioContext() {
     if (store.room.state?.format === 'youtube-embed') return;

@@ -664,6 +664,7 @@ export function parseDolbyVisionRpu(rawInput, ctx = createDoviRpuContext()) {
 
       for (let c = 0; c < 3; c++) {
         const curve = curves[c];
+        let prevLinearEnd = null;
         for (let i = 0; i < curve.numPieces; i++) {
           const mappingIdc = br.readUE();
           if (mappingIdc > 1) return null;
@@ -676,19 +677,28 @@ export function parseDolbyVisionRpu(rawInput, ctx = createDoviRpuContext()) {
             if (polyOrderMinus1 === 0) {
               const linearInterp = br.readBit();
               if (linearInterp) {
-                const x0 = readRpuSignedCoef(br, hdr.coefDataType, hdr.coefLog2Denom);
+                const x0 =
+                  i === 0
+                    ? readRpuSignedCoef(br, hdr.coefDataType, hdr.coefLog2Denom)
+                    : prevLinearEnd !== null
+                      ? prevLinearEnd
+                      : curve.polyCoeffs[i - 1][0] +
+                        curve.pivots[i] * (curve.polyCoeffs[i - 1][1] + curve.pivots[i] * curve.polyCoeffs[i - 1][2]);
                 const x1 = readRpuSignedCoef(br, hdr.coefDataType, hdr.coefLog2Denom);
                 const dx = Math.max(1e-6, curve.pivots[i + 1] - curve.pivots[i]);
                 const slope = (x1 - x0) / dx;
                 curve.polyCoeffs[i] = [x0 - slope * curve.pivots[i], slope, 0];
+                prevLinearEnd = x1;
                 continue;
               }
             }
+            prevLinearEnd = null;
             const c0 = readRpuSignedCoef(br, hdr.coefDataType, hdr.coefLog2Denom);
             const c1 = readRpuSignedCoef(br, hdr.coefDataType, hdr.coefLog2Denom);
             const c2 = order === 2 ? readRpuSignedCoef(br, hdr.coefDataType, hdr.coefLog2Denom) : 0;
             curve.polyCoeffs[i] = [c0, c1, c2];
           } else {
+            prevLinearEnd = null;
             const mmrOrderMinus1 = br.readBits(2);
             if (mmrOrderMinus1 > 2) return null;
             const order = mmrOrderMinus1 + 1;
