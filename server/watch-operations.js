@@ -89,7 +89,11 @@ async function roomContinue(rows, scopeFor) {
   // One scope lookup per server for this call only; never kept beyond it.
   const scopes = new Map();
   const scopeOnce = serverId => {
-    if (!scopes.has(serverId)) scopes.set(serverId, Promise.resolve().then(() => scopeFor(serverId)));
+    if (!scopes.has(serverId))
+      scopes.set(
+        serverId,
+        Promise.resolve().then(() => scopeFor(serverId)),
+      );
     return scopes.get(serverId);
   };
   const items = await Promise.all(
