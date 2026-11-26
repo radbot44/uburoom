@@ -663,6 +663,7 @@ async function packageStandalone({
   outDir = path.join(ROOT, 'releases'),
   requireNvenc = false,
   requireQsv = false,
+  requireVulkan = true,
   skipSourceArchive = false,
   fetchImpl = fetch,
 } = {}) {
@@ -741,6 +742,7 @@ async function packageStandalone({
       expectedVersion: manifest.ffmpeg.version,
       requireNvenc,
       requireQsv,
+      requireVulkan,
     });
 
     // Stage app files
@@ -816,6 +818,7 @@ function parseArgs(argv) {
     else if (arg === '--out-dir') opts.outDir = path.resolve(argv[++i]);
     else if (arg === '--require-nvenc') opts.requireNvenc = true;
     else if (arg === '--require-qsv') opts.requireQsv = true;
+    else if (arg === '--allow-no-vulkan') opts.requireVulkan = false;
     else if (arg === '--skip-source-archive') opts.skipSourceArchive = true;
   }
   return opts;

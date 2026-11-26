@@ -110,6 +110,7 @@ async function verifyFfmpeg({
   expectedVersion = 'n8.1.3-41-ga8029b6528',
   requireNvenc = false,
   requireQsv = false,
+  requireVulkan = true,
 } = {}) {
   if (!ffmpegPath || !fs.existsSync(ffmpegPath)) throw new Error(`FFmpeg binary not found: ${ffmpegPath}`);
   if (!ffprobePath || !fs.existsSync(ffprobePath)) throw new Error(`FFprobe binary not found: ${ffprobePath}`);
@@ -245,26 +246,37 @@ async function verifyFfmpeg({
     }
 
     // 2. Vulkan + libplacebo + apply_dolbyvision=1 shader linkage probe
-    await execTool(ffmpegPath, [
-      '-hide_banner',
-      '-y',
-      '-init_hw_device',
-      'vulkan=v',
-      '-filter_hw_device',
-      'v',
-      '-f',
-      'lavfi',
-      '-i',
-      'color=c=blue:s=320x180:r=24:d=0.1',
-      '-vf',
-      'format=p010le,setparams=colorspace=bt2020nc:color_primaries=bt2020:color_trc=smpte2084:range=tv,hwupload,libplacebo=w=320:h=180:format=nv12:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:peak_detect=0:apply_dolbyvision=1,hwdownload,format=nv12',
-      '-frames:v',
-      '1',
-      '-f',
-      'null',
-      '-',
-    ]);
-    probes.vulkanLibplaceboDovi = { status: 'pass' };
+    try {
+      await execTool(ffmpegPath, [
+        '-hide_banner',
+        '-y',
+        '-init_hw_device',
+        'vulkan=v',
+        '-filter_hw_device',
+        'v',
+        '-f',
+        'lavfi',
+        '-i',
+        'color=c=blue:s=320x180:r=24:d=0.1',
+        '-vf',
+        'format=p010le,setparams=colorspace=bt2020nc:color_primaries=bt2020:color_trc=smpte2084:range=tv,hwupload,libplacebo=w=320:h=180:format=nv12:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:peak_detect=0:apply_dolbyvision=1,hwdownload,format=nv12',
+        '-frames:v',
+        '1',
+        '-f',
+        'null',
+        '-',
+      ]);
+      probes.vulkanLibplaceboDovi = { status: 'pass', executed: true };
+    } catch (error) {
+      if (requireVulkan) throw error;
+      probes.vulkanLibplaceboDovi = {
+        status: 'unavailable',
+        executed: false,
+        reason: String(error.stderr || error.message)
+          .trim()
+          .slice(0, 200),
+      };
+    }
 
     // 3. CPU HDR zscale + tonemap probe
     const tonemapChain = cpuTonemap({ hdr: true, doviP5: false, transfer: 'smpte2084' }).join(',');

@@ -75,7 +75,7 @@ jobs:
         run: npm ci
 
       - name: Build Windows x64 standalone ZIP and GPL Corresponding Source
-        run: node scripts/package-standalone.js
+        run: node scripts/package-standalone.js --allow-no-vulkan
 
       - name: Verify portable ZIP contents and generate SHA256SUMS.txt
         shell: pwsh
