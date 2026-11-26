@@ -9,46 +9,7 @@ const { configPath, parseConfig, normalizeConfig } = require('../server/config')
 const { credentialVault, authenticateDatabaseEnvelopes } = require('../server/accounts');
 const { findOnPath, findBundledTool, findSiblingTool } = require('../server/media-tools');
 
-function readBuildIdentity() {
-  const pkgVersion = require('../package.json').version;
-  const candidates = [path.resolve(__dirname, '../../BUILD_INFO.json'), path.resolve(__dirname, '../BUILD_INFO.json')];
-  for (const file of candidates) {
-    try {
-      const info = JSON.parse(fs.readFileSync(file, 'utf8'));
-      const shortCommit = info?.uburoom?.shortCommit;
-      if (shortCommit) {
-        const suffix = info.uburoom.dirty ? '-dirty' : '';
-        return { version: pkgVersion, buildLabel: `v${pkgVersion} (g${shortCommit}${suffix})`, buildInfo: info };
-      }
-    } catch {}
-  }
-  const repoRoot = path.resolve(__dirname, '..');
-  if (fs.existsSync(path.join(repoRoot, '.git'))) {
-    try {
-      const shortCommit = cp
-        .execFileSync('git', ['-C', repoRoot, 'rev-parse', '--short=7', 'HEAD'], {
-          timeout: 1500,
-          encoding: 'utf8',
-          windowsHide: true,
-          stdio: ['ignore', 'pipe', 'ignore'],
-        })
-        .trim();
-      if (shortCommit) {
-        const dirty =
-          cp
-            .execFileSync('git', ['-C', repoRoot, 'status', '--porcelain'], {
-              timeout: 1500,
-              encoding: 'utf8',
-              windowsHide: true,
-              stdio: ['ignore', 'pipe', 'ignore'],
-            })
-            .trim().length > 0;
-        return { version: pkgVersion, buildLabel: `v${pkgVersion} (g${shortCommit}${dirty ? '-dirty' : ''})` };
-      }
-    } catch {}
-  }
-  return { version: pkgVersion, buildLabel: `v${pkgVersion}` };
-}
+const { readBuildIdentity } = require('../server/build-identity');
 
 /**
  * @typedef {{
@@ -1210,13 +1171,14 @@ async function runDoctor(options = {}) {
   const warnCount = allChecks.filter(c => c.status === 'warn').length;
   const failCount = allChecks.filter(c => c.status === 'fail').length;
 
-  const { version, buildLabel } = readBuildIdentity();
+  const { version, buildLabel, commit } = readBuildIdentity();
 
   if (jsonMode) {
     const summary = {
       timestamp: new Date().toISOString(),
       version,
       build: buildLabel,
+      ...(commit ? { commit } : {}),
       ok: failCount === 0,
       passed: passCount,
       warnings: warnCount,

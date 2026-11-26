@@ -21,6 +21,7 @@ const { runningSettings } = require('../server/operator-settings');
 const { silentLogger } = require('../server/logger');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
+const APP_VERSION = require('../package.json').version;
 
 async function freePort() {
   const srv = net.createServer();
@@ -99,7 +100,15 @@ function linkSlotApp(slotDir, { marker } = {}) {
   if (marker) {
     fs.writeFileSync(
       path.join(slotDir, 'BUILD_INFO.json'),
-      JSON.stringify({ uburoom: { version: '0.5.3', shortCommit: marker, dirty: false, slot: marker } }),
+      JSON.stringify({
+        uburoom: {
+          version: APP_VERSION,
+          commit: marker.padEnd(40, marker[0]),
+          shortCommit: marker,
+          dirty: false,
+          slot: path.basename(slotDir),
+        },
+      }),
     );
   }
   return appDir;
@@ -296,8 +305,8 @@ test('launcher.js supervises setup IPC, exit 75 slot-switching restart, and non-
   fs.mkdirSync(keysDir, { recursive: true });
   const credKeyFile = path.join(keysDir, 'credentials.key');
 
-  const slot1 = '0.5.3-g1111111';
-  const slot2 = '0.5.3-g2222222';
+  const slot1 = `${APP_VERSION}-g1111111`;
+  const slot2 = `${APP_VERSION}-g2222222`;
   const app1 = linkSlotApp(path.join(root, 'versions', slot1), { marker: '1111111' });
   linkSlotApp(path.join(root, 'versions', slot2), { marker: '2222222' });
   fs.writeFileSync(path.join(root, 'current.txt'), `${slot1}\n`);
@@ -405,7 +414,17 @@ test('launcher.js supervises setup IPC, exit 75 slot-switching restart, and non-
     await waitForHealth(appBase).catch(err => {
       throw new Error(`${err.message}\nsupervisor output:\n${supOut}`);
     });
-    assert.match(fs.readFileSync(logFile, 'utf8'), /g1111111/);
+    assert.ok(fs.readFileSync(logFile, 'utf8').includes(`uburoom v${APP_VERSION} (g1111111) listening`));
+
+    // The same copied app is invoked by the bundled doctor wrapper. A nonexistent config is
+    // intentional here: avoid competing with the running server or contacting external providers.
+    const doctor = require(path.join(app1, 'scripts', 'doctor.js'));
+    const report = await doctor.runDoctor({
+      args: ['--config', path.join(root, 'missing-doctor-config.yaml'), '--json'],
+      silent: true,
+    });
+    assert.equal(report.build, `v${APP_VERSION} (g1111111)`);
+    assert.equal(report.commit, '1'.repeat(40));
 
     const browser = client(appBase);
     assert.equal(
