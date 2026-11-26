@@ -803,6 +803,26 @@ test('tailscale probe and funnel helper detect state and degrade gracefully with
   assert.equal(blocked.enableUrl, 'https://login.tailscale.com/f/funnel?node=abc123');
   assert.match(blocked.error, /not enabled/i);
 
+  // If enable succeeds but follow-up probe reports no active Funnel, do not claim active
+  const unverified = await enableTailscaleFunnel(5756, {
+    runner: async args => {
+      if (args[0] === 'funnel' && args[1] === '--bg')
+        return { code: 0, stdout: 'Available on the internet\n', stderr: '' };
+      if (args[0] === 'status') {
+        return {
+          code: 0,
+          stdout: JSON.stringify({ BackendState: 'Running', Self: { DNSName: 'box.tail123.ts.net.', CapMap: {} } }),
+          stderr: '',
+        };
+      }
+      return { code: 0, stdout: JSON.stringify({}), stderr: '' };
+    },
+  });
+  assert.equal(unverified.ok, true);
+  assert.equal(unverified.verified, false);
+  assert.equal(unverified.status.funnelActive, false);
+  assert.equal(unverified.status.funnelPort, null);
+
   // Invalid ports are rejected
   await assert.rejects(() => enableTailscaleFunnel(0, { runner: async () => ({ code: 0, stdout: '', stderr: '' }) }), {
     status: 400,

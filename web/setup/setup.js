@@ -1278,6 +1278,15 @@ function renderTailscalePanel(port) {
     enableButton.hidden = !!networkView?.published;
     return;
   }
+  if (tailscaleFunnelResult?.ok && tailscaleFunnelResult.verified === false) {
+    statusEl.textContent = `Tailscale Funnel configured for port ${port}, not yet verified.`;
+    detailEl.textContent =
+      'Tailscale accepted the command, but the follow-up status check did not confirm an active Funnel yet. Click Recheck or run tailscale funnel status.';
+    detailEl.hidden = false;
+    cmdRow.hidden = false;
+    enableButton.hidden = !!networkView?.published;
+    return;
+  }
   statusEl.textContent = `Tailscale detected: ${ts.dnsName}`;
   detailEl.textContent = ts.funnelEnabled
     ? 'Funnel is available. Click below to publish this port over HTTPS, or run tailscale serve for your tailnet only.'

@@ -297,16 +297,18 @@ async function enableTailscaleFunnel(port, { runner = runTailscale, timeoutMs = 
     };
   }
   const probed = await probeTailscale({ runner, timeoutMs: PROBE_TIMEOUT_MS });
+  const verified = Boolean(probed.funnelActive && (probed.funnelPort === null || probed.funnelPort === port));
   return {
     ok: true,
+    verified,
     command,
     status: {
       ...probed,
       installed: true,
-      loggedIn: true,
-      funnelEnabled: true,
-      funnelActive: true,
-      funnelPort: probed.funnelPort ?? port,
+      loggedIn: probed.loggedIn,
+      funnelEnabled: probed.funnelEnabled,
+      funnelActive: probed.funnelActive,
+      funnelPort: probed.funnelPort,
     },
   };
 }

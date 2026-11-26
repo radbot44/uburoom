@@ -543,3 +543,24 @@ test('round-trip: operator backup download streams with security headers and res
     else process.env.XDG_DATA_HOME = prevXdg;
   }
 });
+
+test('createBackupArchive enforces restore size and entry caps so exports are always restorable', t => {
+  const fixture = createInstallation(t, { port: 5756 });
+  const accounts = new Accounts(fixture.config.accountFile, credentialVault(fixture.keyFile));
+  try {
+    assert.throws(
+      () => createBackupArchive({ config: fixture.config, db: accounts.db, maxArchiveBytes: 64 }),
+      error => error.code === 'BACKUP_TOO_LARGE' && error.status === 413,
+    );
+    assert.throws(
+      () => createBackupArchive({ config: fixture.config, db: accounts.db, maxExtractedBytes: 64 }),
+      error => error.code === 'BACKUP_TOO_LARGE' && error.status === 413,
+    );
+    assert.throws(
+      () => createBackupArchive({ config: fixture.config, db: accounts.db, maxEntryCount: 2 }),
+      error => error.code === 'BACKUP_TOO_LARGE' && error.status === 413,
+    );
+  } finally {
+    accounts.close();
+  }
+});

@@ -143,7 +143,21 @@ begin
   end;
 end;
 
-procedure PruneOldVersionSlots(const AppDir: String; const ActiveSlot: String);
+var
+  PreviousSlot: String;
+
+function ReadInstalledSlot(const AppDir: String): String;
+var
+  CurrentFile: String;
+  Raw: AnsiString;
+begin
+  Result := '';
+  CurrentFile := AddBackslash(AppDir) + 'current.txt';
+  if FileExists(CurrentFile) and LoadStringFromFile(CurrentFile, Raw) then
+    Result := Trim(String(Raw));
+end;
+
+procedure PruneOldVersionSlots(const AppDir: String; const ActiveSlot: String; const KeepSlot: String);
 var
   VersionsDir: String;
   FindRec: TFindRec;
@@ -160,10 +174,11 @@ begin
         if ((FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0) and
            (FindRec.Name <> '.') and
            (FindRec.Name <> '..') and
-           (CompareText(FindRec.Name, ActiveSlot) <> 0) then
+           (CompareText(FindRec.Name, ActiveSlot) <> 0) and
+           ((KeepSlot = '') or (CompareText(FindRec.Name, KeepSlot) <> 0)) then
         begin
           SlotPath := AddBackslash(VersionsDir) + FindRec.Name;
-          Log('Removing superseded uburoom slot: ' + SlotPath);
+          Log('Removing superseded uburoom slot (keeping active and previous slot): ' + SlotPath);
           DelTree(SlotPath, True, True, True);
         end;
       until not FindNext(FindRec);
@@ -174,8 +189,16 @@ begin
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  AppDir: String;
 begin
-  StopRunningUburoom(ExpandConstant('{app}'));
+  AppDir := ExpandConstant('{app}');
+  PreviousSlot := ReadInstalledSlot(AppDir);
+  if (PreviousSlot <> '') and (CompareText(PreviousSlot, '{#AppSlot}') = 0) then
+    PreviousSlot := '';
+  if PreviousSlot <> '' then
+    Log('Preserving previous uburoom slot for rollback: ' + PreviousSlot);
+  StopRunningUburoom(AppDir);
   Result := '';
 end;
 
@@ -183,7 +206,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
-    PruneOldVersionSlots(ExpandConstant('{app}'), '{#AppSlot}');
+    PruneOldVersionSlots(ExpandConstant('{app}'), '{#AppSlot}', PreviousSlot);
   end;
 end;
 

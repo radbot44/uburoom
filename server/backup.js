@@ -343,9 +343,23 @@ function backupFilename(date) {
  *   credentialKeyFile?: string,
  *   dataDirectory?: string,
  *   now?: Date,
+ *   maxArchiveBytes?: number,
+ *   maxExtractedBytes?: number,
+ *   maxEntryCount?: number,
  * }} options
  */
-function createBackupArchive({ config, db, registry, configFile, credentialKeyFile, dataDirectory, now = new Date() }) {
+function createBackupArchive({
+  config,
+  db,
+  registry,
+  configFile,
+  credentialKeyFile,
+  dataDirectory,
+  now = new Date(),
+  maxArchiveBytes = MAX_ARCHIVE_BYTES,
+  maxExtractedBytes = MAX_EXTRACTED_BYTES,
+  maxEntryCount = MAX_ENTRY_COUNT,
+}) {
   const activeDb = db || registry?.db;
   const resolvedConfigFile = configFile || config?.configFile;
   const resolvedKeyFile = credentialKeyFile || config?.credentialKeyFile;
@@ -442,7 +456,30 @@ function createBackupArchive({ config, db, registry, configFile, credentialKeyFi
 
     const filename = backupFilename(now);
     const archivePath = path.join(tmpDir, filename);
-    zipBuffer = createZip([{ name: MANIFEST_NAME, data: manifestBuffer, mtime: now }, ...archivedFiles]);
+    const allEntries = [{ name: MANIFEST_NAME, data: manifestBuffer, mtime: now }, ...archivedFiles];
+    if (allEntries.length > maxEntryCount) {
+      throw new BackupError(
+        'BACKUP_TOO_LARGE',
+        `Backup has ${allEntries.length} files, exceeding the ${maxEntryCount}-file restore limit`,
+        413,
+      );
+    }
+    const extractedBytes = allEntries.reduce((sum, entry) => sum + entry.data.length, 0);
+    if (extractedBytes > maxExtractedBytes) {
+      throw new BackupError(
+        'BACKUP_TOO_LARGE',
+        `Backup data exceeds the ${Math.round(maxExtractedBytes / (1024 * 1024))} MiB restore limit and would not be restorable`,
+        413,
+      );
+    }
+    zipBuffer = createZip(allEntries);
+    if (zipBuffer.length > maxArchiveBytes) {
+      throw new BackupError(
+        'BACKUP_TOO_LARGE',
+        `Backup archive exceeds the ${Math.round(maxArchiveBytes / (1024 * 1024))} MiB restore limit and would not be restorable`,
+        413,
+      );
+    }
     writePrivateFileSync(archivePath, zipBuffer);
     const size = zipBuffer.length;
 
