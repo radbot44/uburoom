@@ -166,13 +166,14 @@ export function mount(host, deps) {
     if (!operatorAllowed) return;
     const browserSupported = uburoomPlayback.supportsUbuPlayer();
     const localOnlySupported = !browserSupported && uburoomPlayback.supportsUbuPlayer({ localFile: true });
-    toggle.disabled = !browserSupported;
-    toggle.checked = browserSupported && store.preferences.playerPreferences.useUbuPlayer !== false;
+    const supported = browserSupported || localOnlySupported;
+    toggle.disabled = !supported;
+    toggle.checked = supported && store.preferences.playerPreferences.useUbuPlayer !== false;
     if (hint) {
       hint.textContent = localOnlySupported
-        ? 'Native fullscreen is used for room streams on iPhone; UbuPlayer remains available for local files.'
+        ? 'On iPhone, this setting only controls local files. Room streams use native fullscreen.'
         : !browserSupported
-          ? 'Unavailable in this browser (requires WebCodecs, AudioWorklet, and OffscreenCanvas).'
+          ? 'This browser does not support all the features UbuPlayer needs. Local files are unavailable.'
           : toggle.checked
             ? 'Plays additional video formats, surround sound, and HDR directly in your browser. Required for local files.'
             : 'Off in this browser; uburoom converts unsupported formats on the server instead.';
@@ -510,7 +511,8 @@ export function mount(host, deps) {
     if (!enabled && (store.room.state?.format === 'local' || store.stream.localFile)) {
       await deps.useRoomStream?.();
     }
-    if (store.room.state?.mediaId && store.room.state.mediaId !== 'demo') {
+    // On iPhone, changing the local-file preference should not reload a native room stream.
+    if (uburoomPlayback.supportsUbuPlayer() && store.room.state?.mediaId && store.room.state.mediaId !== 'demo') {
       const prevUrl = store.room.state.mediaUrl;
       try {
         await deps.execute({

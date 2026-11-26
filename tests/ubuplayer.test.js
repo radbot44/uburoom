@@ -13,6 +13,58 @@ const preferencesMod = require('../web/watch/preferences.js');
 const roomMod = require('../web/watch/room.js');
 const { mountModule, element, stubDocument } = require('./helpers/watch-module.js');
 
+test('iPhone viewers can reverse local-file opt-out without resetting their native room stream', async () => {
+  const commands = [];
+  let saved = { useUbuPlayer: false };
+  let returnsToRoom = 0;
+  const mounted = mountModule(preferencesMod, {
+    config: { ubuplayer: true },
+    state: { mediaId: 'movie', mediaVersion: 'v1', format: 'mp4' },
+    document: (() => {
+      const doc = stubDocument();
+      return { getElementById: id => (id.endsWith('-group') ? null : doc.getElementById(id)) };
+    })(),
+    navigator: { userAgent: 'iPhone' },
+    localStorage: {
+      getItem: key => (key === 'uburoom.player' ? JSON.stringify(saved) : null),
+      setItem: (_, json) => {
+        saved = JSON.parse(json);
+      },
+    },
+    subtitleLayout() {},
+    VideoDecoder: function FakeVD() {},
+    AudioWorkletNode: function FakeAW() {},
+    OffscreenCanvas: function FakeOC() {},
+    Worker: function FakeW() {},
+    execute: async command => commands.push(command),
+    useRoomStream: async () => {
+      returnsToRoom++;
+    },
+  });
+  try {
+    const toggle = mounted.view.document.getElementById('ubuplayer-enabled');
+    assert.equal(toggle.checked, false);
+    assert.equal(toggle.disabled, false);
+    assert.equal(mounted.api.canUseUbuPlayer({ localFile: true }), false);
+    toggle.checked = true;
+    await toggle.listeners.change();
+    assert.equal(saved.useUbuPlayer, true);
+    assert.equal(mounted.api.canUseUbuPlayer({ localFile: true }), true);
+    assert.equal(mounted.api.viewerPreferences().ubuplayer, false);
+    assert.equal(returnsToRoom, 0);
+
+    mounted.view.state.format = 'local';
+    toggle.checked = false;
+    await toggle.listeners.change();
+    assert.equal(saved.useUbuPlayer, false);
+    assert.equal(mounted.api.canUseUbuPlayer({ localFile: true }), false);
+    assert.equal(returnsToRoom, 1);
+    assert.deepEqual(commands, []);
+  } finally {
+    mounted.restore();
+  }
+});
+
 // Bit-writer + Annex B emulation-prevention byte injector for building exact HEVC NAL 62 RPU payloads.
 class BitBuilder {
   constructor() {

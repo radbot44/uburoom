@@ -229,10 +229,15 @@ export function mount(host, deps) {
     const s = abs % 60;
     return m > 0 ? `${m}m ${s}s` : `${s}s`;
   }
+  function localPlayerAllowed() {
+    return deps.canUseUbuPlayer
+      ? deps.canUseUbuPlayer({ localFile: true })
+      : store.identity.config?.ubuplayer !== false;
+  }
   function renderLocalSourceControls() {
     const state = store.room.state;
     const operatorAllowed = deps.operatorAllowsUbuPlayer ? deps.operatorAllowsUbuPlayer() : true;
-    const ubuAllowed = deps.canUseUbuPlayer ? deps.canUseUbuPlayer({ localFile: true }) : operatorAllowed;
+    const ubuAllowed = localPlayerAllowed();
     const sourceField = $('playback-source-field');
     if (sourceField) sourceField.hidden = !operatorAllowed;
     const canUseLocal = Boolean(operatorAllowed && state?.mediaId && state?.format !== 'youtube-embed');
@@ -252,13 +257,18 @@ export function mount(host, deps) {
       clearBtn.hidden = !activeLocal;
       clearBtn.disabled = localProbePending || store.room.pending;
     }
-    if (mismatchBox && (!pendingLocalCandidate || pendingLocalCandidate.mediaVersion !== state?.mediaVersion)) {
+    if (
+      mismatchBox &&
+      (!ubuAllowed || !pendingLocalCandidate || pendingLocalCandidate.mediaVersion !== state?.mediaVersion)
+    ) {
       pendingLocalCandidate = null;
       mismatchBox.hidden = true;
     }
     if (statusEl && !localProbePending && !pendingLocalCandidate) {
       if (!state?.mediaId) statusEl.textContent = 'Choose a video in the room first.';
       else if (state.format === 'youtube-embed') statusEl.textContent = 'Unavailable for embedded YouTube videos.';
+      else if (!uburoomPlayback.supportsUbuPlayer({ localFile: true }))
+        statusEl.textContent = 'Local file playback is unavailable in this browser.';
       else if (!ubuAllowed) statusEl.textContent = 'Enable Use UbuPlayer above to play a local file.';
       else if (activeLocal) statusEl.textContent = 'Playing local file: ' + activeLocal.name;
       else statusEl.textContent = 'Streaming from room. Pick a downloaded copy on this device to play locally.';
@@ -278,7 +288,7 @@ export function mount(host, deps) {
   }
   async function commitLocalFile(candidate) {
     const state = store.room.state;
-    if (!state || state.mediaVersion !== candidate.mediaVersion) return;
+    if (!state || state.mediaVersion !== candidate.mediaVersion || !localPlayerAllowed()) return;
     pendingLocalCandidate = null;
     if ($('local-file-mismatch')) $('local-file-mismatch').hidden = true;
     const defaultAudio =
@@ -334,9 +344,7 @@ export function mount(host, deps) {
   }
   async function handleLocalFilePicked(file) {
     const state = store.room.state;
-    const ubuAllowed = deps.canUseUbuPlayer
-      ? deps.canUseUbuPlayer({ localFile: true })
-      : store.identity.config?.ubuplayer !== false;
+    const ubuAllowed = localPlayerAllowed();
     if (!file || !state?.mediaVersion || !ubuAllowed) return;
     const mediaVersion = state.mediaVersion;
     localProbePending = true;
@@ -350,7 +358,7 @@ export function mount(host, deps) {
     renderLocalSourceControls();
     try {
       const probed = await probeLocalFile(file, { ubuplayerEnabled: ubuAllowed });
-      if (store.room.state?.mediaVersion !== mediaVersion) return;
+      if (store.room.state?.mediaVersion !== mediaVersion || !localPlayerAllowed()) return;
       if (!probed.webCodecsSupported) {
         if (statusEl) {
           statusEl.textContent = `This browser cannot hardware-decode ${(probed.video?.codec || 'the').toUpperCase()} video in ${file.name}. Keep using the room stream.`;
