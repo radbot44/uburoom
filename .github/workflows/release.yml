@@ -126,7 +126,7 @@ jobs:
             "``uburoom-corresponding-source-*.zip`` is the GPLv3 corresponding source archive for the bundled binaries (not needed for installation)."
           ) -join "`n"
 
-          $args = @('release', 'create', $env:TAG, $env:BUNDLE, $env:SOURCE, $env:SUMS, '--draft', '--title', "uburoom $env:TAG", '--notes', $notes)
+          $args = @('release', 'create', $env:TAG, $env:BUNDLE, $env:SOURCE, $env:SUMS, '--draft', '--title', "uburoom $env:TAG", '--notes', $notes, '--generate-notes')
           if ($env:PRERELEASE -eq 'true') {
             $args += '--prerelease'
           }
