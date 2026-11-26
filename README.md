@@ -2,19 +2,28 @@
 
 Watch together, in sync. uburoom is a server you run yourself: friends join a room in their browser (or as a Discord Activity) and everyone sees the same moment of the same video, with shared pause, seek and queue. It plays from the media you already have in Plex, Jellyfin or a folder on your disk. There is no subscription and no hosted service.
 
-**Pre-release:** Real Plex, Discord, browser/device and distribution verification is still open. See the [testing status](docs/testing.md) and [roadmap](ROADMAP.md) for evidence and release gates. A first-run setup wizard configures uburoom in the browser; an installer is still to come.
+**Pre-release:** Real Plex, Discord, browser/device and distribution verification is still open. See the [testing status](docs/testing.md) and [roadmap](ROADMAP.md) for evidence and release gates. A first-run setup wizard configures uburoom in the browser, and a per-user Windows installer is available alongside the portable ZIP.
 
 ## Install
 
 You need a computer that stays on and a media source: a Plex server, a Jellyfin server, a folder of videos, or YouTube.
 
-**Windows (release ZIP — recommended)**
+**Windows installer (recommended)**
 
-The Windows release ZIP (`uburoom-win-x64-….zip`) includes Node.js and FFmpeg — no separate install needed.
+The per-user Windows installer (`uburoom-…-setup.exe`) includes Node.js, FFmpeg, and the system-tray launcher — no administrator prompt or separate runtime install needed.
 
-1. [Download for Windows (x64, 185 MiB)](https://github.com/radbot44/uburoom/releases/download/v0.6.1/uburoom-win-x64-0.6.1-g87f9804_20261126-204721.zip) and unzip the file.
-2. Run `start-uburoom.bat` to start the server. Keep its window open.
-3. The first time, the window shows a setup link. Open it and follow [first-time setup](#first-time-setup).
+1. Download and run `uburoom-…-setup.exe` from [Releases](https://github.com/radbot44/uburoom/releases). It installs to `%LOCALAPPDATA%\Programs\uburoom`, adds Start Menu shortcuts (**uburoom**, **uburoom Doctor**, **uburoom Console**), and optionally starts uburoom when Windows starts.
+2. Launch **uburoom** from the finish screen or Start Menu. It runs quietly in the system tray (right-click the tray icon to open uburoom, view logs, run doctor, restart, or quit).
+3. The first time, your browser opens the setup link automatically; follow [first-time setup](#first-time-setup).
+4. Upgrading or uninstalling preserves your `config/` folder and `%LOCALAPPDATA%\uburoom\credentials.key` by default.
+
+**Windows portable ZIP**
+
+The Windows portable ZIP (`uburoom-…-win-x64.zip`) bundles Node.js, FFmpeg, and `uburoom-tray.exe` with no installation step.
+
+1. Download and unzip `uburoom-…-win-x64.zip` from [Releases](https://github.com/radbot44/uburoom/releases).
+2. Run `uburoom-tray.exe` to run in the system tray (or `start-uburoom.bat` for a visible console window).
+3. The first time, your browser opens the setup link; follow [first-time setup](#first-time-setup).
 4. Run `doctor.bat` any time to check your configuration and media tools.
 
 **Windows, from source**

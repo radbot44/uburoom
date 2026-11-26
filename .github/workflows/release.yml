@@ -56,7 +56,7 @@ jobs:
         run: npm run check
 
   package-windows:
-    name: Package Windows x64 standalone ZIP
+    name: Package Windows x64 installer and standalone ZIP
     needs: verify
     runs-on: windows-latest
     steps:
@@ -88,7 +88,7 @@ jobs:
 
           $verifyDir = Join-Path $env:RUNNER_TEMP 'uburoom-zip-verify'
           Expand-Archive -Path $bundle.FullName -DestinationPath $verifyDir -Force
-          foreach ($req in @('start-uburoom.bat', 'doctor.bat', 'current.txt', 'README.md', 'LICENSE', 'docs\remote-access.md')) {
+          foreach ($req in @('uburoom-tray.exe', 'start-uburoom.bat', 'doctor.bat', 'current.txt', 'README.md', 'LICENSE', 'docs\remote-access.md')) {
             if (-not (Test-Path (Join-Path $verifyDir $req))) {
               throw "Portable ZIP missing required root file: $req"
             }
@@ -103,13 +103,18 @@ jobs:
           } else {
             $tag = "v$pkgVersion-dev"
           }
-          $isPrerelease = ($tag -match '-') ? 'true' : 'false'
+          $isPrerelease = if ($tag -match '-') { 'true' } else { 'false' }
 
-          # Name assets so the Windows download sorts first alphabetically ahead of the GPL source archive.
+          # Name assets so installer and portable ZIP sort ahead of the GPL source archive alphabetically:
+          #   1. uburoom-<slot>-setup.exe
+          #   2. uburoom-<slot>-win-x64.zip
+          #   3. uburoom-gpl-source-<slot>.zip
           $uploadDir = Join-Path $env:RUNNER_TEMP 'uburoom-release-assets'
           New-Item -ItemType Directory -Path $uploadDir -Force | Out-Null
+          $installerName = "uburoom-$slot-setup.exe"
           $bundleName = "uburoom-$slot-win-x64.zip"
           $sourceName = "uburoom-gpl-source-$slot.zip"
+          $installerOut = Join-Path $uploadDir $installerName
           $bundleOut = Join-Path $uploadDir $bundleName
           $sourceOut = Join-Path $uploadDir $sourceName
           Copy-Item -LiteralPath $bundle.FullName -Destination $bundleOut -Force
@@ -117,6 +122,12 @@ jobs:
 
           Add-Content -Path $env:GITHUB_OUTPUT -Value "tag=$tag"
           Add-Content -Path $env:GITHUB_OUTPUT -Value "prerelease=$isPrerelease"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$pkgVersion"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "slot=$slot"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "verify_dir=$verifyDir"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "upload_dir=$uploadDir"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "installer_path=$installerOut"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "installer_name=$installerName"
           Add-Content -Path $env:GITHUB_OUTPUT -Value "bundle_path=$bundleOut"
           Add-Content -Path $env:GITHUB_OUTPUT -Value "bundle_name=$bundleName"
           Add-Content -Path $env:GITHUB_OUTPUT -Value "source_path=$sourceOut"
@@ -125,12 +136,59 @@ jobs:
         env:
           INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
 
+      # SignPath Foundation OSS signing hook (Stage 1 — optional, once approved):
+      # Sign uburoom-tray.exe inside steps.artifacts.outputs.verify_dir (and refresh the portable ZIP)
+      # before compiling the Inno Setup installer below. See docs/releases.md.
+
+      - name: Compile Windows installer (Inno Setup)
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ steps.artifacts.outputs.version }}
+          APP_SLOT: ${{ steps.artifacts.outputs.slot }}
+          VERIFY_DIR: ${{ steps.artifacts.outputs.verify_dir }}
+          UPLOAD_DIR: ${{ steps.artifacts.outputs.upload_dir }}
+          INSTALLER_PATH: ${{ steps.artifacts.outputs.installer_path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $isccCmd = Get-Command iscc.exe -ErrorAction SilentlyContinue
+          $iscc = if ($isccCmd) { $isccCmd.Source } elseif (Test-Path 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe') { 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' } else { $null }
+          if (-not $iscc) {
+            throw 'Inno Setup compiler (iscc.exe) not found on runner.'
+          }
+
+          $baseName = "uburoom-$($env:APP_SLOT)-setup"
+          $iconFile = (Resolve-Path 'web/assets/uburoom-favicon.ico').Path
+          $licenseFile = (Resolve-Path 'LICENSE').Path
+
+          & $iscc `
+            "/DAppVersion=$($env:APP_VERSION)" `
+            "/DAppSlot=$($env:APP_SLOT)" `
+            "/DSourceDir=$($env:VERIFY_DIR)" `
+            "/DIconFile=$iconFile" `
+            "/DLicenseFile=$licenseFile" `
+            "/DOutputDir=$($env:UPLOAD_DIR)" `
+            "/DOutputBaseFilename=$baseName" `
+            'installer/uburoom.iss'
+          if ($LASTEXITCODE -ne 0) {
+            throw "iscc.exe failed with exit code $LASTEXITCODE"
+          }
+          if (-not (Test-Path -LiteralPath $env:INSTALLER_PATH -PathType Leaf)) {
+            throw "Expected installer was not produced: $($env:INSTALLER_PATH)"
+          }
+
+      # SignPath Foundation OSS signing hook (Stage 2 — optional, once approved):
+      # Upload steps.artifacts.outputs.installer_path via actions/upload-artifact@v4 and submit
+      # to signpath/github-action-submit-signing-request@v3 before creating the draft release.
+      # See docs/releases.md for the full configuration.
+
       - name: Create Draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           TAG: ${{ steps.artifacts.outputs.tag }}
           PRERELEASE: ${{ steps.artifacts.outputs.prerelease }}
+          INSTALLER: ${{ steps.artifacts.outputs.installer_path }}
+          INSTALLER_NAME: ${{ steps.artifacts.outputs.installer_name }}
           BUNDLE: ${{ steps.artifacts.outputs.bundle_path }}
           BUNDLE_NAME: ${{ steps.artifacts.outputs.bundle_name }}
           SOURCE: ${{ steps.artifacts.outputs.source_path }}
@@ -138,17 +196,21 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $downloadUrl = "https://github.com/$($env:REPO)/releases/download/$($env:TAG)/$($env:BUNDLE_NAME)"
+          $installerUrl = "https://github.com/$($env:REPO)/releases/download/$($env:TAG)/$($env:INSTALLER_NAME)"
+          $bundleUrl = "https://github.com/$($env:REPO)/releases/download/$($env:TAG)/$($env:BUNDLE_NAME)"
           $notes = @(
-            "## Windows (Recommended)"
-            "**[Download $($env:BUNDLE_NAME)]($downloadUrl)** — unzip it and run ``start-uburoom.bat``."
+            "## Windows Installer (Recommended)"
+            "**[Download $($env:INSTALLER_NAME)]($installerUrl)** — per-user installer (no administrator prompt). Installs to ``%LOCALAPPDATA%\Programs\uburoom``, adds Start Menu shortcuts, and launches uburoom in the system tray."
             "Node.js and FFmpeg are bundled; no separate runtime install is required."
+            ""
+            "## Windows Portable ZIP"
+            "**[Download $($env:BUNDLE_NAME)]($bundleUrl)** — unzip anywhere and run ``uburoom-tray.exe`` (or ``start-uburoom.bat`` for a console window)."
             ""
             "## License & Corresponding Source"
             "``$($env:SOURCE_NAME)`` is the GPLv3 corresponding source archive for the bundled binaries (not needed for installation)."
           ) -join "`n"
 
-          $args = @('release', 'create', $env:TAG, $env:BUNDLE, $env:SOURCE, '--draft', '--title', "uburoom $env:TAG", '--notes', $notes, '--generate-notes')
+          $args = @('release', 'create', $env:TAG, $env:INSTALLER, $env:BUNDLE, $env:SOURCE, '--draft', '--title', "uburoom $env:TAG", '--notes', $notes, '--generate-notes')
           if ($env:PRERELEASE -eq 'true') {
             $args += '--prerelease'
           }

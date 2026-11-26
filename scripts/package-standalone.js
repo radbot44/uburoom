@@ -234,7 +234,8 @@ function trackedRepoFiles(repoRoot = ROOT) {
       const full = path.join(repoRoot, file);
       if (!fs.existsSync(full) || !fs.statSync(full).isFile()) return false;
       const inAllowedArea =
-        ROOT_WHITELIST.has(file) || /^(assets|shared|server|web|diagnostics|scripts|tests|docs)\//.test(file);
+        ROOT_WHITELIST.has(file) ||
+        /^(assets|shared|server|web|diagnostics|scripts|tests|docs|tools|installer)\//.test(file);
       if (!inAllowedArea) return false;
       if (file === 'config.example.yaml' || file === 'docker-compose.yml') return true;
       if (/(^|\/)\.env($|\.)/.test(file)) return false;
@@ -330,6 +331,132 @@ function buildDoctorBat() {
     'exit /b %UBUROOM_EXIT%',
     '',
   ].join('\r\n');
+}
+
+function buildTrayLauncher(outExePath, { repoRoot = ROOT, iconPath } = {}) {
+  const buildScript = path.join(repoRoot, 'tools', 'tray-win', 'build.ps1');
+  if (!fs.existsSync(buildScript)) {
+    throw new Error(`Missing tray build script: ${buildScript}`);
+  }
+  const resolvedIcon = iconPath || path.join(repoRoot, 'web', 'assets', 'uburoom-favicon.ico');
+  if (!fs.existsSync(resolvedIcon)) {
+    throw new Error(`Missing tray icon file: ${resolvedIcon}`);
+  }
+  const resolvedOut = path.resolve(outExePath);
+  fs.mkdirSync(path.dirname(resolvedOut), { recursive: true });
+  execFileSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      buildScript,
+      '-OutPath',
+      resolvedOut,
+      '-IconPath',
+      path.resolve(resolvedIcon),
+    ],
+    { windowsHide: true, stdio: 'inherit' },
+  );
+  if (!fs.existsSync(resolvedOut) || fs.statSync(resolvedOut).size === 0) {
+    throw new Error(`Tray launcher build did not produce ${resolvedOut}`);
+  }
+  return { exePath: resolvedOut, sha256: sha256File(resolvedOut) };
+}
+
+function findIscc() {
+  if (process.env.ISCC_EXE && fs.existsSync(process.env.ISCC_EXE)) {
+    return process.env.ISCC_EXE;
+  }
+  const candidates = [
+    'C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe',
+    'C:\\Program Files\\Inno Setup 6\\ISCC.exe',
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Inno Setup 6', 'ISCC.exe') : '',
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  if (process.platform === 'win32') {
+    try {
+      const found = execFileSync('where.exe', ['iscc.exe'], {
+        encoding: 'utf8',
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .find(line => line && fs.existsSync(line));
+      if (found) return found;
+    } catch {}
+  }
+  return null;
+}
+
+function buildInstallerArgs({
+  issFile,
+  version,
+  slot,
+  sourceDir,
+  iconFile,
+  licenseFile,
+  outputDir,
+  outputBaseFilename,
+}) {
+  return [
+    `/DAppVersion=${version}`,
+    `/DAppSlot=${slot}`,
+    `/DSourceDir=${path.resolve(sourceDir)}`,
+    `/DIconFile=${path.resolve(iconFile)}`,
+    `/DLicenseFile=${path.resolve(licenseFile)}`,
+    `/DOutputDir=${path.resolve(outputDir)}`,
+    `/DOutputBaseFilename=${outputBaseFilename}`,
+    path.resolve(issFile),
+  ];
+}
+
+function buildInstaller({
+  sourceDir,
+  version,
+  slot,
+  outDir,
+  outputBaseFilename = `uburoom-${slot}-setup`,
+  repoRoot = ROOT,
+  isccPath = null,
+}) {
+  const iscc = isccPath || findIscc();
+  if (!iscc) {
+    throw new Error('Inno Setup compiler (ISCC.exe) not found. Install Inno Setup 6 or set ISCC_EXE.');
+  }
+  const issFile = path.join(repoRoot, 'installer', 'uburoom.iss');
+  const iconFile = path.join(repoRoot, 'web', 'assets', 'uburoom-favicon.ico');
+  const licenseFile = path.join(repoRoot, 'LICENSE');
+  for (const [label, filePath] of [
+    ['installer script', issFile],
+    ['installer icon', iconFile],
+    ['license file', licenseFile],
+  ]) {
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`Missing required ${label}: ${filePath}`);
+    }
+  }
+  fs.mkdirSync(outDir, { recursive: true });
+  const args = buildInstallerArgs({
+    issFile,
+    version,
+    slot,
+    sourceDir,
+    iconFile,
+    licenseFile,
+    outputDir: outDir,
+    outputBaseFilename,
+  });
+  execFileSync(iscc, args, { windowsHide: true, stdio: 'inherit' });
+  const installerExe = path.join(outDir, `${outputBaseFilename}.exe`);
+  if (!fs.existsSync(installerExe) || fs.statSync(installerExe).size === 0) {
+    throw new Error(`Inno Setup did not produce expected installer: ${installerExe}`);
+  }
+  return { installerExe, installerSha: sha256File(installerExe) };
 }
 
 function findBashExe() {
@@ -598,7 +725,7 @@ function findSingleSubdir(dir) {
   return dir;
 }
 
-function buildBuildInfo({ meta, manifest, nodeExeSha, ffmpegSha, ffprobeSha, ffmpegVerification }) {
+function buildBuildInfo({ meta, manifest, nodeExeSha, ffmpegSha, ffprobeSha, trayExeSha, ffmpegVerification }) {
   return {
     uburoom: {
       version: meta.version,
@@ -609,6 +736,14 @@ function buildBuildInfo({ meta, manifest, nodeExeSha, ffmpegSha, ffprobeSha, ffm
       builtAt: new Date().toISOString(),
       target: 'win32-x64',
     },
+    ...(trayExeSha
+      ? {
+          launcher: {
+            file: 'uburoom-tray.exe',
+            sha256: trayExeSha,
+          },
+        }
+      : {}),
     dependencies: {
       node: {
         ...manifest.node,
@@ -665,6 +800,9 @@ async function packageStandalone({
   requireQsv = false,
   requireVulkan = true,
   skipSourceArchive = false,
+  buildInstallerExe = false,
+  installerName = null,
+  trayExePath = null,
   fetchImpl = fetch,
 } = {}) {
   const rawManifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'));
@@ -763,12 +901,23 @@ async function packageStandalone({
     // Verify UbuPlayer libav hashes, subtitle WASM, Discord SDK, and hls.js
     verifyVendorAssets(appDir);
 
+    // Build (or copy pre-built/pre-signed) native Windows system-tray launcher alongside start-uburoom.bat and doctor.bat
+    const trayExeDest = path.join(portableRoot, 'uburoom-tray.exe');
+    let trayExeSha;
+    if (trayExePath) {
+      fs.copyFileSync(path.resolve(trayExePath), trayExeDest);
+      trayExeSha = sha256File(trayExeDest);
+    } else {
+      trayExeSha = buildTrayLauncher(trayExeDest, { repoRoot: ROOT }).sha256;
+    }
+
     const buildInfo = buildBuildInfo({
       meta,
       manifest,
       nodeExeSha: sha256File(path.join(nodeRuntimeDir, 'node.exe')),
       ffmpegSha: sha256File(ffmpegExeDest),
       ffprobeSha: sha256File(ffprobeExeDest),
+      trayExeSha,
       ffmpegVerification,
     });
 
@@ -798,9 +947,23 @@ async function packageStandalone({
     createZipFromDir(portableRoot, bundleZip);
     const bundleSha = sha256File(bundleZip);
 
+    let installer = null;
+    if (buildInstallerExe) {
+      installer = buildInstaller({
+        sourceDir: portableRoot,
+        version: meta.version,
+        slot: meta.slot,
+        outDir,
+        outputBaseFilename: installerName || `uburoom-${meta.slot}-setup`,
+        repoRoot: ROOT,
+      });
+    }
+
     return {
       bundleZip,
       bundleSha,
+      installerExe: installer?.installerExe || null,
+      installerSha: installer?.installerSha || null,
       correspondingSourceZip: sourceArchive?.zipPath || null,
       slot: meta.slot,
       buildInfo,
@@ -820,6 +983,9 @@ function parseArgs(argv) {
     else if (arg === '--require-qsv') opts.requireQsv = true;
     else if (arg === '--allow-no-vulkan') opts.requireVulkan = false;
     else if (arg === '--skip-source-archive') opts.skipSourceArchive = true;
+    else if (arg === '--installer') opts.buildInstallerExe = true;
+    else if (arg === '--installer-name') opts.installerName = argv[++i];
+    else if (arg === '--tray-exe') opts.trayExePath = path.resolve(argv[++i]);
   }
   return opts;
 }
@@ -829,6 +995,9 @@ if (require.main === module) {
   packageStandalone(opts)
     .then(result => {
       console.log(`[package-standalone] Built: ${result.bundleZip} (sha256: ${result.bundleSha})`);
+      if (result.installerExe) {
+        console.log(`[package-standalone] Installer: ${result.installerExe} (sha256: ${result.installerSha})`);
+      }
       if (result.correspondingSourceZip) {
         console.log(`[package-standalone] Corresponding Source: ${result.correspondingSourceZip}`);
       }
@@ -847,6 +1016,10 @@ module.exports = {
   verifyFileSha256,
   ensureCachedBinary,
   verifyVendorAssets,
+  buildTrayLauncher,
+  findIscc,
+  buildInstallerArgs,
+  buildInstaller,
   buildBuildInfo,
   packageStandalone,
 };

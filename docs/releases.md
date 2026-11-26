@@ -37,3 +37,59 @@ During preparation, an owner may choose `X.Y.Z-dev` as the next development vers
 6. **Publish only on approval.** After the owner authorizes publication, create the matching Git tag and GitHub Release with the reviewed notes, artifacts, and upgrade warnings. An automated workflow, if later implemented, must not silently publish on routine merges or pushes.
 
 For a patch release, apply the same release and upgrade discipline with a smaller, risk-based test scope; do not assume a patch is harmless to an operator's stored state.
+
+## Windows installer and SignPath Foundation OSS signing
+
+The draft release workflow (`.github/workflows/release.yml`) builds three Windows release assets on GitHub-hosted `windows-latest` runners:
+
+1. `uburoom-<slot>-setup.exe` — per-user Inno Setup installer compiled from `installer/uburoom.iss` (installs to `%LOCALAPPDATA%\Programs\uburoom` with `PrivilegesRequired=lowest`, preserves `config\` and `%LOCALAPPDATA%\uburoom\credentials.key`).
+2. `uburoom-<slot>-win-x64.zip` — portable standalone bundle containing `uburoom-tray.exe`, `start-uburoom.bat`, `doctor.bat`, and the versioned slot (`versions/<slot>/`).
+3. `uburoom-gpl-source-<slot>.zip` — GPLv3 Corresponding Source archive for uburoom and its bundled Node.js/FFmpeg binaries.
+
+Local builds can also compile the installer when Inno Setup 6 (`ISCC.exe`) is installed:
+
+```powershell
+node scripts/package-standalone.js --installer
+```
+
+### Enabling SignPath Foundation OSS signing
+
+Release binaries are currently unsigned until SignPath Foundation OSS onboarding is approved. Do not add unconfigured signing steps to `.github/workflows/release.yml` before approval, as missing secrets or unapproved projects will fail release builds.
+
+Once the [SignPath Foundation](https://signpath.org/) approves uburoom:
+
+1. **Install the SignPath GitHub App** on the repository so SignPath can verify workflow origin and confirm all jobs ran on GitHub-hosted runners.
+2. **Create SignPath artifact configurations** in the SignPath organization for:
+   - First-party tray binary (`uburoom-tray.exe`, PE Authenticode signing).
+   - Inno Setup installer (`uburoom-*-setup.exe`, Inno Setup artifact configuration so both the outer installer and embedded uninstaller are signed).
+   - Do **not** re-sign bundled third-party runtimes (`node.exe`, `ffmpeg.exe`, `ffprobe.exe`).
+3. **Add repository secrets and variables** (never store private keys or PFX certificates in GitHub Secrets):
+   - Secret: `SIGNPATH_API_TOKEN`
+   - Variables (or explicit slugs): `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG` (e.g. `uburoom`), `SIGNPATH_SIGNING_POLICY_SLUG` (e.g. `release-signing`).
+4. **Plug in the two marked hooks in `.github/workflows/release.yml`:**
+   - **Stage 1 (before `Compile Windows installer`):** upload `uburoom-tray.exe` from `steps.artifacts.outputs.verify_dir` with `actions/upload-artifact@v4`, submit it to `signpath/github-action-submit-signing-request@v3`, replace `uburoom-tray.exe` in `verify_dir` with the signed binary, and re-zip `verify_dir` into `bundle_path` so both the portable ZIP and installer ship the signed tray executable.
+   - **Stage 2 (after `Compile Windows installer`, before `Create Draft GitHub Release`):** upload `steps.artifacts.outputs.installer_path` and submit it with the Inno Setup artifact configuration, replacing `installer_path` with the signed output:
+
+```yaml
+- name: Upload unsigned installer for SignPath
+  id: upload-unsigned-installer
+  uses: actions/upload-artifact@v4
+  with:
+    name: uburoom-unsigned-installer
+    path: ${{ steps.artifacts.outputs.installer_path }}
+    retention-days: 1
+
+- name: Sign installer with SignPath
+  uses: signpath/github-action-submit-signing-request@v3
+  with:
+    api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+    organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+    project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+    signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+    artifact-configuration-slug: inno-setup-installer
+    github-artifact-id: ${{ steps.upload-unsigned-installer.outputs.artifact-id }}
+    wait-for-completion: true
+    output-artifact-directory: ${{ steps.artifacts.outputs.upload_dir }}
+```
+
+5. **Verify signatures** before publishing the draft release (`Get-AuthenticodeSignature` on both `uburoom-<slot>-setup.exe` and the installed `uburoom-tray.exe`).
