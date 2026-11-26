@@ -1,6 +1,6 @@
 {
   "name": "uburoom",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "private": true,
   "description": "Self-hosted Plex watch parties with a web interface and Discord integration",
   "engines": {
