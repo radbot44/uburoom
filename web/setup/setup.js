@@ -1083,19 +1083,150 @@ $('access-next').addEventListener('click', () =>
 
 let networkView,
   where = 'computer',
-  remoteRoute = 'cloudflare';
+  remoteRoute = 'cloudflare',
+  tailscaleStatus = null,
+  tailscaleProbeSeq = 0,
+  tailscaleFunnelResult = null,
+  tailscaleAutoFilled = '';
 const ROUTE_HINTS = {
   cloudflare: 'Uses http-proxy mode with cf-connecting-ip. Point your Cloudflare Tunnel at HTTP on this port.',
-  tailscale: 'Uses http-proxy mode with x-forwarded-for. Run tailscale serve against HTTP on this port.',
+  tailscale:
+    'Uses http-proxy mode with x-forwarded-for. Use Tailscale Funnel to share with friends over the internet (no Tailscale needed on their device), or Tailscale Serve for your tailnet only.',
   caddy: 'Uses http-proxy mode with x-forwarded-for. Point Caddy or nginx at HTTP on this port.',
   https: 'uburoom serves HTTPS itself with its own certificate and can also accept direct LAN connections.',
 };
+function currentNetworkPort() {
+  const raw = $('setup-port').value.trim();
+  return /^\d{1,5}$/.test(raw) ? raw : String(networkView?.port ?? 5756);
+}
+function applyTailscaleAutofill() {
+  if (where !== 'internet' || remoteRoute !== 'tailscale') return;
+  if (!tailscaleStatus || tailscaleStatus === 'loading' || !tailscaleStatus.loggedIn || !tailscaleStatus.dnsName)
+    return;
+  const input = $('setup-public-url');
+  const currentValue = input.value.trim();
+  if (!currentValue || currentValue === tailscaleAutoFilled) {
+    input.value = tailscaleStatus.dnsName;
+    tailscaleAutoFilled = tailscaleStatus.dnsName;
+  }
+}
+function renderTailscalePanel(port) {
+  const panel = $('network-tailscale-panel');
+  const visible = where === 'internet' && remoteRoute === 'tailscale';
+  panel.hidden = !visible;
+  if (!visible) return;
+  const statusEl = $('tailscale-status');
+  const detailEl = $('tailscale-detail');
+  const linkRow = $('tailscale-enable-link-row');
+  const linkEl = $('tailscale-enable-link');
+  const cmdRow = $('tailscale-command-row');
+  const cmdEl = $('tailscale-command');
+  const enableButton = $('tailscale-enable-funnel');
+  const refreshButton = $('tailscale-refresh');
+  const numericPort = Number(port);
+  const command = tailscaleFunnelResult?.command || `tailscale funnel --bg ${port}`;
+  cmdEl.textContent = command;
+  linkRow.hidden = true;
+  if (tailscaleStatus === 'loading' || tailscaleStatus === null) {
+    statusEl.textContent = 'Checking Tailscale on this computer…';
+    detailEl.hidden = true;
+    cmdRow.hidden = true;
+    enableButton.hidden = true;
+    refreshButton.disabled = true;
+    return;
+  }
+  refreshButton.disabled = false;
+  const ts = tailscaleStatus;
+  if (tailscaleFunnelResult && !tailscaleFunnelResult.ok) {
+    statusEl.textContent = 'Could not enable Tailscale Funnel automatically.';
+    detailEl.textContent = tailscaleFunnelResult.error || 'Run the command below in a terminal instead.';
+    detailEl.hidden = false;
+    if (tailscaleFunnelResult.enableUrl) {
+      linkEl.href = tailscaleFunnelResult.enableUrl;
+      linkRow.hidden = false;
+    }
+    cmdRow.hidden = false;
+    enableButton.hidden = !(ts.installed && ts.loggedIn && ts.dnsName && !networkView?.published);
+    return;
+  }
+  if (!ts.installed) {
+    statusEl.textContent = 'Tailscale was not detected on this computer.';
+    detailEl.textContent =
+      'Install Tailscale and sign in to auto-fill your https://*.ts.net address, or enter your Tailscale HTTPS address above.';
+    detailEl.hidden = false;
+    cmdRow.hidden = false;
+    enableButton.hidden = true;
+    return;
+  }
+  if (!ts.loggedIn) {
+    statusEl.textContent = 'Tailscale is installed, but not signed in.';
+    detailEl.textContent = 'Sign in to Tailscale on this computer, then click Recheck to detect your HTTPS address.';
+    detailEl.hidden = false;
+    cmdRow.hidden = false;
+    enableButton.hidden = true;
+    return;
+  }
+  if (!ts.dnsName) {
+    statusEl.textContent = 'Tailscale is running, but MagicDNS / HTTPS is not enabled yet.';
+    detailEl.textContent = 'Enable MagicDNS and HTTPS certificates in the Tailscale admin console, then click Recheck.';
+    detailEl.hidden = false;
+    cmdRow.hidden = false;
+    enableButton.hidden = true;
+    return;
+  }
+  if (ts.funnelActive && (ts.funnelPort === null || ts.funnelPort === numericPort)) {
+    statusEl.textContent = `Tailscale Funnel is active at ${ts.dnsName} (port ${port}).`;
+    detailEl.textContent = 'Friends can open this HTTPS address in any browser—no Tailscale needed on their device.';
+    detailEl.hidden = false;
+    cmdRow.hidden = true;
+    enableButton.hidden = true;
+    return;
+  }
+  if (ts.funnelActive && ts.funnelPort && ts.funnelPort !== numericPort) {
+    statusEl.textContent = `Tailscale detected (${ts.dnsName}). Funnel currently points to port ${ts.funnelPort}.`;
+    detailEl.textContent = `Enable Funnel on port ${port} below, or run the command in a terminal.`;
+    detailEl.hidden = false;
+    cmdRow.hidden = false;
+    enableButton.hidden = !!networkView?.published;
+    return;
+  }
+  statusEl.textContent = `Tailscale detected: ${ts.dnsName}`;
+  detailEl.textContent = ts.funnelEnabled
+    ? 'Funnel is available. Click below to publish this port over HTTPS, or run tailscale serve for your tailnet only.'
+    : 'Click below to enable Tailscale Funnel for friends over the internet, or use tailscale serve for your tailnet only.';
+  detailEl.hidden = false;
+  cmdRow.hidden = !!networkView?.published ? false : true;
+  enableButton.hidden = !!networkView?.published;
+}
+async function refreshTailscale() {
+  const mine = ++tailscaleProbeSeq;
+  tailscaleStatus = 'loading';
+  tailscaleFunnelResult = null;
+  if (networkView) renderWhere();
+  try {
+    const result = await api('/setup/api/network/tailscale');
+    if (mine !== tailscaleProbeSeq) return;
+    tailscaleStatus = result;
+    applyTailscaleAutofill();
+  } catch (error) {
+    if (error instanceof SessionEnded || mine !== tailscaleProbeSeq) return;
+    tailscaleStatus = {
+      installed: false,
+      loggedIn: false,
+      dnsName: '',
+      funnelEnabled: false,
+      funnelActive: false,
+      funnelPort: null,
+    };
+  }
+  if (networkView) renderWhere();
+}
 function renderWhere() {
   for (const button of $('network-where').querySelectorAll('[data-where]'))
     button.setAttribute('aria-pressed', String(button.dataset.where === where));
   for (const button of $('setup-route').querySelectorAll('[data-route]'))
     button.setAttribute('aria-pressed', String(button.dataset.route === remoteRoute));
-  const port = /^\d{1,5}$/.test($('setup-port').value.trim()) ? $('setup-port').value.trim() : String(networkView.port);
+  const port = currentNetworkPort();
   const address = host => 'https://' + (host.includes(':') ? `[${host}]` : host) + ':' + port;
   const isInternet = where === 'internet';
   $('network-internet').hidden = !isInternet;
@@ -1103,6 +1234,7 @@ function renderWhere() {
   $('network-proxies-field').hidden = !isInternet || remoteRoute === 'https';
   $('network-lan-field').hidden = !isInternet || remoteRoute !== 'https' || networkView.published;
   $('network-route-hint').textContent = ROUTE_HINTS[remoteRoute] || '';
+  renderTailscalePanel(port);
   $('network-computer').hidden = where !== 'computer';
   $('network-computer-hint').hidden = where !== 'computer';
   $('network-home').hidden = where !== 'home' || !networkView.homeAddress;
@@ -1124,6 +1256,8 @@ async function loadNetwork() {
   networkView = await api('/setup/api/network');
   where = networkView.where;
   remoteRoute = networkView.route || 'cloudflare';
+  tailscaleFunnelResult = null;
+  tailscaleAutoFilled = '';
   $('setup-port').value = String(networkView.port);
   $('setup-port').readOnly = networkView.published;
   $('setup-public-url').value = networkView.publicUrl || '';
@@ -1132,21 +1266,59 @@ async function loadNetwork() {
   $('network-port-hint').textContent = networkView.published
     ? 'Docker’s container port. The address below uses the published port.'
     : 'Use the setup port unless something else needs it.';
+  if (where === 'internet' && tailscaleStatus === null) void refreshTailscale();
+  else applyTailscaleAutofill();
   renderWhere();
 }
 $('network-where').addEventListener('click', event => {
   const button = event.target.closest('[data-where]');
   if (!button) return;
   where = button.dataset.where;
+  if (where === 'internet' && tailscaleStatus === null) void refreshTailscale();
+  else applyTailscaleAutofill();
   renderWhere();
 });
 $('setup-route').addEventListener('click', event => {
   const button = event.target.closest('[data-route]');
   if (!button) return;
+  const previous = remoteRoute;
   remoteRoute = button.dataset.route;
+  if (previous === 'tailscale' && remoteRoute !== 'tailscale' && tailscaleAutoFilled) {
+    if ($('setup-public-url').value.trim() === tailscaleAutoFilled) $('setup-public-url').value = '';
+    tailscaleAutoFilled = '';
+  }
+  if (remoteRoute === 'tailscale') {
+    if (tailscaleStatus === null) void refreshTailscale();
+    else applyTailscaleAutofill();
+  }
   renderWhere();
 });
-$('setup-port').addEventListener('input', renderWhere);
+$('setup-public-url').addEventListener('input', () => {
+  if ($('setup-public-url').value.trim() !== tailscaleAutoFilled) tailscaleAutoFilled = '';
+});
+$('setup-port').addEventListener('input', () => {
+  tailscaleFunnelResult = null;
+  renderWhere();
+});
+$('tailscale-refresh').addEventListener('click', () => void refreshTailscale());
+$('tailscale-enable-funnel').addEventListener('click', () => {
+  const button = $('tailscale-enable-funnel');
+  const label = button.textContent;
+  button.textContent = 'Enabling Funnel…';
+  void run('network', button, async () => {
+    try {
+      const result = await api('/setup/api/network/tailscale/funnel', { port: $('setup-port').value.trim() });
+      tailscaleFunnelResult = result;
+      if (result.ok && result.status) {
+        tailscaleStatus = result.status;
+        applyTailscaleAutofill();
+      }
+      renderWhere();
+    } finally {
+      button.textContent = label;
+    }
+  });
+});
 $('network-next').addEventListener('click', () =>
   run('network', $('network-next'), async () => {
     const payload = { where, port: $('setup-port').value.trim() };
@@ -1202,9 +1374,13 @@ async function runChecks() {
       }
       if (httpProxy) {
         $('check-proxy-note').textContent =
-          `uburoom will switch to proxy-only HTTP on ${httpProxy.host}:${httpProxy.port} after Finish. ` +
-          `Your Cloudflare Tunnel, Tailscale, or Caddy proxy must forward HTTPS traffic (with X-Forwarded-Proto: https) ` +
-          `to port ${httpProxy.port} before ${httpProxy.publicUrl} opens.`;
+          httpProxy.route === 'tailscale'
+            ? `uburoom will switch to proxy-only HTTP on ${httpProxy.host}:${httpProxy.port} after Finish. ` +
+              `Make sure Tailscale Funnel (tailscale funnel --bg ${httpProxy.port}) or Tailscale Serve forwards HTTPS traffic ` +
+              `to port ${httpProxy.port} before ${httpProxy.publicUrl} opens.`
+            : `uburoom will switch to proxy-only HTTP on ${httpProxy.host}:${httpProxy.port} after Finish. ` +
+              `Your Cloudflare Tunnel, Tailscale, or Caddy proxy must forward HTTPS traffic (with X-Forwarded-Proto: https) ` +
+              `to port ${httpProxy.port} before ${httpProxy.publicUrl} opens.`;
         $('check-proxy-note').hidden = false;
       }
     } catch (error) {
@@ -1239,8 +1415,11 @@ async function probeReadyProxy() {
   } catch {
     $('ready-proxy-status').textContent = `This browser could not verify uburoom at ${info.publicUrl} yet.`;
     $('ready-proxy-guide').textContent =
-      `Check that your Cloudflare Tunnel, Tailscale, or Caddy proxy forwards to port ${info.port}. ` +
-      `Start your tunnel now, then click Retry connection—or open ${info.publicUrl} and sign in normally once your tunnel is live.`;
+      info.route === 'tailscale'
+        ? `Check that Tailscale Funnel is running on this computer (tailscale funnel --bg ${info.port}), ` +
+          `then click Retry connection—or open ${info.publicUrl} and sign in normally once Funnel is live.`
+        : `Check that your Cloudflare Tunnel, Tailscale, or Caddy proxy forwards to port ${info.port}. ` +
+          `Start your tunnel now, then click Retry connection—or open ${info.publicUrl} and sign in normally once your tunnel is live.`;
     $('ready-proxy-guide').hidden = false;
     $('ready-open').textContent = 'Open ' + info.publicUrl;
   } finally {

@@ -22,6 +22,7 @@ test.after(() => fs.rmSync(KEYS, { recursive: true, force: true }));
 const { startWithSetup } = require('../server/start');
 const { needsSetup, allowedHost, setupOptions } = require('../server/setup');
 const { createSetupGuard, MAX_WRONG, SESSION_MS } = require('../server/setup/code');
+const { probeTailscale, enableTailscaleFunnel } = require('../server/setup/tailscale');
 const { createConfigFile } = require('../server/config-editor');
 const { loadConfig } = require('../server/config');
 const { silentLogger } = require('../server/logger');
@@ -96,7 +97,7 @@ function client(base, { host, secure = base.startsWith('https:') } = {}) {
 }
 
 /** Setup mode on a free port in an empty folder, with fake Plex, Jellyfin and Discord. */
-async function setupFixture(t, { host, args = [], youtubeRunner } = {}) {
+async function setupFixture(t, { host, args = [], youtubeRunner, tailscaleRunner } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-setup-'));
   fs.mkdirSync(path.join(directory, 'Films'));
   const configFile = path.join(directory, 'config', 'config.yaml');
@@ -117,6 +118,7 @@ async function setupFixture(t, { host, args = [], youtubeRunner } = {}) {
       jellyfinDiscover: jellyfin.jellyfinDiscover,
       discordFetch: discord.discordFetch,
       ...(youtubeRunner ? { youtubeRunner } : {}),
+      ...(tailscaleRunner ? { tailscaleRunner } : {}),
     },
     appOptions: {
       plexFetch: plex.plexFetch,
@@ -682,4 +684,267 @@ test('VD-03 / D4: internet https + allowLan returns localUrl handoff, and http-p
   assert.equal(health.headers['access-control-allow-origin'], '*');
   const missingProto = await proxyClient.request('/api/account');
   assert.equal(missingProto.status, 421);
+});
+
+test('tailscale probe and funnel helper detect state and degrade gracefully without live tailscale', async () => {
+  // Missing tailscale binary (ENOENT)
+  assert.deepEqual(
+    await probeTailscale({
+      runner: async () => ({ code: null, stdout: '', stderr: '', errorCode: 'ENOENT' }),
+    }),
+    {
+      installed: false,
+      loggedIn: false,
+      dnsName: '',
+      funnelEnabled: false,
+      funnelActive: false,
+      funnelPort: null,
+    },
+  );
+
+  // Installed but logged out
+  assert.deepEqual(
+    await probeTailscale({
+      runner: async () => ({
+        code: 0,
+        stdout: JSON.stringify({ BackendState: 'NeedsLogin', Self: { DNSName: 'old.tail1234.ts.net.' } }),
+        stderr: '',
+      }),
+    }),
+    {
+      installed: true,
+      loggedIn: false,
+      dnsName: '',
+      funnelEnabled: false,
+      funnelActive: false,
+      funnelPort: null,
+    },
+  );
+
+  // Timed out daemon degrades cleanly
+  assert.deepEqual(
+    await probeTailscale({
+      runner: async () => ({ code: null, stdout: '', stderr: '', timedOut: true }),
+    }),
+    {
+      installed: true,
+      loggedIn: false,
+      dnsName: '',
+      funnelEnabled: false,
+      funnelActive: false,
+      funnelPort: null,
+    },
+  );
+
+  // Logged in with MagicDNS name, Funnel capability, and active Funnel forwarding to 5756
+  const calls = [];
+  const detected = await probeTailscale({
+    runner: async args => {
+      calls.push(args);
+      if (args[0] === 'status') {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            BackendState: 'Running',
+            Self: {
+              DNSName: 'MediaBox.tail1234.ts.net.',
+              CapMap: { 'https://tailscale.com/cap/funnel': [] },
+            },
+          }),
+          stderr: '',
+        };
+      }
+      if (args[0] === 'funnel' && args[1] === 'status') {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            AllowFunnel: { 'mediabox.tail1234.ts.net:443': true },
+            Web: {
+              'mediabox.tail1234.ts.net:443': {
+                Handlers: { '/': { Proxy: 'http://127.0.0.1:5756' } },
+              },
+            },
+          }),
+          stderr: '',
+        };
+      }
+      return { code: 1, stdout: '', stderr: 'unexpected' };
+    },
+  });
+  assert.deepEqual(calls, [
+    ['status', '--json'],
+    ['funnel', 'status', '--json'],
+  ]);
+  assert.deepEqual(detected, {
+    installed: true,
+    loggedIn: true,
+    dnsName: 'https://mediabox.tail1234.ts.net',
+    funnelEnabled: true,
+    funnelActive: true,
+    funnelPort: 5756,
+  });
+
+  // enableTailscaleFunnel passes exact argument array (no shell) and handles ACL fallback cleanly
+  const blockedArgs = [];
+  const blocked = await enableTailscaleFunnel(5756, {
+    runner: async args => {
+      blockedArgs.push(args);
+      return {
+        code: 1,
+        stdout: '',
+        stderr:
+          'Funnel is not enabled on your tailnet.\nTo enable, visit: https://login.tailscale.com/f/funnel?node=abc123\n',
+      };
+    },
+  });
+  assert.deepEqual(blockedArgs, [['funnel', '--bg', '5756']]);
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.command, 'tailscale funnel --bg 5756');
+  assert.equal(blocked.enableUrl, 'https://login.tailscale.com/f/funnel?node=abc123');
+  assert.match(blocked.error, /not enabled/i);
+
+  // Invalid ports are rejected
+  await assert.rejects(() => enableTailscaleFunnel(0, { runner: async () => ({ code: 0, stdout: '', stderr: '' }) }), {
+    status: 400,
+  });
+  await assert.rejects(
+    () =>
+      enableTailscaleFunnel(/** @type {any} */ ('5756 && echo hi'), {
+        runner: async () => ({ code: 0, stdout: '', stderr: '' }),
+      }),
+    { status: 400 },
+  );
+});
+
+test('setup Step 5 Tailscale probe, Funnel enable fallback/success, and http-proxy finish flow', async t => {
+  let allowFunnel = false;
+  let activePort = null;
+  const seenArgs = [];
+  const tailscaleRunner = async args => {
+    seenArgs.push(args);
+    if (args[0] === 'status') {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          BackendState: 'Running',
+          Self: {
+            DNSName: 'livingroom.tail9999.ts.net.',
+            Capabilities: allowFunnel ? ['https://tailscale.com/cap/funnel'] : [],
+          },
+        }),
+        stderr: '',
+      };
+    }
+    if (args[0] === 'funnel' && args[1] === 'status') {
+      return {
+        code: 0,
+        stdout: JSON.stringify(
+          activePort
+            ? {
+                AllowFunnel: { 'livingroom.tail9999.ts.net:443': true },
+                Web: {
+                  'livingroom.tail9999.ts.net:443': { Handlers: { '/': { Proxy: `http://127.0.0.1:${activePort}` } } },
+                },
+              }
+            : {},
+        ),
+        stderr: '',
+      };
+    }
+    if (args[0] === 'funnel' && args[1] === '--bg') {
+      if (!allowFunnel) {
+        return {
+          code: 1,
+          stdout: '',
+          stderr: 'Access denied: tailscale operator permission required.\n',
+        };
+      }
+      activePort = Number(args[2]);
+      return { code: 0, stdout: 'Available on the internet:\nhttps://livingroom.tail9999.ts.net/\n', stderr: '' };
+    }
+    return { code: 1, stdout: '', stderr: 'unknown command' };
+  };
+
+  const f = await setupFixture(t, { tailscaleRunner });
+  // Unauthenticated access to Tailscale endpoints is rejected.
+  assert.equal((await f.browser.request('/setup/api/network/tailscale')).status, 401);
+  await signIn(f);
+
+  // Probe returns detected HTTPS origin before Funnel is active.
+  const probed = await f.browser.request('/setup/api/network/tailscale');
+  assert.equal(probed.status, 200);
+  assert.deepEqual(probed.body, {
+    installed: true,
+    loggedIn: true,
+    dnsName: 'https://livingroom.tail9999.ts.net',
+    funnelEnabled: false,
+    funnelActive: false,
+    funnelPort: null,
+  });
+
+  // Invalid port rejected on Funnel endpoint.
+  assert.equal((await f.browser.post('/setup/api/network/tailscale/funnel', { port: 70000 })).status, 400);
+
+  // When permissions block Funnel, endpoint returns clean fallback with exact command.
+  const denied = await f.browser.post('/setup/api/network/tailscale/funnel', { port: f.port });
+  assert.equal(denied.status, 200);
+  assert.equal(denied.body.ok, false);
+  assert.equal(denied.body.command, `tailscale funnel --bg ${f.port}`);
+  assert.match(denied.body.error, /operator permission/i);
+
+  // Once allowed, 1-click enable succeeds and reports active Funnel status.
+  allowFunnel = true;
+  const enabled = await f.browser.post('/setup/api/network/tailscale/funnel', { port: f.port });
+  assert.equal(enabled.status, 200);
+  assert.equal(enabled.body.ok, true);
+  assert.equal(enabled.body.command, `tailscale funnel --bg ${f.port}`);
+  assert.equal(enabled.body.status.funnelActive, true);
+  assert.equal(enabled.body.status.funnelPort, f.port);
+  assert.ok(seenArgs.some(args => args.join(' ') === `funnel --bg ${f.port}`));
+
+  // Complete setup using the detected Tailscale HTTPS address.
+  await f.browser.post('/setup/api/account/create', { username: 'alex', password: 'setup password 1' });
+  const { flow } = (await f.browser.post('/setup/api/sources/setup', { type: 'folders' })).body;
+  await step(f, flow, 'choose', { path: path.join(f.directory, 'Films'), type: 'movies' });
+  await f.browser.post('/setup/api/sources', { action: 'add', flow });
+  await f.browser.post('/setup/api/access', {
+    sourceMembers: [],
+    password: null,
+    accounts: true,
+    guests: true,
+    discord: false,
+  });
+  const savedNet = await f.browser.post('/setup/api/network', {
+    where: 'internet',
+    port: f.port,
+    route: 'tailscale',
+    publicUrl: probed.body.dnsName,
+    trustedProxies: '127.0.0.1, ::1',
+  });
+  assert.equal(savedNet.status, 200);
+  assert.equal(savedNet.body.route, 'tailscale');
+  assert.equal(savedNet.body.publicUrl, 'https://livingroom.tail9999.ts.net');
+
+  const check = await f.browser.post('/setup/api/check', {});
+  assert.equal(check.status, 200);
+  assert.ok(
+    check.body.checks.every(row => row.status === 'pass'),
+    JSON.stringify(check.body.checks),
+  );
+  assert.equal(check.body.httpProxy.route, 'tailscale');
+  assert.equal(check.body.httpProxy.publicUrl, 'https://livingroom.tail9999.ts.net');
+
+  const fin = await f.browser.post('/setup/api/finish', {});
+  assert.equal(fin.status, 200, fin.text);
+  assert.equal(fin.body.listen, 'http-proxy');
+  assert.equal(fin.body.route, 'tailscale');
+  assert.equal(fin.body.publicUrl, 'https://livingroom.tail9999.ts.net');
+  await f.started;
+
+  const config = loadConfig(f.configFile, []);
+  assert.equal(config.listen, 'http-proxy');
+  assert.equal(config.host, '127.0.0.1');
+  assert.equal(config.publicUrl, 'https://livingroom.tail9999.ts.net');
+  assert.deepEqual(config.trustedProxies, ['127.0.0.1', '::1']);
+  assert.equal(config.trustedProxyHeader, 'x-forwarded-for');
 });

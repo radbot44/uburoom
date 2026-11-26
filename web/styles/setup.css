@@ -479,6 +479,7 @@
   .setup-source strong,
   .setup-source .hint,
   .setup-steps code,
+  #network-tailscale-panel code,
   .setup-where strong {
     overflow-wrap: anywhere;
   }

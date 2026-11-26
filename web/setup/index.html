@@ -447,6 +447,30 @@
               </div>
               <span class="hint" id="network-route-hint"></span>
             </div>
+            <div class="setup-panel setup-gap" id="network-tailscale-panel" hidden>
+              <p class="setup-flush" id="tailscale-status" role="status"></p>
+              <p class="hint setup-gap" id="tailscale-detail" hidden></p>
+              <p class="hint setup-gap" id="tailscale-enable-link-row" hidden>
+                Enable Funnel for your tailnet in the
+                <a
+                  id="tailscale-enable-link"
+                  class="setup-link"
+                  href="https://login.tailscale.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Tailscale admin console</a
+                >, then try again.
+              </p>
+              <p class="hint setup-gap" id="tailscale-command-row" hidden>
+                Run in a terminal: <code id="tailscale-command"></code>
+              </p>
+              <div class="setup-inline-actions">
+                <button id="tailscale-enable-funnel" class="quiet" type="button" hidden>
+                  Enable Tailscale Funnel on this port
+                </button>
+                <button id="tailscale-refresh" class="quiet" type="button">Recheck</button>
+              </div>
+            </div>
             <div class="setup-field setup-gap" id="network-proxies-field">
               <label for="setup-trusted-proxies">Trusted proxy addresses</label>
               <input id="setup-trusted-proxies" class="setup-text-input" autocomplete="off" />

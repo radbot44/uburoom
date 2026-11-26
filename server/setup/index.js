@@ -92,7 +92,8 @@ const cookieValue = req =>
 /**
  * Starts setup mode and resolves once it listens.
  * @param {{configFile: string, host?: string, port?: number, logger: any, handOff: (handoff: any) => Promise<any>,
- *   plexFetch?: typeof fetch, jellyfinFetch?: typeof fetch, jellyfinDiscover?: () => Promise<any[]>,
+ *   plexFetch?: typeof fetch, jellyfinFetch?: typeof fetch, youtubeFetch?: typeof fetch, youtubeRunner?: any,
+ *   tailscaleRunner?: import('./tailscale').TailscaleRunner, jellyfinDiscover?: () => Promise<any[]>,
  *   discordFetch?: typeof fetch, platform?: string, published?: boolean}} options - `handOff` starts the normal app from the
  *   config just written, with the operator's sign-in ticket; setup's listener is closed first.
  */
@@ -106,6 +107,7 @@ async function startSetup({
   jellyfinFetch,
   youtubeFetch,
   youtubeRunner,
+  tailscaleRunner,
   jellyfinDiscover,
   discordFetch,
   platform,
@@ -125,6 +127,7 @@ async function startSetup({
     jellyfinFetch,
     youtubeFetch,
     youtubeRunner,
+    tailscaleRunner,
     jellyfinDiscover,
     discordFetch,
     platform,
@@ -290,6 +293,8 @@ async function startSetup({
     'POST /setup/api/access': data => wizard.access.set(data),
     'POST /setup/api/access/discord': data => wizard.access.discord(data),
     'GET /setup/api/network': () => wizard.network.view(),
+    'GET /setup/api/network/tailscale': () => wizard.network.tailscale(),
+    'POST /setup/api/network/tailscale/funnel': data => wizard.network.enableTailscaleFunnel(data),
     'POST /setup/api/network': data => wizard.network.set(data),
     'POST /setup/api/check': async () => {
       const { checks, config, answers } = await check();

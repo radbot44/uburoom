@@ -5,7 +5,7 @@ Friends outside your home open `https://watch.example.com` and join your rooms. 
 In `http-proxy` mode:
 
 - Only addresses in `server.trusted_proxies` may connect (it must not be empty). Other connections are dropped before a request is read; `GET /health` from the same machine is always answered, for health checks.
-- The proxy must send `X-Forwarded-Proto: https`; requests without it get 421. Cloudflare Tunnel, Caddy and `tailscale serve` send it.
+- The proxy must send `X-Forwarded-Proto: https`; requests without it get 421. Cloudflare Tunnel, Caddy, `tailscale funnel` and `tailscale serve` send it.
 - `server.public_url` stays the HTTPS address people open, sign-in cookies stay `Secure`, and no certificate is read.
 - Plain HTTP on your LAN is not offered: a browser on `http://` would lose sign-in and Picture-in-Picture, and passwords would cross the network in clear.
 - With Docker, do not publish uburoom's port (`ports:`): traffic from outside can then arrive from the bridge gateway, inside a broad CIDR. Use `expose:` and list the narrowest subnet that holds the proxy, as in the Compose files below.
@@ -14,8 +14,9 @@ Pick one route.
 
 | Route | Who can join | Needs | Notes |
 | --- | --- | --- | --- |
-| **Cloudflare Tunnel** (recommended) | Anyone with the link | A domain on Cloudflare (free plan works) | No port forwarding, works behind CGNAT, trusted certificate. Read the [video caveat](#caveat-about-cloudflare-and-video). |
-| **Tailscale** | Only people you invite to your tailnet | Everyone installs Tailscale | Private. Not usable for Discord Activities (Discord cannot reach a tailnet). |
+| **Tailscale Funnel** (easiest) | Anyone with the link | Tailscale on the host only (free plan works, no domain needed) | No port forwarding, works behind CGNAT, trusted certificate, friends do not install Tailscale. Auto-detected in setup Step 5. |
+| **Cloudflare Tunnel** | Anyone with the link | A domain on Cloudflare (free plan works) | No port forwarding, works behind CGNAT, trusted certificate. Read the [video caveat](#caveat-about-cloudflare-and-video). |
+| **Tailscale Serve** | Only people you invite to your tailnet | Everyone installs Tailscale | Private. Not usable for Discord Activities (Discord cannot reach a tailnet). |
 | **Own domain + Caddy** | Anyone with the link | A domain, ports 80 and 443 forwarded, a public IP (no CGNAT) | Most control, no third party in the path. |
 
 Before you start: uburoom runs, `npm run doctor` passes, and your media source works on the local network.
@@ -91,23 +92,45 @@ Without Docker: run `cloudflared` on the same machine, point the public hostname
 
 Cloudflare's terms restrict serving large amounts of video through its network, and a watch party streams video. Whether your use is allowed depends on your plan and on the terms as they stand today, and the terms change. Read Cloudflare's current terms yourself before relying on this route for regular use. If you are unsure, use Tailscale or your own domain with Caddy.
 
-## Route 2: Tailscale (private group)
+## Route 2: Tailscale
 
-1. Install Tailscale on the uburoom host and on every viewer's device, and invite viewers to your tailnet (admin console → Users). Turn on HTTPS certificates in the admin console's DNS settings.
-2. Note the host's name, such as `media.tail1234.ts.net`.
-3. Set in `config.yaml`:
+Tailscale supports two modes with uburoom—**Funnel** for friends over the internet (no Tailscale needed on their device), or **Serve** for a private tailnet only.
+
+### Tailscale Funnel (friends over the internet — simplest)
+
+1. Install Tailscale on the uburoom host and sign in. In the Tailscale admin console, make sure **MagicDNS**, **HTTPS Certificates**, and **Funnel** are enabled for this device.
+2. **In first-run setup (Step 5):** choose **The internet** → **Tailscale**. uburoom automatically detects your `https://<host>.<tailnet>.ts.net` address, fills in the Public HTTPS address, and offers **Enable Tailscale Funnel on this port** (which runs `tailscale funnel --bg <port>` for you, or shows the exact command to paste if your tailnet ACL or OS permissions require running it in a terminal).
+3. **Or configure `config.yaml` manually:**
 
    ```yaml
    server:
      listen: 'http-proxy'
      host: '127.0.0.1'
+     port: 5756
      public_url: 'https://media.tail1234.ts.net'
      trusted_proxies: ['127.0.0.1', '::1']
      trusted_proxy_header: 'x-forwarded-for'
    ```
 
-4. On the host run `tailscale serve --bg --https=443 http://127.0.0.1:5756`. Do **not** use `tailscale funnel`; that publishes to the whole internet.
-5. Verify from a device on the tailnet: `https://media.tail1234.ts.net/health`, then `/watch`. A device without Tailscale must fail to connect.
+   Then run one command on the host:
+
+   ```sh
+   tailscale funnel --bg 5756
+   ```
+
+4. **Verify.** Step 7 of setup checks `https://media.tail1234.ts.net/health` automatically once uburoom finishes starting. Confirm external reachability by opening `https://media.tail1234.ts.net/watch` from outside your home network (for example, on a phone using mobile data with Wi-Fi off).
+
+> [!NOTE]
+> Funnel publishes your `*.ts.net` address to the internet so friends can join without installing Tailscale. Keep your uburoom access rules (Step 4 / `access:` in `config.yaml`) set to allow only the people you intend. To stop Funnel later, run `tailscale funnel --https=443 off`.
+
+### Tailscale Serve (private tailnet only)
+
+If you want only people invited to your tailnet to be able to reach the server at all:
+
+1. Install Tailscale on the uburoom host and on every viewer's device, invite viewers to your tailnet (admin console → Users), and turn on HTTPS certificates in DNS settings.
+2. Use the same `config.yaml` settings as above (`listen: 'http-proxy'`, `host: '127.0.0.1'`, `public_url: 'https://media.tail1234.ts.net'`, `trusted_proxies: ['127.0.0.1', '::1']`, `trusted_proxy_header: 'x-forwarded-for'`).
+3. On the host run `tailscale serve --bg --https=443 http://127.0.0.1:5756` (do not run `tailscale funnel`).
+4. Verify from a device on the tailnet: `https://media.tail1234.ts.net/health`, then `/watch`. A device without Tailscale will not be able to connect.
 
 ## Route 3: Your own domain and Caddy
 

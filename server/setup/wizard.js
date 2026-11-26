@@ -17,6 +17,7 @@ const { validateSources, sourceType } = require('../sources');
 const flowsCore = require('../source-flows');
 const { normalizeUsername, hashPassword, PROVIDER: UBUROOM } = require('../identity/accounts');
 const discord = require('./discord');
+const { probeTailscale, enableTailscaleFunnel } = require('./tailscale');
 
 const OWNER = 'setup';
 const DEFAULT_PORT = 5756;
@@ -44,7 +45,8 @@ function homeAddress(requestHost, interfaces = os.networkInterfaces()) {
 
 /**
  * @param {{configFile: string, setupHost: string, setupPort: () => number, published: boolean, plexTv: any, plexFetch?: typeof fetch,
- *   jellyfinFetch?: typeof fetch, jellyfinDiscover?: () => Promise<any[]>, discordFetch?: typeof fetch,
+ *   jellyfinFetch?: typeof fetch, youtubeFetch?: typeof fetch, youtubeRunner?: any, tailscaleRunner?: import('./tailscale').TailscaleRunner,
+ *   jellyfinDiscover?: () => Promise<any[]>, discordFetch?: typeof fetch,
  *   platform?: string, origin: () => string}} services - `origin` is where the setup page is open now
  */
 function createWizard({
@@ -57,6 +59,7 @@ function createWizard({
   jellyfinFetch = fetch,
   youtubeFetch = fetch,
   youtubeRunner,
+  tailscaleRunner,
   jellyfinDiscover,
   discordFetch = fetch,
   platform = process.platform,
@@ -352,6 +355,12 @@ function createWizard({
     }
     return parsed.origin;
   };
+  const parsePort = raw => {
+    const port = typeof raw === 'string' && /^\d{1,5}$/.test(raw.trim()) ? Number(raw) : raw;
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw fail('Use a port from 1 to 65535');
+    if (published && port !== setupPort()) throw fail('Keep the container port used by the Docker port mapping');
+    return port;
+  };
   const network = {
     view() {
       const port = draft.network?.port ?? setupPort();
@@ -367,11 +376,16 @@ function createWizard({
         ...options,
       };
     },
+    tailscale() {
+      return probeTailscale(tailscaleRunner ? { runner: tailscaleRunner } : undefined);
+    },
+    enableTailscaleFunnel(data) {
+      const port = parsePort(data?.port ?? draft.network?.port ?? setupPort());
+      return enableTailscaleFunnel(port, tailscaleRunner ? { runner: tailscaleRunner } : undefined);
+    },
     set(data) {
       if (!['computer', 'home', 'internet'].includes(data.where)) throw fail('Choose where people watch');
-      const port = typeof data.port === 'string' && /^\d{1,5}$/.test(data.port.trim()) ? Number(data.port) : data.port;
-      if (!Number.isInteger(port) || port < 1 || port > 65535) throw fail('Use a port from 1 to 65535');
-      if (published && port !== setupPort()) throw fail('Keep the container port used by the Docker port mapping');
+      const port = parsePort(data.port);
       const options = networkOptions(port);
       if (data.where === 'home' && !options.home)
         throw fail(
