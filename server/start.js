@@ -83,9 +83,13 @@ async function startServer(config, { logger, setupHandoff, botStarter = startBot
   }
   logger.info('Server', `uburoom ${readBuildIdentity().buildLabel} listening`);
   logger.info('Server', `Server address: ${config.publicUrl}`);
-  if (!setupHandoff && typeof process.send === 'function') {
+  if (typeof process.send === 'function') {
     try {
-      process.send({ type: 'uburoom:server-ready', url: config.publicUrl });
+      process.send({
+        type: 'uburoom:server-ready',
+        url: config.publicUrl,
+        ...(setupHandoff ? { fromSetup: true } : {}),
+      });
     } catch {}
   }
   if (config.lanUrl === 'auto') {
@@ -107,9 +111,11 @@ async function startServer(config, { logger, setupHandoff, botStarter = startBot
   let bot,
     retry,
     stopped = false;
+  let onIpcMessage = null;
   async function stop({ exitCode: requestedExitCode = 0 } = {}) {
     if (stopped) return;
     stopped = true;
+    if (onIpcMessage) process.off('message', onIpcMessage);
     clearTimeout(retry);
     // Hard-exit beyond Watch.close()'s 35s mediaDrainMs so a stuck dependency cannot wedge shutdown forever.
     const forceExit = setTimeout(() => {
@@ -144,9 +150,20 @@ async function startServer(config, { logger, setupHandoff, botStarter = startBot
     logger.info('Server', 'Restart requested by server operator.');
     void stop({ exitCode: 75 });
   };
+  onIpcMessage = message => {
+    if (!message || typeof message !== 'object') return;
+    if (message.type === 'uburoom:shutdown') {
+      logger.info('Server', 'Shutdown requested by supervisor.');
+      void stop({ exitCode: 0 });
+    } else if (message.type === 'uburoom:restart') {
+      logger.info('Server', 'Restart requested by supervisor.');
+      void stop({ exitCode: 75 });
+    }
+  };
   if (signals) {
     process.once('SIGINT', () => void stop());
     process.once('SIGTERM', () => void stop());
+    process.on('message', onIpcMessage);
   }
   async function connect() {
     try {
@@ -187,9 +204,19 @@ async function startWithSetup({ configFile, args = [], logger, setup = {}, signa
     rejectStarted = reject;
   });
   started.catch(() => {});
-  const stopSetup = async () => {
+  let setupStopping = false;
+  const stopSetup = async (exitCode = 0) => {
+    if (setupStopping) return;
+    setupStopping = true;
+    process.off('message', onSetupIpcMessage);
     await running?.close();
-    process.exit(0);
+    process.exit(exitCode);
+  };
+  const onSetupSignal = () => void stopSetup(0);
+  const onSetupIpcMessage = message => {
+    if (!message || typeof message !== 'object') return;
+    if (message.type === 'uburoom:shutdown') void stopSetup(0);
+    else if (message.type === 'uburoom:restart') void stopSetup(75);
   };
   let running;
   running = await startSetup({
@@ -199,8 +226,9 @@ async function startWithSetup({ configFile, args = [], logger, setup = {}, signa
     logger: setupLogger,
     async handOff(handoff) {
       if (signals) {
-        process.off('SIGINT', stopSetup);
-        process.off('SIGTERM', stopSetup);
+        process.off('SIGINT', onSetupSignal);
+        process.off('SIGTERM', onSetupSignal);
+        process.off('message', onSetupIpcMessage);
       }
       try {
         running = undefined;
@@ -221,8 +249,9 @@ async function startWithSetup({ configFile, args = [], logger, setup = {}, signa
     },
   });
   if (signals) {
-    process.once('SIGINT', stopSetup);
-    process.once('SIGTERM', stopSetup);
+    process.once('SIGINT', onSetupSignal);
+    process.once('SIGTERM', onSetupSignal);
+    process.on('message', onSetupIpcMessage);
   }
   return { setup: running, started };
 }

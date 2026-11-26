@@ -29,6 +29,7 @@ node_modules/
 /artifacts/
 /dist/
 /build/
+/tools/tray-win/build/
 /coverage/
 /backups/
 *.log

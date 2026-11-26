@@ -510,3 +510,255 @@ test('launcher.js supervises setup IPC, exit 75 slot-switching restart, and non-
   assert.notEqual(exitCode, 0);
   assert.notEqual(exitCode, 75);
 });
+
+test('launcher.js --tray-pipe reports active setup/server URLs and handles clean restart and shutdown', async t => {
+  const { parseLauncherArgs } = require('../scripts/launcher');
+  const parsed = parseLauncherArgs(['--no-browser', '--tray-pipe', '\\\\.\\pipe\\sample', '--setup-port', '1234']);
+  assert.equal(parsed.noBrowser, true);
+  assert.equal(parsed.trayPipe, '\\\\.\\pipe\\sample');
+  assert.deepEqual(parsed.forwardedArgs, ['--setup-port', '1234']);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-tray-ipc-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const keysDir = path.join(root, 'keys');
+  fs.mkdirSync(keysDir, { recursive: true });
+  const credKeyFile = path.join(keysDir, 'credentials.key');
+
+  const slot1 = `${APP_VERSION}-g3333333`;
+  const slot2 = `${APP_VERSION}-g4444444`;
+  const app1 = linkSlotApp(path.join(root, 'versions', slot1), { marker: '3333333' });
+  linkSlotApp(path.join(root, 'versions', slot2), { marker: '4444444' });
+  fs.writeFileSync(path.join(root, 'current.txt'), `${slot1}\n`);
+
+  const launcherPath = path.join(app1, 'scripts', 'launcher.js');
+
+  function createPipeServer(pipePath) {
+    const events = [];
+    let clientSocket = null;
+    const waiters = [];
+    const server = net.createServer(socket => {
+      clientSocket = socket;
+      socket.setEncoding('utf8');
+      let buf = '';
+      socket.on('data', chunk => {
+        buf += chunk;
+        let idx;
+        while ((idx = buf.indexOf('\n')) !== -1) {
+          const line = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 1);
+          if (!line) continue;
+          const msg = JSON.parse(line);
+          events.push(msg);
+          for (let i = waiters.length - 1; i >= 0; i--) {
+            if (waiters[i].predicate(msg)) {
+              const { resolve, timer } = waiters.splice(i, 1)[0];
+              clearTimeout(timer);
+              resolve(msg);
+            }
+          }
+        }
+      });
+    });
+    const waitForEvent = (predicate, timeoutMs = 15000) => {
+      const existing = events.find(predicate);
+      if (existing) return Promise.resolve(existing);
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error(`Timed out waiting for tray pipe event; saw: ${JSON.stringify(events)}`)),
+          timeoutMs,
+        );
+        waiters.push({ predicate, resolve, timer });
+      });
+    };
+    const sendCommand = cmd => {
+      assert.ok(clientSocket && !clientSocket.destroyed, 'tray pipe client must be connected');
+      clientSocket.write(`${JSON.stringify(cmd)}\n`);
+    };
+    return { server, events, waitForEvent, sendCommand };
+  }
+
+  // 1. Setup mode over --tray-pipe emits setup URL and exits 0 cleanly on shutdown command
+  const setupPort = await freePort();
+  const setupPipePath =
+    process.platform === 'win32'
+      ? `\\\\.\\pipe\\uburoom-test-setup-${process.pid}-${Date.now()}`
+      : path.join(root, 'setup.sock');
+  const setupPipe = createPipeServer(setupPipePath);
+  await new Promise(resolve => setupPipe.server.listen(setupPipePath, resolve));
+  t.after(() => setupPipe.server.close());
+
+  const setupLauncher = spawn(
+    process.execPath,
+    [launcherPath, '--no-browser', '--tray-pipe', setupPipePath, '--setup-port', String(setupPort)],
+    {
+      env: { ...process.env, LOCALAPPDATA: keysDir, XDG_DATA_HOME: keysDir },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  try {
+    const setupMsg = await setupPipe.waitForEvent(ev => ev.type === 'status' && ev.state === 'setup');
+    assert.match(setupMsg.url, new RegExp(`^http://localhost:${setupPort}/setup#code=`));
+    setupPipe.sendCommand({ type: 'shutdown' });
+    const code = await new Promise(resolve => setupLauncher.once('exit', resolve));
+    assert.equal(code, 0, 'launcher must exit cleanly with code 0 on tray shutdown');
+  } finally {
+    killTree(setupLauncher);
+  }
+
+  // 2. Normal server mode emits running URL, switches slot on restart command, and shuts down cleanly
+  const port = await freePort();
+  const certDir = path.join(root, 'config', 'certs');
+  fs.mkdirSync(certDir, { recursive: true });
+  const { certPem, keyPem } = createCertificate();
+  fs.writeFileSync(path.join(certDir, 'server-cert.pem'), certPem);
+  fs.writeFileSync(path.join(certDir, 'server-key.pem'), keyPem);
+  const configFile = path.join(root, 'config', 'config.yaml');
+  fs.writeFileSync(
+    configFile,
+    [
+      'server:',
+      "  host: '127.0.0.1'",
+      `  port: ${port}`,
+      `  public_url: 'https://localhost:${port}'`,
+      "  tls_cert: 'certs/server-cert.pem'",
+      "  tls_key: 'certs/server-key.pem'",
+      'storage:',
+      `  credential_key_file: '${credKeyFile.replace(/\\/g, '/')}'`,
+      'access:',
+      '  discord_server: false',
+      '  accounts: true',
+      'operator:',
+      "  identities: ['uburoom:op-tray']",
+      'logging:',
+      "  level: 'info'",
+      '  requests: false',
+      "  file: ''",
+      '',
+    ].join('\n'),
+  );
+
+  const serverPipePath =
+    process.platform === 'win32'
+      ? `\\\\.\\pipe\\uburoom-test-server-${process.pid}-${Date.now()}`
+      : path.join(root, 'server.sock');
+  const serverPipe = createPipeServer(serverPipePath);
+  await new Promise(resolve => serverPipe.server.listen(serverPipePath, resolve));
+  t.after(() => serverPipe.server.close());
+
+  const serverLauncher = spawn(process.execPath, [launcherPath, '--no-browser', '--tray-pipe', serverPipePath], {
+    env: { ...process.env, LOCALAPPDATA: keysDir, XDG_DATA_HOME: keysDir },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  try {
+    const firstReady = await serverPipe.waitForEvent(ev => ev.type === 'status' && ev.state === 'running');
+    assert.equal(firstReady.url, `https://localhost:${port}`);
+    const beforeHealth = await waitForHealth(`https://localhost:${port}`);
+
+    fs.writeFileSync(path.join(root, 'current.txt'), `${slot2}\n`);
+    const prevRunningCount = serverPipe.events.filter(ev => ev.state === 'running').length;
+    serverPipe.sendCommand({ type: 'restart' });
+    await serverPipe.waitForEvent(
+      () => serverPipe.events.filter(ev => ev.state === 'running').length > prevRunningCount,
+    );
+    const afterHealth = await waitForHealth(`https://localhost:${port}`);
+    assert.notEqual(afterHealth.bootId, beforeHealth.bootId);
+
+    serverPipe.sendCommand({ type: 'shutdown' });
+    const code = await new Promise(resolve => serverLauncher.once('exit', resolve));
+    assert.equal(code, 0, 'server launcher must exit cleanly with code 0 on tray shutdown');
+  } finally {
+    killTree(serverLauncher);
+  }
+});
+
+test(
+  'uburoom-tray.exe builds cleanly with inbox csc.exe, supervises launcher with rotating log, and quits cleanly',
+  { skip: process.platform !== 'win32' },
+  async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-tray-exe-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const keysDir = path.join(root, 'keys');
+    fs.mkdirSync(keysDir, { recursive: true });
+
+    const slot = `${APP_VERSION}-g5555555`;
+    linkSlotApp(path.join(root, 'versions', slot), { marker: '5555555' });
+    fs.writeFileSync(path.join(root, 'current.txt'), `${slot}\n`);
+
+    const trayExe = path.join(root, 'uburoom-tray.exe');
+    execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        path.join(REPO_ROOT, 'tools', 'tray-win', 'build.ps1'),
+        '-OutPath',
+        trayExe,
+      ],
+      { stdio: 'pipe', windowsHide: true },
+    );
+    assert.equal(fs.existsSync(trayExe), true);
+    assert.ok(fs.statSync(trayExe).size > 4096);
+
+    const setupPort = await freePort();
+    const logPath = path.join(root, 'config', 'data', 'uburoom-launcher.log');
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.writeFileSync(logPath, `${'previous-log-entry-'.repeat(64)}\n`);
+
+    const trayProc = spawn(
+      trayExe,
+      [
+        '--root',
+        root,
+        '--node',
+        process.execPath,
+        '--no-browser',
+        '--max-log-bytes',
+        '1024',
+        '--setup-port',
+        String(setupPort),
+      ],
+      {
+        env: { ...process.env, LOCALAPPDATA: keysDir, XDG_DATA_HOME: keysDir },
+        stdio: 'ignore',
+        windowsHide: true,
+      },
+    );
+    try {
+      const health = await waitForHealth(`http://localhost:${setupPort}`);
+      assert.equal(health.setup, true);
+
+      const deadline = Date.now() + 5000;
+      let logText = '';
+      while (Date.now() < deadline) {
+        if (fs.existsSync(logPath)) {
+          logText = fs.readFileSync(logPath, 'utf8');
+          if (logText.includes('[tray] Status: setup')) break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      assert.ok(fs.existsSync(logPath), 'uburoom-launcher.log must be created under config/data/');
+      assert.ok(fs.existsSync(`${logPath}.1`), 'oversized uburoom-launcher.log must rotate to .1');
+      assert.match(fs.readFileSync(`${logPath}.1`, 'utf8'), /previous-log-entry-/);
+      assert.match(logText, /\[tray\] Status: setup \(http:\/\/localhost:\d+\/setup\)/);
+      // Tray's own status log line must never include the setup #code fragment.
+      const trayStatusLine = logText.split(/\r?\n/).find(line => line.includes('[tray] Status: setup'));
+      assert.ok(trayStatusLine && !trayStatusLine.includes('#code='));
+
+      // Cleanly quit via --quit (same code path as clicking "Quit uburoom")
+      execFileSync(trayExe, ['--root', root, '--quit'], { stdio: 'ignore', windowsHide: true, timeout: 20000 });
+      const exitCode = await new Promise((resolve, reject) => {
+        if (trayProc.exitCode !== null) return resolve(trayProc.exitCode);
+        const timer = setTimeout(() => reject(new Error('Timed out waiting for uburoom-tray.exe to exit')), 10000);
+        trayProc.once('exit', code => {
+          clearTimeout(timer);
+          resolve(code);
+        });
+      });
+      assert.equal(exitCode, 0);
+    } finally {
+      killTree(trayProc);
+    }
+  },
+);
