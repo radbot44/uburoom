@@ -145,7 +145,7 @@ function runLauncher(baseDir = path.resolve(__dirname, '..'), args = process.arg
       process.exit(1);
       return;
     }
-    child = spawn(target.nodeExe, [target.indexJs, ...target.childArgs], {
+    child = spawn(target.nodeExe, ['--no-warnings=ExperimentalWarning', target.indexJs, ...target.childArgs], {
       cwd: target.appDir,
       stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
       env: target.env,
@@ -155,7 +155,7 @@ function runLauncher(baseDir = path.resolve(__dirname, '..'), args = process.arg
         !browserOpened &&
         !target.noBrowser &&
         message &&
-        message.type === 'uburoom:setup-ready' &&
+        (message.type === 'uburoom:setup-ready' || message.type === 'uburoom:server-ready') &&
         typeof message.url === 'string'
       ) {
         browserOpened = true;

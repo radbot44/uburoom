@@ -408,9 +408,11 @@
         <h1 id="h-network" tabindex="-1">Where will people watch?</h1>
         <div class="setup-body">
           <div class="button-group watch-segmented" role="group" aria-label="Where people watch" id="network-where">
-            <button class="group-button" type="button" data-where="computer" aria-pressed="true">This computer</button>
-            <button class="group-button" type="button" data-where="home" aria-pressed="false">My home network</button>
+            <button class="group-button" type="button" data-where="home" aria-pressed="true">My home network</button>
             <button class="group-button" type="button" data-where="internet" aria-pressed="false">The internet</button>
+            <button class="group-button" type="button" data-where="computer" aria-pressed="false">
+              This computer only
+            </button>
           </div>
           <div class="setup-field setup-gap">
             <label for="setup-port">Port</label>
@@ -457,6 +459,10 @@
           </div>
           <div class="setup-panel setup-where" id="network-local-panel">
             <p id="network-computer">Open uburoom at <strong></strong></p>
+            <p class="hint" id="network-computer-hint" hidden>
+              Only this computer can open uburoom—for testing only. Others can’t join until you switch to Home network
+              or The internet.
+            </p>
             <p id="network-home" hidden>Viewers open <strong></strong></p>
             <p class="hint" id="network-home-missing" hidden></p>
             <p class="hint" id="network-home-hint" hidden>

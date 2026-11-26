@@ -1104,6 +1104,7 @@ function renderWhere() {
   $('network-lan-field').hidden = !isInternet || remoteRoute !== 'https' || networkView.published;
   $('network-route-hint').textContent = ROUTE_HINTS[remoteRoute] || '';
   $('network-computer').hidden = where !== 'computer';
+  $('network-computer-hint').hidden = where !== 'computer';
   $('network-home').hidden = where !== 'home' || !networkView.homeAddress;
   $('network-home-hint').hidden = $('network-home').hidden;
   $('network-home-missing').hidden = where !== 'home' || !!networkView.homeAddress;

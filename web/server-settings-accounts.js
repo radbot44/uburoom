@@ -88,6 +88,17 @@ export function mount(panel, { request, onOpenAccess }) {
     });
     copy.classList.add('quiet');
     row.append(copy);
+    try {
+      const host = new URL(link.url).hostname;
+      if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') {
+        node(
+          'p',
+          linkBox,
+          'This link uses localhost and only works on this computer. Switch to Home network or The internet in Server settings to invite someone on another device.',
+          'hint',
+        );
+      }
+    } catch {}
     linkBox.hidden = false;
     input.select();
   }

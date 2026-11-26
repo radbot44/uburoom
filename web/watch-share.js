@@ -47,17 +47,27 @@ function mount({ request, share, openLink, canNativeShare = false }) {
     titleEl.textContent = 'Share room';
 
     const rawUrl = value?.invite?.url || '';
+    const isLocalhost = (() => {
+      try {
+        const host = new URL(rawUrl).hostname;
+        return host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+      } catch {
+        return false;
+      }
+    })();
     urlInput.value = rawUrl.replace(/^https?:\/\//i, '');
     copyBtn.disabled = personalBtn.disabled = busy || !value;
     if (personalBtn) personalBtn.hidden = !canNativeShare;
     if (hintEl) {
       hintEl.textContent = !value?.invite
         ? ''
-        : value.invite.guestsAllowed
-          ? value.invite.signInRequired
-            ? 'Guests can join with this link after signing in with Discord or Plex.'
-            : 'Anyone with this link can join, including guests.'
-          : 'Members of this server can join with this link.';
+        : isLocalhost
+          ? 'This link uses localhost and only works on this computer. Switch to Home network or The internet in Server settings to invite friends on other devices.'
+          : value.invite.guestsAllowed
+            ? value.invite.signInRequired
+              ? 'Guests can join with this link after signing in with Discord or Plex.'
+              : 'Anyone with this link can join, including guests.'
+            : 'Members of this server can join with this link.';
     }
 
     errorEl.textContent = value?.error || '';

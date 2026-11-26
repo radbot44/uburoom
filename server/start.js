@@ -83,6 +83,11 @@ async function startServer(config, { logger, setupHandoff, botStarter = startBot
   }
   logger.info('Server', `uburoom ${readBuildIdentity().buildLabel} listening`);
   logger.info('Server', `Server address: ${config.publicUrl}`);
+  if (!setupHandoff && typeof process.send === 'function') {
+    try {
+      process.send({ type: 'uburoom:server-ready', url: config.publicUrl });
+    } catch {}
+  }
   if (config.lanUrl === 'auto') {
     const { detectLanOrigins } = require('./origins');
     const detected = [...detectLanOrigins(config)].filter(

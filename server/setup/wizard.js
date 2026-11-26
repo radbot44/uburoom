@@ -355,15 +355,16 @@ function createWizard({
   const network = {
     view() {
       const port = draft.network?.port ?? setupPort();
+      const options = networkOptions(port);
       return {
-        where: draft.network?.where || 'computer',
+        where: draft.network?.where || (options.home ? 'home' : 'computer'),
         port,
         published,
         route: draft.network?.route || 'cloudflare',
         publicUrl: draft.network?.where === 'internet' ? draft.network.publicUrl : '',
         trustedProxies: draft.network?.trustedProxies || (published ? ['172.30.0.0/24'] : ['127.0.0.1', '::1']),
         allowLan: draft.network?.allowLan ?? true,
-        ...networkOptions(port),
+        ...options,
       };
     },
     set(data) {
