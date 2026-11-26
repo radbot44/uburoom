@@ -588,25 +588,8 @@ $('folder-form').addEventListener('submit', event => {
 });
 
 // Add YouTube & shared YouTube fields (also used by Edit).
-function renderYouTubeFields(container, draft, { editing = false, source = null } = {}) {
+function renderYouTubeFields(container, draft, { editing = false, source = null, onModeChange } = {}) {
   const mode = draft.delivery || 'auto';
-  const usesCache = mode === 'auto' || mode === 'ytdlp';
-  const field = (label, type, id, value, placeholder, onInput, extraHint, autocomplete = 'off') =>
-    el(
-      'div',
-      { class: 'setup-field' },
-      el('label', { for: id }, label),
-      el('input', {
-        id,
-        class: 'setup-text-input',
-        type,
-        autocomplete,
-        value: value ?? '',
-        placeholder,
-        oninput: event => onInput(event.target.value),
-      }),
-      extraHint ? el('span', { class: 'hint' }, extraHint) : undefined,
-    );
   const deliveryFieldset = el(
     'fieldset',
     { class: 'setup-servers setup-gap' },
@@ -638,14 +621,38 @@ function renderYouTubeFields(container, draft, { editing = false, source = null 
           checked: mode === value,
           onchange: () => {
             draft.delivery = value;
-            renderYouTubeFields(container, draft, { editing, source });
+            // Keep the focused radio and its group in place during keyboard navigation.
+            while (deliveryFieldset.nextElementSibling) deliveryFieldset.nextElementSibling.remove();
+            deliveryFieldset.after(...youTubeOptions(draft, value, { editing, source }));
+            onModeChange?.();
           },
         }),
         el('div', {}, el('strong', {}, title), el('span', { class: 'hint' }, hint)),
       ),
     ),
   );
-  const nodes = [deliveryFieldset];
+  container.replaceChildren(deliveryFieldset, ...youTubeOptions(draft, mode, { editing, source }));
+}
+
+function youTubeOptions(draft, mode, { editing, source }) {
+  const field = (label, type, id, value, placeholder, onInput, extraHint, autocomplete = 'off') =>
+    el(
+      'div',
+      { class: 'setup-field' },
+      el('label', { for: id }, label),
+      el('input', {
+        id,
+        class: 'setup-text-input',
+        type,
+        autocomplete,
+        value: value ?? '',
+        placeholder,
+        oninput: event => onInput(event.target.value),
+      }),
+      extraHint ? el('span', { class: 'hint' }, extraHint) : undefined,
+    );
+  const usesCache = mode === 'auto' || mode === 'ytdlp';
+  const nodes = [];
   if (usesCache) {
     const cacheLimit = field(
       'Cache limit (GB)',
@@ -659,7 +666,8 @@ function renderYouTubeFields(container, draft, { editing = false, source = null 
     const input = cacheLimit.querySelector('input');
     input.min = '0.1';
     input.max = '2000';
-    input.step = '0.5';
+    // The server accepts any finite fractional size within these bounds.
+    input.step = 'any';
     nodes.push(cacheLimit);
   }
   nodes.push(
@@ -734,13 +742,32 @@ function renderYouTubeFields(container, draft, { editing = false, source = null 
     );
     nodes.push(advanced);
   }
-  container.replaceChildren(...nodes);
+  return nodes;
 }
 
 let ytDraft;
+
+function renderYouTubeProbe(draft) {
+  const probe = draft.probe;
+  const status = $('yt-probe-status');
+  if (!probe) {
+    status.hidden = true;
+    return;
+  }
+  status.textContent =
+    draft.delivery === 'embed'
+      ? 'IFrame embed mode does not use yt-dlp.'
+      : probe.ok
+        ? `Detected yt-dlp ${probe.ytdlp}` +
+          (probe.ffmpeg ? ' · FFmpeg ready.' : ' · FFmpeg not found (single-stream fallback).')
+        : draft.delivery === 'ytdlp'
+          ? 'yt-dlp was not found on PATH. Cache-only playback needs yt-dlp. Install it or set its path under Advanced options.'
+          : 'yt-dlp was not found on PATH. Auto mode uses IFrame playback when yt-dlp is unavailable.';
+  status.hidden = false;
+}
 async function addYouTube() {
   parts('sources', 'add-youtube');
-  ytDraft = {
+  const draft = {
     delivery: 'auto',
     maxCacheGb: '20',
     ytDlp: '',
@@ -749,19 +776,16 @@ async function addYouTube() {
     poTokenUrl: '',
     apiKey: '',
     advancedOpen: false,
+    probe: null,
   };
+  ytDraft = draft;
   $('yt-name').value = 'YouTube';
-  $('yt-probe-status').hidden = true;
-  renderYouTubeFields($('yt-fields'), ytDraft);
+  const updateProbe = () => renderYouTubeProbe(draft);
+  updateProbe();
+  renderYouTubeFields($('yt-fields'), draft, { onModeChange: updateProbe });
   await start('youtube');
-  const probe = await step('probe').catch(() => null);
-  if (probe) {
-    $('yt-probe-status').textContent = probe.ok
-      ? `Detected yt-dlp ${probe.ytdlp}` +
-        (probe.ffmpeg ? ' · FFmpeg ready.' : ' · FFmpeg not found (single-stream fallback).')
-      : 'yt-dlp was not found on PATH — Auto mode will use IFrame embed playback until yt-dlp is installed.';
-    $('yt-probe-status').hidden = false;
-  }
+  draft.probe = await step('probe').catch(() => null);
+  if (ytDraft === draft) updateProbe();
 }
 $('yt-form').addEventListener('submit', event => {
   event.preventDefault();
@@ -1165,15 +1189,24 @@ async function probeReadyProxy() {
   button.disabled = true;
   $('ready-proxy-status').textContent = `Checking whether your browser can reach ${info.publicUrl}…`;
   try {
-    const res = await fetch(info.publicUrl + '/health', { mode: 'cors', signal: AbortSignal.timeout(5000) });
+    const res = await fetch(info.publicUrl + '/health', {
+      mode: 'cors',
+      cache: 'no-store',
+      redirect: 'error',
+      signal: AbortSignal.timeout(5000),
+    });
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    $('ready-proxy-status').textContent = `Proxy handoff succeeded: your browser reached ${info.publicUrl}.`;
+    const health = await res.json();
+    if (health?.ok !== true || health.service !== 'uburoom' || health.setup === true) {
+      throw new Error('Expected a running uburoom');
+    }
+    $('ready-proxy-status').textContent = `Proxy handoff succeeded: your browser reached uburoom at ${info.publicUrl}.`;
     $('ready-proxy-guide').hidden = true;
     $('ready-open').textContent = 'Open uburoom';
   } catch {
-    $('ready-proxy-status').textContent = `${info.publicUrl} is not reachable from this browser yet.`;
+    $('ready-proxy-status').textContent = `This browser could not verify uburoom at ${info.publicUrl} yet.`;
     $('ready-proxy-guide').textContent =
-      `uburoom is running and waiting for your Cloudflare Tunnel, Tailscale, or Caddy proxy on port ${info.port}. ` +
+      `Check that your Cloudflare Tunnel, Tailscale, or Caddy proxy forwards to port ${info.port}. ` +
       `Start your tunnel now, then click Retry connection—or open ${info.publicUrl} and sign in normally once your tunnel is live.`;
     $('ready-proxy-guide').hidden = false;
     $('ready-open').textContent = 'Open ' + info.publicUrl;

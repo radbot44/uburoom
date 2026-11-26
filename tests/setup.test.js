@@ -591,11 +591,11 @@ test('VD-04: setup Step 3 adds and edits a YouTube source in embed and auto mode
     action: 'update',
     id: added.body.sources[0].id,
     name: 'YouTube Auto',
-    settings: { delivery: 'auto', maxCacheGb: 10, ytDlp: stubYtDlp },
+    settings: { delivery: 'auto', maxCacheGb: 1.375, ytDlp: stubYtDlp },
   });
   assert.equal(updated.status, 200);
   assert.equal(updated.body.sources[0].delivery, 'auto');
-  assert.equal(updated.body.sources[0].maxCacheGb, 10);
+  assert.equal(updated.body.sources[0].maxCacheGb, 1.375);
 
   await f.browser.post('/setup/api/access', {
     sourceMembers: [],
@@ -611,7 +611,7 @@ test('VD-04: setup Step 3 adds and edits a YouTube source in embed and auto mode
   const config = loadConfig(f.configFile, []);
   assert.equal(config.sources[0].type, 'youtube');
   assert.equal(config.sources[0].delivery, 'auto');
-  assert.equal(config.sources[0].maxCacheGb, 10);
+  assert.equal(config.sources[0].maxCacheGb, 1.375);
 });
 
 test('VD-03 / D4: internet https + allowLan returns localUrl handoff, and http-proxy sets /health CORS while keeping guardProxy strict', async t => {
