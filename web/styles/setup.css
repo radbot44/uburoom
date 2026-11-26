@@ -468,10 +468,10 @@
   .setup-waiting[hidden] {
     display: none;
   }
-  /* The 128-bit setup code is 32 characters long; it fits the card at every width. */
+  /* The 128-bit setup code is 32 characters long (34 with dashes); fit the card at every width. */
   .setup-code-input {
-    font-size: clamp(var(--font-size-14), 3.6vw, var(--font-size-20));
-    letter-spacing: 0.08em;
+    font-size: clamp(var(--font-size-12), 2.8vw, var(--font-size-16));
+    letter-spacing: 0.06em;
     padding-inline: var(--space-8);
   }
   .setup-check strong,

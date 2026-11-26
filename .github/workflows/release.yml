@@ -1,0 +1,133 @@
+name: Release
+
+# Draft-only release workflow per docs/releases.md:
+# - Never auto-publishes on routine pushes or merges.
+# - Runs only on explicit version tags (v*) or manual workflow_dispatch.
+# - Always creates/updates a Draft GitHub Release for owner review before publishing.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag name for the draft release (defaults to v<package.json version>-dev)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Verify (format, lint, typecheck, tests)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.5'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run checks and unit tests
+        run: npm run check
+
+  package-windows:
+    name: Package Windows x64 standalone ZIP
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - name: Checkout (full history for build metadata)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.5'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows x64 standalone ZIP and GPL Corresponding Source
+        run: node scripts/package-standalone.js
+
+      - name: Verify portable ZIP contents and generate SHA256SUMS.txt
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = Get-ChildItem -Path releases -Filter 'uburoom-win-x64-*.zip' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $source = Get-ChildItem -Path releases -Filter 'uburoom-corresponding-source-*.zip' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $bundle) { throw 'Windows standalone ZIP not found in releases/' }
+          if (-not $source) { throw 'Corresponding source ZIP not found in releases/' }
+
+          $verifyDir = Join-Path $env:RUNNER_TEMP 'uburoom-zip-verify'
+          Expand-Archive -Path $bundle.FullName -DestinationPath $verifyDir -Force
+          foreach ($req in @('start-uburoom.bat', 'doctor.bat', 'current.txt', 'README.md', 'LICENSE', 'docs\remote-access.md')) {
+            if (-not (Test-Path (Join-Path $verifyDir $req))) {
+              throw "Portable ZIP missing required root file: $req"
+            }
+          }
+
+          $sums = @(
+            "$((Get-FileHash -Algorithm SHA256 $bundle.FullName).Hash.ToLowerInvariant()) *$($bundle.Name)"
+            "$((Get-FileHash -Algorithm SHA256 $source.FullName).Hash.ToLowerInvariant()) *$($source.Name)"
+          )
+          $sumsPath = Join-Path (Resolve-Path 'releases') 'SHA256SUMS.txt'
+          Set-Content -Path $sumsPath -Value $sums -Encoding ascii
+
+          $pkgVersion = (Get-Content -Raw 'package.json' | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $tag = $env:GITHUB_REF_NAME
+          } elseif ($env:INPUT_RELEASE_TAG) {
+            $tag = $env:INPUT_RELEASE_TAG
+          } else {
+            $tag = "v$pkgVersion-dev"
+          }
+          $isPrerelease = ($tag -match '-') ? 'true' : 'false'
+
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "tag=$tag"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "prerelease=$isPrerelease"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "bundle_path=$($bundle.FullName)"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "source_path=$($source.FullName)"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "sums_path=$sumsPath"
+        id: artifacts
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+
+      - name: Create Draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.artifacts.outputs.tag }}
+          PRERELEASE: ${{ steps.artifacts.outputs.prerelease }}
+          BUNDLE: ${{ steps.artifacts.outputs.bundle_path }}
+          SOURCE: ${{ steps.artifacts.outputs.source_path }}
+          SUMS: ${{ steps.artifacts.outputs.sums_path }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $notes = @(
+            "## Windows (Recommended)"
+            "Download the ``uburoom-win-x64-*.zip`` archive, unzip it, and run ``start-uburoom.bat``."
+            "Node.js and FFmpeg are bundled; no separate runtime install is required."
+            ""
+            "## Verification"
+            "Verify downloads against ``SHA256SUMS.txt``."
+            ""
+            "## License & Corresponding Source"
+            "``uburoom-corresponding-source-*.zip`` is the GPLv3 corresponding source archive for the bundled binaries (not needed for installation)."
+          ) -join "`n"
+
+          $args = @('release', 'create', $env:TAG, $env:BUNDLE, $env:SOURCE, $env:SUMS, '--draft', '--title', "uburoom $env:TAG", '--notes', $notes)
+          if ($env:PRERELEASE -eq 'true') {
+            $args += '--prerelease'
+          }
+          gh @args

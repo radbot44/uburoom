@@ -783,6 +783,14 @@ async function packageStandalone({
     fs.writeFileSync(path.join(portableRoot, 'current.txt'), `${meta.slot}\n`);
     fs.writeFileSync(path.join(portableRoot, 'start-uburoom.bat'), buildStartBat());
     fs.writeFileSync(path.join(portableRoot, 'doctor.bat'), buildDoctorBat());
+    // Place key user-facing docs at the portable root so paths referenced by the setup wizard exist out of the box.
+    fs.copyFileSync(path.join(ROOT, 'README.md'), path.join(portableRoot, 'README.md'));
+    fs.copyFileSync(path.join(ROOT, 'LICENSE'), path.join(portableRoot, 'LICENSE'));
+    const remoteAccessDoc = path.join(ROOT, 'docs', 'remote-access.md');
+    if (fs.existsSync(remoteAccessDoc)) {
+      fs.mkdirSync(path.join(portableRoot, 'docs'), { recursive: true });
+      fs.copyFileSync(remoteAccessDoc, path.join(portableRoot, 'docs', 'remote-access.md'));
+    }
 
     const bundleZip = path.join(outDir, `uburoom-win-x64-${meta.slot}_${stamp}.zip`);
     createZipFromDir(portableRoot, bundleZip);

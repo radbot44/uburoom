@@ -101,7 +101,7 @@
           </div>
           <p class="setup-error" role="alert" hidden><span data-icon="alert-triangle"></span><span></span></p>
         </div>
-        <footer class="setup-footer">
+        <footer class="setup-footer" data-part="choose done">
           <button class="quiet" type="button" data-go="code">Back</button>
           <button id="account-next" class="primary setup-next" type="button" data-go="sources" disabled>Next</button>
         </footer>
@@ -265,7 +265,19 @@
           <!-- Add folder -->
           <form class="setup-panel" data-part="add-folder" id="folder-form" hidden>
             <h2>Add a folder</h2>
-            <p class="setup-folder-path setup-flush" id="folder-path"></p>
+            <div class="setup-manual-row setup-flush">
+              <label class="visually-hidden" for="folder-path-input">Folder path</label>
+              <input
+                id="folder-path-input"
+                class="setup-text-input"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="Paste a folder path or browse below"
+              />
+              <button id="folder-path-go" class="quiet" type="button">Open</button>
+            </div>
+            <p class="setup-folder-path setup-gap" id="folder-path"></p>
+            <p class="hint setup-flush" id="folder-video-hint" hidden></p>
             <ul class="setup-folders" id="folder-list"></ul>
             <div class="setup-field">
               <label for="folder-name">Name</label>
@@ -498,6 +510,10 @@
           </div>
         </div>
         <a class="primary" id="ready-open" href="/">Open uburoom</a>
+        <p class="hint setup-gap" id="ready-cert-note" hidden>
+          Your browser will show a one-time security warning for uburoom’s self-signed certificate—accept it to
+          continue. If you aren’t signed in automatically afterward, sign in with the account you just created.
+        </p>
         <div class="setup-gap">
           <a class="quiet" id="ready-local" href="/" hidden>Open locally instead</a>
         </div>

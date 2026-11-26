@@ -6,9 +6,20 @@ Watch together, in sync. uburoom is a server you run yourself: friends join a ro
 
 ## Install
 
-You need a computer that stays on, [Node.js](https://nodejs.org/) **22.13.0 or later**, and a media source: a Plex server, a Jellyfin server or a folder of videos. FFmpeg is needed for subtitles and for converting video a browser cannot play.
+You need a computer that stays on and a media source: a Plex server, a Jellyfin server, a folder of videos, or YouTube.
+
+**Windows (release ZIP — recommended)**
+
+The Windows release ZIP (`uburoom-win-x64-….zip`) includes Node.js and FFmpeg — no separate install needed.
+
+1. Download and unzip `uburoom-win-x64-….zip`.
+2. Run `start-uburoom.bat` to start the server. Keep its window open.
+3. The first time, the window shows a setup link. Open it and follow [first-time setup](#first-time-setup).
+4. Run `doctor.bat` any time to check your configuration and media tools.
 
 **Windows, from source**
+
+Requires [Node.js](https://nodejs.org/) **22.13.0 or later**, plus FFmpeg for subtitles and converting video a browser cannot play.
 
 1. Download or clone this repository.
 2. Run `install-uburoom.bat` once. It installs dependencies.
@@ -16,6 +27,8 @@ You need a computer that stays on, [Node.js](https://nodejs.org/) **22.13.0 or l
 4. The first time, the window shows a setup link. Open it and follow [first-time setup](#first-time-setup).
 
 **Linux or macOS, from source**
+
+Requires [Node.js](https://nodejs.org/) **22.13.0 or later** and FFmpeg.
 
 ```sh
 npm ci
@@ -36,12 +49,14 @@ The wizard has six steps:
 
 1. **Setup code.** Filled in from the link.
 2. **Your account.** Sign in with Plex, or create a uburoom account. This account becomes the server operator.
-3. **Media sources.** Add any number of Plex servers, Jellyfin servers and folders, and choose which libraries each offers.
+3. **Media sources.** Add any number of Plex servers, Jellyfin servers, folders, and YouTube, and choose which libraries each offers.
 4. **Who can get in.** Members of your Plex or Jellyfin servers, a server password, uburoom accounts, room invites, and members of your Discord servers.
 5. **Where people watch.** This computer, or your home network, and the port.
 6. **Check and finish.** uburoom checks the port, sources, certificate, data folder and encryption key, writes `config.yaml` (with a self-signed certificate in its `data/certs` folder) and opens uburoom with you signed in. Browsers warn about the certificate the first time; accept it once.
 
-Setup runs only while the config file is missing. A config that exists but has a mistake stops startup with the reason instead. To set up again, stop uburoom and move `config.yaml` away. Everything the wizard sets, and much more, can also be changed by hand: [`config.example.yaml`](config.example.yaml) lists every setting, and `npm run doctor` checks a config you edited.
+To add more uburoom accounts after setup, open your profile menu → **Server settings** → **Accounts** and send each person their one-time password link (or share a room invite link for guests).
+
+Setup runs only while the config file is missing. A config that exists but has a mistake stops startup with the reason instead. To set up again, stop uburoom and move `config.yaml` away. Everything the wizard sets, and much more, can also be changed by hand: [`config.example.yaml`](config.example.yaml) lists every setting, and `doctor.bat` (or `npm run doctor`) checks a config you edited.
 
 To invite people from outside your home network, you need a public HTTPS address. [Self-hosting](docs/self-hosting.md#network-and-deployment) covers reverse proxies and trusted proxies.
 

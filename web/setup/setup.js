@@ -531,6 +531,22 @@ function segmented(group, value) {
 async function browse(path) {
   listing = await step('browse', { path });
   $('folder-path').textContent = listing.path || 'This computer';
+  $('folder-path-input').value = listing.path || '';
+  const videoHint = $('folder-video-hint');
+  if (!listing.path) {
+    videoHint.hidden = true;
+  } else if (listing.videoCount > 0) {
+    videoHint.textContent =
+      listing.videoCount === 1
+        ? '1 video found in this folder.'
+        : `${listing.videoCount.toLocaleString()} videos found in this folder.`;
+    videoHint.hidden = false;
+  } else {
+    videoHint.textContent = listing.folders.length
+      ? 'No videos directly in this folder (subfolders are scanned too).'
+      : 'No videos found in this folder yet.';
+    videoHint.hidden = false;
+  }
   $('folder-list').replaceChildren(
     ...(listing.parent !== null
       ? [
@@ -569,9 +585,24 @@ async function addFolder() {
   folderKind = 'movies';
   segmented($('folder-kind-group'), folderKind);
   $('folder-name').value = '';
+  $('folder-path-input').value = '';
+  $('folder-video-hint').hidden = true;
   await start('folders');
   await browse('');
 }
+$('folder-path-input').addEventListener('input', () => {
+  const typed = $('folder-path-input').value.trim();
+  if (!folderNamed && typed) $('folder-name').value = typed.split(/[\\/]/).filter(Boolean).pop() || typed;
+  $('folder-add').disabled = !(typed || listing?.path);
+});
+$('folder-path-input').addEventListener('keydown', event => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  void run('sources', $('folder-path-go'), () => browse($('folder-path-input').value.trim()));
+});
+$('folder-path-go').addEventListener('click', () =>
+  run('sources', $('folder-path-go'), () => browse($('folder-path-input').value.trim())),
+);
 $('folder-name').addEventListener('input', () => (folderNamed = true));
 $('folder-kind-group').addEventListener('click', event => {
   const button = event.target.closest('[data-kind]');
@@ -582,7 +613,8 @@ $('folder-kind-group').addEventListener('click', event => {
 $('folder-form').addEventListener('submit', event => {
   event.preventDefault();
   void run('sources', $('folder-add'), async () => {
-    await step('choose', { path: listing.path, type: folderKind });
+    const targetPath = $('folder-path-input').value.trim() || listing?.path || '';
+    await step('choose', { path: targetPath, type: folderKind });
     await add({ name: $('folder-name').value });
   });
 });
@@ -1230,6 +1262,7 @@ $('check-finish').addEventListener('click', () => {
       if (result.localUrl) $('ready-local').href = result.localUrl;
       $('ready-wan-note').hidden = result.where !== 'internet';
       $('ready-proxy-box').hidden = result.listen !== 'http-proxy';
+      $('ready-cert-note').hidden = result.listen === 'http-proxy';
       show('ready');
       if (result.listen === 'http-proxy') void probeReadyProxy();
     } catch (error) {

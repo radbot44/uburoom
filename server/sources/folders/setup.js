@@ -11,6 +11,7 @@ const { constants: fsConstants } = require('node:fs');
 const MAX_FOLDERS = 500,
   MAX_LIBRARIES = 32,
   MAX_PATHS = 16;
+const VIDEO_EXTS = new Set(['.mkv', '.mp4', '.m4v', '.webm', '.mov', '.avi', '.ts', '.m2ts', '.mpg', '.mpeg', '.wmv']);
 const fail = (message, status = 400) => Object.assign(new Error(message), { status, expose: true });
 
 /** Windows drive roots that exist, for the top of the browser. */
@@ -170,8 +171,11 @@ const steps = {
       .map(entry => ({ name: entry.name, path: path.join(at, entry.name) }))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
       .slice(0, MAX_FOLDERS);
+    const videoCount = entries.filter(
+      entry => entry.isFile() && !entry.name.startsWith('.') && VIDEO_EXTS.has(path.extname(entry.name).toLowerCase()),
+    ).length;
     const up = path.dirname(at);
-    return { path: at, parent: up !== at ? up : platform === 'win32' ? '' : null, folders };
+    return { path: at, parent: up !== at ? up : platform === 'win32' ? '' : null, folders, videoCount };
   },
   /** The folder to add and what it holds; the flow is then ready to be added. */
   async choose(flow, data, { platform = process.platform } = {}) {
