@@ -1297,6 +1297,18 @@ function mount(
       availabilityReads.delete(read);
     }
   }
+  // The notice describes the cached page, not the navigation that originally fetched it.
+  function renderBrowseStatus() {
+    if (screen.kind === 'details' || (screen.kind === 'home' && !screen.q)) return;
+    if (screen.partial && screen.limited)
+      signalError(
+        'Some libraries could not be searched and the search limit was reached. Narrow your search to see more.',
+        () => void loadPage(false),
+      );
+    else if (screen.partial)
+      signalError('Some libraries could not be searched. Showing partial results.', () => void loadPage(false));
+    else if (screen.limited) signalNotice('Not all libraries were searched. Narrow your search to see more.');
+  }
   async function loadPage(append = false) {
     if (!catalog || !screen || screen.kind === 'details' || (screen.kind === 'home' && !screen.q)) return;
     if (append && (screen.loading || screen.nextOffset == null)) return;
@@ -1383,14 +1395,7 @@ function mount(
         setBusy(busy);
         void refreshRoomMedia();
       } else renderResults();
-      if (current.partial && current.limited)
-        signalError(
-          'Some libraries could not be searched and the search limit was reached. Narrow your search to see more.',
-          () => void loadPage(false),
-        );
-      else if (current.partial)
-        signalError('Some libraries could not be searched. Showing partial results.', () => void loadPage(false));
-      else if (current.limited) signalNotice('Not all libraries were searched. Narrow your search to see more.');
+      renderBrowseStatus();
       void checkAvailability(added, current);
     } catch (error) {
       if (version !== requestVersion || catalogVersion !== generation || error.name === 'AbortError') return;
@@ -1514,6 +1519,7 @@ function mount(
     scroll.reserveHeight();
     screen.loading = false;
     renderResults();
+    renderBrowseStatus();
     if (reveal) scroll.position();
     else if (screen.anchor?.id) scroll.restoreAnchor(screen.anchor);
     else {
@@ -1612,7 +1618,10 @@ function mount(
       screen.total = null;
       screen.nextOffset = null;
       screen.loading = false;
-      controller?.abort();
+      screen.partial = false;
+      screen.limited = false;
+      screen.pageError = false;
+      cancelReads();
       renderResults();
       return;
     }

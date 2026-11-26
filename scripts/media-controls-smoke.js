@@ -42,8 +42,29 @@ async function main() {
         { id: 'plex', type: 'plex', url: 'http://plex-fixture.invalid:32400', token: 'fixture-owner' },
       ]),
     };
+    let incompleteSearch = true;
+    let searchReads = 0;
     const plexFetch = async (input, options) => {
-      const pathname = new URL(input).pathname;
+      const { pathname, searchParams } = new URL(input);
+      if (/^\/library\/sections\/[12]\/all$/.test(pathname) && searchParams.get('title') === 'History fixture') {
+        searchReads++;
+        if (pathname.includes('/2/'))
+          return incompleteSearch
+            ? new Response('', { status: 503 })
+            : Response.json({ MediaContainer: { totalSize: 0, Metadata: [] } });
+        const offset = Number(searchParams.get('X-Plex-Container-Start'));
+        return Response.json({
+          MediaContainer: {
+            totalSize: 60,
+            Metadata: Array.from({ length: 3 }, (_, i) => ({
+              ratingKey: String(1001 + offset + i),
+              type: 'movie',
+              title: 'History fixture ' + (1001 + offset + i),
+              duration: 60000,
+            })),
+          },
+        });
+      }
       if (pathname === '/library/sections')
         return new Response(
           JSON.stringify({
@@ -428,6 +449,38 @@ async function main() {
       await pause(180);
       assert.equal(await run('document.documentElement.scrollWidth<=innerWidth+1'), true, '320px Media fits');
       await shot('narrow');
+      // Search results reached the per-library cap and another library failed.
+      // Back should explain both facts and offer Retry without refetching the result page.
+      await run('document.getElementById("library-home").click()');
+      await until('document.getElementById("search").placeholder==="Search all libraries"', 'Libraries home');
+      await run(
+        '(()=>{const e=document.getElementById("search");e.value="History fixture";e.dispatchEvent(new Event("input"))})()',
+      );
+      const mixedNotice =
+        'document.getElementById("library-note").textContent.includes("the search limit was reached") &&' +
+        '!document.querySelector(".library-footer button").hidden';
+      await until(mixedNotice, 'Incomplete search results and Retry');
+      const readsAtFirstResults = searchReads;
+      const firstTile = 'document.querySelector(".library-tile .library-open")';
+      await run(firstTile + '.focus();' + firstTile + '.click()');
+      await until('!document.querySelector(".library-overview").hidden', 'Search item details');
+      await run('document.getElementById("library-back").click()');
+      await until(mixedNotice, 'Incomplete search notice and Retry restored from history');
+      await until(firstTile + '===document.activeElement', 'Focus restored to original result');
+      assert.equal(searchReads, readsAtFirstResults, 'Back does not repeat the search');
+      incompleteSearch = false;
+      await run('document.querySelector(".library-footer button").click()');
+      const limitNotice =
+        'document.getElementById("library-note").textContent.startsWith("Not all libraries were searched.") &&' +
+        'document.querySelector(".library-footer button").hidden';
+      await until(limitNotice, 'Retry performs a new search and replaces the mixed notice with the limit-only notice');
+      assert.ok(searchReads > readsAtFirstResults);
+      const readsAfterRetry = searchReads;
+      await run(firstTile + '.focus();' + firstTile + '.click()');
+      await until('!document.querySelector(".library-overview").hidden', 'Search item details after Retry');
+      await run('document.getElementById("library-back").click()');
+      await until(limitNotice, 'Limit-only notice restored without Retry');
+      assert.equal(searchReads, readsAfterRetry, 'Back does not repeat the retried search');
       console.log(name + ': Media controls and sticky desktop/phone checks passed');
     } finally {
       await browser?.close();
