@@ -1751,6 +1751,7 @@ test('Direct Plex rooms execute zero ffprobe/bridge bytes on load, preload, and 
   };
 
   const plex = new Plex({ url: 'https://plex.example', token: 'owner-token' }, customFetch);
+  plex.shared.sessionReport = { plexSessions: 2, uburoomSessions: 1 };
   plex.pipeline.av1.ffprobe = 'fixture-ffprobe';
   plex.pipeline.av1.run = async () => {
     ffprobeSpawns++;
@@ -1817,6 +1818,14 @@ test('Direct Plex rooms execute zero ffprobe/bridge bytes on load, preload, and 
     assert.equal(autoCheck.status, 200);
     assert.equal(autoCheck.value.status, 'checked');
     assert.equal(autoCheck.value.checking, false);
+    assert.equal(
+      autoCheck.value.items.find(i => i.topic === 'sessions')?.title,
+      'Plex is running 2 conversions, 1 for uburoom',
+    );
+    assert.equal(
+      autoCheck.value.items.some(i => i.title === "Provider check couldn't run"),
+      false,
+    );
     assert.ok(
       autoCheck.value.items.some(i => i.title === 'Direct Plex playback active — container scan skipped'),
       'auto check reports skipped container scan',

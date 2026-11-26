@@ -129,12 +129,12 @@ class MediaChecks {
     const existing = key ? this.files.get(key) : undefined;
     const canStartProbe = allowFileProbe || Boolean(existing?.items);
     const entry = canStartProbe ? this.start(media) : undefined;
-    const serverCheck = media?.provider?.checks?.server;
-    const hasServerCheck = typeof serverCheck === 'function';
+    const providerChecks = media?.provider?.checks;
+    const hasServerCheck = typeof providerChecks?.server === 'function';
     let live = [];
     if (hasServerCheck) {
       try {
-        live = (await serverCheck()) || [];
+        live = (await providerChecks.server()) || [];
       } catch (error) {
         live = [
           {
