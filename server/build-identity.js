@@ -25,7 +25,11 @@ function readBuildIdentity(appRoot = path.resolve(__dirname, '..')) {
         stdio: ['ignore', 'pipe', 'ignore'],
       }).trim();
     try {
-      if (fs.realpathSync(git('rev-parse', '--show-toplevel')) !== fs.realpathSync(appRoot)) return unknown;
+      const normalize = p => {
+        const real = fs.realpathSync.native(p);
+        return process.platform === 'win32' ? real.toLowerCase() : real;
+      };
+      if (normalize(git('rev-parse', '--show-toplevel')) !== normalize(appRoot)) return unknown;
       const commit = git('rev-parse', '--verify', 'HEAD');
       if (commitPattern.test(commit)) return identity(commit, git('status', '--porcelain').length > 0);
     } catch {}

@@ -35,6 +35,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install pinned FFmpeg on PATH for tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = (Get-Content -Raw 'scripts/standalone-dependencies.json' | ConvertFrom-Json).'win32-x64'.ffmpeg
+          $zipPath = Join-Path $env:RUNNER_TEMP $manifest.archiveFile
+          $extractDir = Join-Path $env:RUNNER_TEMP 'uburoom-ci-ffmpeg'
+          Invoke-WebRequest -Uri $manifest.url -OutFile $zipPath
+          $actual = (Get-FileHash -Algorithm SHA256 $zipPath).Hash.ToLowerInvariant()
+          if ($actual -ne $manifest.sha256) {
+            throw "FFmpeg SHA-256 mismatch: expected $($manifest.sha256), got $actual"
+          }
+          Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+          $binDir = (Get-ChildItem -Path $extractDir -Recurse -Filter 'ffmpeg.exe' | Select-Object -First 1).DirectoryName
+          if (-not $binDir) { throw 'ffmpeg.exe not found in extracted archive' }
+          Add-Content -Path $env:GITHUB_PATH -Value $binDir
+
       - name: Run checks and unit tests
         run: npm run check
 
