@@ -19,6 +19,7 @@ const https = require('node:https');
 const { randomBytes, createHash } = require('node:crypto');
 const { PlexTv } = require('../identity');
 const { createStaticFiles, WEB } = require('../http/static');
+const { service } = require('../http/health');
 const { createConfigFile } = require('../config-editor');
 const { createCertificate } = require('../local-tls');
 const { createSetupGuard } = require('./code');
@@ -314,7 +315,7 @@ async function startSetup({
     if (!hostname) return json(res, 421, { error: 'Open setup at localhost or this computer’s IP address' });
     const url = new URL(req.url || '/', 'http://setup');
     const route = url.pathname;
-    if (req.method === 'GET' && route === '/health') return json(res, 200, { ok: true, setup: true });
+    if (req.method === 'GET' && route === '/health') return json(res, 200, { ok: true, service, setup: true });
     if (finished) return json(res, 503, { error: 'Setup has finished' });
     const requestOrigin = new URL((secure ? 'https://' : 'http://') + req.headers.host).origin;
     if (['GET', 'HEAD'].includes(req.method || '')) {

@@ -443,7 +443,7 @@ test('in a container: an empty config folder, HTTPS setup and a server reachable
   f.browser = client(published);
   assert.equal(fs.existsSync(path.dirname(f.configFile)), false, 'the config folder starts empty (or missing)');
   // The image's health check reaches setup over HTTPS.
-  assert.deepEqual((await f.browser.request('/health')).body, { ok: true, setup: true });
+  assert.deepEqual((await f.browser.request('/health')).body, { ok: true, service: 'uburoom', setup: true });
   const signed = await signIn(f);
   assert.match(signed.headers['set-cookie'][0], /; Secure/);
   const options = (await f.browser.request('/setup/api/network')).body;

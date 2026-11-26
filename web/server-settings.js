@@ -136,6 +136,7 @@ function mount({ request, trigger }) {
     footer.hidden = section === 'sources' && !canRestart;
     save.setAttribute('aria-busy', String(saving));
     // Accounts and Sources act at once and keep their own busy state; only the saved-settings fields wait for a draft.
+    nav.inert = content.inert = restarting;
     for (const control of content.querySelectorAll('input,select,button'))
       if (savedControl(control)) control.disabled = busy || !draft || control.dataset.fixed === 'true';
     for (const item of permissionControls) {
@@ -149,7 +150,7 @@ function mount({ request, trigger }) {
     }
     for (const button of resolutions.querySelectorAll('button')) button.disabled = busy;
     add.disabled = busy || !draft || draft['transcoding.qualities'].length >= 32;
-    review.disabled = busy;
+    review.disabled = restarting || busy;
   }
   function set(key, value) {
     draft[key] = value;
@@ -260,7 +261,7 @@ function mount({ request, trigger }) {
   });
   const sourcesPanel = uburoomServerSources.mount(panels.sources, {
     request,
-    canWrite: () => !saving,
+    canWrite: () => !saving && !restarting,
     onWriting: writing => {
       sourcesWriting = writing;
       state();
@@ -716,13 +717,22 @@ function mount({ request, trigger }) {
     }
   }
   review.addEventListener('click', () => void load(!!base));
-  async function waitForRestart(id) {
+  async function waitForRestart(id, previousBoot) {
     const deadline = Date.now() + 20000;
     await new Promise(resolve => setTimeout(resolve, 400));
     while (id === generation && dialog.open && Date.now() < deadline) {
       try {
         const res = await fetch('/health', { cache: 'no-store', signal: AbortSignal.timeout(2000) });
-        if (res.ok) {
+        const health = res.ok ? await res.json() : null;
+        if (id !== generation || !dialog.open) return;
+        if (
+          health?.ok === true &&
+          health.service === 'uburoom' &&
+          health.setup !== true &&
+          typeof health.bootId === 'string' &&
+          health.bootId &&
+          health.bootId !== previousBoot
+        ) {
           location.reload();
           return;
         }
@@ -732,13 +742,18 @@ function mount({ request, trigger }) {
     if (id === generation && dialog.open) {
       restarting = false;
       state();
-      message.textContent = 'uburoom is still restarting. Refresh the page shortly.';
+      message.textContent = 'Could not confirm uburoom restarted. Refresh the page to check.';
+      if (document.activeElement === document.body) restartButton.focus();
     }
   }
   async function triggerRestart(confirmActive) {
     if (restarting || busy || saving || sourcesWriting) return;
     if (dirty()) {
       error.textContent = 'Save or discard your draft changes before restarting.';
+      return;
+    }
+    if (sourcesPanel.hasDraft()) {
+      error.textContent = 'Save or cancel the open Sources form before restarting.';
       return;
     }
     const id = generation;
@@ -748,10 +763,18 @@ function mount({ request, trigger }) {
     resolutions.replaceChildren();
     message.textContent = 'Restarting uburoom…';
     try {
-      await request('/api/operator/restart', { confirmActive });
+      const result = await request('/api/operator/restart', { confirmActive });
       if (id !== generation || !dialog.open) return;
+      if (typeof result?.bootId !== 'string' || !result.bootId) {
+        restarting = false;
+        state();
+        message.textContent =
+          'Restart requested, but could not verify the running instance. Refresh the page to check.';
+        restartButton.focus();
+        return;
+      }
       message.textContent = 'Restarting uburoom… Waiting for the server to reconnect.';
-      void waitForRestart(id);
+      void waitForRestart(id, result.bootId);
     } catch (failure) {
       if (id !== generation || !dialog.open) return;
       restarting = false;
@@ -773,10 +796,14 @@ function mount({ request, trigger }) {
         proceed.addEventListener('click', () => void triggerRestart(true));
         const keep = node('button', box, 'Keep running', 'quiet');
         keep.type = 'button';
-        keep.addEventListener('click', () => resolutions.replaceChildren());
+        keep.addEventListener('click', () => {
+          resolutions.replaceChildren();
+          restartButton.focus();
+        });
         proceed.focus();
       } else {
         error.textContent = failure.message;
+        if (document.activeElement === document.body) restartButton.focus();
       }
     }
   }

@@ -4,6 +4,7 @@ const { createRouter } = require('./router');
 const { pageRoutes } = require('./pages');
 const { mediaRoutes } = require('./media');
 const { authRoutes } = require('./auth');
+const { service, bootId } = require('./health');
 const version = require('../../package.json').version;
 
 /**
@@ -72,7 +73,7 @@ function createRoutes({
         name: 'health',
         methods: ['GET'],
         path: '/health',
-        handle: ({ res }) => json(res, 200, { ok: true, version }),
+        handle: ({ res }) => json(res, 200, { ok: true, service, version, bootId }),
       },
     ],
     authRoutes({

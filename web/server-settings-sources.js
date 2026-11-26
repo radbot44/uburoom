@@ -16,7 +16,7 @@ const STEP_TIMEOUT = 25000;
  * @param {HTMLElement} panel
  * @param {{request: (path: string, data?: any, options?: any) => Promise<any>,
  *   onSaved?: (revision: string) => void, onWriting?: (writing: boolean) => void, canWrite?: () => boolean}} services
- * @returns {{load: () => Promise<void>, reset: () => void}}
+ * @returns {{load: () => Promise<void>, reset: () => void, hasDraft: () => boolean, setRevision: (next: string) => void}}
  */
 export function mount(panel, { request, onSaved, onWriting, canWrite }) {
   const doc = panel.ownerDocument;
@@ -1086,12 +1086,13 @@ export function mount(panel, { request, onSaved, onWriting, canWrite }) {
   }
 
   return {
+    hasDraft: () => view.name !== 'list',
     setRevision(next) {
       if (next) revision = next;
     },
     async load() {
-      // A tab switch keeps the in-flight operation and its view. Re-entry can use its result.
-      if (busy) return;
+      // Switching tabs must not discard an open editor or an in-flight operation.
+      if (busy || view.name !== 'list') return;
       view = { name: 'list' };
       generation++;
       details.clear();

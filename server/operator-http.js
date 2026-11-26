@@ -3,6 +3,7 @@ const { hash } = require('./core');
 const { isServerOperator } = require('./operator-policy');
 const { runningSettings } = require('./operator-settings');
 const { isAllowedBrowserOrigin } = require('./origins');
+const { bootId } = require('./http/health');
 
 function operatorHttp({
   config,
@@ -21,7 +22,7 @@ function operatorHttp({
   body,
   json,
 }) {
-  let restarting = false;
+  let restartState;
   // The settings this process is running with. Flush before the final checks, rather than deferring
   // the response: logout, account changes or operator removal during persistence must win.
   async function running(req, res, reply, value) {
@@ -97,38 +98,49 @@ function operatorHttp({
         reply(503, { error: 'Restart is unavailable in this server instance' });
         return true;
       }
-      let openRooms = 0;
-      let activeViewers = 0;
-      let anyPlaying = false;
-      for (const room of watch?.rooms?.values?.() || []) {
-        if (room.closed) continue;
-        openRooms++;
-        activeViewers += room.viewers?.size || 0;
-        if (room.playing || (room.media && !room.state?.paused)) anyPlaying = true;
-      }
-      if ((activeViewers > 0 || anyPlaying) && data.confirmActive !== true) {
+      const activity = () => {
+        let openRooms = 0;
+        let activeViewers = 0;
+        let anyPlaying = false;
+        for (const room of watch?.rooms?.values?.() || []) {
+          if (room.closed) continue;
+          openRooms++;
+          activeViewers += room.viewers?.size || 0;
+          if (room.playing || (room.media && !room.state?.paused)) anyPlaying = true;
+        }
+        return { openRooms, activeViewers, anyPlaying };
+      };
+      const confirmActive = data.confirmActive === true;
+      const needsConfirmation = snapshot => !confirmActive && (snapshot.activeViewers > 0 || snapshot.anyPlaying);
+      const askToConfirm = ({ openRooms, activeViewers }) =>
         reply(409, {
           code: 'ACTIVE_ROOMS',
           openRooms,
           activeViewers,
           error: 'Viewers are currently active in a room; confirm restart to interrupt playback.',
         });
+      const accepted = { ok: true, restarting: true, supervised: Boolean(process.send), bootId };
+      if (restartState) {
+        if (restartState === 'accepted') reply(202, accepted);
+        else reply(409, { error: 'A restart request is already being checked. Try again shortly.' });
         return true;
       }
-      if (restarting) {
-        reply(202, { ok: true, restarting: true, supervised: Boolean(process.send) });
+      const before = activity();
+      if (needsConfirmation(before)) {
+        askToConfirm(before);
         return true;
       }
-      restarting = true;
+      restartState = 'checking';
       try {
         registry.audit(login.userId, 'operator-restart', {
-          confirmActive: data.confirmActive === true,
-          openRooms,
-          activeViewers,
+          phase: 'requested',
+          confirmActive,
+          openRooms: before.openRooms,
+          activeViewers: before.activeViewers,
         });
         await registry.flush();
       } catch (error) {
-        restarting = false;
+        restartState = undefined;
         reply(503, { error: 'Could not record restart audit event' });
         return true;
       }
@@ -138,10 +150,19 @@ function operatorHttp({
         req.headers['x-csrf-token'] !== login.csrf ||
         (login.oauth && login.oauth.expires <= Date.now())
       ) {
-        restarting = false;
+        restartState = undefined;
         reply(current() ? 403 : 401, { error: 'Operator authorization changed' });
         return true;
       }
+      // A viewer may have joined while the request audit was being persisted. Check
+      // again at the final decision boundary, without awaiting any more work.
+      const after = activity();
+      if (needsConfirmation(after)) {
+        restartState = undefined;
+        askToConfirm(after);
+        return true;
+      }
+      restartState = 'accepted';
       let triggered = false;
       const trigger = () => {
         if (triggered) return;
@@ -151,7 +172,7 @@ function operatorHttp({
       res.once('finish', trigger);
       const fallback = setTimeout(trigger, 150);
       fallback.unref();
-      reply(202, { ok: true, restarting: true, supervised: Boolean(process.send) });
+      reply(202, accepted);
       return true;
     }
     if (url.pathname !== '/api/operator/settings/saved' || !['GET', 'POST'].includes(req.method)) return false;

@@ -275,9 +275,54 @@ test('createApp() unsupervised hides Restart now (canRestart === false) and guar
     assert.equal(playingConflict.body.activeViewers, 0);
     assert.equal(restartCalls, 0);
 
+    // A newly active viewer must win if they join while the restart audit is being flushed.
+    room.state.paused = true;
+    const { audit, flush } = app.registry;
+    let requested = false;
+    let reachedAuditFlush;
+    const atAuditFlush = new Promise(resolve => (reachedAuditFlush = resolve));
+    let releaseAuditFlush;
+    const waitForViewer = new Promise(resolve => (releaseAuditFlush = resolve));
+    app.registry.audit = function (actor, action, data) {
+      if (action === 'operator-restart') requested = true;
+      return audit.call(this, actor, action, data);
+    };
+    app.registry.flush = async function () {
+      if (requested) {
+        requested = false;
+        reachedAuditFlush();
+        await waitForViewer;
+      }
+      return flush.call(this);
+    };
+    const pendingRestart = browser.post('/api/operator/restart', {}, { 'x-csrf-token': csrf });
+    let overlapping;
+    try {
+      // Race the gate against the request so a missing flush fails instead of hanging the suite.
+      await Promise.race([atAuditFlush, pendingRestart]);
+      overlapping = await browser.post('/api/operator/restart', { confirmActive: true }, { 'x-csrf-token': csrf });
+      room.viewers.set('v-1', { userId: guestUser.userId, actor: { userId: guestUser.userId, name: 'Viewer' } });
+    } finally {
+      releaseAuditFlush();
+    }
+    const lateViewer = await pendingRestart;
+    app.registry.audit = audit;
+    app.registry.flush = flush;
+    assert.equal(overlapping.status, 409, 'an unaccepted restart must not report success to another request');
+    assert.equal(lateViewer.status, 409);
+    assert.equal(lateViewer.body.code, 'ACTIVE_ROOMS');
+    assert.equal(lateViewer.body.activeViewers, 1);
+    assert.equal(restartCalls, 0);
+
+    const health = await browser.request('/health');
+    assert.equal(health.headers['cache-control'], 'no-store');
+    assert.equal(health.body.service, 'uburoom');
+    assert.ok(health.body.bootId);
+
     const confirmed = await browser.post('/api/operator/restart', { confirmActive: true }, { 'x-csrf-token': csrf });
     assert.equal(confirmed.status, 202);
     assert.equal(confirmed.body.restarting, true);
+    assert.equal(confirmed.body.bootId, health.body.bootId);
     await new Promise(resolve => setTimeout(resolve, 200));
     assert.equal(restartCalls, 1);
   } finally {
@@ -411,7 +456,7 @@ test('launcher.js supervises setup IPC, exit 75 slot-switching restart, and non-
   supervisor.stderr.on('data', chunk => (supOut += chunk.toString()));
   try {
     const appBase = `https://localhost:${port}`;
-    await waitForHealth(appBase).catch(err => {
+    const before = await waitForHealth(appBase).catch(err => {
       throw new Error(`${err.message}\nsupervisor output:\n${supOut}`);
     });
     assert.ok(fs.readFileSync(logFile, 'utf8').includes(`uburoom v${APP_VERSION} (g1111111) listening`));
@@ -441,10 +486,13 @@ test('launcher.js supervises setup IPC, exit 75 slot-switching restart, and non-
     const restartRes = await browser.post('/api/operator/restart', {}, { 'x-csrf-token': csrf });
     assert.equal(restartRes.status, 202);
     assert.equal(restartRes.body.supervised, true);
+    assert.equal(restartRes.body.bootId, before.bootId);
 
     // Wait for respawn on the same port and confirm slot2 booted cleanly with WAL/lock intact
     await new Promise(resolve => setTimeout(resolve, 700));
-    await waitForHealth(appBase);
+    const after = await waitForHealth(appBase);
+    assert.equal(after.version, before.version);
+    assert.notEqual(after.bootId, before.bootId);
     assert.match(fs.readFileSync(logFile, 'utf8'), /g2222222/);
     assert.match(supOut, /Restarting uburoom/);
   } finally {
