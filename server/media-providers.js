@@ -554,20 +554,32 @@ class MediaProviders {
    * and Recently added from every provider that lists it, newest first. Each item names its server.
    */
   async shelves(actor, scopeFor = (person, serverId) => this.for(person, serverId)) {
-    const continueWatching = [],
-      recentlyAdded = [];
-    for (const provider of this.list) {
-      if (!provider.root?.configured) continue;
-      try {
-        const serverId = await this.identityOf(provider);
-        const named = item => ({ ...item, serverId });
-        const scope = await scopeFor(actor, serverId);
-        if (provider.continueWatching) continueWatching.push(...(await provider.continueWatching(actor)).map(named));
-        if (scope.recentlyAdded) recentlyAdded.push(...(await scope.recentlyAdded()).map(named));
-      } catch {
-        // A server that cannot answer leaves its items out; the rest still show.
+    const providers = this.list.filter(provider => provider.root?.configured);
+    // At most two source lanes run at once; each source's own steps stay in order, and results are slotted by
+    // configured position so the merged order matches a serial walk.
+    const slots = new Array(providers.length);
+    let next = 0;
+    const lane = async () => {
+      while (next < providers.length) {
+        const index = next++,
+          provider = providers[index],
+          mine = { continueWatching: [], recentlyAdded: [] };
+        slots[index] = mine;
+        try {
+          const serverId = await this.identityOf(provider);
+          const named = item => ({ ...item, serverId });
+          const scope = await scopeFor(actor, serverId);
+          if (provider.continueWatching)
+            mine.continueWatching.push(...(await provider.continueWatching(actor)).map(named));
+          if (scope.recentlyAdded) mine.recentlyAdded.push(...(await scope.recentlyAdded()).map(named));
+        } catch {
+          // A server that cannot answer leaves its items out; the rest still show.
+        }
       }
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(2, providers.length) }, lane));
+    const continueWatching = slots.flatMap(slot => slot.continueWatching),
+      recentlyAdded = slots.flatMap(slot => slot.recentlyAdded);
     recentlyAdded.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
     return { continueWatching: continueWatching.slice(0, 20), recentlyAdded: recentlyAdded.slice(0, 20) };
   }

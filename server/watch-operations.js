@@ -86,10 +86,16 @@ async function roomContinue(rows, scopeFor) {
       unfinished.push({ row, position });
     if (unfinished.length >= 10) break;
   }
+  // One scope lookup per server for this call only; never kept beyond it.
+  const scopes = new Map();
+  const scopeOnce = serverId => {
+    if (!scopes.has(serverId)) scopes.set(serverId, Promise.resolve().then(() => scopeFor(serverId)));
+    return scopes.get(serverId);
+  };
   const items = await Promise.all(
     unfinished.map(async ({ row, position }) => {
       try {
-        const item = await (await scopeFor(row.serverId)).playableItem(row.mediaId);
+        const item = await (await scopeOnce(row.serverId)).playableItem(row.mediaId);
         return item && { ...item, serverId: row.serverId, viewOffset: Math.round(position) };
       } catch {
         return undefined;
