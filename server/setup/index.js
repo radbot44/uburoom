@@ -26,6 +26,7 @@ const { createSetupGuard } = require('./code');
 const { createWizard, homeAddress, DEFAULT_PORT } = require('./wizard');
 const { configText, load } = require('./config-file');
 const { runChecks } = require('./checks');
+const { inspectAndRestoreBackup, MAX_ARCHIVE_BYTES } = require('../backup');
 
 const TICKET_MS = 2 * 60000;
 const COOKIE = 'uburoom_setup';
@@ -166,6 +167,24 @@ async function startSetup({
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail('Invalid request');
     return value;
   }
+  async function rawBody(req, limit = MAX_ARCHIVE_BYTES) {
+    const contentType = String(req.headers['content-type'] || '')
+      .split(';')[0]
+      .trim()
+      .toLowerCase();
+    if (!['application/zip', 'application/octet-stream', 'application/x-zip-compressed'].includes(contentType))
+      throw fail('Upload a ZIP backup archive');
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of req) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buf.length;
+      if (total > limit) throw fail('Backup archive is too large', 413);
+      chunks.push(buf);
+    }
+    if (total === 0) throw fail('Choose a backup ZIP file');
+    return Buffer.concat(chunks, total);
+  }
   function setCookie(res, value, maxAge) {
     res.setHeader(
       'Set-Cookie',
@@ -272,6 +291,68 @@ async function startSetup({
     }
   }
 
+  /** Validates and restores a backup ZIP archive during first-run setup, then hands off to the server. */
+  async function restore(req, res, setupOrigin) {
+    if (finishing) throw fail('Setup is already finishing', 409);
+    finishing = true;
+    try {
+      if (!needsSetup(configFile)) {
+        throw fail('A config.yaml already exists; restore is only available during first-run setup', 409);
+      }
+      const zipBuffer = await rawBody(req, MAX_ARCHIVE_BYTES);
+      const restored = inspectAndRestoreBackup({ zipBuffer, configFile, platform });
+      const config = restored.config;
+      log.info('Restored backup to ' + configFile);
+      guard.end();
+      wizard.close();
+      clearInterval(sweep);
+      finished = true;
+      server.close();
+      server.closeIdleConnections?.();
+      await new Promise(resolve => setImmediate(resolve));
+      try {
+        await handOff({ restored: true });
+      } catch (error) {
+        log.error('uburoom could not start after restore: ' + error.message);
+        return json(res, 500, {
+          error: 'Backup files were restored, but uburoom couldn’t start: ' + String(error.message).slice(0, 300),
+        });
+      }
+      const suffix = config.port === 443 ? '' : ':' + config.port;
+      const setupHostname = new URL(setupOrigin).hostname;
+      const setupHostBare = setupHostname.replace(/^\[|\]$/g, '');
+      const localOrigin =
+        config.listen === 'https' && config.lanUrl === 'auto'
+          ? 'https://' +
+            (setupHostname === 'localhost' || net.isIP(setupHostBare) ? setupHostname : 'localhost') +
+            suffix
+          : undefined;
+      const localUrl = localOrigin && localOrigin !== config.publicUrl ? localOrigin + '/' : undefined;
+      json(res, 200, {
+        restored: true,
+        url: config.publicUrl + '/',
+        ...(localUrl ? { localUrl } : {}),
+        listen: config.listen || 'https',
+        port: config.port,
+        publicUrl: config.publicUrl,
+        manifest: {
+          version: restored.manifest.version,
+          schemaVersion: restored.manifest.schemaVersion,
+          createdAt: restored.manifest.createdAt,
+        },
+      });
+    } finally {
+      if (!finished) finishing = false;
+      else
+        res.once('finish', () =>
+          setImmediate(() => {
+            files.close();
+            server.closeAllConnections?.();
+          }),
+        );
+    }
+  }
+
   /** @type {Record<string, (data: any, req: any) => any>} */
   const api = {
     'GET /setup/api/state': () => wizard.view(),
@@ -364,6 +445,7 @@ async function startSetup({
         return json(res, 401, { code: 'session', error: 'Enter the setup code again' });
       origin = requestOrigin;
       if (req.method === 'POST' && route === '/setup/api/finish') return await finish(req, res, requestOrigin);
+      if (req.method === 'POST' && route === '/setup/api/restore') return await restore(req, res, requestOrigin);
       const action = api[req.method + ' ' + route];
       if (!action) return json(res, 404, { error: 'Not found' });
       const data = req.method === 'POST' ? await body(req) : {};

@@ -37,7 +37,35 @@
           <p class="hint" id="code-where">Docker: run <code>docker logs uburoom</code> to see it.</p>
           <p class="hint" id="code-filled" hidden>Filled in from the link in the uburoom window.</p>
           <footer class="setup-footer">
+            <button id="code-restore-open" class="quiet" type="button">Restore from a backup</button>
             <button id="code-next" class="primary setup-next" type="submit">Continue</button>
+          </footer>
+        </form>
+      </section>
+
+      <!-- 1b. Restore from a backup -->
+      <section class="card setup-card" data-screen="restore" aria-labelledby="h-restore" hidden>
+        <p class="hint setup-step">Restore backup</p>
+        <h1 id="h-restore" tabindex="-1">Restore from a backup</h1>
+        <p>
+          Upload a uburoom backup ZIP archive. uburoom verifies the manifest, file hashes, database integrity, and
+          encryption key before restoring.
+        </p>
+        <form id="restore-form" class="setup-body">
+          <div class="setup-panel">
+            <div class="setup-field">
+              <label for="restore-file">Backup archive (.zip)</label>
+              <input id="restore-file" class="setup-file-input" type="file" accept=".zip,application/zip" required />
+              <span class="hint" id="restore-file-hint">
+                Restores config.yaml, accounts.sqlite, TLS certificates (if included), and credentials.key.
+              </span>
+            </div>
+          </div>
+          <p class="hint setup-gap" id="restore-status" role="status" hidden></p>
+          <p class="setup-error" role="alert" hidden><span data-icon="alert-triangle"></span><span></span></p>
+          <footer class="setup-footer">
+            <button id="restore-back" class="quiet" type="button">Back</button>
+            <button id="restore-submit" class="primary setup-next" type="submit" disabled>Restore and start</button>
           </footer>
         </form>
       </section>

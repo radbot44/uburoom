@@ -423,6 +423,15 @@
   .server-source-confirm > h3 {
     margin-top: 0;
   }
+  .server-backup-actions {
+    margin-top: var(--space-16);
+  }
+  .server-backup-confirm {
+    margin-top: var(--space-16);
+  }
+  .server-backup-confirm[hidden] {
+    display: none;
+  }
   .server-settings-dialog input[type='password'],
   .server-settings-dialog input[type='url'] {
     box-sizing: border-box;

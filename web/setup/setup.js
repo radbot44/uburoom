@@ -43,7 +43,8 @@ const picture = (type, size) =>
 // ----- Screens, errors and requests -----
 
 let current = 'code',
-  resume = 'account';
+  resume = 'account',
+  sessionReady = false;
 const card = name => document.querySelector(`[data-screen="${name}"]`);
 function show(name, { focus = true } = {}) {
   current = name;
@@ -80,6 +81,7 @@ async function api(path, data) {
   }
   const value = await response.json().catch(() => ({}));
   if (response.status === 401 && value.code === 'session') {
+    sessionReady = false;
     if (current !== 'code') resume = current;
     stopPolls();
     show('code');
@@ -131,27 +133,113 @@ if (fromLink) {
   $('code-filled').hidden = false;
   $('code-where').hidden = true;
 }
+async function verifySetupCode() {
+  const input = $('setup-code');
+  try {
+    await api('/setup/api/code', { code: input.value });
+  } catch (error) {
+    input.setAttribute('aria-invalid', 'true');
+    if (error.body?.code === 'locked') input.value = '';
+    $('code-filled').hidden = true;
+    $('code-where').hidden = false;
+    throw error;
+  }
+  input.setAttribute('aria-invalid', 'false');
+  sessionReady = true;
+}
 $('code-form').addEventListener('submit', event => {
   event.preventDefault();
   void run('code', $('code-next'), async () => {
-    const input = $('setup-code');
-    try {
-      await api('/setup/api/code', { code: input.value });
-    } catch (error) {
-      input.setAttribute('aria-invalid', 'true');
-      if (error.body?.code === 'locked') input.value = '';
-      $('code-filled').hidden = true;
-      $('code-where').hidden = false;
-      throw error;
-    }
-    input.setAttribute('aria-invalid', 'false');
+    if (!sessionReady) await verifySetupCode();
     const state = await api('/setup/api/state');
     renderAccount(state.account);
     renderSources(state.sources);
-    await open(resume);
+    await open(resume === 'restore' ? 'restore' : resume);
+  });
+});
+$('code-restore-open').addEventListener('click', () => {
+  void run('code', $('code-restore-open'), async () => {
+    if (!sessionReady) {
+      if (!$('setup-code').value.trim()) {
+        $('setup-code').setAttribute('aria-invalid', 'true');
+        $('setup-code').focus();
+        throw new Error('Enter the setup code shown in the uburoom window first.');
+      }
+      await verifySetupCode();
+    }
+    resume = 'restore';
+    show('restore');
   });
 });
 $('setup-code').addEventListener('input', () => $('setup-code').setAttribute('aria-invalid', 'false'));
+
+// ----- 1b. Restore from a backup -----
+
+$('restore-file').addEventListener('change', () => {
+  const file = $('restore-file').files?.[0];
+  $('restore-submit').disabled = !file;
+  setError('restore', '');
+});
+$('restore-back').addEventListener('click', () => {
+  resume = 'account';
+  show('code');
+});
+$('restore-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const file = $('restore-file').files?.[0];
+  if (!file) return;
+  const button = $('restore-submit');
+  const back = $('restore-back');
+  const status = $('restore-status');
+  back.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.textContent = 'Restoring…';
+  status.textContent = 'Validating and restoring backup…';
+  status.hidden = false;
+  void run('restore', button, async () => {
+    try {
+      let response;
+      try {
+        response = await fetch('/setup/api/restore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/zip' },
+          body: file,
+          signal: AbortSignal.timeout(60000),
+        });
+      } catch {
+        throw new Error('uburoom didn’t answer. Check that the uburoom window is still open.');
+      }
+      const value = await response.json().catch(() => ({}));
+      if (response.status === 401 && value.code === 'session') {
+        sessionReady = false;
+        resume = 'restore';
+        stopPolls();
+        show('code');
+        setError('code', value.error);
+        throw new SessionEnded(value.error);
+      }
+      if (!response.ok) throw new Error(value.error || 'Backup restore failed; check the archive and try again');
+      lastReadyResult = value;
+      $('h-ready').textContent = 'Backup restored';
+      $('ready-subtitle').textContent =
+        'Your settings, accounts, and rooms are restored. Open uburoom and sign in with your existing account.';
+      $('ready-open').href = value.url;
+      $('ready-open').textContent = 'Open uburoom';
+      $('ready-local').hidden = !value.localUrl;
+      if (value.localUrl) $('ready-local').href = value.localUrl;
+      $('ready-wan-note').hidden = true;
+      $('ready-proxy-box').hidden = value.listen !== 'http-proxy';
+      $('ready-cert-note').hidden = value.listen === 'http-proxy';
+      show('ready');
+      if (value.listen === 'http-proxy') void probeReadyProxy();
+    } finally {
+      back.disabled = false;
+      button.setAttribute('aria-busy', 'false');
+      button.textContent = 'Restore and start';
+      status.hidden = true;
+    }
+  });
+});
 
 // ----- 2. Your account -----
 

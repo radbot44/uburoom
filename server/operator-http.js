@@ -1,9 +1,11 @@
 'use strict';
+const fs = require('node:fs');
 const { hash } = require('./core');
 const { isServerOperator } = require('./operator-policy');
 const { runningSettings } = require('./operator-settings');
 const { isAllowedBrowserOrigin } = require('./origins');
 const { bootId } = require('./http/health');
+const { createBackupArchive } = require('./backup');
 
 function operatorHttp({
   config,
@@ -173,6 +175,94 @@ function operatorHttp({
       const fallback = setTimeout(trigger, 150);
       fallback.unref();
       reply(202, accepted);
+      return true;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/operator/backup') {
+      const login = await user(req);
+      const current = () =>
+        !!login &&
+        logins.get(hash(cookies(req)[COOKIES.session] || '')) === login &&
+        validIdentity(login) &&
+        (login.expires === null || login.expires > Date.now());
+      const operator = () => current() && isServerOperator(registry, config, login.userId);
+      if (!current()) {
+        json(res, 401, { error: 'Sign in to download a server backup' });
+        return true;
+      }
+      if (!operator()) {
+        json(res, 403, { error: 'Server operator required' });
+        return true;
+      }
+      if ((await protectedPost(req)) !== login) {
+        json(res, 403, { error: 'Valid origin and CSRF proof required' });
+        return true;
+      }
+      let data;
+      try {
+        data = await body(req);
+      } catch (error) {
+        json(res, error?.status || 400, { error: error?.message || 'Invalid JSON request body' });
+        return true;
+      }
+      if (Object.keys(data).some(key => key !== 'confirm') || data.confirm !== true) {
+        json(res, 400, { error: 'Explicit backup download confirmation is required' });
+        return true;
+      }
+      await registry.flush();
+      if (
+        !operator() ||
+        !isAllowedBrowserOrigin(config, req.headers.origin, req) ||
+        req.headers['x-csrf-token'] !== login.csrf ||
+        (login.oauth && login.oauth.expires <= Date.now())
+      ) {
+        reply(current() ? 403 : 401, { error: 'Operator authorization changed' });
+        return true;
+      }
+      if (!config.configFile || !config.credentialKeyFile || !registry?.db) {
+        reply(503, { error: 'Backup download is unavailable in this server instance' });
+        return true;
+      }
+      try {
+        registry.audit(login.userId, 'operator-backup-download', { action: 'download' });
+        await registry.flush();
+      } catch {
+        reply(503, { error: 'Could not record backup download audit event' });
+        return true;
+      }
+      if (
+        !operator() ||
+        !isAllowedBrowserOrigin(config, req.headers.origin, req) ||
+        req.headers['x-csrf-token'] !== login.csrf ||
+        (login.oauth && login.oauth.expires <= Date.now())
+      ) {
+        reply(current() ? 403 : 401, { error: 'Operator authorization changed' });
+        return true;
+      }
+      let backup;
+      try {
+        backup = createBackupArchive({ config, db: registry.db });
+      } catch (error) {
+        reply(error?.expose && error?.status ? error.status : 503, {
+          error: error?.expose ? error.message : 'Could not create backup archive; check server configuration',
+        });
+        return true;
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/zip',
+        'Content-Length': String(backup.size),
+        'Cache-Control': 'no-store',
+        'Content-Disposition': `attachment; filename="${backup.filename}"`,
+      });
+      const stream = fs.createReadStream(backup.archivePath);
+      const cleanup = () => backup.cleanup();
+      res.once('close', cleanup);
+      res.once('finish', cleanup);
+      stream.once('error', () => {
+        cleanup();
+        if (!res.headersSent) json(res, 500, { error: 'Backup download failed' });
+        else res.destroy();
+      });
+      stream.pipe(res);
       return true;
     }
     if (url.pathname !== '/api/operator/settings/saved' || !['GET', 'POST'].includes(req.method)) return false;

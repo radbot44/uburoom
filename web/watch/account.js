@@ -57,7 +57,11 @@ export function mount(host, deps) {
   let serverSettingsPanel;
   serverSettingsButton.addEventListener('click', () => {
     if (deps.activity || store.identity.token || serverSettingsButton.hidden) return;
-    serverSettingsPanel ||= uburoomServerSettings.mount({ request: deps.api, trigger: serverSettingsButton });
+    serverSettingsPanel ||= uburoomServerSettings.mount({
+      request: deps.api,
+      trigger: serverSettingsButton,
+      getCsrf: () => store.identity.me?.csrf,
+    });
     serverSettingsPanel.open();
   });
   $('account-close').replaceChildren(uburoomIcons.icon(document, 'close'));

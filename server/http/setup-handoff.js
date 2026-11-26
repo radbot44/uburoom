@@ -29,7 +29,7 @@ function setupHandoff({ handoff, config, registry, uburoomAccounts, accountRoute
   return {
     /** Makes the operator's uburoom account (setup's choice), before the app answers anyone. */
     async prepare() {
-      if (!pending) return;
+      if (!pending || !pending.account) return;
       const account = pending.account;
       if (account.provider !== 'uburoom') {
         who = {
@@ -86,7 +86,7 @@ function setupHandoff({ handoff, config, registry, uburoomAccounts, accountRoute
             return json(res, 400, { error: EXPIRED });
           }
           const ticket = typeof data.ticket === 'string' && data.ticket.length <= 100 ? data.ticket : '';
-          const expected = pending && Buffer.from(pending.ticket, 'hex');
+          const expected = pending?.ticket ? Buffer.from(pending.ticket, 'hex') : undefined;
           const given = createHash('sha256').update(ticket).digest();
           const match = !!expected && expected.length === given.length && timingSafeEqual(expected, given);
           if (!match || !who || pending.expires <= Date.now()) {

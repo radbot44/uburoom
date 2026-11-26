@@ -6,7 +6,7 @@ import * as uburoomServerAccounts from './server-settings-accounts.js';
 import * as uburoomServerSources from './server-settings-sources.js';
 import { CAPABILITIES, VIEWER_BLOCKED } from '../shared/sync/policy.mjs';
 
-function mount({ request, trigger }) {
+function mount({ request, trigger, getCsrf }) {
   const popups = uburoomDialogs,
     controls = uburoomControls;
   const node = (tag, parent, text, style) => {
@@ -82,6 +82,7 @@ function mount({ request, trigger }) {
     busy = false,
     saving = false,
     sourcesWriting = false,
+    downloadingBackup = false,
     section = 'rooms',
     conflicts = new Set();
   const labels = {},
@@ -110,8 +111,9 @@ function mount({ request, trigger }) {
     return patch;
   };
   const dirty = () => !!base && Object.keys(changes()).length > 0;
-  const savedControl = control => !panels.accounts.contains(control) && !panels.sources.contains(control);
-  popups.register(dialog, { dirty, busy: () => saving || sourcesWriting || restarting });
+  const savedControl = control =>
+    !panels.accounts.contains(control) && !panels.sources.contains(control) && !panels.backup.contains(control);
+  popups.register(dialog, { dirty, busy: () => saving || sourcesWriting || restarting || downloadingBackup });
   dialog.addEventListener('close', () => {
     if (dialog.open) return;
     generation++;
@@ -122,23 +124,36 @@ function mount({ request, trigger }) {
     sourcesDirty = false;
     canRestart = false;
     restarting = false;
+    downloadingBackup = false;
     conflicts.clear();
     busy = saving = false;
     accountsPanel.reset();
     sourcesPanel.reset();
+    resetBackupPanel();
   });
   function state() {
     updateAccessUi();
     restartButton.hidden = !canRestart;
-    restartButton.disabled = busy || saving || sourcesWriting || restarting;
-    save.disabled = busy || sourcesWriting || sourcesDirty || !revision || !dirty() || conflicts.size > 0 || restarting;
-    cancel.disabled = close.disabled = saving || sourcesWriting || restarting;
-    footer.hidden = section === 'sources' && !canRestart;
+    restartButton.disabled = busy || saving || sourcesWriting || restarting || downloadingBackup;
+    save.disabled =
+      busy ||
+      sourcesWriting ||
+      sourcesDirty ||
+      !revision ||
+      !dirty() ||
+      conflicts.size > 0 ||
+      restarting ||
+      downloadingBackup;
+    cancel.disabled = close.disabled = saving || sourcesWriting || restarting || downloadingBackup;
+    footer.hidden = (section === 'sources' || section === 'backup') && !canRestart;
     save.setAttribute('aria-busy', String(saving));
-    // Accounts and Sources act at once and keep their own busy state; only the saved-settings fields wait for a draft.
+    // Accounts, Sources and Backup act at once and keep their own busy state; only saved-settings fields wait for a draft.
     nav.inert = content.inert = restarting;
     for (const control of content.querySelectorAll('input,select,button'))
       if (savedControl(control)) control.disabled = busy || !draft || control.dataset.fixed === 'true';
+    backupDownloadButton.disabled = downloadingBackup || restarting;
+    backupConfirmButton.disabled = downloadingBackup || restarting;
+    backupCancelButton.disabled = downloadingBackup || restarting;
     for (const item of permissionControls) {
       const own = draft?.[item.key]?.includes(item.cap),
         inherited = item.role === 'host' && draft?.['rooms.viewer_permissions']?.includes(item.cap);
@@ -166,11 +181,12 @@ function mount({ request, trigger }) {
     if (section !== key) content.scrollTop = 0;
     if (key === 'accounts' && section !== key && dialog.open) void accountsPanel.load();
     if (key === 'sources' && section !== key && dialog.open) void sourcesPanel.load();
+    if (section === 'backup' && key !== 'backup') resetBackupPanel();
     section = key;
-    cancel.hidden = save.hidden = key === 'sources';
-    footer.hidden = key === 'sources' && !canRestart;
-    // Accounts and Sources do not depend on the saved settings, so they show even before (or without) them.
-    if (key === 'accounts' || key === 'sources') content.hidden = false;
+    cancel.hidden = save.hidden = key === 'sources' || key === 'backup';
+    footer.hidden = (key === 'sources' || key === 'backup') && !canRestart;
+    // Accounts, Sources and Backup do not depend on the saved settings, so they show even before (or without) them.
+    if (key === 'accounts' || key === 'sources' || key === 'backup') content.hidden = false;
     else if (!draft) content.hidden = true;
     for (const name of Object.keys(panels)) {
       panels[name].hidden = name !== key;
@@ -186,6 +202,7 @@ function mount({ request, trigger }) {
     ['transcoding', 'Transcoding'],
     ['sources', 'Sources'],
     ['accounts', 'Accounts'],
+    ['backup', 'Backup'],
   ]) {
     const button = node('button', nav, label, 'quiet');
     button.type = 'button';
@@ -270,6 +287,110 @@ function mount({ request, trigger }) {
     onSaved: () => {
       sourcesDirty = true;
     },
+  });
+  node('h3', panels.backup, 'Server backup');
+  node(
+    'p',
+    panels.backup,
+    'Download a snapshot of config.yaml, your accounts and rooms database, TLS certificates (if present), and your private encryption key. Restore this archive during first-run setup on a clean installation.',
+    'hint',
+  );
+  const backupActions = node('div', panels.backup, null, 'server-backup-actions');
+  const backupDownloadButton = node('button', backupActions, 'Download backup', 'primary');
+  backupDownloadButton.type = 'button';
+  backupDownloadButton.id = 'server-settings-backup-download';
+  const backupConfirmBox = node('div', panels.backup, null, 'server-source-confirm server-backup-confirm');
+  backupConfirmBox.id = 'server-settings-backup-confirm-box';
+  backupConfirmBox.hidden = true;
+  node('h3', backupConfirmBox, 'Confirm backup download');
+  node(
+    'p',
+    backupConfirmBox,
+    'This archive contains your private encryption key and server tokens — store it privately',
+    'server-source-problem',
+  );
+  const backupConfirmActions = node('div', backupConfirmBox, null, 'server-source-actions');
+  const backupCancelButton = node('button', backupConfirmActions, 'Cancel', 'quiet');
+  backupCancelButton.type = 'button';
+  backupCancelButton.id = 'server-settings-backup-cancel';
+  const backupConfirmButton = node('button', backupConfirmActions, 'Download backup archive', 'primary');
+  backupConfirmButton.type = 'button';
+  backupConfirmButton.id = 'server-settings-backup-confirm';
+  const backupStatus = node('p', panels.backup, null, 'hint server-settings-status');
+  backupStatus.id = 'server-settings-backup-status';
+  backupStatus.setAttribute('role', 'status');
+  const backupError = node('p', panels.backup, null, 'server-settings-error');
+  backupError.id = 'server-settings-backup-error';
+  backupError.setAttribute('role', 'alert');
+  function resetBackupPanel() {
+    backupConfirmBox.hidden = true;
+    backupDownloadButton.hidden = false;
+    backupStatus.textContent = '';
+    backupError.textContent = '';
+  }
+  backupDownloadButton.addEventListener('click', () => {
+    if (downloadingBackup || restarting) return;
+    backupError.textContent = '';
+    backupStatus.textContent = '';
+    backupDownloadButton.hidden = true;
+    backupConfirmBox.hidden = false;
+    backupConfirmButton.focus();
+  });
+  backupCancelButton.addEventListener('click', () => {
+    if (downloadingBackup) return;
+    backupConfirmBox.hidden = true;
+    backupDownloadButton.hidden = false;
+    backupDownloadButton.focus();
+  });
+  backupConfirmButton.addEventListener('click', async () => {
+    if (downloadingBackup || restarting) return;
+    const id = generation;
+    downloadingBackup = true;
+    backupError.textContent = '';
+    backupStatus.textContent = 'Preparing backup archive…';
+    state();
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      const csrf = getCsrf?.();
+      if (csrf) headers['X-CSRF-Token'] = csrf;
+      const response = await fetch('/api/operator/backup', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ confirm: true }),
+        cache: 'no-store',
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!response.ok) {
+        const failed = await response.json().catch(() => ({}));
+        throw new Error(failed.error || 'Backup download failed');
+      }
+      const disposition = response.headers.get('content-disposition') || '';
+      const matched = /filename="([^"]+)"/i.exec(disposition);
+      const filename = matched ? matched[1] : 'uburoom-backup.zip';
+      const blob = await response.blob();
+      if (id !== generation || !dialog.open) return;
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      backupConfirmBox.hidden = true;
+      backupDownloadButton.hidden = false;
+      backupStatus.textContent = 'Backup downloaded. Store it privately.';
+    } catch (failure) {
+      if (id === generation && dialog.open) {
+        backupStatus.textContent = '';
+        backupError.textContent = failure?.message || 'Backup download failed';
+      }
+    } finally {
+      if (id === generation && dialog.open) {
+        downloadingBackup = false;
+        state();
+      }
+    }
   });
   node('h3', panels.access, 'Who can sign in');
   node('p', panels.access, 'Anyone matching at least one enabled method can sign in and watch every library.', 'hint');
@@ -747,7 +868,7 @@ function mount({ request, trigger }) {
     }
   }
   async function triggerRestart(confirmActive) {
-    if (restarting || busy || saving || sourcesWriting) return;
+    if (restarting || busy || saving || sourcesWriting || downloadingBackup) return;
     if (dirty()) {
       error.textContent = 'Save or discard your draft changes before restarting.';
       return;
@@ -920,8 +1041,10 @@ function mount({ request, trigger }) {
       conflicts.clear();
       canRestart = false;
       restarting = false;
+      downloadingBackup = false;
       busy = saving = false;
       resolutions.replaceChildren();
+      resetBackupPanel();
       content.hidden = true;
       review.hidden = true;
       message.textContent = error.textContent = '';

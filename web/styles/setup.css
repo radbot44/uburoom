@@ -73,6 +73,16 @@
     padding: var(--space-12);
     font: inherit;
   }
+  .setup-file-input {
+    box-sizing: border-box;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-10);
+    background: var(--elevated);
+    color: var(--text);
+    padding: var(--space-10);
+    font: inherit;
+  }
   .setup-error {
     display: flex;
     gap: var(--space-8);
