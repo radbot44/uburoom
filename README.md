@@ -12,7 +12,7 @@ You need a computer that stays on and a media source: a Plex server, a Jellyfin 
 
 The Windows release ZIP (`uburoom-win-x64-….zip`) includes Node.js and FFmpeg — no separate install needed.
 
-1. Download and unzip `uburoom-win-x64-….zip`.
+1. [Download for Windows (x64, 185 MiB)](https://github.com/radbot44/uburoom/releases/download/v0.6.1/uburoom-win-x64-0.6.1-g87f9804_20261126-204721.zip) and unzip the file.
 2. Run `start-uburoom.bat` to start the server. Keep its window open.
 3. The first time, the window shows a setup link. Open it and follow [first-time setup](#first-time-setup).
 4. Run `doctor.bat` any time to check your configuration and media tools.
