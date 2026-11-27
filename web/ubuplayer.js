@@ -10,7 +10,15 @@ import * as uburoomPlayback from './playback-policy.js';
 const HTTP_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_HTTP_CHUNKS = 10;
 const SAMPLE_RATE = 48000;
+const PREPARED_WORKER_TTL_MS = 30000;
 const workletModulesLoaded = new WeakMap();
+
+function createAbortError() {
+  if (typeof DOMException === 'function') return new DOMException('Aborted', 'AbortError');
+  const err = new Error('Aborted');
+  err.name = 'AbortError';
+  return err;
+}
 
 function parseContentRangeTotal(header) {
   const match = /^bytes\s+\d+-\d+\/(\d+)$/i.exec(String(header || '').trim());
@@ -253,29 +261,69 @@ async function ensureWorkletModule(audioContext) {
 /**
  * Probe a local File/Blob via `ubuplayer-worker.js` without loading `/vendor/libav/*`
  * on the main thread or when `ubuplayer` is disabled.
+ * When `keepPrepared` is true, returns a bounded one-shot `prepared` handle that
+ * `UbuPlayer` can promote directly into playback without re-initializing LibAV demux.
  * @param {Blob} file
- * @param {{ubuplayerEnabled?: boolean}} [options]
+ * @param {{ubuplayerEnabled?: boolean, keepPrepared?: boolean, preparedTimeoutMs?: number, signal?: AbortSignal}} [options]
  */
 export async function probeLocalFile(file, options = {}) {
   if (options?.ubuplayerEnabled === false) {
     throw new Error('UbuPlayer client playback is disabled.');
   }
+  const signal = options?.signal;
+  if (signal?.aborted) throw createAbortError();
   const reader = new BlobRangeReader(file);
   const { fileSize, initialBytes } = await reader.probe();
+  if (signal?.aborted) throw createAbortError();
+  const keepPrepared = Boolean(options?.keepPrepared);
   const worker = new Worker('/ubuplayer-worker.js', { type: 'module' });
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      worker.terminate();
-      reject(new Error('Timed out reading local file headers.'));
-    }, 15000);
-    const cleanup = () => {
-      clearTimeout(timer);
+    let settled = false;
+    let workerClosed = false;
+    let workerErrored = false;
+    let probeDone = false;
+    const closeWorker = () => {
+      if (workerClosed) return;
+      workerClosed = true;
+      worker.onerror = null;
+      worker.onmessage = null;
       try {
         worker.postMessage({ type: 'close' });
       } catch {}
       setTimeout(() => worker.terminate(), 50);
     };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      closeWorker();
+      reject(createAbortError());
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      closeWorker();
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', onAbort);
+      workerClosed = true;
+      worker.onerror = null;
+      worker.onmessage = null;
+      worker.terminate();
+      reject(new Error('Timed out reading local file headers.'));
+    }, 15000);
+    signal?.addEventListener('abort', onAbort, { once: true });
     worker.onerror = ev => {
+      workerErrored = true;
+      if (probeDone) {
+        closeWorker();
+        return;
+      }
+      if (settled) return;
+      settled = true;
       cleanup();
       reject(ev.error || new Error(ev.message || 'Could not inspect local file.'));
     };
@@ -285,12 +333,19 @@ export async function probeLocalFile(file, options = {}) {
       if (msg.type === 'read') {
         try {
           const bytes = await reader.read(msg.start, msg.end);
-          worker.postMessage({ type: 'readResult', id: msg.id, bytes: bytes.buffer }, [bytes.buffer]);
+          if (!workerClosed) {
+            worker.postMessage({ type: 'readResult', id: msg.id, bytes: bytes.buffer }, [bytes.buffer]);
+          }
         } catch (err) {
-          worker.postMessage({ type: 'readResult', id: msg.id, error: err.message });
+          if (!workerClosed) {
+            worker.postMessage({ type: 'readResult', id: msg.id, error: err.message });
+          }
         }
       } else if (msg.type === 'probed') {
-        cleanup();
+        if (settled) return;
+        probeDone = true;
+        clearTimeout(timer);
+        if (!keepPrepared) closeWorker();
         let webCodecsSupported = typeof VideoDecoder === 'function' && Boolean(msg.video?.webCodecsCodec);
         if (webCodecsSupported && typeof VideoDecoder.isConfigSupported === 'function') {
           try {
@@ -304,8 +359,74 @@ export async function probeLocalFile(file, options = {}) {
             webCodecsSupported = false;
           }
         }
-        resolve({ ...msg, fileSize, webCodecsSupported, mseSupported: webCodecsSupported });
+        if (settled) return;
+        if (signal?.aborted) {
+          settled = true;
+          cleanup();
+          reject(createAbortError());
+          return;
+        }
+        settled = true;
+        signal?.removeEventListener('abort', onAbort);
+        if (!keepPrepared || !webCodecsSupported || workerErrored || workerClosed) {
+          closeWorker();
+          resolve({
+            ...msg,
+            fileSize,
+            webCodecsSupported,
+            mseSupported: webCodecsSupported,
+            ...(keepPrepared ? { prepared: null } : {}),
+          });
+          return;
+        }
+        let disposed = false;
+        let claimed = false;
+        /** @type {ReturnType<typeof setTimeout> | null} */
+        let idleTimer = null;
+        const dispose = () => {
+          if (disposed || claimed) return;
+          disposed = true;
+          if (idleTimer !== null) {
+            clearTimeout(idleTimer);
+            idleTimer = null;
+          }
+          closeWorker();
+        };
+        const ttlMs =
+          Number.isFinite(options?.preparedTimeoutMs) && Number(options.preparedTimeoutMs) >= 0
+            ? Number(options.preparedTimeoutMs)
+            : PREPARED_WORKER_TTL_MS;
+        idleTimer = setTimeout(dispose, ttlMs);
+        worker.onerror = () => dispose();
+        worker.onmessage = ev => {
+          if (ev?.data?.type === 'error') dispose();
+        };
+        const prepared = {
+          file,
+          fileSize,
+          isReady: () => !disposed && !claimed && !workerClosed,
+          claim(expectedFile) {
+            if (disposed || claimed || workerClosed || expectedFile !== file) return null;
+            claimed = true;
+            if (idleTimer !== null) {
+              clearTimeout(idleTimer);
+              idleTimer = null;
+            }
+            worker.onerror = null;
+            worker.onmessage = null;
+            return { worker, reader, fileSize };
+          },
+          dispose,
+        };
+        resolve({ ...msg, fileSize, webCodecsSupported, mseSupported: webCodecsSupported, prepared });
       } else if (msg.type === 'error') {
+        workerErrored = true;
+        if (probeDone) {
+          closeWorker();
+          return;
+        }
+        if (settled) return;
+        settled = true;
         cleanup();
         reject(new Error(msg.message || 'Unsupported media file.'));
       }
@@ -325,7 +446,7 @@ export async function probeLocalFile(file, options = {}) {
 export class UbuPlayer {
   /**
    * @param {HTMLCanvasElement | null} canvasElement
-   * @param {{file?: Blob, url?: string, direct?: boolean, fileSize?: number}} input
+   * @param {{file?: Blob, prepared?: {claim?: (file: Blob) => {worker: Worker, reader: any, fileSize: number} | null, dispose?: () => void} | null, url?: string, direct?: boolean, fileSize?: number}} input
    * @param {()=>number} target
    * @param {(message: string, error?: any)=>void} failed
    * @param {Record<string, any>} [options]
@@ -407,6 +528,7 @@ export class UbuPlayer {
       },
     };
 
+    this.prepared = input.file && input.prepared ? input.prepared : null;
     this.reader = input.file
       ? new BlobRangeReader(input.file)
       : new HttpRangeReader(input.url, {
@@ -618,8 +740,23 @@ export class UbuPlayer {
   }
 
   async start() {
-    const { fileSize, initialBytes } = await this.reader.probe();
-    if (this.destroyed || this.abort.signal.aborted) return;
+    const claimed = this.input?.file ? this.prepared?.claim?.(this.input.file) || null : null;
+    this.prepared = null;
+
+    let fileSize;
+    let initialBytes = null;
+    if (claimed) {
+      fileSize = claimed.fileSize;
+      this.reader = claimed.reader;
+      this.worker = claimed.worker;
+      this.worker.onerror = ev => this.fail(ev.error || new Error(ev.message || 'UbuPlayer worker crashed.'));
+      this.worker.onmessage = event => this.handleWorkerMessage(event.data);
+    } else {
+      const probed = await this.reader.probe();
+      if (this.destroyed || this.abort.signal.aborted) return;
+      fileSize = probed.fileSize;
+      initialBytes = probed.initialBytes;
+    }
 
     const workerAudioPort = await this.initAudioEngine();
     if (this.destroyed || this.abort.signal.aborted) {
@@ -634,9 +771,11 @@ export class UbuPlayer {
       offscreen = this.canvasElement.transferControlToOffscreen();
     }
 
-    this.worker = new Worker('/ubuplayer-worker.js', { type: 'module' });
-    this.worker.onerror = ev => this.fail(ev.error || new Error(ev.message || 'UbuPlayer worker crashed.'));
-    this.worker.onmessage = event => this.handleWorkerMessage(event.data);
+    if (!claimed) {
+      this.worker = new Worker('/ubuplayer-worker.js', { type: 'module' });
+      this.worker.onerror = ev => this.fail(ev.error || new Error(ev.message || 'UbuPlayer worker crashed.'));
+      this.worker.onmessage = event => this.handleWorkerMessage(event.data);
+    }
 
     const startPos = Math.max(0, Number(this.target?.()) || 0);
     this.anchorMediaTime = startPos;
@@ -644,14 +783,16 @@ export class UbuPlayer {
     this.bufferedStart = startPos;
     this.bufferedEnd = startPos;
 
-    const transfers = [initialBytes.buffer];
+    /** @type {Transferable[]} */
+    const transfers = [];
+    if (initialBytes) transfers.push(initialBytes.buffer);
     if (offscreen) transfers.push(offscreen);
     if (workerAudioPort) transfers.push(workerAudioPort);
 
     this.worker.postMessage(
       {
-        type: 'init',
-        fileSize,
+        type: claimed ? 'activate' : 'init',
+        ...(claimed ? {} : { fileSize, initialBytes: initialBytes.buffer }),
         duration: Number.isFinite(this._duration) ? this._duration : 0,
         audioMode: this.audioMode,
         targetHdr: this.targetHdr,
@@ -659,7 +800,6 @@ export class UbuPlayer {
         serverAudioIds: this.options.serverAudioIds,
         startTime: startPos,
         aheadSeconds: uburoomPlayback.BUFFER.ahead,
-        initialBytes: initialBytes.buffer,
         canvas: offscreen,
         sampleRate: this.audioContext?.sampleRate || SAMPLE_RATE,
         audioPort: workerAudioPort,
@@ -1249,6 +1389,8 @@ export class UbuPlayer {
       this.audioSwitchPlayTimer = null;
     }
     this.abort.abort();
+    this.prepared?.dispose?.();
+    this.prepared = null;
     this.reader?.abort();
     this.frameCallbacks.clear();
     this.listeners.clear();

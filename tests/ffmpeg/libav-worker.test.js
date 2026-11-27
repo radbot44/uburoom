@@ -498,4 +498,86 @@ function describeWasmSuite() {
       );
     },
   );
+
+  test(
+    'ubuplayer-worker promotes a probeOnly engine via activate without re-reading block 0 and enforces one-shot activation',
+    { timeout: 20000 },
+    async () => {
+      const fileBuf = fs.readFileSync(path.join(tmpDir, 'dts_dual.mkv'));
+      const mockWC = createMockWebCodecs();
+      const readsAfterProbe = [];
+      const pcmBatches = [];
+      let probedMsg = null;
+      let readyMsg = null;
+      let subInitMsg = null;
+      let duplicateError = null;
+      let activated = false;
+
+      await new Promise((resolve, reject) => {
+        const engine = createWorkerEngine(msg => {
+          if (msg.type === 'read') {
+            if (probedMsg) readsAfterProbe.push([msg.start, msg.end]);
+            const copy = new Uint8Array(fileBuf.subarray(msg.start, Math.min(fileBuf.length, msg.end)));
+            setImmediate(() => engine.onMessage({ type: 'readResult', id: msg.id, bytes: copy.buffer }));
+          } else if (msg.type === 'probed') {
+            probedMsg = msg;
+            activated = true;
+            engine.onMessage({
+              type: 'activate',
+              duration: msg.duration,
+              audioMode: 'normal',
+              audioId: msg.audioTracks[0]?.id,
+              startTime: 1.0,
+              aheadSeconds: 10,
+              canvas: {},
+            });
+          } else if (msg.type === 'ready') {
+            readyMsg = msg;
+            if (msg.subtitleTracks[0]) {
+              engine.onMessage({
+                type: 'selectSubtitle',
+                subGen: 1,
+                subtitleId: msg.subtitleTracks[0].id,
+                time: 1.0,
+                aheadSeconds: 10,
+              });
+            }
+          } else if (msg.type === 'subtitleInit') {
+            subInitMsg = msg;
+          } else if (msg.type === 'audioPcm') {
+            pcmBatches.push(msg);
+            if (subInitMsg && mockWC.stats.chunks.length > 0 && !duplicateError) {
+              // Second activate must be rejected (one-shot activation guard)
+              engine.onMessage({ type: 'activate', canvas: {} });
+            }
+          } else if (msg.type === 'error') {
+            if (activated && readyMsg && !duplicateError) {
+              duplicateError = msg;
+              void engine.cleanup().then(resolve);
+            } else {
+              void engine.cleanup().then(() => reject(new Error(msg.message)));
+            }
+          }
+        }, mockWC);
+
+        const initial = new Uint8Array(fileBuf.subarray(0, Math.min(fileBuf.length, 1024 * 1024)));
+        engine.onMessage({
+          type: 'init',
+          probeOnly: true,
+          fileSize: fileBuf.length,
+          initialBytes: initial.buffer,
+        });
+      });
+
+      assert.ok(probedMsg, 'probeOnly emitted probed metadata');
+      assert.ok(readyMsg, 'activate emitted ready metadata');
+      assert.equal(readyMsg.audioTracks.length, 2, 'preserved both audio tracks across activate');
+      assert.equal(readyMsg.subtitleTracks.length, 1, 'preserved embedded ASS subtitle track across activate');
+      assert.equal(readsAfterProbe.length, 0, 'zero duplicate block reads after probeOnly for <1 MiB MKV');
+      assert.ok(mockWC.stats.chunks.length > 0, 'decoded video packets after mid-file activate');
+      assert.ok(pcmBatches.length > 0, 'decoded Float32 PCM audio after mid-file activate');
+      assert.ok(subInitMsg?.fonts?.length === 1, 'preserved cached MKV TTF font attachment across activate');
+      assert.match(duplicateError?.message || '', /not prepared/i, 'rejected duplicate activate on live worker');
+    },
+  );
 }

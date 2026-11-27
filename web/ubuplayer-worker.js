@@ -379,6 +379,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
 
   let pumping = false;
   let pumpRequested = false;
+  let probedReady = false;
   let renderTimer = null;
   let renderingFrame = false;
   let opChain = Promise.resolve();
@@ -980,7 +981,108 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     }
   }
 
+  async function startPlayback(msg) {
+    if (Number(msg.sampleRate) > 0) outSampleRate = Math.round(Number(msg.sampleRate));
+    audioMode = ['normal', 'dialogue', 'night'].includes(msg.audioMode) ? msg.audioMode : 'normal';
+    targetHdr = Boolean(msg.targetHdr);
+    packetInspectMode = Boolean(msg.packetInspectMode);
+    offscreenCanvas = msg.canvas || null;
+    if (duration <= 0 && Number(msg.duration) > 0) duration = Number(msg.duration);
+    if (Array.isArray(msg.serverAudioIds) && audioStreams.length > 0) {
+      for (const stream of audioStreams) {
+        if (msg.serverAudioIds[stream.ordinal]) stream.id = msg.serverAudioIds[stream.ordinal];
+      }
+    }
+
+    vReadPkt = await libav.av_packet_alloc();
+    await configureStreamDiscards(vFmtCtx, [vStream.index]);
+
+    if (offscreenCanvas) {
+      renderer = await createRendererFn(offscreenCanvas, {
+        preferWebGpu: msg.preferWebGpu !== false,
+        targetHdr,
+      });
+      if (!renderer) {
+        throw Object.assign(new Error('No WebGPU or WebGL2 renderer could be initialized for UbuPlayer.'), {
+          kind: 'codec-unsupported',
+        });
+      }
+    } else if (typeof VideoDecoderCtor === 'function' && !packetInspectMode) {
+      throw Object.assign(new Error('No OffscreenCanvas surface is available for UbuPlayer.'), {
+        kind: 'codec-unsupported',
+      });
+    }
+    await initVideoDecoder();
+
+    const chosenAudio =
+      audioStreams.find(a => a.id === msg.audioId) || audioStreams.find(a => a.default) || audioStreams[0] || null;
+    if (chosenAudio) {
+      await initAudioDecoder(chosenAudio);
+    }
+
+    aheadBudgetSeconds = Math.max(10, Math.min(45, Number(msg.aheadSeconds) || 30));
+    if (fileSize > 0 && duration > 0) {
+      const bytesPerSec = fileSize / duration;
+      if (bytesPerSec > 0) {
+        aheadBudgetSeconds = Math.max(
+          10,
+          Math.min(aheadBudgetSeconds, Math.floor(MAX_VIDEO_PACKET_BYTES / bytesPerSec)),
+        );
+      }
+    }
+
+    const startTime = Math.max(0, Number(msg.startTime) || 0);
+    clockAnchorMedia = startTime;
+    clockAnchorWallMs = nowMs();
+    bufferedStart = startTime;
+    videoDemuxUntil = startTime;
+    audioDemuxUntil = startTime;
+
+    if (startTime > 0.25) {
+      await performSeek(startTime, seekGen);
+    }
+    targetUntil = startTime + aheadBudgetSeconds;
+
+    postMessageFn({
+      type: 'ready',
+      duration,
+      rendererBackend: renderer?.backend || 'none',
+      hdrOutputActive: Boolean(renderer?.hdrOutputActive),
+      video: {
+        codec: vStream.codecName,
+        webCodecsCodec: vStream.webCodecsCodec,
+        mime: vStream.videoMime,
+        width: vStream.width,
+        height: vStream.height,
+        bitDepth: vStream.bitDepth,
+        hdr: vStream.hdr,
+        hdrKind: vStream.hdrKind,
+        doviProfile: vStream.doviProfile,
+        maxLuminance: vStream.maxLuminance,
+        minLuminance: vStream.minLuminance,
+        maxCll: vStream.maxCll,
+        maxFall: vStream.maxFall,
+      },
+      surroundDialogueActive: surroundDialogueActive(),
+      selectedAudioId: chosenAudio?.id || null,
+      audioTracks: audioStreams.map(({ codecpar, ...pub }) => pub),
+      subtitleTracks: subtitleStreams.map(({ codecpar, extradata, ...pub }) => pub),
+      chapters,
+    });
+
+    pumpLoop();
+  }
+
+  async function activate(msg) {
+    if (!probedReady || !vFmtCtx || !vStream) {
+      throw new Error('UbuPlayer worker is not prepared for playback activation.');
+    }
+    probedReady = false;
+    await startPlayback(msg);
+  }
+
   async function init(msg) {
+    probedReady = false;
     libav = await getSharedLibAV();
     if (typeof libav.av_log_set_level === 'function') {
       await libav.av_log_set_level(libav.AV_LOG_FATAL ?? libav.AV_LOG_QUIET ?? 8);
@@ -1215,6 +1317,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
     }
 
     if (msg.probeOnly) {
+      probedReady = true;
       postMessageFn({
         type: 'probed',
         duration,
@@ -1240,83 +1343,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
       return;
     }
 
-    vReadPkt = await libav.av_packet_alloc();
-    await configureStreamDiscards(vFmtCtx, [vStream.index]);
-
-    if (offscreenCanvas) {
-      renderer = await createRendererFn(offscreenCanvas, {
-        preferWebGpu: msg.preferWebGpu !== false,
-        targetHdr,
-      });
-      if (!renderer) {
-        throw Object.assign(new Error('No WebGPU or WebGL2 renderer could be initialized for UbuPlayer.'), {
-          kind: 'codec-unsupported',
-        });
-      }
-    } else if (typeof VideoDecoderCtor === 'function' && !packetInspectMode) {
-      throw Object.assign(new Error('No OffscreenCanvas surface is available for UbuPlayer.'), {
-        kind: 'codec-unsupported',
-      });
-    }
-    await initVideoDecoder();
-
-    const chosenAudio =
-      audioStreams.find(a => a.id === msg.audioId) || audioStreams.find(a => a.default) || audioStreams[0] || null;
-    if (chosenAudio) {
-      await initAudioDecoder(chosenAudio);
-    }
-
-    aheadBudgetSeconds = Math.max(10, Math.min(45, Number(msg.aheadSeconds) || 30));
-    if (fileSize > 0 && duration > 0) {
-      const bytesPerSec = fileSize / duration;
-      if (bytesPerSec > 0) {
-        aheadBudgetSeconds = Math.max(
-          10,
-          Math.min(aheadBudgetSeconds, Math.floor(MAX_VIDEO_PACKET_BYTES / bytesPerSec)),
-        );
-      }
-    }
-
-    const startTime = Math.max(0, Number(msg.startTime) || 0);
-    clockAnchorMedia = startTime;
-    clockAnchorWallMs = nowMs();
-    bufferedStart = startTime;
-    videoDemuxUntil = startTime;
-    audioDemuxUntil = startTime;
-
-    if (startTime > 0.25) {
-      await performSeek(startTime, seekGen);
-    }
-    targetUntil = startTime + aheadBudgetSeconds;
-
-    postMessageFn({
-      type: 'ready',
-      duration,
-      rendererBackend: renderer?.backend || 'none',
-      hdrOutputActive: Boolean(renderer?.hdrOutputActive),
-      video: {
-        codec: vStream.codecName,
-        webCodecsCodec: vStream.webCodecsCodec,
-        mime: vStream.videoMime,
-        width: vStream.width,
-        height: vStream.height,
-        bitDepth: vStream.bitDepth,
-        hdr: vStream.hdr,
-        hdrKind: vStream.hdrKind,
-        doviProfile: vStream.doviProfile,
-        maxLuminance: vStream.maxLuminance,
-        minLuminance: vStream.minLuminance,
-        maxCll: vStream.maxCll,
-        maxFall: vStream.maxFall,
-      },
-      surroundDialogueActive: surroundDialogueActive(),
-      selectedAudioId: chosenAudio?.id || null,
-      audioTracks: audioStreams.map(({ codecpar, ...pub }) => pub),
-      subtitleTracks: subtitleStreams.map(({ codecpar, extradata, ...pub }) => pub),
-      chapters,
-    });
-
-    pumpLoop();
+    await startPlayback(msg);
   }
 
   async function performSeek(seconds, gen) {
@@ -1786,6 +1813,7 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
 
   async function cleanup() {
     closed = true;
+    probedReady = false;
     cancelRenderTick();
     blockReadHandlers.delete(vDevName);
     blockReadHandlers.delete(aDevName);
@@ -1902,6 +1930,23 @@ export function createWorkerEngine(postMessageFn, runtimeOptions = {}) {
               type: 'error',
               kind: err?.kind || 'init-failed',
               message: err?.message || 'Could not open media container.',
+            });
+          }
+        }
+      });
+      return;
+    }
+    if (msg.type === 'activate') {
+      if (ports?.[0] || msg.audioPort) attachAudioPort(ports?.[0] || msg.audioPort);
+      void enqueue(async () => {
+        try {
+          await activate(msg);
+        } catch (err) {
+          if (!closed) {
+            postMessageFn({
+              type: 'error',
+              kind: err?.kind || 'init-failed',
+              message: err?.message || 'Could not start prepared media playback.',
             });
           }
         }

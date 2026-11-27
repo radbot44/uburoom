@@ -223,6 +223,24 @@ export function mount(host, deps) {
   });
   let pendingLocalCandidate = null;
   let localProbePending = false;
+  let localProbeController = null;
+  let localProbeMediaVersion = null;
+  let localProbeToken = 0;
+  function clearPendingLocalCandidate() {
+    pendingLocalCandidate?.prepared?.dispose?.();
+    pendingLocalCandidate = null;
+  }
+  function abortPendingLocalProbe() {
+    if (localProbeController) {
+      localProbeController.abort();
+      localProbeController = null;
+    }
+    localProbeMediaVersion = null;
+  }
+  function clearStoredLocalFile() {
+    store.stream.localFile?.prepared?.dispose?.();
+    store.stream.localFile = undefined;
+  }
   function formatDurationDiff(seconds) {
     const abs = Math.round(Math.abs(seconds));
     const m = Math.floor(abs / 60);
@@ -258,11 +276,19 @@ export function mount(host, deps) {
       clearBtn.disabled = localProbePending || store.room.pending;
     }
     if (
+      localProbeController &&
+      (!ubuAllowed || !state?.mediaVersion || localProbeMediaVersion !== state.mediaVersion)
+    ) {
+      abortPendingLocalProbe();
+    }
+    if (
       mismatchBox &&
       (!ubuAllowed || !pendingLocalCandidate || pendingLocalCandidate.mediaVersion !== state?.mediaVersion)
     ) {
-      pendingLocalCandidate = null;
+      clearPendingLocalCandidate();
       mismatchBox.hidden = true;
+    } else if (!ubuAllowed || (pendingLocalCandidate && pendingLocalCandidate.mediaVersion !== state?.mediaVersion)) {
+      clearPendingLocalCandidate();
     }
     if (statusEl && !localProbePending && !pendingLocalCandidate) {
       if (!state?.mediaId) statusEl.textContent = 'Choose a video in the room first.';
@@ -288,20 +314,28 @@ export function mount(host, deps) {
   }
   async function commitLocalFile(candidate) {
     const state = store.room.state;
-    if (!state || state.mediaVersion !== candidate.mediaVersion || !localPlayerAllowed()) return;
-    pendingLocalCandidate = null;
+    if (!state || state.mediaVersion !== candidate.mediaVersion || !localPlayerAllowed()) {
+      candidate.prepared?.dispose?.();
+      if (pendingLocalCandidate === candidate) pendingLocalCandidate = null;
+      return;
+    }
+    if (pendingLocalCandidate === candidate) pendingLocalCandidate = null;
+    else clearPendingLocalCandidate();
     if ($('local-file-mismatch')) $('local-file-mismatch').hidden = true;
     const defaultAudio =
       candidate.probed.audioTracks.find(a => a.default)?.id || candidate.probed.audioTracks[0]?.id || null;
-    store.stream.localFile = {
+    clearStoredLocalFile();
+    const entry = {
       key: 'local-file:' + crypto.randomUUID(),
       file: candidate.file,
       name: candidate.file.name,
       probed: candidate.probed,
+      prepared: candidate.prepared || null,
       mediaVersion: state.mediaVersion,
       audioId: defaultAudio,
       subtitleId: state.tracks?.subtitleId || null,
     };
+    store.stream.localFile = entry;
     renderLocalSourceControls();
     try {
       const res = await deps.execute({
@@ -309,14 +343,16 @@ export function mount(host, deps) {
         args: { mode: 'local', mediaVersion: state.mediaVersion },
       });
       if (res?.status && res.status !== 'applied') {
-        store.stream.localFile = undefined;
+        entry.prepared?.dispose?.();
+        if (store.stream.localFile === entry) store.stream.localFile = undefined;
         if ($('local-file-status')) {
           $('local-file-status').textContent = res.message || 'Could not switch to local file.';
           $('local-file-status').classList.add('error');
         }
       }
     } catch (err) {
-      store.stream.localFile = undefined;
+      entry.prepared?.dispose?.();
+      if (store.stream.localFile === entry) store.stream.localFile = undefined;
       deps.fail(err.message);
     } finally {
       renderLocalSourceControls();
@@ -325,9 +361,10 @@ export function mount(host, deps) {
   }
   async function useRoomStream() {
     const state = store.room.state;
-    pendingLocalCandidate = null;
+    abortPendingLocalProbe();
+    clearPendingLocalCandidate();
     if ($('local-file-mismatch')) $('local-file-mismatch').hidden = true;
-    store.stream.localFile = undefined;
+    clearStoredLocalFile();
     renderLocalSourceControls();
     if (!state?.mediaVersion) return;
     try {
@@ -347,8 +384,13 @@ export function mount(host, deps) {
     const ubuAllowed = localPlayerAllowed();
     if (!file || !state?.mediaVersion || !ubuAllowed) return;
     const mediaVersion = state.mediaVersion;
+    const probeToken = ++localProbeToken;
+    abortPendingLocalProbe();
+    clearPendingLocalCandidate();
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    localProbeController = controller;
+    localProbeMediaVersion = mediaVersion;
     localProbePending = true;
-    pendingLocalCandidate = null;
     if ($('local-file-mismatch')) $('local-file-mismatch').hidden = true;
     const statusEl = $('local-file-status');
     if (statusEl) {
@@ -357,9 +399,18 @@ export function mount(host, deps) {
     }
     renderLocalSourceControls();
     try {
-      const probed = await probeLocalFile(file, { ubuplayerEnabled: ubuAllowed });
-      if (store.room.state?.mediaVersion !== mediaVersion || !localPlayerAllowed()) return;
+      const probed = await probeLocalFile(file, {
+        ubuplayerEnabled: ubuAllowed,
+        keepPrepared: true,
+        signal: controller?.signal,
+      });
+      const prepared = probed.prepared || null;
+      if (probeToken !== localProbeToken || store.room.state?.mediaVersion !== mediaVersion || !localPlayerAllowed()) {
+        prepared?.dispose?.();
+        return;
+      }
       if (!probed.webCodecsSupported) {
+        prepared?.dispose?.();
         if (statusEl) {
           statusEl.textContent = `This browser cannot hardware-decode ${(probed.video?.codec || 'the').toUpperCase()} video in ${file.name}. Keep using the room stream.`;
           statusEl.classList.add('error');
@@ -368,7 +419,7 @@ export function mount(host, deps) {
       }
       const roomDur = Number(store.room.state?.state?.duration) || 0;
       if (roomDur > 0 && probed.duration > 0 && Math.abs(probed.duration - roomDur) > 5) {
-        pendingLocalCandidate = { file, probed, mediaVersion };
+        pendingLocalCandidate = { file, probed, prepared, mediaVersion };
         if ($('local-file-mismatch-text')) {
           $('local-file-mismatch-text').textContent =
             `Duration differs by ${formatDurationDiff(probed.duration - roomDur)} (${file.name}: ${deps.clock(probed.duration)}, room: ${deps.clock(roomDur)}). Playback sync may not line up.`;
@@ -377,14 +428,19 @@ export function mount(host, deps) {
         if (statusEl) statusEl.textContent = 'Confirm local file duration mismatch below.';
         return;
       }
-      await commitLocalFile({ file, probed, mediaVersion });
+      await commitLocalFile({ file, probed, prepared, mediaVersion });
     } catch (err) {
+      if (err?.name === 'AbortError' || probeToken !== localProbeToken) return;
       if (statusEl) {
         statusEl.textContent = (err?.message || 'Could not read local file.') + ' Using room stream.';
         statusEl.classList.add('error');
       }
     } finally {
-      localProbePending = false;
+      if (probeToken === localProbeToken) {
+        localProbePending = false;
+        localProbeController = null;
+        localProbeMediaVersion = null;
+      }
       renderLocalSourceControls();
     }
   }
@@ -442,9 +498,14 @@ export function mount(host, deps) {
     if (pendingLocalCandidate) void commitLocalFile(pendingLocalCandidate);
   });
   $('local-file-cancel')?.addEventListener('click', () => {
-    pendingLocalCandidate = null;
+    clearPendingLocalCandidate();
     if ($('local-file-mismatch')) $('local-file-mismatch').hidden = true;
     renderLocalSourceControls();
+  });
+  globalThis.window?.addEventListener?.('pagehide', () => {
+    abortPendingLocalProbe();
+    clearPendingLocalCandidate();
+    clearStoredLocalFile();
   });
   $('local-subtitle-choose')?.addEventListener('click', () => $('local-subtitle-input')?.click());
   $('local-subtitle-input')?.addEventListener('change', ev => {

@@ -261,6 +261,7 @@ export function mount(host, deps) {
   }
   function enrichLocalView(view) {
     if (store.stream.localFile && store.stream.localFile.mediaVersion !== view.mediaVersion) {
+      store.stream.localFile.prepared?.dispose?.();
       store.stream.localFile = undefined;
     }
     if (store.stream.localSidecarSubtitle && store.stream.localSidecarSubtitle.mediaVersion !== view.mediaVersion) {
@@ -273,6 +274,7 @@ export function mount(host, deps) {
       ? deps.canUseUbuPlayer({ localFile: isLocalMode })
       : store.identity.config?.ubuplayer !== false;
     if (!ubuAllowed && store.stream.localFile) {
+      store.stream.localFile.prepared?.dispose?.();
       store.stream.localFile = undefined;
     }
     const localFile =
@@ -531,63 +533,69 @@ export function mount(host, deps) {
             : store.identity.config?.ubuplayer !== false;
           if (canUbu && store.stream.localFile?.mediaVersion === next.mediaVersion) {
             const localFile = store.stream.localFile;
+            const prepared = localFile.prepared || null;
+            localFile.prepared = null;
             const audioChain = deps.ensureAudioProcessingInput?.();
             const wantHdr = uburoomPlayback.supportsHdrDisplay(undefined, hdrMode());
-            store.stream.ubuplayer = deps.surface.attachUbuPlayer(
-              canvas =>
-                new UbuPlayer(
-                  canvas,
-                  { file: localFile.file },
-                  deps.expected,
-                  message => {
-                    store.player.playbackError = message;
-                    deps.toasts.show('local-file-error', {
-                      type: 'error',
-                      title: 'Local file playback stopped',
-                      hint: message,
-                      symbol: 'alert-triangle',
-                      persistent: true,
-                      action: {
-                        label: 'Use room stream',
-                        run: () => {
-                          deps.toasts.dismiss('local-file-error');
-                          void deps.useRoomStream?.();
+            try {
+              store.stream.ubuplayer = deps.surface.attachUbuPlayer(
+                canvas =>
+                  new UbuPlayer(
+                    canvas,
+                    { file: localFile.file, prepared },
+                    deps.expected,
+                    message => {
+                      store.player.playbackError = message;
+                      deps.toasts.show('local-file-error', {
+                        type: 'error',
+                        title: 'Local file playback stopped',
+                        hint: message,
+                        symbol: 'alert-triangle',
+                        persistent: true,
+                        action: {
+                          label: 'Use room stream',
+                          run: () => {
+                            deps.toasts.dismiss('local-file-error');
+                            void deps.useRoomStream?.();
+                          },
                         },
-                      },
-                    });
-                  },
-                  {
-                    duration: localFile.probed.duration || next.state?.duration,
-                    volume: (next.state?.volume ?? store.preferences.playerPreferences?.volume ?? 100) / 100,
-                    muted: Boolean(next.state?.muted ?? store.preferences.playerPreferences?.muted),
-                    targetHdr: wantHdr,
-                    audioContext: audioChain?.audioContext,
-                    audioDestination: audioChain?.destination,
-                    downstreamAudioLatencySec: audioChain?.downstreamAudioLatencySec || 0,
-                    audioId: next.tracks?.audioId,
-                    audioMode: store.preferences.playerPreferences?.audioMode || 'normal',
-                    onAudioStateChange: () => {
-                      deps.applyAudioMode?.();
-                      deps.renderTracks?.();
-                    },
-                    subtitleId: String(next.tracks?.subtitleId || '').startsWith('local-s-')
-                      ? next.tracks.subtitleId
-                      : null,
-                    onSubtitleInit: subMsg => {
-                      void deps.captions.setLocalSubtitle({
-                        key: `${localFile.key}:${subMsg.subtitleId}`,
-                        format: subMsg.format,
-                        data: subMsg.header,
-                        fonts: subMsg.fonts,
-                        pushStream: subMsg.format === 'pgs',
                       });
                     },
-                    onSubtitleReset: () => deps.captions.resetLocalRenderer?.(),
-                    onSubtitleCues: cues => deps.captions.appendLocalCues(cues),
-                    onSubtitleData: (_fmt, bytes) => void deps.captions.appendLocalData(bytes),
-                  },
-                ),
-            );
+                    {
+                      duration: localFile.probed.duration || next.state?.duration,
+                      volume: (next.state?.volume ?? store.preferences.playerPreferences?.volume ?? 100) / 100,
+                      muted: Boolean(next.state?.muted ?? store.preferences.playerPreferences?.muted),
+                      targetHdr: wantHdr,
+                      audioContext: audioChain?.audioContext,
+                      audioDestination: audioChain?.destination,
+                      downstreamAudioLatencySec: audioChain?.downstreamAudioLatencySec || 0,
+                      audioId: next.tracks?.audioId,
+                      audioMode: store.preferences.playerPreferences?.audioMode || 'normal',
+                      onAudioStateChange: () => {
+                        deps.applyAudioMode?.();
+                        deps.renderTracks?.();
+                      },
+                      subtitleId: String(next.tracks?.subtitleId || '').startsWith('local-s-')
+                        ? next.tracks.subtitleId
+                        : null,
+                      onSubtitleInit: subMsg => {
+                        void deps.captions.setLocalSubtitle({
+                          key: `${localFile.key}:${subMsg.subtitleId}`,
+                          format: subMsg.format,
+                          data: subMsg.header,
+                          fonts: subMsg.fonts,
+                          pushStream: subMsg.format === 'pgs',
+                        });
+                      },
+                      onSubtitleReset: () => deps.captions.resetLocalRenderer?.(),
+                      onSubtitleCues: cues => deps.captions.appendLocalCues(cues),
+                      onSubtitleData: (_fmt, bytes) => void deps.captions.appendLocalData(bytes),
+                    },
+                  ),
+              );
+            } finally {
+              prepared?.dispose?.();
+            }
             deps.watchFrames();
           }
         } else {

@@ -373,6 +373,13 @@ export function mount(host, deps) {
     deps.updatePipVisibility?.();
     store.stream.ubuplayer?.destroy?.();
     store.stream.ubuplayer = undefined;
+    if (reason !== 'state-change' && store.stream.localFile) {
+      store.stream.localFile.prepared?.dispose?.();
+      store.stream.localFile.prepared = null;
+      if (reason === 'logout' || reason === 'room-select') {
+        store.stream.localFile = undefined;
+      }
+    }
     deps.time.clearTimeout(store.stream.hlsRecoveryTimer);
     deps.time.clearTimeout(store.stream.hlsNativeErrorTimer);
     store.stream.hlsNativeErrorTimer = undefined;

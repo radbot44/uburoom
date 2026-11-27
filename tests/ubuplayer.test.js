@@ -1379,3 +1379,345 @@ test('HttpRangeReader handles 206, bounded small 200, and cancels oversized/chun
     globalThis.fetch = prevFetch;
   }
 });
+
+test('probeLocalFile keepPrepared enforces one-shot same-File promotion, TTL fallback, abort, and watch cleanup', async () => {
+  const ubuMod = await import(pathToFileURL(path.join(__dirname, '../web/ubuplayer.js')).href);
+  const { probeLocalFile, UbuPlayer } = ubuMod;
+
+  const prevWorker = globalThis.Worker;
+  const prevVideoDecoder = globalThis.VideoDecoder;
+  const prevAudioContext = globalThis.AudioContext;
+  const workers = [];
+  let webCodecsSupported = true;
+  let holdProbe = false;
+
+  class FakeWorker {
+    constructor(url, opts) {
+      this.url = url;
+      this.opts = opts;
+      this.messages = [];
+      this.closed = false;
+      this.terminated = false;
+      this.onmessage = null;
+      this.onerror = null;
+      workers.push(this);
+    }
+    postMessage(msg) {
+      this.messages.push(msg);
+      if (msg.type === 'close') {
+        this.closed = true;
+        return;
+      }
+      if (msg.type === 'init' && msg.probeOnly) {
+        if (holdProbe) return;
+        queueMicrotask(() => {
+          if (this.closed || this.terminated) return;
+          this.onmessage?.({
+            data: {
+              type: 'probed',
+              duration: 120,
+              video: { codec: 'h264', webCodecsCodec: 'avc1.640028', width: 1920, height: 1080 },
+              audioTracks: [{ id: 'local-a-1', default: true }],
+              subtitleTracks: [],
+              chapters: [],
+            },
+          });
+        });
+      }
+    }
+    terminate() {
+      this.terminated = true;
+    }
+  }
+
+  function makeFakeFile(size = 2048) {
+    let sliceCount = 0;
+    return {
+      size,
+      name: 'movie.mkv',
+      get sliceCount() {
+        return sliceCount;
+      },
+      slice(start = 0, end = size) {
+        sliceCount++;
+        const len = Math.max(0, Math.min(size, end) - Math.max(0, start));
+        return { arrayBuffer: async () => new Uint8Array(len).buffer };
+      },
+    };
+  }
+
+  globalThis.Worker = FakeWorker;
+  globalThis.VideoDecoder = class FakeVideoDecoder {
+    static async isConfigSupported() {
+      return { supported: webCodecsSupported };
+    }
+  };
+  globalThis.AudioContext = undefined;
+
+  try {
+    // 1. Happy path: same-File one-shot promotion reuses probed worker with activate and zero extra file slices
+    const fileA = makeFakeFile();
+    const fileB = makeFakeFile();
+    const probed = await probeLocalFile(fileA, { ubuplayerEnabled: true, keepPrepared: true, preparedTimeoutMs: 5000 });
+    assert.equal(workers.length, 1);
+    assert.equal(fileA.sliceCount, 1);
+    assert.ok(probed.prepared?.isReady());
+    // Wrong File reference cannot claim
+    assert.equal(probed.prepared.claim(fileB), null);
+    assert.ok(probed.prepared.isReady());
+
+    const player1 = new UbuPlayer(
+      null,
+      { file: fileA, prepared: probed.prepared },
+      () => 15,
+      () => {},
+    );
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(workers.length, 1, 'promoted prepared worker without spawning a second Worker');
+    assert.equal(fileA.sliceCount, 1, 'reused probed reader without re-slicing initial bytes');
+    assert.equal(probed.prepared.isReady(), false, 'prepared handle is consumed once claimed');
+    assert.ok(workers[0].messages.some(m => m.type === 'activate' && m.startTime === 15));
+    // Calling dispose() on an already-claimed handle must not close the live player worker
+    probed.prepared.dispose();
+    assert.equal(workers[0].closed, false);
+    player1.destroy();
+    assert.equal(workers[0].closed, true);
+
+    // 2. Second attach with the already-consumed handle falls back cleanly to a fresh Worker + init
+    const player2 = new UbuPlayer(
+      null,
+      { file: fileA, prepared: probed.prepared },
+      () => 0,
+      () => {},
+    );
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(workers.length, 2, 'second attach spawns a fresh Worker');
+    assert.equal(fileA.sliceCount, 2, 'fresh fallback reads initial bytes');
+    assert.ok(workers[1].messages.some(m => m.type === 'init' && !m.probeOnly));
+    player2.destroy();
+
+    // 3. TTL expiry auto-disposes idle prepared worker, and post-expiry attach falls back cleanly
+    const fileC = makeFakeFile();
+    const expiring = await probeLocalFile(fileC, {
+      ubuplayerEnabled: true,
+      keepPrepared: true,
+      preparedTimeoutMs: 15,
+    });
+    const expiringWorker = workers.at(-1);
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.equal(expiring.prepared.isReady(), false);
+    assert.equal(expiringWorker.closed, true);
+    assert.equal(expiringWorker.terminated, true);
+    const beforeCount = workers.length;
+    const player3 = new UbuPlayer(
+      null,
+      { file: fileC, prepared: expiring.prepared },
+      () => 0,
+      () => {},
+    );
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(workers.length, beforeCount + 1, 'expired prepared handle falls back to fresh attach');
+    assert.ok(workers.at(-1).messages.some(m => m.type === 'init'));
+    player3.destroy();
+
+    // 4. Unsupported WebCodecs immediately disposes worker and returns prepared: null
+    webCodecsSupported = false;
+    const unsupported = await probeLocalFile(makeFakeFile(), { ubuplayerEnabled: true, keepPrepared: true });
+    assert.equal(unsupported.webCodecsSupported, false);
+    assert.equal(unsupported.prepared, null);
+    assert.equal(workers.at(-1).closed, true);
+    webCodecsSupported = true;
+
+    // 5. Aborting an in-flight probe closes the worker and rejects with AbortError
+    holdProbe = true;
+    const ac = new AbortController();
+    const pendingProbe = probeLocalFile(makeFakeFile(), {
+      ubuplayerEnabled: true,
+      keepPrepared: true,
+      signal: ac.signal,
+    });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const abortedWorker = workers.at(-1);
+    ac.abort();
+    await assert.rejects(
+      () => pendingProbe,
+      err => err?.name === 'AbortError',
+    );
+    assert.equal(abortedWorker.closed, true);
+    holdProbe = false;
+
+    // 6. room.js enrichLocalView disposes stale localFile.prepared when mediaVersion advances
+    let roomDisposed = 0;
+    const videoEl = element('video');
+    videoEl.canPlayType = () => 'probably';
+    const roomMount = mountModule(roomMod, {
+      selected: 'room-1',
+      config: { ubuplayer: true },
+      video: videoEl,
+      canUseUbuPlayer: () => true,
+      canGpuTonemap: () => false,
+      execute: () => Promise.resolve({ status: 'applied' }),
+      fallbackPlayback: { receive: s => s, reset() {}, tick() {} },
+      sync: { transition() {}, synchronize() {}, reset() {}, sharedSeek() {} },
+      diagnostics: { state() {}, record() {} },
+      roomUI: { render() {} },
+      stageCards: { register() {}, sync() {} },
+      bufferingViewers: new Map(),
+      suppressedBuffering: new Set(),
+      queueUI: { render() {}, restorePosition() {} },
+      playerUI: { settingsOpen: () => false, reset() {} },
+      captions: { update() {}, reset() {} },
+      videoCheck: {},
+      toasts: { show() {}, dismiss() {} },
+      expected: () => 0,
+      clock: () => '0:00',
+    });
+    try {
+      roomMount.view.localFile = {
+        key: 'local-file:1',
+        file: fileA,
+        name: 'movie.mkv',
+        probed: { duration: 120, video: {}, audioTracks: [], subtitleTracks: [], chapters: [] },
+        prepared: {
+          dispose() {
+            roomDisposed++;
+          },
+        },
+        mediaVersion: 'v-old',
+      };
+      roomMount.api.applyState({
+        id: 'room-1',
+        roomName: 'Cinema',
+        title: 'Next Film',
+        mediaId: '102',
+        mediaVersion: 'v-new',
+        streamVersion: 's2',
+        format: 'mp4',
+        mediaUrl: '/media/102',
+        viewers: 1,
+        state: { paused: true, position: 0, duration: 120, volume: 80, muted: false },
+        tracks: { audio: [], subtitles: [] },
+      });
+      assert.equal(roomDisposed, 1, 'room mediaVersion advance disposes unclaimed localFile.prepared');
+      assert.equal(roomMount.view.localFile, undefined);
+    } finally {
+      roomMount.restore();
+    }
+
+    // 7. tracks-menu.js disposes prepared workers on mismatch cancel, room mediaVersion advance, and repick
+    const prevResizeObserver = globalThis.ResizeObserver;
+    const prevMutationObserver = globalThis.MutationObserver;
+    const prevMatchMedia = globalThis.matchMedia;
+    const prevGetComputedStyle = globalThis.getComputedStyle;
+    globalThis.ResizeObserver = class FakeResizeObserver {
+      observe() {}
+      disconnect() {}
+    };
+    globalThis.MutationObserver = class FakeMutationObserver {
+      observe() {}
+      disconnect() {}
+    };
+    globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+    globalThis.getComputedStyle = () => ({ getPropertyValue: () => '' });
+    const tracksMenuMod = require('../web/watch/tracks-menu.js');
+    const tracksById = new Map();
+    const tracksDoc = stubDocument({
+      getElementById: id => {
+        if (!tracksById.has(id)) {
+          const el = element();
+          el.options = [];
+          el.isConnected = false;
+          if (id === 'player-mute') el.closest = () => element('div');
+          tracksById.set(id, el);
+        }
+        return tracksById.get(id);
+      },
+    });
+    const tracksMount = mountModule(tracksMenuMod, {
+      selected: 'room-1',
+      config: { ubuplayer: true },
+      document: tracksDoc,
+      playerPreferences: { subtitlePosition: 'bottom', subtitleSize: 'medium', volume: 100, muted: false },
+      state: {
+        id: 'room-1',
+        mediaId: '101',
+        mediaVersion: 'mv-1',
+        streamVersion: 's1',
+        format: 'mp4',
+        state: { duration: 300 },
+        tracks: { audio: [], subtitles: [] },
+      },
+      canUseUbuPlayer: () => true,
+      operatorAllowsUbuPlayer: () => true,
+      execute: () => Promise.resolve({ status: 'applied' }),
+      fail() {},
+      expected: () => 0,
+      clock: s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`,
+      toasts: { show() {}, dismiss() {} },
+      applyState() {},
+      applySubtitleAppearance() {},
+      savePlayerPreferences() {},
+      rememberPlayerSubtitles() {},
+      VideoDecoder: globalThis.VideoDecoder,
+      Worker: globalThis.Worker,
+    });
+    try {
+      const input = tracksMount.view.document.getElementById('local-file-input');
+      const cancelBtn = tracksMount.view.document.getElementById('local-file-cancel');
+
+      // Mismatch prompt (probed 120s vs room 300s) -> cancel disposes prepared worker
+      const mismatchFile1 = makeFakeFile();
+      input.listeners.change({ target: { files: [mismatchFile1], value: 'a' } });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const mismatchWorker1 = workers.at(-1);
+      assert.equal(mismatchWorker1.closed, false, 'mismatch keeps prepared worker ready until user decides');
+      cancelBtn.listeners.click();
+      assert.equal(mismatchWorker1.closed, true, 'mismatch cancel disposes prepared worker');
+
+      // Mismatch prompt -> rapid repick disposes first candidate worker
+      const mismatchFile2 = makeFakeFile();
+      const mismatchFile3 = makeFakeFile();
+      input.listeners.change({ target: { files: [mismatchFile2], value: 'b' } });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const mismatchWorker2 = workers.at(-1);
+      assert.equal(mismatchWorker2.closed, false);
+      input.listeners.change({ target: { files: [mismatchFile3], value: 'c' } });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const mismatchWorker3 = workers.at(-1);
+      assert.equal(mismatchWorker2.closed, true, 'repick disposes previous mismatch candidate prepared worker');
+      assert.equal(mismatchWorker3.closed, false);
+
+      // Room advances mediaVersion while mismatch prompt is open -> renderTracks disposes prepared worker
+      tracksMount.view.state = { ...tracksMount.view.state, mediaVersion: 'mv-2' };
+      tracksMount.api.renderTracks();
+      assert.equal(
+        mismatchWorker3.closed,
+        true,
+        'room mediaVersion advance disposes pending candidate prepared worker',
+      );
+
+      // useRoomStream() disposes any uncommitted or pending prepared worker
+      const mismatchFile4 = makeFakeFile();
+      input.listeners.change({ target: { files: [mismatchFile4], value: 'd' } });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const mismatchWorker4 = workers.at(-1);
+      assert.equal(mismatchWorker4.closed, false);
+      await tracksMount.api.useRoomStream();
+      assert.equal(mismatchWorker4.closed, true, 'useRoomStream disposes pending prepared worker');
+    } finally {
+      tracksMount.restore();
+      if (prevResizeObserver === undefined) delete globalThis.ResizeObserver;
+      else globalThis.ResizeObserver = prevResizeObserver;
+      if (prevMutationObserver === undefined) delete globalThis.MutationObserver;
+      else globalThis.MutationObserver = prevMutationObserver;
+      if (prevMatchMedia === undefined) delete globalThis.matchMedia;
+      else globalThis.matchMedia = prevMatchMedia;
+      if (prevGetComputedStyle === undefined) delete globalThis.getComputedStyle;
+      else globalThis.getComputedStyle = prevGetComputedStyle;
+    }
+  } finally {
+    globalThis.Worker = prevWorker;
+    globalThis.VideoDecoder = prevVideoDecoder;
+    globalThis.AudioContext = prevAudioContext;
+  }
+});
