@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 64 64">
+  <title>uburoom Windows icon</title>
+  <circle cx="32" cy="32" r="31" fill="#101217"/>
+  <!-- Mark from web/assets/uburoom-oomark-brand.svg, served as /favicon.svg. -->
+  <g transform="translate(32 35.5) scale(0.19) translate(-677.905 -686.95)">
+    <circle cx="618.4600" cy="634.4500" r="48.3813" fill="none" stroke="#F8F7F4" stroke-width="35.3374"/>
+    <circle cx="737.3500" cy="634.4500" r="48.3813" fill="none" stroke="#F8F7F4" stroke-width="35.3374"/>
+    <line x1="601.9475" x2="753.8625" y1="743.0031" y2="743.0031" stroke="#FF7197" stroke-width="53.0061" stroke-linecap="butt"/>
+  </g>
+</svg>

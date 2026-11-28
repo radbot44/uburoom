@@ -157,7 +157,7 @@ jobs:
           }
 
           $baseName = "uburoom-$($env:APP_SLOT)-setup"
-          $iconFile = (Resolve-Path 'web/assets/uburoom-favicon.ico').Path
+          $iconFile = (Resolve-Path 'assets/branding/uburoom-icon-windows.ico').Path
           $licenseFile = (Resolve-Path 'LICENSE').Path
 
           & $iscc `

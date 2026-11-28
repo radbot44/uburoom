@@ -338,7 +338,7 @@ function buildTrayLauncher(outExePath, { repoRoot = ROOT, iconPath } = {}) {
   if (!fs.existsSync(buildScript)) {
     throw new Error(`Missing tray build script: ${buildScript}`);
   }
-  const resolvedIcon = iconPath || path.join(repoRoot, 'web', 'assets', 'uburoom-favicon.ico');
+  const resolvedIcon = iconPath || path.join(repoRoot, 'assets', 'branding', 'uburoom-icon-windows.ico');
   if (!fs.existsSync(resolvedIcon)) {
     throw new Error(`Missing tray icon file: ${resolvedIcon}`);
   }
@@ -429,7 +429,7 @@ function buildInstaller({
     throw new Error('Inno Setup compiler (ISCC.exe) not found. Install Inno Setup 6 or set ISCC_EXE.');
   }
   const issFile = path.join(repoRoot, 'installer', 'uburoom.iss');
-  const iconFile = path.join(repoRoot, 'web', 'assets', 'uburoom-favicon.ico');
+  const iconFile = path.join(repoRoot, 'assets', 'branding', 'uburoom-icon-windows.ico');
   const licenseFile = path.join(repoRoot, 'LICENSE');
   for (const [label, filePath] of [
     ['installer script', issFile],

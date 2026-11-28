@@ -40,7 +40,7 @@
 #endif
 
 #ifndef IconFile
-  #define IconFile "..\web\assets\uburoom-favicon.ico"
+  #define IconFile "..\assets\branding\uburoom-icon-windows.ico"
 #endif
 
 #ifndef LicenseFile

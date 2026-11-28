@@ -21,19 +21,10 @@ if (-not $OutPath) {
 $OutPath = [IO.Path]::GetFullPath($OutPath)
 
 if (-not $IconPath) {
-  $candidates = @(
-    (Join-Path $repoRoot 'web\assets\uburoom-favicon.ico'),
-    (Join-Path $repoRoot 'web\favicon.ico')
-  )
-  foreach ($candidate in $candidates) {
-    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-      $IconPath = $candidate
-      break
-    }
-  }
+  $IconPath = Join-Path $repoRoot 'assets\branding\uburoom-icon-windows.ico'
 }
 if (-not $IconPath -or -not (Test-Path -LiteralPath $IconPath -PathType Leaf)) {
-  throw "Missing tray icon file. Expected web\assets\uburoom-favicon.ico or -IconPath."
+  throw "Missing tray icon file: $IconPath"
 }
 $IconPath = [IO.Path]::GetFullPath($IconPath)
 
