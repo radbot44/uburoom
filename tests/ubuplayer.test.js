@@ -1722,7 +1722,7 @@ test('probeLocalFile keepPrepared enforces one-shot same-File promotion, TTL fal
   }
 });
 
-test('persisted pagehide keeps committed local File while releasing warm workers, and probe deadline bounds hung codec checks', async () => {
+test('persisted pagehide keeps committed local File while releasing warm workers, and probe deadline bounds hung codec checks', async t => {
   const ubuMod = await import(pathToFileURL(path.join(__dirname, '../web/ubuplayer.js')).href);
   const { probeLocalFile } = ubuMod;
   const tracksMenuMod = require('../web/watch/tracks-menu.js');
@@ -1738,12 +1738,34 @@ test('persisted pagehide keeps committed local File while releasing warm workers
   const workers = [];
   let codecCheckImpl = async () => ({ supported: true });
 
+  async function flush() {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+
+  async function waitForTermination(worker, maxMs = 5000) {
+    let done = false;
+    worker.terminated.then(() => {
+      done = true;
+    });
+    await flush();
+    for (let elapsed = 0; elapsed < maxMs && !done; elapsed += 50) {
+      t.mock.timers.tick(50);
+      await flush();
+    }
+    assert.ok(done, 'expected worker to terminate within virtual timer budget');
+    await worker.terminated;
+  }
+
   class CountingWorker {
     constructor() {
       this.closeCount = 0;
       this.terminateCount = 0;
       this.onmessage = null;
       this.onerror = null;
+      this._resolveTerminated = null;
+      this.terminated = new Promise(resolve => {
+        this._resolveTerminated = resolve;
+      });
       workers.push(this);
     }
     postMessage(msg) {
@@ -1772,6 +1794,7 @@ test('persisted pagehide keeps committed local File while releasing warm workers
     }
     terminate() {
       this.terminateCount++;
+      this._resolveTerminated?.();
     }
   }
 
@@ -1803,6 +1826,7 @@ test('persisted pagehide keeps committed local File while releasing warm workers
   };
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   globalThis.getComputedStyle = () => ({ getPropertyValue: () => '' });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
 
   try {
     // 1. Persisted pagehide releases warm workers & unconfirmed mismatch candidates, keeps committed File & tracks,
@@ -1886,13 +1910,16 @@ test('persisted pagehide keeps committed local File while releasing warm workers
       // Also stage an unconfirmed mismatch candidate before persisted pagehide
       const input = tracksDoc.getElementById('local-file-input');
       input.listeners.change({ target: { files: [makeFakeFile('mismatch.mkv')], value: 'm' } });
-      await new Promise(resolve => setTimeout(resolve, 20));
+      await flush();
       const mismatchWorker = workers.at(-1);
+      assert.equal(tracksDoc.getElementById('local-file-mismatch').hidden, false);
       assert.equal(mismatchWorker.closeCount, 0);
 
       for (const fn of pagehideListeners) fn({ persisted: true });
       assert.equal(preparedDisposes, 1, 'persisted pagehide disposes unclaimed prepared worker exactly once');
       assert.equal(mismatchWorker.closeCount, 1, 'persisted pagehide disposes unconfirmed mismatch candidate worker');
+      await waitForTermination(mismatchWorker);
+      assert.equal(mismatchWorker.terminateCount, 1);
       assert.equal(tracksDoc.getElementById('local-file-mismatch').hidden, true);
       assert.equal(tracksMount.view.localFile?.file, committedFile, 'persisted pagehide preserves committed File');
       assert.equal(tracksMount.view.localFile?.prepared, null, 'persisted pagehide clears prepared reference');
@@ -1987,55 +2014,81 @@ test('persisted pagehide keeps committed local File while releasing warm workers
     // 2. Hung VideoDecoder.isConfigSupported() is bounded by probe deadline; late resolve/reject cannot leak a handle or touch UI
     let resolveHungCodec;
     let rejectHungCodec;
-    codecCheckImpl = () =>
-      new Promise((resolve, reject) => {
+    let markHungCodec1;
+    const hungCodec1Started = new Promise(resolve => {
+      markHungCodec1 = resolve;
+    });
+    codecCheckImpl = () => {
+      markHungCodec1();
+      return new Promise((resolve, reject) => {
         resolveHungCodec = resolve;
         rejectHungCodec = reject;
       });
+    };
     const hungWorkerStart = workers.length;
-    await assert.rejects(
+    const hungProbe1 = assert.rejects(
       () =>
         probeLocalFile(makeFakeFile('hung1.mkv'), { ubuplayerEnabled: true, keepPrepared: true, probeTimeoutMs: 25 }),
       /timed out/i,
     );
+    await hungCodec1Started;
     const hungWorker1 = workers[hungWorkerStart];
-    await new Promise(resolve => setTimeout(resolve, 75));
+    t.mock.timers.tick(25);
+    await hungProbe1;
+    await waitForTermination(hungWorker1);
     assert.equal(hungWorker1.closeCount, 1, 'hung codec check closes worker exactly once');
     assert.equal(hungWorker1.terminateCount, 1, 'hung codec check terminates worker exactly once');
     // Late success after timeout must be ignored cleanly
     resolveHungCodec({ supported: true });
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await flush();
+    t.mock.timers.tick(100);
+    await flush();
     assert.equal(hungWorker1.closeCount, 1);
     assert.equal(hungWorker1.terminateCount, 1);
 
     // Late rejection after timeout must also be ignored cleanly
-    codecCheckImpl = () =>
-      new Promise((_, reject) => {
+    let markHungCodec2;
+    const hungCodec2Started = new Promise(resolve => {
+      markHungCodec2 = resolve;
+    });
+    codecCheckImpl = () => {
+      markHungCodec2();
+      return new Promise((_, reject) => {
         rejectHungCodec = reject;
       });
+    };
     const hungWorkerStart2 = workers.length;
-    await assert.rejects(
+    const hungProbe2 = assert.rejects(
       () =>
         probeLocalFile(makeFakeFile('hung2.mkv'), { ubuplayerEnabled: true, keepPrepared: true, probeTimeoutMs: 25 }),
       /timed out/i,
     );
+    await hungCodec2Started;
     const hungWorker2 = workers[hungWorkerStart2];
-    await new Promise(resolve => setTimeout(resolve, 75));
+    t.mock.timers.tick(25);
+    await hungProbe2;
+    await waitForTermination(hungWorker2);
     assert.equal(hungWorker2.closeCount, 1);
     assert.equal(hungWorker2.terminateCount, 1);
     rejectHungCodec(new Error('late codec check failure'));
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await flush();
+    t.mock.timers.tick(100);
+    await flush();
     assert.equal(hungWorker2.closeCount, 1);
     assert.equal(hungWorker2.terminateCount, 1);
 
     // 3. Full tracks-menu.js flow: hung codec check re-enables chooser on timeout, and late resolution cannot overwrite a newer file
     let resolveMenuHungCodec;
-    codecCheckImpl = () =>
-      new Promise(resolve => {
+    let markMenuHungCodec;
+    const menuHungCodecStarted = new Promise(resolve => {
+      markMenuHungCodec = resolve;
+    });
+    codecCheckImpl = () => {
+      markMenuHungCodec();
+      return new Promise(resolve => {
         resolveMenuHungCodec = resolve;
       });
-    const origSetTimeout = globalThis.setTimeout;
-    globalThis.setTimeout = (fn, ms, ...args) => origSetTimeout(fn, ms === 15000 ? 25 : ms, ...args);
+    };
     const menuById = new Map();
     const menuDoc = stubDocument({
       getElementById: id => {
@@ -2087,8 +2140,10 @@ test('persisted pagehide keeps committed local File while releasing warm workers
 
       input.listeners.change({ target: { files: [makeFakeFile('stalled.mkv')], value: 's' } });
       assert.equal(chooseBtn.disabled, true, 'chooser disables while probing');
-      await new Promise(resolve => origSetTimeout(resolve, 90));
+      await menuHungCodecStarted;
       const stalledWorker = workers[beforeHung];
+      t.mock.timers.tick(15000);
+      await waitForTermination(stalledWorker);
       assert.equal(chooseBtn.disabled, false, 'chooser re-enables after codec check timeout');
       assert.equal(stalledWorker.closeCount, 1);
       assert.equal(stalledWorker.terminateCount, 1);
@@ -2099,7 +2154,7 @@ test('persisted pagehide keeps committed local File while releasing warm workers
       const goodFile = makeFakeFile('good.mkv');
       menuMount.view.state = { ...menuMount.view.state, format: 'local' };
       input.listeners.change({ target: { files: [goodFile], value: 'g' } });
-      await new Promise(resolve => origSetTimeout(resolve, 30));
+      await flush();
       assert.equal(menuMount.view.localFile?.file, goodFile, 'second file commits cleanly after earlier timeout');
       assert.ok(menuMount.view.localFile?.prepared?.isReady(), 'fast supported pick still prepares worker');
       assert.match(statusEl.textContent, /good\.mkv/);
@@ -2107,15 +2162,21 @@ test('persisted pagehide keeps committed local File while releasing warm workers
 
       // Late resolution of the first file's hung codec check must not replace status or touch the new file
       resolveMenuHungCodec({ supported: true });
-      await new Promise(resolve => origSetTimeout(resolve, 30));
+      await flush();
+      t.mock.timers.tick(100);
+      await flush();
       assert.equal(menuMount.view.localFile?.file, goodFile);
       assert.equal(statusEl.textContent, statusAfterGood);
+      assert.equal(stalledWorker.closeCount, 1);
+      assert.equal(stalledWorker.terminateCount, 1);
+      const goodWorker = workers.at(-1);
       menuMount.view.localFile?.prepared?.dispose?.();
+      await waitForTermination(goodWorker);
     } finally {
-      globalThis.setTimeout = origSetTimeout;
       menuMount.restore();
     }
   } finally {
+    t.mock.timers.reset();
     globalThis.Worker = prevWorker;
     globalThis.VideoDecoder = prevVideoDecoder;
     globalThis.AudioContext = prevAudioContext;
