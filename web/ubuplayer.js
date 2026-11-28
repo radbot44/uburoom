@@ -10,6 +10,7 @@ import * as uburoomPlayback from './playback-policy.js';
 const HTTP_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_HTTP_CHUNKS = 10;
 const SAMPLE_RATE = 48000;
+const PROBE_TIMEOUT_MS = 15000;
 const PREPARED_WORKER_TTL_MS = 30000;
 const workletModulesLoaded = new WeakMap();
 
@@ -264,7 +265,7 @@ async function ensureWorkletModule(audioContext) {
  * When `keepPrepared` is true, returns a bounded one-shot `prepared` handle that
  * `UbuPlayer` can promote directly into playback without re-initializing LibAV demux.
  * @param {Blob} file
- * @param {{ubuplayerEnabled?: boolean, keepPrepared?: boolean, preparedTimeoutMs?: number, signal?: AbortSignal}} [options]
+ * @param {{ubuplayerEnabled?: boolean, keepPrepared?: boolean, probeTimeoutMs?: number, preparedTimeoutMs?: number, signal?: AbortSignal}} [options]
  */
 export async function probeLocalFile(file, options = {}) {
   if (options?.ubuplayerEnabled === false) {
@@ -276,45 +277,51 @@ export async function probeLocalFile(file, options = {}) {
   const { fileSize, initialBytes } = await reader.probe();
   if (signal?.aborted) throw createAbortError();
   const keepPrepared = Boolean(options?.keepPrepared);
+  const probeTimeoutMs =
+    Number.isFinite(options?.probeTimeoutMs) && Number(options.probeTimeoutMs) >= 0
+      ? Number(options.probeTimeoutMs)
+      : PROBE_TIMEOUT_MS;
   const worker = new Worker('/ubuplayer-worker.js', { type: 'module' });
   return new Promise((resolve, reject) => {
     let settled = false;
     let workerClosed = false;
     let workerErrored = false;
     let probeDone = false;
-    const closeWorker = () => {
+    const closeWorker = ({ immediate = false } = {}) => {
       if (workerClosed) return;
       workerClosed = true;
       worker.onerror = null;
       worker.onmessage = null;
+      if (immediate) {
+        worker.terminate();
+        return;
+      }
       try {
         worker.postMessage({ type: 'close' });
       } catch {}
       setTimeout(() => worker.terminate(), 50);
     };
-    const onAbort = () => {
+    const stopDeadline = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const settleReject = (err, closeOpts) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      closeWorker();
-      reject(createAbortError());
+      stopDeadline();
+      closeWorker(closeOpts);
+      reject(err);
     };
-    const cleanup = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      closeWorker();
+    const settleResolve = value => {
+      if (settled) return;
+      settled = true;
+      stopDeadline();
+      resolve(value);
     };
+    const onAbort = () => settleReject(createAbortError());
     const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      signal?.removeEventListener('abort', onAbort);
-      workerClosed = true;
-      worker.onerror = null;
-      worker.onmessage = null;
-      worker.terminate();
-      reject(new Error('Timed out reading local file headers.'));
-    }, 15000);
+      settleReject(new Error('Timed out reading local file headers.'), { immediate: !probeDone });
+    }, probeTimeoutMs);
     signal?.addEventListener('abort', onAbort, { once: true });
     worker.onerror = ev => {
       workerErrored = true;
@@ -322,10 +329,7 @@ export async function probeLocalFile(file, options = {}) {
         closeWorker();
         return;
       }
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(ev.error || new Error(ev.message || 'Could not inspect local file.'));
+      settleReject(ev.error || new Error(ev.message || 'Could not inspect local file.'));
     };
     worker.onmessage = async event => {
       const msg = event.data;
@@ -342,9 +346,8 @@ export async function probeLocalFile(file, options = {}) {
           }
         }
       } else if (msg.type === 'probed') {
-        if (settled) return;
+        if (settled || probeDone) return;
         probeDone = true;
-        clearTimeout(timer);
         if (!keepPrepared) closeWorker();
         let webCodecsSupported = typeof VideoDecoder === 'function' && Boolean(msg.video?.webCodecsCodec);
         if (webCodecsSupported && typeof VideoDecoder.isConfigSupported === 'function') {
@@ -361,16 +364,12 @@ export async function probeLocalFile(file, options = {}) {
         }
         if (settled) return;
         if (signal?.aborted) {
-          settled = true;
-          cleanup();
-          reject(createAbortError());
+          settleReject(createAbortError());
           return;
         }
-        settled = true;
-        signal?.removeEventListener('abort', onAbort);
         if (!keepPrepared || !webCodecsSupported || workerErrored || workerClosed) {
           closeWorker();
-          resolve({
+          settleResolve({
             ...msg,
             fileSize,
             webCodecsSupported,
@@ -379,6 +378,7 @@ export async function probeLocalFile(file, options = {}) {
           });
           return;
         }
+        stopDeadline();
         let disposed = false;
         let claimed = false;
         /** @type {ReturnType<typeof setTimeout> | null} */
@@ -418,17 +418,14 @@ export async function probeLocalFile(file, options = {}) {
           },
           dispose,
         };
-        resolve({ ...msg, fileSize, webCodecsSupported, mseSupported: webCodecsSupported, prepared });
+        settleResolve({ ...msg, fileSize, webCodecsSupported, mseSupported: webCodecsSupported, prepared });
       } else if (msg.type === 'error') {
         workerErrored = true;
         if (probeDone) {
           closeWorker();
           return;
         }
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(new Error(msg.message || 'Unsupported media file.'));
+        settleReject(new Error(msg.message || 'Unsupported media file.'));
       }
     };
     worker.postMessage(

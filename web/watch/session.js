@@ -193,7 +193,6 @@ export function mount(host, deps) {
       } catch {}
     }
     stopBrowserHandoff(true);
-    store.stream.localFile?.prepared?.dispose?.();
     void presence.clear();
     store.connection.transport?.close();
   });

@@ -226,6 +226,7 @@ export function mount(host, deps) {
   let localProbeController = null;
   let localProbeMediaVersion = null;
   let localProbeToken = 0;
+  let localSourceError = null;
   function clearPendingLocalCandidate() {
     pendingLocalCandidate?.prepared?.dispose?.();
     pendingLocalCandidate = null;
@@ -237,8 +238,13 @@ export function mount(host, deps) {
     }
     localProbeMediaVersion = null;
   }
+  function releaseStoredPreparedLocalFile() {
+    if (!store.stream.localFile?.prepared) return;
+    store.stream.localFile.prepared.dispose?.();
+    store.stream.localFile.prepared = null;
+  }
   function clearStoredLocalFile() {
-    store.stream.localFile?.prepared?.dispose?.();
+    releaseStoredPreparedLocalFile();
     store.stream.localFile = undefined;
   }
   function formatDurationDiff(seconds) {
@@ -290,15 +296,23 @@ export function mount(host, deps) {
     } else if (!ubuAllowed || (pendingLocalCandidate && pendingLocalCandidate.mediaVersion !== state?.mediaVersion)) {
       clearPendingLocalCandidate();
     }
+    if (localSourceError && (!ubuAllowed || localSourceError.mediaVersion !== state?.mediaVersion || activeLocal)) {
+      localSourceError = null;
+    }
     if (statusEl && !localProbePending && !pendingLocalCandidate) {
-      if (!state?.mediaId) statusEl.textContent = 'Choose a video in the room first.';
-      else if (state.format === 'youtube-embed') statusEl.textContent = 'Unavailable for embedded YouTube videos.';
-      else if (!uburoomPlayback.supportsUbuPlayer({ localFile: true }))
-        statusEl.textContent = 'Local file playback is unavailable in this browser.';
-      else if (!ubuAllowed) statusEl.textContent = 'Enable Use UbuPlayer above to play a local file.';
-      else if (activeLocal) statusEl.textContent = 'Playing local file: ' + activeLocal.name;
-      else statusEl.textContent = 'Streaming from room. Pick a downloaded copy on this device to play locally.';
-      statusEl.classList.remove('error');
+      if (localSourceError) {
+        statusEl.textContent = localSourceError.message;
+        statusEl.classList.add('error');
+      } else {
+        if (!state?.mediaId) statusEl.textContent = 'Choose a video in the room first.';
+        else if (state.format === 'youtube-embed') statusEl.textContent = 'Unavailable for embedded YouTube videos.';
+        else if (!uburoomPlayback.supportsUbuPlayer({ localFile: true }))
+          statusEl.textContent = 'Local file playback is unavailable in this browser.';
+        else if (!ubuAllowed) statusEl.textContent = 'Enable Use UbuPlayer above to play a local file.';
+        else if (activeLocal) statusEl.textContent = 'Playing local file: ' + activeLocal.name;
+        else statusEl.textContent = 'Streaming from room. Pick a downloaded copy on this device to play locally.';
+        statusEl.classList.remove('error');
+      }
     }
     const subChoose = $('local-subtitle-choose');
     const subClear = $('local-subtitle-clear');
@@ -321,6 +335,7 @@ export function mount(host, deps) {
     }
     if (pendingLocalCandidate === candidate) pendingLocalCandidate = null;
     else clearPendingLocalCandidate();
+    localSourceError = null;
     if ($('local-file-mismatch')) $('local-file-mismatch').hidden = true;
     const defaultAudio =
       candidate.probed.audioTracks.find(a => a.default)?.id || candidate.probed.audioTracks[0]?.id || null;
@@ -345,10 +360,10 @@ export function mount(host, deps) {
       if (res?.status && res.status !== 'applied') {
         entry.prepared?.dispose?.();
         if (store.stream.localFile === entry) store.stream.localFile = undefined;
-        if ($('local-file-status')) {
-          $('local-file-status').textContent = res.message || 'Could not switch to local file.';
-          $('local-file-status').classList.add('error');
-        }
+        localSourceError = {
+          message: res.message || 'Could not switch to local file.',
+          mediaVersion: state.mediaVersion,
+        };
       }
     } catch (err) {
       entry.prepared?.dispose?.();
@@ -363,6 +378,7 @@ export function mount(host, deps) {
     const state = store.room.state;
     abortPendingLocalProbe();
     clearPendingLocalCandidate();
+    localSourceError = null;
     if ($('local-file-mismatch')) $('local-file-mismatch').hidden = true;
     clearStoredLocalFile();
     renderLocalSourceControls();
@@ -387,6 +403,7 @@ export function mount(host, deps) {
     const probeToken = ++localProbeToken;
     abortPendingLocalProbe();
     clearPendingLocalCandidate();
+    localSourceError = null;
     const controller = typeof AbortController === 'function' ? new AbortController() : null;
     localProbeController = controller;
     localProbeMediaVersion = mediaVersion;
@@ -411,10 +428,10 @@ export function mount(host, deps) {
       }
       if (!probed.webCodecsSupported) {
         prepared?.dispose?.();
-        if (statusEl) {
-          statusEl.textContent = `This browser cannot hardware-decode ${(probed.video?.codec || 'the').toUpperCase()} video in ${file.name}. Keep using the room stream.`;
-          statusEl.classList.add('error');
-        }
+        localSourceError = {
+          message: `This browser cannot hardware-decode ${(probed.video?.codec || 'the').toUpperCase()} video in ${file.name}. Keep using the room stream.`,
+          mediaVersion,
+        };
         return;
       }
       const roomDur = Number(store.room.state?.state?.duration) || 0;
@@ -431,10 +448,10 @@ export function mount(host, deps) {
       await commitLocalFile({ file, probed, prepared, mediaVersion });
     } catch (err) {
       if (err?.name === 'AbortError' || probeToken !== localProbeToken) return;
-      if (statusEl) {
-        statusEl.textContent = (err?.message || 'Could not read local file.') + ' Using room stream.';
-        statusEl.classList.add('error');
-      }
+      localSourceError = {
+        message: (err?.message || 'Could not read local file.') + ' Using room stream.',
+        mediaVersion,
+      };
     } finally {
       if (probeToken === localProbeToken) {
         localProbePending = false;
@@ -502,10 +519,16 @@ export function mount(host, deps) {
     if ($('local-file-mismatch')) $('local-file-mismatch').hidden = true;
     renderLocalSourceControls();
   });
-  globalThis.window?.addEventListener?.('pagehide', () => {
+  globalThis.window?.addEventListener?.('pagehide', event => {
     abortPendingLocalProbe();
     clearPendingLocalCandidate();
-    clearStoredLocalFile();
+    if ($('local-file-mismatch')) $('local-file-mismatch').hidden = true;
+    if (event?.persisted) {
+      releaseStoredPreparedLocalFile();
+      renderLocalSourceControls();
+    } else {
+      clearStoredLocalFile();
+    }
   });
   $('local-subtitle-choose')?.addEventListener('click', () => $('local-subtitle-input')?.click());
   $('local-subtitle-input')?.addEventListener('change', ev => {

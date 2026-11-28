@@ -1721,3 +1721,411 @@ test('probeLocalFile keepPrepared enforces one-shot same-File promotion, TTL fal
     globalThis.AudioContext = prevAudioContext;
   }
 });
+
+test('persisted pagehide keeps committed local File while releasing warm workers, and probe deadline bounds hung codec checks', async () => {
+  const ubuMod = await import(pathToFileURL(path.join(__dirname, '../web/ubuplayer.js')).href);
+  const { probeLocalFile } = ubuMod;
+  const tracksMenuMod = require('../web/watch/tracks-menu.js');
+
+  const prevWorker = globalThis.Worker;
+  const prevVideoDecoder = globalThis.VideoDecoder;
+  const prevAudioContext = globalThis.AudioContext;
+  const prevResizeObserver = globalThis.ResizeObserver;
+  const prevMutationObserver = globalThis.MutationObserver;
+  const prevMatchMedia = globalThis.matchMedia;
+  const prevGetComputedStyle = globalThis.getComputedStyle;
+
+  const workers = [];
+  let codecCheckImpl = async () => ({ supported: true });
+
+  class CountingWorker {
+    constructor() {
+      this.closeCount = 0;
+      this.terminateCount = 0;
+      this.onmessage = null;
+      this.onerror = null;
+      workers.push(this);
+    }
+    postMessage(msg) {
+      if (msg.type === 'close') {
+        this.closeCount++;
+        return;
+      }
+      if (msg.type === 'init' && msg.probeOnly) {
+        queueMicrotask(() => {
+          if (this.closeCount > 0 || this.terminateCount > 0) return;
+          this.onmessage?.({
+            data: {
+              type: 'probed',
+              duration: 120,
+              video: { codec: 'h264', webCodecsCodec: 'avc1.640028', width: 1920, height: 1080 },
+              audioTracks: [
+                { id: 'local-a-1', default: true },
+                { id: 'local-a-2', default: false },
+              ],
+              subtitleTracks: [{ id: 'local-s-3', codec: 'ass', delivery: 'ass', available: true }],
+              chapters: [],
+            },
+          });
+        });
+      }
+    }
+    terminate() {
+      this.terminateCount++;
+    }
+  }
+
+  function makeFakeFile(name = 'movie.mkv', size = 2048) {
+    return {
+      size,
+      name,
+      slice(start = 0, end = size) {
+        const len = Math.max(0, Math.min(size, end) - Math.max(0, start));
+        return { arrayBuffer: async () => new Uint8Array(len).buffer };
+      },
+    };
+  }
+
+  globalThis.Worker = CountingWorker;
+  globalThis.VideoDecoder = class DeferredVideoDecoder {
+    static isConfigSupported(cfg) {
+      return codecCheckImpl(cfg);
+    }
+  };
+  globalThis.AudioContext = undefined;
+  globalThis.ResizeObserver = class {
+    observe() {}
+    disconnect() {}
+  };
+  globalThis.MutationObserver = class {
+    observe() {}
+    disconnect() {}
+  };
+  globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  globalThis.getComputedStyle = () => ({ getPropertyValue: () => '' });
+
+  try {
+    // 1. Persisted pagehide releases warm workers & unconfirmed mismatch candidates, keeps committed File & tracks,
+    //    and non-persisted pagehide clears the committed localFile.
+    const pagehideListeners = [];
+    const fakeWindow = {
+      addEventListener(type, fn) {
+        if (type === 'pagehide') pagehideListeners.push(fn);
+      },
+      removeEventListener() {},
+    };
+    const tracksById = new Map();
+    const tracksDoc = stubDocument({
+      getElementById: id => {
+        if (!tracksById.has(id)) {
+          const el = element();
+          el.options = [];
+          el.isConnected = false;
+          if (id === 'player-mute') el.closest = () => element('div');
+          tracksById.set(id, el);
+        }
+        return tracksById.get(id);
+      },
+    });
+    const tracksMount = mountModule(tracksMenuMod, {
+      selected: 'room-1',
+      config: { ubuplayer: true },
+      document: tracksDoc,
+      window: fakeWindow,
+      playerPreferences: { subtitlePosition: 'bottom', subtitleSize: 'medium', volume: 100, muted: false },
+      state: {
+        id: 'room-1',
+        mediaId: '101',
+        mediaVersion: 'mv-1',
+        streamVersion: 's1',
+        format: 'local',
+        state: { duration: 300 },
+        tracks: { audio: [], subtitles: [] },
+      },
+      canUseUbuPlayer: () => true,
+      operatorAllowsUbuPlayer: () => true,
+      execute: () => Promise.resolve({ status: 'applied' }),
+      fail() {},
+      expected: () => 0,
+      clock: s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`,
+      toasts: { show() {}, dismiss() {} },
+      applyState() {},
+      applySubtitleAppearance() {},
+      savePlayerPreferences() {},
+      rememberPlayerSubtitles() {},
+      VideoDecoder: globalThis.VideoDecoder,
+      Worker: globalThis.Worker,
+    });
+    try {
+      const committedFile = makeFakeFile('committed.mkv');
+      let preparedDisposes = 0;
+      tracksMount.view.localFile = {
+        key: 'local-file:committed',
+        file: committedFile,
+        name: committedFile.name,
+        probed: {
+          duration: 300,
+          video: { codec: 'h264', width: 1920, height: 1080 },
+          audioTracks: [
+            { id: 'local-a-1', default: true },
+            { id: 'local-a-2', default: false },
+          ],
+          subtitleTracks: [{ id: 'local-s-3', codec: 'ass', delivery: 'ass', available: true }],
+          chapters: [],
+        },
+        prepared: {
+          dispose() {
+            preparedDisposes++;
+          },
+        },
+        mediaVersion: 'mv-1',
+        audioId: 'local-a-2',
+        subtitleId: 'local-s-3',
+      };
+
+      // Also stage an unconfirmed mismatch candidate before persisted pagehide
+      const input = tracksDoc.getElementById('local-file-input');
+      input.listeners.change({ target: { files: [makeFakeFile('mismatch.mkv')], value: 'm' } });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const mismatchWorker = workers.at(-1);
+      assert.equal(mismatchWorker.closeCount, 0);
+
+      for (const fn of pagehideListeners) fn({ persisted: true });
+      assert.equal(preparedDisposes, 1, 'persisted pagehide disposes unclaimed prepared worker exactly once');
+      assert.equal(mismatchWorker.closeCount, 1, 'persisted pagehide disposes unconfirmed mismatch candidate worker');
+      assert.equal(tracksDoc.getElementById('local-file-mismatch').hidden, true);
+      assert.equal(tracksMount.view.localFile?.file, committedFile, 'persisted pagehide preserves committed File');
+      assert.equal(tracksMount.view.localFile?.prepared, null, 'persisted pagehide clears prepared reference');
+      assert.equal(tracksMount.view.localFile?.audioId, 'local-a-2');
+      assert.equal(tracksMount.view.localFile?.subtitleId, 'local-s-3');
+
+      // Reconnecting on pageshow with matching mediaVersion must keep local playback without requesting auto
+      const savedLocalFile = tracksMount.view.localFile;
+      const roomCommands = [];
+      let attachedInput = null;
+      const videoForRoom = element('video');
+      videoForRoom.canPlayType = () => 'probably';
+      const roomMount = mountModule(roomMod, {
+        selected: 'room-1',
+        config: { ubuplayer: true },
+        video: videoForRoom,
+        localFile: savedLocalFile,
+        canUseUbuPlayer: () => true,
+        canGpuTonemap: () => false,
+        surface: {
+          attachUbuPlayer(factory) {
+            // Capture the input passed to UbuPlayer without needing a full canvas
+            const prevUbuStart = ubuMod.UbuPlayer.prototype.start;
+            ubuMod.UbuPlayer.prototype.start = async function () {
+              attachedInput = this.input;
+            };
+            try {
+              const p = factory(null);
+              p.destroy();
+              return p;
+            } finally {
+              ubuMod.UbuPlayer.prototype.start = prevUbuStart;
+            }
+          },
+          detachUbuPlayer() {},
+          width: () => 0,
+          height: () => 0,
+          isUbuPlayer: () => true,
+        },
+        watchFrames() {},
+        execute: cmd => {
+          roomCommands.push(cmd);
+          return Promise.resolve({ status: 'applied' });
+        },
+        fallbackPlayback: { receive: s => s, reset() {}, tick() {} },
+        sync: { transition() {}, synchronize() {}, reset() {}, sharedSeek() {} },
+        diagnostics: { state() {}, record() {} },
+        roomUI: { render() {} },
+        stageCards: { register() {}, sync() {} },
+        bufferingViewers: new Map(),
+        suppressedBuffering: new Set(),
+        queueUI: { render() {}, restorePosition() {} },
+        playerUI: { settingsOpen: () => false, reset() {} },
+        captions: { update() {}, reset() {}, setLocalSubtitle() {}, resetLocalRenderer() {} },
+        videoCheck: {},
+        toasts: { show() {}, dismiss() {} },
+        expected: () => 42,
+        clock: () => '0:42',
+      });
+      try {
+        roomMount.api.applyState({
+          id: 'room-1',
+          roomName: 'Cinema',
+          title: 'Committed Film',
+          mediaId: '101',
+          mediaVersion: 'mv-1',
+          streamVersion: 's1',
+          format: 'local',
+          mediaUrl: 'local://selected',
+          viewers: 1,
+          state: { paused: true, position: 42, duration: 300, volume: 80, muted: false },
+          tracks: { audio: [], subtitles: [] },
+        });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(roomCommands.length, 0, 'persisted return does not send media.delivery.set auto');
+        assert.equal(attachedInput?.file, committedFile, 're-attaches preserved committed File via cold reopen');
+        assert.equal(attachedInput?.prepared, null, 're-attach has no stale prepared worker');
+        assert.equal(roomMount.view.state?.tracks?.audioId, 'local-a-2');
+        assert.equal(roomMount.view.state?.tracks?.subtitleId, 'local-s-3');
+      } finally {
+        roomMount.restore();
+      }
+
+      // Non-persisted pagehide (ordinary unload/reload) forgets the committed localFile
+      tracksMount.view.localFile = savedLocalFile;
+      for (const fn of pagehideListeners) fn({ persisted: false });
+      assert.equal(tracksMount.view.localFile, undefined, 'non-persisted pagehide clears localFile');
+    } finally {
+      tracksMount.restore();
+    }
+
+    // 2. Hung VideoDecoder.isConfigSupported() is bounded by probe deadline; late resolve/reject cannot leak a handle or touch UI
+    let resolveHungCodec;
+    let rejectHungCodec;
+    codecCheckImpl = () =>
+      new Promise((resolve, reject) => {
+        resolveHungCodec = resolve;
+        rejectHungCodec = reject;
+      });
+    const hungWorkerStart = workers.length;
+    await assert.rejects(
+      () =>
+        probeLocalFile(makeFakeFile('hung1.mkv'), { ubuplayerEnabled: true, keepPrepared: true, probeTimeoutMs: 25 }),
+      /timed out/i,
+    );
+    const hungWorker1 = workers[hungWorkerStart];
+    await new Promise(resolve => setTimeout(resolve, 75));
+    assert.equal(hungWorker1.closeCount, 1, 'hung codec check closes worker exactly once');
+    assert.equal(hungWorker1.terminateCount, 1, 'hung codec check terminates worker exactly once');
+    // Late success after timeout must be ignored cleanly
+    resolveHungCodec({ supported: true });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(hungWorker1.closeCount, 1);
+    assert.equal(hungWorker1.terminateCount, 1);
+
+    // Late rejection after timeout must also be ignored cleanly
+    codecCheckImpl = () =>
+      new Promise((_, reject) => {
+        rejectHungCodec = reject;
+      });
+    const hungWorkerStart2 = workers.length;
+    await assert.rejects(
+      () =>
+        probeLocalFile(makeFakeFile('hung2.mkv'), { ubuplayerEnabled: true, keepPrepared: true, probeTimeoutMs: 25 }),
+      /timed out/i,
+    );
+    const hungWorker2 = workers[hungWorkerStart2];
+    await new Promise(resolve => setTimeout(resolve, 75));
+    assert.equal(hungWorker2.closeCount, 1);
+    assert.equal(hungWorker2.terminateCount, 1);
+    rejectHungCodec(new Error('late codec check failure'));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(hungWorker2.closeCount, 1);
+    assert.equal(hungWorker2.terminateCount, 1);
+
+    // 3. Full tracks-menu.js flow: hung codec check re-enables chooser on timeout, and late resolution cannot overwrite a newer file
+    let resolveMenuHungCodec;
+    codecCheckImpl = () =>
+      new Promise(resolve => {
+        resolveMenuHungCodec = resolve;
+      });
+    const origSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn, ms, ...args) => origSetTimeout(fn, ms === 15000 ? 25 : ms, ...args);
+    const menuById = new Map();
+    const menuDoc = stubDocument({
+      getElementById: id => {
+        if (!menuById.has(id)) {
+          const el = element();
+          el.options = [];
+          el.isConnected = false;
+          if (id === 'player-mute') el.closest = () => element('div');
+          menuById.set(id, el);
+        }
+        return menuById.get(id);
+      },
+    });
+    const menuMount = mountModule(tracksMenuMod, {
+      selected: 'room-1',
+      config: { ubuplayer: true },
+      document: menuDoc,
+      playerPreferences: { subtitlePosition: 'bottom', subtitleSize: 'medium', volume: 100, muted: false },
+      state: {
+        id: 'room-1',
+        mediaId: '101',
+        mediaVersion: 'mv-1',
+        streamVersion: 's1',
+        format: 'mp4',
+        state: { duration: 120 },
+        tracks: { audio: [], subtitles: [] },
+      },
+      canUseUbuPlayer: () => true,
+      operatorAllowsUbuPlayer: () => true,
+      execute: () => Promise.resolve({ status: 'applied' }),
+      fail() {},
+      expected: () => 0,
+      clock: s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`,
+      toasts: { show() {}, dismiss() {} },
+      applyState() {},
+      applySubtitleAppearance() {},
+      savePlayerPreferences() {},
+      rememberPlayerSubtitles() {},
+      VideoDecoder: globalThis.VideoDecoder,
+      AudioWorkletNode: function FakeAudioWorkletNode() {},
+      OffscreenCanvas: function FakeOffscreenCanvas() {},
+      Worker: globalThis.Worker,
+    });
+    try {
+      const input = menuDoc.getElementById('local-file-input');
+      const chooseBtn = menuDoc.getElementById('local-file-choose');
+      const statusEl = menuDoc.getElementById('local-file-status');
+      const beforeHung = workers.length;
+
+      input.listeners.change({ target: { files: [makeFakeFile('stalled.mkv')], value: 's' } });
+      assert.equal(chooseBtn.disabled, true, 'chooser disables while probing');
+      await new Promise(resolve => origSetTimeout(resolve, 90));
+      const stalledWorker = workers[beforeHung];
+      assert.equal(chooseBtn.disabled, false, 'chooser re-enables after codec check timeout');
+      assert.equal(stalledWorker.closeCount, 1);
+      assert.equal(stalledWorker.terminateCount, 1);
+      assert.match(statusEl.textContent, /timed out/i);
+
+      // Now pick a second file whose codec check succeeds quickly
+      codecCheckImpl = async () => ({ supported: true });
+      const goodFile = makeFakeFile('good.mkv');
+      menuMount.view.state = { ...menuMount.view.state, format: 'local' };
+      input.listeners.change({ target: { files: [goodFile], value: 'g' } });
+      await new Promise(resolve => origSetTimeout(resolve, 30));
+      assert.equal(menuMount.view.localFile?.file, goodFile, 'second file commits cleanly after earlier timeout');
+      assert.ok(menuMount.view.localFile?.prepared?.isReady(), 'fast supported pick still prepares worker');
+      assert.match(statusEl.textContent, /good\.mkv/);
+      const statusAfterGood = statusEl.textContent;
+
+      // Late resolution of the first file's hung codec check must not replace status or touch the new file
+      resolveMenuHungCodec({ supported: true });
+      await new Promise(resolve => origSetTimeout(resolve, 30));
+      assert.equal(menuMount.view.localFile?.file, goodFile);
+      assert.equal(statusEl.textContent, statusAfterGood);
+      menuMount.view.localFile?.prepared?.dispose?.();
+    } finally {
+      globalThis.setTimeout = origSetTimeout;
+      menuMount.restore();
+    }
+  } finally {
+    globalThis.Worker = prevWorker;
+    globalThis.VideoDecoder = prevVideoDecoder;
+    globalThis.AudioContext = prevAudioContext;
+    if (prevResizeObserver === undefined) delete globalThis.ResizeObserver;
+    else globalThis.ResizeObserver = prevResizeObserver;
+    if (prevMutationObserver === undefined) delete globalThis.MutationObserver;
+    else globalThis.MutationObserver = prevMutationObserver;
+    if (prevMatchMedia === undefined) delete globalThis.matchMedia;
+    else globalThis.matchMedia = prevMatchMedia;
+    if (prevGetComputedStyle === undefined) delete globalThis.getComputedStyle;
+    else globalThis.getComputedStyle = prevGetComputedStyle;
+  }
+});
